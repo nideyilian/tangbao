@@ -13,6 +13,7 @@
 ### Task 1: Add failing hydration regression tests
 
 **Files:**
+
 - Modify: `src/features/composite/storeV2.test.ts`
 
 - [ ] **Step 1: Import the store module namespace**
@@ -44,6 +45,7 @@ Expected: FAIL because `mergeCompositeV2PersistedState` does not exist.
 ### Task 2: Implement the persistence-boundary fix
 
 **Files:**
+
 - Modify: `src/features/composite/storeV2.ts`
 
 - [ ] **Step 1: Define the persisted state shape**
@@ -98,6 +100,7 @@ Expected: all store tests pass.
 ### Task 3: Verify the complete change
 
 **Files:**
+
 - Verify: `src/features/composite/storeV2.ts`
 - Verify: `src/features/composite/storeV2.test.ts`
 

@@ -13,6 +13,7 @@
 ### Task 1: Lock the default rule catalog with a test
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeV2Defaults.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -25,15 +26,17 @@ describe('composite v2 defaults', () => {
   it('creates the confirmed disabled output-size catalog', () => {
     const groups = createDefaultCompositeV2OutputRuleGroups()
 
-    expect(groups.map((group) => ({
-      name: group.name,
-      rules: group.rules.map(({ width, height, maxSizeKb, enabled }) => ({
-        width,
-        height,
-        maxSizeKb,
-        enabled,
+    expect(
+      groups.map((group) => ({
+        name: group.name,
+        rules: group.rules.map(({ width, height, maxSizeKb, enabled }) => ({
+          width,
+          height,
+          maxSizeKb,
+          enabled,
+        })),
       })),
-    }))).toEqual([
+    ).toEqual([
       {
         name: '广点通',
         rules: [
@@ -88,6 +91,7 @@ group and lacks the additional vendor and separate Toutiao rules.
 ### Task 2: Update the default rule factory
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeV2Defaults.ts`
 - Test: `src/features/composite/lib/compositeV2Defaults.test.ts`
 

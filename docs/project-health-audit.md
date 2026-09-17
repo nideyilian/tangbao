@@ -10,16 +10,16 @@
 
 **这个项目的工程纪律是偏上的。** 先说好话，因为是硬数据：
 
-| 健康度指标 | 实测 |
-| --- | --- |
-| `TODO` / `FIXME` / `HACK` | **0** |
-| `@ts-ignore` / `@ts-expect-error` | **0** |
-| `any` 使用 | **2**（均在 `electron/ipc-guard.ts`） |
-| `eslint-disable` | **15**，分布在 13 个文件，无集中滥用 |
-| 被跳过的测试（`.skip`/`.todo`/`xit`） | **0** |
-| 测试文件数 | **234**（约 2,247 个用例） |
-| 安全面（IPC 守卫 / 路径遍历 / Zip Slip / CSP / contextIsolation / 密钥加密） | **全部通过，无 P0** |
-| 死 import / 死符号检查 | ❌ **全网关闭**（`tsconfig.json:19-20`、`eslint.config.js:46`） |
+| 健康度指标                                                                   | 实测                                                            |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `TODO` / `FIXME` / `HACK`                                                    | **0**                                                           |
+| `@ts-ignore` / `@ts-expect-error`                                            | **0**                                                           |
+| `any` 使用                                                                   | **2**（均在 `electron/ipc-guard.ts`）                           |
+| `eslint-disable`                                                             | **15**，分布在 13 个文件，无集中滥用                            |
+| 被跳过的测试（`.skip`/`.todo`/`xit`）                                        | **0**                                                           |
+| 测试文件数                                                                   | **234**（约 2,247 个用例）                                      |
+| 安全面（IPC 守卫 / 路径遍历 / Zip Slip / CSP / contextIsolation / 密钥加密） | **全部通过，无 P0**                                             |
+| 死 import / 死符号检查                                                       | ❌ **全网关闭**（`tsconfig.json:19-20`、`eslint.config.js:46`） |
 
 所以**不用担心的是**：代码脏、类型逃逸、格式混乱、测试是假的。这几项在同体量项目里都属于上游水平。
 
@@ -83,6 +83,7 @@ if (!existing) {
 **换句话说：生成落库、遮罩编辑、外部导入、批量派生的每一张图，都还在主线程同步编码一次缩略图。**
 
 受影响的正是杰哥那段给用户的文案（`RELEASE.md` v0.8.19）：
+
 > 「生成完成那一刻不再卡界面：缩略图的 WebP 编码从渲染主线程移到后台线程。」
 
 这句对 **grid 显示通道**成立（`db.ts:872` 走 `createImageThumbnailDataUrl` → `canvasToWebpDataUrl`，确实异步了），
@@ -127,20 +128,22 @@ if (!existing) {
 
 ```ts
 for (const fileName of toRead) {
-  const result = await readFileBuffer(filePath)     // 已经是字节了
+  const result = await readFileBuffer(filePath) // 已经是字节了
   const bytes = new Uint8Array(result.data)
   let binary = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) {  // 主线程逐 chunk 拼串
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    // 主线程逐 chunk 拼串
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
   }
-  const dataUrl = `data:${mime};base64,${btoa(binary)}`   // 主线程同步 base64
-  const id = await computeContentHash(dataUrl)            // 又要把 dataUrl 解回去
-  await storeImage(dataUrl)                               // ← 内含 P1-1 的同步缩略图编码
+  const dataUrl = `data:${mime};base64,${btoa(binary)}` // 主线程同步 base64
+  const id = await computeContentHash(dataUrl) // 又要把 dataUrl 解回去
+  await storeImage(dataUrl) // ← 内含 P1-1 的同步缩略图编码
   imageIds.push(id)
 }
 ```
 
 **三重浪费**：
+
 1. `readFileBuffer` 已经返回字节，却拼串再 `btoa` 造 dataUrl —— 这一步对 3MB 图是 ~几十 ms 纯主线程；
 2. `computeContentHash` / `storeImage` 拿到 dataUrl 后又要解回字节才能算 hash 与落盘；
 3. 整个循环是严格串行（`await` 在循环体里），N 张图 = N 次串行 + N 次冻结。
@@ -193,7 +196,7 @@ for (const fileName of toRead) {
 
 ```ts
 function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
-  const queued = localImageSaveQueue.catch(() => {}).then(operation)   // ← 前一项失败也不传递
+  const queued = localImageSaveQueue.catch(() => {}).then(operation) // ← 前一项失败也不传递
   localImageSaveQueue = queued
   return queued
 }
@@ -233,11 +236,11 @@ function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
 
 ## P2-8 组件巨型化到影响可改动性
 
-| 文件 | 行数 | 实证问题 |
-| --- | --- | --- |
-| `src/components/InputBar.tsx` | 5,503 | 634 个顶层函数、内嵌 2 个 Modal；`renderVariablePrompt`/`parseVariablePrompt` 有 4 处重复引用 |
-| `src/components/SettingsModal.tsx` | 5,375 | 单文件塞进全部设置子面板 |
-| `src/features/strategy/adapters/GallerySopBatchModal.tsx` | 4,110 | 内嵌 3 个 Modal |
+| 文件                                                      | 行数  | 实证问题                                                                                      |
+| --------------------------------------------------------- | ----- | --------------------------------------------------------------------------------------------- |
+| `src/components/InputBar.tsx`                             | 5,503 | 634 个顶层函数、内嵌 2 个 Modal；`renderVariablePrompt`/`parseVariablePrompt` 有 4 处重复引用 |
+| `src/components/SettingsModal.tsx`                        | 5,375 | 单文件塞进全部设置子面板                                                                      |
+| `src/features/strategy/adapters/GallerySopBatchModal.tsx` | 4,110 | 内嵌 3 个 Modal                                                                               |
 
 后果是具体的：**改一处 prompt 变量解析，要在 InputBar 内部同步多处**。
 `src/features/` 下只有 **2 个 `index.ts`**（barrel 出口形同虚设），跨 feature 直接深引内部实现
@@ -268,6 +271,7 @@ function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
 这不是个别失误，是**门禁的形状问题**：当前的 CI 能证伪"代码坏了"，但不能证伪"声称的改动没落地"。
 
 **建议**（成本很低，收益直接对准本次事故）：
+
 1. 把 `@typescript-eslint/no-unused-vars` 从 `off` 改为 `warn`（先进一段观察期），
    或直接对 `src/**` 与 `electron/**` 开 `error`；
 2. 给「改了一半」这类性能修复补一条**结构性断言测试**，而不是只测工具函数本身 ——
@@ -278,17 +282,17 @@ function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
 
 # 三、P3 —— 可选 / 纵深防御
 
-| # | 问题 | 位置 | 说明 |
-| --- | --- | --- | --- |
-| 3-1 | 写类 handler 不解析真实路径 | `electron/ipc-handlers.ts:245` | `assertAllowedPath` 不 realpath，删除/导出类已用 `assertAllowedRealPath`。**需攻击者先在被允许的根目录内植入符号链接**，远程网页无法独立完成 → 理论风险。写类统一切 `assertAllowedRealPath` 即可闭合 |
-| 3-2 | 解密后的 API 密钥经 IPC 明文回传渲染进程 | `electron/main.ts:553` | `safeStorage`（Windows DPAPI，绑定本机用户）本身是对的✅，密钥**未明文落盘**、拷走数据目录≠泄露。仅当渲染进程被攻破时可取到明文 key |
-| 3-3 | 本地 API token 同用户可读 | `electron/asset-api-server.ts:143` + `asset-kernel.ts:485` | 已绑 `127.0.0.1` ✅ + Bearer token（`timingSafeEqual`）+ Origin 白名单 ✅，DNS-rebinding 与远程网页都挡住了。仅同用户恶意进程可读该 token 后经 `/v1/imports` 读任意本地文件——但同用户恶意软件本来就能直接读文件，边际收益有限 |
-| 3-4 | `agentBatchQueue` 读改写 | `src/lib/agentBatchQueue.ts:119-126` | load→map→save 全量覆盖写。**复核后降为 P3**：所有调用点（`AgentBatchPlannerModal.tsx:411/441/447/466/491/498`、`AgentBatchQueueRunner.tsx:38-57`）都是单次 UI 触发的串行 await 链，**实际不存在并发写入者**（grep `Promise.all/allSettled` 在这批文件里 0 命中）。真正引入并发那天才会爆 |
-| 3-5 | `partialize` 忽略 `version` 形参 | `src/store.ts:4530` | 未来加 v5 时所有旧版仍走同一 `migratePersistedState`，必须持续保证幂等 |
-| 3-6 | 未切片的长列表 | `src/features/assetLibrary/AssetBatchView.tsx:1192,1222` | `group.assets.map` 不分片；批次组超大时才需要处理 |
-| 3-7 | `dataUrlToBlob` 双实现 | `src/lib/blobDataUrl.ts:33`（真相源）vs `src/lib/canvasImage.ts:75` | 统一到前者 |
-| 3-8 | `electron-builder ^26.15.3` 配 `electron ^43.4.0` | `package.json:62-63` | **未联网核实，不妄断**。`release/` 里最后一次成功产物是 v0.8.11，建议下次本地 `npm run release:dry` 时确认 builder 是否输出 "Electron version not supported" 类告警 |
-| 3-9 | `electron/ipc-handlers.ts` 1877 行、`asset-catalog.ts` 1286 行 | 主进程侧 God object | 按 IPC 域拆分 handler |
+| #   | 问题                                                           | 位置                                                                | 说明                                                                                                                                                                                                                                                                                     |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3-1 | 写类 handler 不解析真实路径                                    | `electron/ipc-handlers.ts:245`                                      | `assertAllowedPath` 不 realpath，删除/导出类已用 `assertAllowedRealPath`。**需攻击者先在被允许的根目录内植入符号链接**，远程网页无法独立完成 → 理论风险。写类统一切 `assertAllowedRealPath` 即可闭合                                                                                     |
+| 3-2 | 解密后的 API 密钥经 IPC 明文回传渲染进程                       | `electron/main.ts:553`                                              | `safeStorage`（Windows DPAPI，绑定本机用户）本身是对的✅，密钥**未明文落盘**、拷走数据目录≠泄露。仅当渲染进程被攻破时可取到明文 key                                                                                                                                                      |
+| 3-3 | 本地 API token 同用户可读                                      | `electron/asset-api-server.ts:143` + `asset-kernel.ts:485`          | 已绑 `127.0.0.1` ✅ + Bearer token（`timingSafeEqual`）+ Origin 白名单 ✅，DNS-rebinding 与远程网页都挡住了。仅同用户恶意进程可读该 token 后经 `/v1/imports` 读任意本地文件——但同用户恶意软件本来就能直接读文件，边际收益有限                                                            |
+| 3-4 | `agentBatchQueue` 读改写                                       | `src/lib/agentBatchQueue.ts:119-126`                                | load→map→save 全量覆盖写。**复核后降为 P3**：所有调用点（`AgentBatchPlannerModal.tsx:411/441/447/466/491/498`、`AgentBatchQueueRunner.tsx:38-57`）都是单次 UI 触发的串行 await 链，**实际不存在并发写入者**（grep `Promise.all/allSettled` 在这批文件里 0 命中）。真正引入并发那天才会爆 |
+| 3-5 | `partialize` 忽略 `version` 形参                               | `src/store.ts:4530`                                                 | 未来加 v5 时所有旧版仍走同一 `migratePersistedState`，必须持续保证幂等                                                                                                                                                                                                                   |
+| 3-6 | 未切片的长列表                                                 | `src/features/assetLibrary/AssetBatchView.tsx:1192,1222`            | `group.assets.map` 不分片；批次组超大时才需要处理                                                                                                                                                                                                                                        |
+| 3-7 | `dataUrlToBlob` 双实现                                         | `src/lib/blobDataUrl.ts:33`（真相源）vs `src/lib/canvasImage.ts:75` | 统一到前者                                                                                                                                                                                                                                                                               |
+| 3-8 | `electron-builder ^26.15.3` 配 `electron ^43.4.0`              | `package.json:62-63`                                                | **未联网核实，不妄断**。`release/` 里最后一次成功产物是 v0.8.11，建议下次本地 `npm run release:dry` 时确认 builder 是否输出 "Electron version not supported" 类告警                                                                                                                      |
+| 3-9 | `electron/ipc-handlers.ts` 1877 行、`asset-catalog.ts` 1286 行 | 主进程侧 God object                                                 | 按 IPC 域拆分 handler                                                                                                                                                                                                                                                                    |
 
 ---
 
@@ -328,18 +332,18 @@ function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
 
 按「改一处 / 收益」排序，前三条是同一条图片读写主线：
 
-| 优先级 | 动作 | 位置 | 预期收益 | 验收方式 |
-| --- | --- | --- | --- | --- |
-| **①** | 补齐声称已做但没落的改动：`canvas.toDataURL` → `await canvasToWebpDataUrl(canvas, THUMBNAIL_QUALITY)`；顺带核实 `RELEASE.md` v0.8.19 是否需要修正措辞 | `src/lib/db.ts:1521` | 19 个入库调用点全部解除主线程冻结；`db.ts:31` 的死 import 转为活用 | **帧探针看主线程长任务**，不要比总耗时 |
-| **②** | 打开 `no-unused-vars`（至少 `warn`），并给这类修复补结构性断言测试 | `eslint.config.js:46`、`tsconfig.json:19-20` | 让「声称做了但没落地」下次无法混过 CI | 改完跑 `npm run lint`，确认不引入假阳性洪泛 |
-| **③** | 文件夹导入走字节通道 + 限并发 | `src/components/InputBar.tsx:2455-2485` | 去掉 dataUrl 双向转换，N 张并行 | 导入 50 张文件夹，测主线程最大任务时长 |
-| **④** | composite 导出整图改 `toBlob`/OffscreenCanvas | `compositeRenderer.ts:198`、`compositeRendererV2.ts:317` | 批量导出不再单次长冻结 | 帧探针 |
-| **⑤** | 收藏/集合状态归一到一个 store，删除跨 store 桥接 | `store.ts:487` + `assetLibrary/store.ts:77` | 消灭双 schema / 双迁移 | 迁移测试 + 老库升级验证 |
-| **⑥** | 给持久化加「写失败必须上抛/上报」的显式通道 | `store.ts:416`（保留防止队列中毒的字面量意图，改为记录标志位） | 磁盘满时用户能感知 | 人为制造写入失败验证 Toast |
-| **⑦** | `moveLibraryData` 加事务/快照回滚 | `electron/catalog-migration.ts:97-122` | 跨卷迁移中断后不再停在半迁移态 | 跨卷切换库根、中途杀进程验证 |
-| **⑧** | 6 份 sanitize → 1 份；4 份 escapeHtml → 1 份 | 见 P2-6 | 消除语义不一致隐患 | 逐个替换 + 对应单测 |
-| **⑨** | 清理 `release/`、工作区残留旧产物 | `release/`、`release-0.8.14/` 等 | 收回 ~262MB + 避免发版搞混产物 | 手工确认 |
-| **⑩** | 写类 IPC handler 切 `assertAllowedRealPath` | `electron/ipc-handlers.ts:245` | 闭合符号链接理论缺口 | 现有测试回归 |
+| 优先级 | 动作                                                                                                                                                  | 位置                                                           | 预期收益                                                           | 验收方式                                    |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------- |
+| **①**  | 补齐声称已做但没落的改动：`canvas.toDataURL` → `await canvasToWebpDataUrl(canvas, THUMBNAIL_QUALITY)`；顺带核实 `RELEASE.md` v0.8.19 是否需要修正措辞 | `src/lib/db.ts:1521`                                           | 19 个入库调用点全部解除主线程冻结；`db.ts:31` 的死 import 转为活用 | **帧探针看主线程长任务**，不要比总耗时      |
+| **②**  | 打开 `no-unused-vars`（至少 `warn`），并给这类修复补结构性断言测试                                                                                    | `eslint.config.js:46`、`tsconfig.json:19-20`                   | 让「声称做了但没落地」下次无法混过 CI                              | 改完跑 `npm run lint`，确认不引入假阳性洪泛 |
+| **③**  | 文件夹导入走字节通道 + 限并发                                                                                                                         | `src/components/InputBar.tsx:2455-2485`                        | 去掉 dataUrl 双向转换，N 张并行                                    | 导入 50 张文件夹，测主线程最大任务时长      |
+| **④**  | composite 导出整图改 `toBlob`/OffscreenCanvas                                                                                                         | `compositeRenderer.ts:198`、`compositeRendererV2.ts:317`       | 批量导出不再单次长冻结                                             | 帧探针                                      |
+| **⑤**  | 收藏/集合状态归一到一个 store，删除跨 store 桥接                                                                                                      | `store.ts:487` + `assetLibrary/store.ts:77`                    | 消灭双 schema / 双迁移                                             | 迁移测试 + 老库升级验证                     |
+| **⑥**  | 给持久化加「写失败必须上抛/上报」的显式通道                                                                                                           | `store.ts:416`（保留防止队列中毒的字面量意图，改为记录标志位） | 磁盘满时用户能感知                                                 | 人为制造写入失败验证 Toast                  |
+| **⑦**  | `moveLibraryData` 加事务/快照回滚                                                                                                                     | `electron/catalog-migration.ts:97-122`                         | 跨卷迁移中断后不再停在半迁移态                                     | 跨卷切换库根、中途杀进程验证                |
+| **⑧**  | 6 份 sanitize → 1 份；4 份 escapeHtml → 1 份                                                                                                          | 见 P2-6                                                        | 消除语义不一致隐患                                                 | 逐个替换 + 对应单测                         |
+| **⑨**  | 清理 `release/`、工作区残留旧产物                                                                                                                     | `release/`、`release-0.8.14/` 等                               | 收回 ~262MB + 避免发版搞混产物                                     | 手工确认                                    |
+| **⑩**  | 写类 IPC handler 切 `assertAllowedRealPath`                                                                                                           | `electron/ipc-handlers.ts:245`                                 | 闭合符号链接理论缺口                                               | 现有测试回归                                |
 
 **不建议现在动**：`agentBatchQueue` 的并发锁（P3-4，当前无并发写入者，加了是无效复杂度）；
 以及单独立项再拆一次 `store.ts` —— 建议随着 **⑤** 的收藏域归一顺带切分，而不是独立开一个大重构。

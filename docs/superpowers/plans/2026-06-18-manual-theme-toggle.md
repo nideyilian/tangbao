@@ -13,6 +13,7 @@
 ### Task 1: Theme State And Tests
 
 **Files:**
+
 - Modify: `src/types.ts`
 - Modify: `src/lib/apiProfiles.ts`
 - Create: `src/lib/theme.ts`
@@ -39,6 +40,7 @@ Expected: PASS.
 ### Task 2: Manual UI Toggle
 
 **Files:**
+
 - Modify: `tailwind.config.js`
 - Modify: `src/index.css`
 - Modify: `src/App.tsx`

@@ -15,10 +15,18 @@ const outFile = process.argv[2]
 const dark = process.argv.includes('--dark')
 const targetTab = process.argv[3] ?? '策略'
 
-const chrome = spawn(CHROME, [
-  '--headless=new', '--disable-gpu', '--no-sandbox',
-  `--remote-debugging-port=${PORT}`, '--window-size=1440,900', 'about:blank',
-], { stdio: 'ignore' })
+const chrome = spawn(
+  CHROME,
+  [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-sandbox',
+    `--remote-debugging-port=${PORT}`,
+    '--window-size=1440,900',
+    'about:blank',
+  ],
+  { stdio: 'ignore' },
+)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function getJson(path, method = 'GET') {
@@ -26,7 +34,13 @@ async function getJson(path, method = 'GET') {
     const req = http.request({ host: '127.0.0.1', port: PORT, path, method }, (res) => {
       let data = ''
       res.on('data', (c) => (data += c))
-      res.on('end', () => { try { resolve(JSON.parse(data)) } catch (e) { reject(new Error(data.slice(0, 200))) } })
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data))
+        } catch (e) {
+          reject(new Error(data.slice(0, 200)))
+        }
+      })
     })
     req.on('error', reject)
     req.end()
@@ -36,22 +50,34 @@ async function getJson(path, method = 'GET') {
 let ws
 try {
   for (let i = 0; i < 30; i++) {
-    try { await getJson('/json/version'); break } catch { await sleep(300) }
+    try {
+      await getJson('/json/version')
+      break
+    } catch {
+      await sleep(300)
+    }
   }
   const tabs = await getJson('/json/new?' + encodeURIComponent(url), 'PUT')
   ws = new WebSocket(tabs.webSocketDebuggerUrl)
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
+  await new Promise((res, rej) => {
+    ws.onopen = res
+    ws.onerror = rej
+  })
   let id = 0
   const pending = new Map()
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data)
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) }
+    if (m.id && pending.has(m.id)) {
+      pending.get(m.id)(m)
+      pending.delete(m.id)
+    }
   }
-  const send = (method, params = {}) => new Promise((res) => {
-    const mid = ++id
-    pending.set(mid, res)
-    ws.send(JSON.stringify({ id: mid, method, params }))
-  })
+  const send = (method, params = {}) =>
+    new Promise((res) => {
+      const mid = ++id
+      pending.set(mid, res)
+      ws.send(JSON.stringify({ id: mid, method, params }))
+    })
   await sleep(2500)
 
   if (dark) {

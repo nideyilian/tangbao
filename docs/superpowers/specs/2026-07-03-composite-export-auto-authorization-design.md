@@ -49,4 +49,3 @@ Tests must prove:
 - one export run authorizes each distinct root only once;
 - an authorization failure prevents write attempts and reports the absolute-path error; and
 - existing collision suffix behavior still prevents overwriting files.
-

@@ -126,10 +126,13 @@ Extend the ZIP manifest with:
 ```ts
 type ExportData = {
   compositeState?: CompositeV2PersistedSnapshot
-  compositeAssetFiles?: Record<string, {
-    path: string
-    createdAt: number
-  }>
+  compositeAssetFiles?: Record<
+    string,
+    {
+      path: string
+      createdAt: number
+    }
+  >
 }
 ```
 

@@ -88,9 +88,12 @@ const NEUTRAL = ['gray', 'slate', 'zinc', 'neutral']
 const BRAND = ['blue', 'violet', 'purple']
 
 const SEMANTIC_MAP = {
-  emerald: 'success', green: 'success',
-  amber: 'warning', yellow: 'warning',
-  red: 'danger', rose: 'danger',
+  emerald: 'success',
+  green: 'success',
+  amber: 'warning',
+  yellow: 'warning',
+  red: 'danger',
+  rose: 'danger',
 }
 
 // text: 中性灰阶 → 语义文字层级
@@ -203,9 +206,15 @@ function parseAlpha(alpha) {
 const SOLID_BG_RE =
   /(\b(?:[\w-]+:)*)(bg-(?:blue|violet|purple|red|rose|emerald|green|amber|yellow)-(?:400|500|600|700|800))(?![/\d])/g
 const SEM_BY_COLOR = {
-  blue: 'primary', violet: 'primary', purple: 'primary',
-  red: 'danger', rose: 'danger', emerald: 'success', green: 'success',
-  amber: 'warning', yellow: 'warning',
+  blue: 'primary',
+  violet: 'primary',
+  purple: 'primary',
+  red: 'danger',
+  rose: 'danger',
+  emerald: 'success',
+  green: 'success',
+  amber: 'warning',
+  yellow: 'warning',
 }
 
 function migratePairButtons(src) {

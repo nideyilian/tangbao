@@ -12,11 +12,11 @@
 
 建议先确定复刻范围：
 
-| 范围 | 包含内容 | 适合场景 |
-| --- | --- | --- |
-| MVP | 策略树、策略卡片、策略编辑、SOP 选择、保存 | 只需要管理策略 |
-| 完整工作区 | MVP + SOP 管理中心 + 测试任务 + 版本回滚 + 图片结果 | 复刻当前策略页 |
-| 完整联动 | 完整工作区 + 画廊选择 SOP + 批量生成提示词 + 批量生图 | 复刻当前仓库的完整链路 |
+| 范围       | 包含内容                                              | 适合场景               |
+| ---------- | ----------------------------------------------------- | ---------------------- |
+| MVP        | 策略树、策略卡片、策略编辑、SOP 选择、保存            | 只需要管理策略         |
+| 完整工作区 | MVP + SOP 管理中心 + 测试任务 + 版本回滚 + 图片结果   | 复刻当前策略页         |
+| 完整联动   | 完整工作区 + 画廊选择 SOP + 批量生成提示词 + 批量生图 | 复刻当前仓库的完整链路 |
 
 ## 2. 模块能力
 
@@ -77,21 +77,21 @@ src/features/strategy/
 
 迁移建议：
 
-| 文件 | 处理方式 | 原因 |
-| --- | --- | --- |
-| `types.ts`、`contracts.ts` | 原样复制 | 领域模型和最小宿主契约 |
-| `model.ts` | 原样复制 | 默认值、旧数据兼容、校验、提示词编译 |
-| `sopGeneration.ts` | 原样复制 | SOP 模型指令、请求构造和响应解析 |
-| `sopPromptBatch.ts` | 原样复制 | SOP 批量提示词分配、去重和解析 |
-| `sopLibrary.ts` | 原样复制 | SOP 初始数据与 ID 生成 |
-| 三个 `Strategy*.tsx` | 优先原样复制 | 核心工作区 UI |
-| `SopManagementCenter.tsx` | 完整工作区复制 | SOP 管理与智能生成 UI |
-| `styles.css` | 原样复制 | 三栏布局、响应式和动效 |
-| `SopPresetPickerModal.tsx` | 复制并替换关闭钩子 | 依赖宿主的 `useCloseOnEscape` |
-| `RequirementStrategyWorkspace.tsx` | 重写 | 当前实现绑定需求原型 Store、任务 Store、IndexedDB、Electron |
-| `StoreStrategyImage.tsx` | 重写 | 当前实现绑定全局图片缓存 |
-| `storeSopGeneration.ts` | 重写请求部分 | 当前实现绑定 API Profile 和代理配置 |
-| `GallerySopBatchModal.tsx` | 仅完整联动时移植并重写 | 强绑定画廊输入、任务提交和工作区标签 |
+| 文件                               | 处理方式               | 原因                                                        |
+| ---------------------------------- | ---------------------- | ----------------------------------------------------------- |
+| `types.ts`、`contracts.ts`         | 原样复制               | 领域模型和最小宿主契约                                      |
+| `model.ts`                         | 原样复制               | 默认值、旧数据兼容、校验、提示词编译                        |
+| `sopGeneration.ts`                 | 原样复制               | SOP 模型指令、请求构造和响应解析                            |
+| `sopPromptBatch.ts`                | 原样复制               | SOP 批量提示词分配、去重和解析                              |
+| `sopLibrary.ts`                    | 原样复制               | SOP 初始数据与 ID 生成                                      |
+| 三个 `Strategy*.tsx`               | 优先原样复制           | 核心工作区 UI                                               |
+| `SopManagementCenter.tsx`          | 完整工作区复制         | SOP 管理与智能生成 UI                                       |
+| `styles.css`                       | 原样复制               | 三栏布局、响应式和动效                                      |
+| `SopPresetPickerModal.tsx`         | 复制并替换关闭钩子     | 依赖宿主的 `useCloseOnEscape`                               |
+| `RequirementStrategyWorkspace.tsx` | 重写                   | 当前实现绑定需求原型 Store、任务 Store、IndexedDB、Electron |
+| `StoreStrategyImage.tsx`           | 重写                   | 当前实现绑定全局图片缓存                                    |
+| `storeSopGeneration.ts`            | 重写请求部分           | 当前实现绑定 API Profile 和代理配置                         |
+| `GallerySopBatchModal.tsx`         | 仅完整联动时移植并重写 | 强绑定画廊输入、任务提交和工作区标签                        |
 
 注意：`index.ts` 当前没有导出 `SopManagementCenter` 和 `SopPresetPickerModal`，装配层直接从文件导入它们。目标项目可保持现状，也可补充公共导出。
 
@@ -160,12 +160,12 @@ interface StrategyAsset {
 
 ### 6.2 SOP 数据
 
-| 类型 | 用途 |
-| --- | --- |
-| `SopGroup` | SOP 分组 |
-| `SopLibraryItem` | 可被策略和画廊选用的 SOP 正文 |
-| `SopMetaInstruction` | 用来指导模型“如何生成 SOP”的元指令 |
-| `StrategyPreset` | 当前只继续承载 `export` 和 `allocation`；旧 `sop` 预设会迁入 SOP 库 |
+| 类型                 | 用途                                                                |
+| -------------------- | ------------------------------------------------------------------- |
+| `SopGroup`           | SOP 分组                                                            |
+| `SopLibraryItem`     | 可被策略和画廊选用的 SOP 正文                                       |
+| `SopMetaInstruction` | 用来指导模型“如何生成 SOP”的元指令                                  |
+| `StrategyPreset`     | 当前只继续承载 `export` 和 `allocation`；旧 `sop` 预设会迁入 SOP 库 |
 
 `seedSopLibrary` 会把未归档的旧 `StrategyPreset(type='sop')` 转成 `source: 'legacy-preset'` 的 SOP 项。
 
@@ -173,14 +173,14 @@ interface StrategyAsset {
 
 `contracts.ts` 定义 UI 所需的最小形状：
 
-| 契约 | 必要信息 |
-| --- | --- |
-| `StrategyCatalog` | 产品、素材类型、渠道 |
-| `StrategyKnowledgeBatch` | 知识素材批次、目录和状态 |
-| `StrategyKnowledgeInsight` | 知识结论标题、分类和批次关联 |
-| `StrategyTestOrder` | 测试订单、测试单元、任务 ID、提示词 |
-| `StrategyTask` | 任务提示词和输出图片 ID |
-| `StrategyRole` | `optimizer`、`strategist`、`admin` |
+| 契约                       | 必要信息                            |
+| -------------------------- | ----------------------------------- |
+| `StrategyCatalog`          | 产品、素材类型、渠道                |
+| `StrategyKnowledgeBatch`   | 知识素材批次、目录和状态            |
+| `StrategyKnowledgeInsight` | 知识结论标题、分类和批次关联        |
+| `StrategyTestOrder`        | 测试订单、测试单元、任务 ID、提示词 |
+| `StrategyTask`             | 任务提示词和输出图片 ID             |
+| `StrategyRole`             | `optimizer`、`strategist`、`admin`  |
 
 目标项目不需要复制当前需求原型的完整类型，只需映射成这些形状。
 
@@ -212,9 +212,11 @@ onMoveStrategy(strategyId, productId, materialTypeId)
 ```tsx
 function ProjectStrategyImage({ imageId, alt, className }: StrategyImageProps) {
   const url = useProjectImageUrl(imageId)
-  return url
-    ? <img src={url} alt={alt} className={className} />
-    : <div className={className} aria-label={`${alt}暂无图片`} />
+  return url ? (
+    <img src={url} alt={alt} className={className} />
+  ) : (
+    <div className={className} aria-label={`${alt}暂无图片`} />
+  )
 }
 ```
 
@@ -229,7 +231,7 @@ URL 如果由 `URL.createObjectURL` 创建，组件卸载或图片变化时必�
 ```ts
 onSave(strategy)
 onTest(strategyId, quantity) // 同步返回 { error?: string }
-onPickLocalReference()       // Promise<string[]>，返回 imageId
+onPickLocalReference() // Promise<string[]>，返回 imageId
 onPickKnowledgeMaterial(batchId) // Promise<string[]>，返回 imageId
 onRollback(version)
 ```
@@ -414,15 +416,15 @@ export type AppMode = 'gallery' | 'strategy' | 'ordering' | 'agent' | 'postproce
 ### 11.2 懒加载工作区
 
 ```tsx
-const StrategyWorkspace = React.lazy(
-  () => import('./features/strategy/adapters/ProjectStrategyWorkspace'),
-)
+const StrategyWorkspace = React.lazy(() => import('./features/strategy/adapters/ProjectStrategyWorkspace'))
 
-{appMode === 'strategy' && (
-  <React.Suspense fallback={null}>
-    <StrategyWorkspace />
-  </React.Suspense>
-)}
+{
+  appMode === 'strategy' && (
+    <React.Suspense fallback={null}>
+      <StrategyWorkspace />
+    </React.Suspense>
+  )
+}
 ```
 
 ### 11.3 收口其他工作区 UI
@@ -430,7 +432,9 @@ const StrategyWorkspace = React.lazy(
 进入策略模式后必须隐藏画廊专属输入栏、侧栏、选区和浮层。例如：
 
 ```tsx
-{(appMode === 'gallery' || appMode === 'agent') && <InputBar />}
+{
+  ;(appMode === 'gallery' || appMode === 'agent') && <InputBar />
+}
 ```
 
 桌面和移动导航都要增加“策略”入口。

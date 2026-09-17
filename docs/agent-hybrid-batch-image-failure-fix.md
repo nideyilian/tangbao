@@ -78,10 +78,7 @@ const shouldStreamAssistantMessage = activeProfile.streamImages === true
 
 ```ts
 if (!shouldStreamAssistantMessage && batchResult.image) {
-  await completeAgentImageTask(
-    { ...batchResult.image, toolCallId: batchToolCallId },
-    batchResult.rawResponsePayload,
-  )
+  await completeAgentImageTask({ ...batchResult.image, toolCallId: batchToolCallId }, batchResult.rawResponsePayload)
 }
 ```
 
@@ -154,10 +151,7 @@ sequenceDiagram
 
 ```ts
 if (!shouldStreamAssistantMessage && batchResult.image) {
-  await completeAgentImageTask(
-    { ...batchResult.image, toolCallId: batchToolCallId },
-    batchResult.rawResponsePayload,
-  )
+  await completeAgentImageTask({ ...batchResult.image, toolCallId: batchToolCallId }, batchResult.rawResponsePayload)
 }
 ```
 
@@ -165,10 +159,7 @@ if (!shouldStreamAssistantMessage && batchResult.image) {
 
 ```ts
 if (batchResult.image) {
-  await completeAgentImageTask(
-    { ...batchResult.image, toolCallId: batchToolCallId },
-    batchResult.rawResponsePayload,
-  )
+  await completeAgentImageTask({ ...batchResult.image, toolCallId: batchToolCallId }, batchResult.rawResponsePayload)
 }
 ```
 
@@ -259,20 +250,22 @@ it('stores successful hybrid batch images when Agent streaming is enabled', asyn
   vi.mocked(callAgentResponsesApi).mockResolvedValueOnce({
     text: '',
     images: [],
-    outputItems: [{
-      type: 'function_call',
-      name: 'generate_image_batch',
-      call_id: 'hybrid-batch',
-      arguments: JSON.stringify({
-        requested_count: 2,
-        finalize_after_batch: true,
-        shared_prompt: '',
-        images: [
-          { id: 'image-1', prompt: '第一张' },
-          { id: 'image-2', prompt: '第二张' },
-        ],
-      }),
-    }],
+    outputItems: [
+      {
+        type: 'function_call',
+        name: 'generate_image_batch',
+        call_id: 'hybrid-batch',
+        arguments: JSON.stringify({
+          requested_count: 2,
+          finalize_after_batch: true,
+          shared_prompt: '',
+          images: [
+            { id: 'image-1', prompt: '第一张' },
+            { id: 'image-2', prompt: '第二张' },
+          ],
+        }),
+      },
+    ],
     responseId: 'response-1',
   })
 
@@ -326,17 +319,17 @@ Mock `callImageApi()` 抛出错误，例如 `new Error('provider failed')`。
 
 ### 6.4 建议测试矩阵
 
-| Agent 模式 | 调用类型 | Agent 流式 | 图片流式 | 预期 |
-| --- | --- | ---: | ---: | --- |
-| hybrid | generate_image | true | true | 单图成功，1 个输出 |
-| hybrid | generate_image_batch | true | true | 批量成功，不得误报失败 |
-| hybrid | generate_image_batch | true | false | 批量成功，不得误报失败 |
-| hybrid | generate_image_batch | false | true | 批量成功 |
-| hybrid | generate_image_batch | false | false | 批量成功 |
-| native | image_generation | true | true | 流式成功，结果不重复 |
-| native | generate_image_batch | true | true | 批量成功，结果不重复 |
-| native | generate_image_batch | false | false | 批量成功 |
-| 任意 | 批量真实 API 错误 | 任意 | 任意 | 保持 error，不生成输出 |
+| Agent 模式 | 调用类型             | Agent 流式 | 图片流式 | 预期                   |
+| ---------- | -------------------- | ---------: | -------: | ---------------------- |
+| hybrid     | generate_image       |       true |     true | 单图成功，1 个输出     |
+| hybrid     | generate_image_batch |       true |     true | 批量成功，不得误报失败 |
+| hybrid     | generate_image_batch |       true |    false | 批量成功，不得误报失败 |
+| hybrid     | generate_image_batch |      false |     true | 批量成功               |
+| hybrid     | generate_image_batch |      false |    false | 批量成功               |
+| native     | image_generation     |       true |     true | 流式成功，结果不重复   |
+| native     | generate_image_batch |       true |     true | 批量成功，结果不重复   |
+| native     | generate_image_batch |      false |    false | 批量成功               |
+| 任意       | 批量真实 API 错误    |       任意 |     任意 | 保持 error，不生成输出 |
 
 ## 7. 验收标准
 

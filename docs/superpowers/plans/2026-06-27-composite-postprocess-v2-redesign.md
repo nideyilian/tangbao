@@ -48,6 +48,7 @@ Do not split the gallery or Agent modules. Do not migrate the old `src/storePost
 ### Task 1: Add V2 Domain Types And Defaults
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeV2Types.ts`
 - Create: `src/features/composite/lib/compositeV2Defaults.ts`
 - Test: `src/features/composite/lib/compositeV2Types.test.ts`
@@ -155,8 +156,7 @@ export type CompositeV2LayerBase = {
 }
 
 export type CompositeV2ImageAssetRef =
-  | { kind: 'path'; path: string }
-  | { kind: 'internal'; path: string; originalPath?: string }
+  { kind: 'path'; path: string } | { kind: 'internal'; path: string; originalPath?: string }
 
 export type CompositeV2ImageLayer = CompositeV2LayerBase & {
   type: 'image'
@@ -394,6 +394,7 @@ git commit -m "feat: add composite v2 domain defaults"
 ### Task 2: Background Loading Sort And Preview History Logic
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeBackgrounds.ts`
 - Test: `src/features/composite/lib/compositeBackgrounds.test.ts`
 
@@ -422,11 +423,7 @@ describe('composite backgrounds', () => {
   })
 
   it('sorts non-recursive backgrounds by natural filename', () => {
-    const sorted = naturalSortBackgrounds([
-      image('D:/bg/10.jpg'),
-      image('D:/bg/2.jpg'),
-      image('D:/bg/1.jpg'),
-    ])
+    const sorted = naturalSortBackgrounds([image('D:/bg/10.jpg'), image('D:/bg/2.jpg'), image('D:/bg/1.jpg')])
 
     expect(sorted.map((item) => item.name)).toEqual(['1.jpg', '2.jpg', '10.jpg'])
   })
@@ -490,7 +487,10 @@ export function normalizeCompositeRelativeDir(relativeDir: string): string {
 
 export function naturalSortBackgrounds(items: CompositeV2BackgroundImage[]): CompositeV2BackgroundImage[] {
   return [...items].sort((a, b) => {
-    const folderCompare = collator.compare(normalizeCompositeRelativeDir(a.relativeDir), normalizeCompositeRelativeDir(b.relativeDir))
+    const folderCompare = collator.compare(
+      normalizeCompositeRelativeDir(a.relativeDir),
+      normalizeCompositeRelativeDir(b.relativeDir),
+    )
     if (folderCompare !== 0) return folderCompare
     return collator.compare(a.name, b.name)
   })
@@ -549,6 +549,7 @@ git commit -m "feat: add composite background ordering"
 ### Task 3: Output Rule Overrides And Path Templates
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeOutputRulesV2.ts`
 - Create: `src/features/composite/lib/compositePathTemplates.ts`
 - Test: `src/features/composite/lib/compositeOutputRulesV2.test.ts`
@@ -564,7 +565,10 @@ import { createDefaultCompositeV2OutputRuleGroups } from './compositeV2Defaults'
 import { getEffectiveOutputRuleGroups, getEnabledOutputRules } from './compositeOutputRulesV2'
 import type { CompositeV2Preset } from './compositeV2Types'
 
-function presetWithOverride(useOutputOverrides: boolean, override = createDefaultCompositeV2OutputRuleGroups()): Pick<CompositeV2Preset, 'useOutputOverrides' | 'outputRuleGroupsOverride'> {
+function presetWithOverride(
+  useOutputOverrides: boolean,
+  override = createDefaultCompositeV2OutputRuleGroups(),
+): Pick<CompositeV2Preset, 'useOutputOverrides' | 'outputRuleGroupsOverride'> {
   return { useOutputOverrides, outputRuleGroupsOverride: override }
 }
 
@@ -666,9 +670,11 @@ export function getEffectiveOutputRuleGroups(
 }
 
 export function getEnabledOutputRules(groups: CompositeV2OutputRuleGroup[]): CompositeV2EnabledOutputRule[] {
-  return groups.flatMap((group) => group.rules
-    .filter((rule) => rule.enabled)
-    .map((rule) => ({ ...rule, channelId: group.id, channelName: group.name })))
+  return groups.flatMap((group) =>
+    group.rules
+      .filter((rule) => rule.enabled)
+      .map((rule) => ({ ...rule, channelId: group.id, channelName: group.name })),
+  )
 }
 ```
 
@@ -764,6 +770,7 @@ git commit -m "feat: add composite output rule planning"
 ### Task 4: Preset Library And Group Operations
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositePresetLibrary.ts`
 - Test: `src/features/composite/lib/compositePresetLibrary.test.ts`
 
@@ -774,7 +781,12 @@ Create `src/features/composite/lib/compositePresetLibrary.test.ts`:
 ```ts
 import { describe, expect, it } from 'vitest'
 import { createDefaultCompositeV2Preset, createDefaultCompositeV2PresetGroup } from './compositeV2Defaults'
-import { addPresetToGroup, duplicatePresetIntoGroup, filterPresetsForLibrary, movePresetInGroup } from './compositePresetLibrary'
+import {
+  addPresetToGroup,
+  duplicatePresetIntoGroup,
+  filterPresetsForLibrary,
+  movePresetInGroup,
+} from './compositePresetLibrary'
 
 describe('composite preset library', () => {
   it('adds a global preset reference to a group once', () => {
@@ -807,7 +819,9 @@ describe('composite preset library', () => {
     ]
     const groups = [{ ...createDefaultCompositeV2PresetGroup(1), id: 'g1', presetIds: ['b'] }]
 
-    expect(filterPresetsForLibrary(presets, groups, { query: '产品', groupId: 'g1' }).map((preset) => preset.id)).toEqual(['b'])
+    expect(
+      filterPresetsForLibrary(presets, groups, { query: '产品', groupId: 'g1' }).map((preset) => preset.id),
+    ).toEqual(['b'])
   })
 })
 ```
@@ -834,7 +848,11 @@ export function addPresetToGroup(group: CompositeV2PresetGroup, presetId: string
   return { ...group, presetIds: [...group.presetIds, presetId], updatedAt: Date.now() }
 }
 
-export function movePresetInGroup(group: CompositeV2PresetGroup, presetId: string, targetIndex: number): CompositeV2PresetGroup {
+export function movePresetInGroup(
+  group: CompositeV2PresetGroup,
+  presetId: string,
+  targetIndex: number,
+): CompositeV2PresetGroup {
   const currentIndex = group.presetIds.indexOf(presetId)
   if (currentIndex < 0) return group
   const presetIds = [...group.presetIds]
@@ -902,6 +920,7 @@ git commit -m "feat: add composite preset library helpers"
 ### Task 5: Export Snapshot And Item Expansion
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeExportPlan.ts`
 - Test: `src/features/composite/lib/compositeExportPlan.test.ts`
 
@@ -911,7 +930,11 @@ Create `src/features/composite/lib/compositeExportPlan.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { createDefaultCompositeV2OutputRuleGroups, createDefaultCompositeV2Preset, createDefaultCompositeV2PresetGroup } from './compositeV2Defaults'
+import {
+  createDefaultCompositeV2OutputRuleGroups,
+  createDefaultCompositeV2Preset,
+  createDefaultCompositeV2PresetGroup,
+} from './compositeV2Defaults'
 import { createCompositeExportSnapshot, expandCompositeExportItems } from './compositeExportPlan'
 import type { CompositeV2BackgroundImage } from './compositeV2Types'
 
@@ -946,8 +969,12 @@ describe('composite export plan', () => {
     const items = expandCompositeExportItems(snapshot)
 
     expect(items).toHaveLength(8)
-    expect(items.filter((item) => item.preset.id === 'a' && item.outputRule.name === '1280x720').map((item) => item.index)).toEqual([1, 2])
-    expect(items.filter((item) => item.preset.id === 'a' && item.outputRule.name === '1080x1920').map((item) => item.index)).toEqual([1, 2])
+    expect(
+      items.filter((item) => item.preset.id === 'a' && item.outputRule.name === '1280x720').map((item) => item.index),
+    ).toEqual([1, 2])
+    expect(
+      items.filter((item) => item.preset.id === 'a' && item.outputRule.name === '1080x1920').map((item) => item.index),
+    ).toEqual([1, 2])
   })
 
   it('freezes presets inside the snapshot', () => {
@@ -992,7 +1019,11 @@ Expected: fail because planner does not exist.
 Create `src/features/composite/lib/compositeExportPlan.ts`:
 
 ```ts
-import { getEffectiveOutputRuleGroups, getEnabledOutputRules, type CompositeV2EnabledOutputRule } from './compositeOutputRulesV2'
+import {
+  getEffectiveOutputRuleGroups,
+  getEnabledOutputRules,
+  type CompositeV2EnabledOutputRule,
+} from './compositeOutputRulesV2'
 import type {
   CompositeV2BackgroundImage,
   CompositeV2FitMode,
@@ -1030,7 +1061,10 @@ export type CompositeV2ExportItem = {
   custom: string
 }
 
-export function createCompositeExportSnapshot(input: CompositeV2ExportSnapshotInput, now = Date.now()): CompositeV2ExportSnapshot {
+export function createCompositeExportSnapshot(
+  input: CompositeV2ExportSnapshotInput,
+  now = Date.now(),
+): CompositeV2ExportSnapshot {
   return structuredClone({ ...input, createdAt: now })
 }
 
@@ -1044,15 +1078,17 @@ export function expandCompositeExportItems(snapshot: CompositeV2ExportSnapshot):
 
   return orderedPresets.flatMap((preset) => {
     const rules = getEnabledOutputRules(getEffectiveOutputRuleGroups(preset, snapshot.outputRuleGroups))
-    return rules.flatMap((rule) => snapshot.backgrounds.map((background, backgroundIndex) => ({
-      snapshotId: snapshot.id,
-      background,
-      preset,
-      outputRule: rule,
-      index: backgroundIndex + 1,
-      date: snapshot.date,
-      custom: snapshot.custom,
-    })))
+    return rules.flatMap((rule) =>
+      snapshot.backgrounds.map((background, backgroundIndex) => ({
+        snapshotId: snapshot.id,
+        background,
+        preset,
+        outputRule: rule,
+        index: backgroundIndex + 1,
+        date: snapshot.date,
+        custom: snapshot.custom,
+      })),
+    )
   })
 }
 ```
@@ -1081,6 +1117,7 @@ git commit -m "feat: add composite export snapshot planning"
 ### Task 6: Render Plan Geometry And Layer Mapping
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeRenderPlan.ts`
 - Test: `src/features/composite/lib/compositeRenderPlan.test.ts`
 
@@ -1115,11 +1152,13 @@ describe('composite render plan', () => {
   })
 
   it('maps free position from base canvas to target canvas', () => {
-    expect(mapLayerPositionToCanvas(
-      { mode: 'free', x: 128, y: 72, width: 256, height: 144 },
-      { width: 1280, height: 720 },
-      { width: 640, height: 360 },
-    )).toEqual({ x: 64, y: 36, width: 128, height: 72 })
+    expect(
+      mapLayerPositionToCanvas(
+        { mode: 'free', x: 128, y: 72, width: 256, height: 144 },
+        { width: 1280, height: 720 },
+        { width: 640, height: 360 },
+      ),
+    ).toEqual({ x: 64, y: 36, width: 128, height: 72 })
   })
 })
 ```
@@ -1166,17 +1205,36 @@ export function planBackgroundFit(mode: CompositeV2FitMode, source: Size, target
   if (mode === 'stretch') {
     return { sx: 0, sy: 0, sw: source.width, sh: source.height, dx: 0, dy: 0, dw: target.width, dh: target.height }
   }
-  const scale = mode === 'crop-fill'
-    ? Math.max(target.width / source.width, target.height / source.height)
-    : Math.min(target.width / source.width, target.height / source.height)
+  const scale =
+    mode === 'crop-fill'
+      ? Math.max(target.width / source.width, target.height / source.height)
+      : Math.min(target.width / source.width, target.height / source.height)
   const dw = source.width * scale
   const dh = source.height * scale
   if (mode === 'contain-blur') {
-    return { sx: 0, sy: 0, sw: source.width, sh: source.height, dx: (target.width - dw) / 2, dy: (target.height - dh) / 2, dw, dh }
+    return {
+      sx: 0,
+      sy: 0,
+      sw: source.width,
+      sh: source.height,
+      dx: (target.width - dw) / 2,
+      dy: (target.height - dh) / 2,
+      dw,
+      dh,
+    }
   }
   const sw = target.width / scale
   const sh = target.height / scale
-  return { sx: (source.width - sw) / 2, sy: (source.height - sh) / 2, sw, sh, dx: 0, dy: 0, dw: target.width, dh: target.height }
+  return {
+    sx: (source.width - sw) / 2,
+    sy: (source.height - sh) / 2,
+    sw,
+    sh,
+    dx: 0,
+    dy: 0,
+    dw: target.width,
+    dh: target.height,
+  }
 }
 
 export function mapLayerPositionToCanvas(position: CompositeV2Position, base: Size, target: Size) {
@@ -1229,6 +1287,7 @@ git commit -m "feat: add composite render planning"
 ### Task 7: JPG Quality Search And History Retention
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeJpeg.ts`
 - Create: `src/features/composite/lib/compositeExportHistoryV2.ts`
 - Test: `src/features/composite/lib/compositeJpeg.test.ts`
@@ -1246,7 +1305,7 @@ describe('composite jpg quality', () => {
   it('chooses the highest quality that fits max KB', () => {
     const result = chooseJpegQuality({
       maxSizeKb: 100,
-      estimateSizeKb: (quality) => quality >= 0.8 ? 120 : 90,
+      estimateSizeKb: (quality) => (quality >= 0.8 ? 120 : 90),
     })
 
     expect(result.warning).toBeUndefined()
@@ -1361,9 +1420,7 @@ export function addCompositeHistoryRecord(
   record: CompositeV2HistoryRecord,
   retention: number,
 ): CompositeV2HistoryRecord[] {
-  return [record, ...history]
-    .sort((a, b) => b.endedAt - a.endedAt)
-    .slice(0, Math.max(1, retention))
+  return [record, ...history].sort((a, b) => b.endedAt - a.endedAt).slice(0, Math.max(1, retention))
 }
 ```
 
@@ -1391,6 +1448,7 @@ git commit -m "feat: add composite export quality and history helpers"
 ### Task 8: Electron Filesystem Helpers For Recursive Listing And Cleanup
 
 **Files:**
+
 - Modify: `electron/ipc-handlers.ts`
 - Modify: `electron/preload.ts`
 - Modify: `electron/preload.cjs`
@@ -1414,41 +1472,45 @@ In `electron/ipc-handlers.ts`, add these narrow handlers near existing composite
 function listCompositeImageFilesRecursive(dirPath: string, rootPath = dirPath) {
   const safeDirPath = assertAllowedPath(dirPath)
   if (!existsSync(safeDirPath) || !statSync(safeDirPath).isDirectory()) return []
-  return readdirSync(safeDirPath)
-    .flatMap((name) => {
-      const filePath = path.join(safeDirPath, name)
-      try {
-        const stat = statSync(filePath)
-        if (stat.isDirectory()) return listCompositeImageFilesRecursive(filePath, rootPath)
-        if (!stat.isFile() || !isCompositeImagePath(filePath)) return []
-        const relativeDir = path.relative(rootPath, path.dirname(filePath))
-        return [{
+  return readdirSync(safeDirPath).flatMap((name) => {
+    const filePath = path.join(safeDirPath, name)
+    try {
+      const stat = statSync(filePath)
+      if (stat.isDirectory()) return listCompositeImageFilesRecursive(filePath, rootPath)
+      if (!stat.isFile() || !isCompositeImagePath(filePath)) return []
+      const relativeDir = path.relative(rootPath, path.dirname(filePath))
+      return [
+        {
           path: filePath,
           name: path.basename(filePath),
           relativeDir,
-        }]
-      } catch {
-        return []
-      }
-    })
+        },
+      ]
+    } catch {
+      return []
+    }
+  })
 }
 ```
 
 Then register:
 
 ```ts
-ipcMain.handle('composite:list-background-files', async (_event, { dirPath, recursive }: { dirPath: string; recursive: boolean }) => {
-  try {
-    const safeDirPath = assertAllowedPath(dirPath)
-    const files = recursive
-      ? listCompositeImageFilesRecursive(safeDirPath)
-      : listCompositeImageFiles(safeDirPath).map((file) => ({ path: file.path, name: file.name, relativeDir: '' }))
-    return files
-  } catch (err) {
-    console.error('列出后期处理背景图失败:', err)
-    return []
-  }
-})
+ipcMain.handle(
+  'composite:list-background-files',
+  async (_event, { dirPath, recursive }: { dirPath: string; recursive: boolean }) => {
+    try {
+      const safeDirPath = assertAllowedPath(dirPath)
+      const files = recursive
+        ? listCompositeImageFilesRecursive(safeDirPath)
+        : listCompositeImageFiles(safeDirPath).map((file) => ({ path: file.path, name: file.name, relativeDir: '' }))
+      return files
+    } catch (err) {
+      console.error('列出后期处理背景图失败:', err)
+      return []
+    }
+  },
+)
 
 ipcMain.handle('composite:delete-files', async (_event, { filePaths }: { filePaths: string[] }) => {
   const deleted: string[] = []
@@ -1518,6 +1580,7 @@ git commit -m "feat: add composite background filesystem IPC"
 ### Task 9: Add V2 Store With Persisted Presets And History
 
 **Files:**
+
 - Create: `src/features/composite/storeV2.ts`
 - Test: `src/features/composite/storeV2.test.ts`
 
@@ -1600,7 +1663,12 @@ export type CompositeV2StoreState = {
 
 export function createCompositeV2StoreState(): Omit<
   CompositeV2StoreState,
-  'setBackgroundFolder' | 'setBackgrounds' | 'setSelectedPresetGroup' | 'setEnabledPresetIdsForRun' | 'setExportProgress' | 'setExportStatus'
+  | 'setBackgroundFolder'
+  | 'setBackgrounds'
+  | 'setSelectedPresetGroup'
+  | 'setEnabledPresetIdsForRun'
+  | 'setExportProgress'
+  | 'setExportStatus'
 > {
   const defaults = createDefaultCompositeV2State()
   return {
@@ -1677,6 +1745,7 @@ git commit -m "feat: add composite v2 store"
 ### Task 10: Preset Management UI Skeleton With Floating Sidebars
 
 **Files:**
+
 - Create: `src/features/composite/components/PresetManagementTab.tsx`
 - Create: `src/features/composite/components/PresetCanvasEditor.tsx`
 - Create: `src/features/composite/components/FloatingLogoLibrary.tsx`
@@ -1713,10 +1782,28 @@ type FloatingLayerToolbarProps = {
 export function FloatingLayerToolbar({ onAddText, onAddImage }: FloatingLayerToolbarProps) {
   return (
     <div className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-white/[0.08] dark:bg-gray-950">
-      <button type="button" onClick={onAddText} className="h-11 w-11 border-b border-gray-100 text-lg font-semibold dark:border-white/[0.08]" title="添加文字图层">T</button>
-      <button type="button" onClick={onAddImage} className="h-11 w-11 border-b border-gray-100 text-sm dark:border-white/[0.08]" title="添加图片图层">▧</button>
-      <button type="button" disabled className="h-11 w-11 cursor-not-allowed text-gray-300" title="形状图层后续支持">◆</button>
-      <button type="button" disabled className="h-11 w-11 cursor-not-allowed text-gray-300" title="形状图层后续支持">○</button>
+      <button
+        type="button"
+        onClick={onAddText}
+        className="h-11 w-11 border-b border-gray-100 text-lg font-semibold dark:border-white/[0.08]"
+        title="添加文字图层"
+      >
+        T
+      </button>
+      <button
+        type="button"
+        onClick={onAddImage}
+        className="h-11 w-11 border-b border-gray-100 text-sm dark:border-white/[0.08]"
+        title="添加图片图层"
+      >
+        ▧
+      </button>
+      <button type="button" disabled className="h-11 w-11 cursor-not-allowed text-gray-300" title="形状图层后续支持">
+        ◆
+      </button>
+      <button type="button" disabled className="h-11 w-11 cursor-not-allowed text-gray-300" title="形状图层后续支持">
+        ○
+      </button>
     </div>
   )
 }
@@ -1737,21 +1824,53 @@ type FloatingLogoLibraryProps = {
   onPickAsset: (asset: CompositeFsImage) => void
 }
 
-export function FloatingLogoLibrary({ path, assets, onSelectFolder, onRefresh, onPickAsset }: FloatingLogoLibraryProps) {
+export function FloatingLogoLibrary({
+  path,
+  assets,
+  onSelectFolder,
+  onRefresh,
+  onPickAsset,
+}: FloatingLogoLibraryProps) {
   return (
     <aside className="absolute right-4 top-4 z-20 flex max-h-[calc(100%-2rem)] w-72 flex-col rounded-xl border border-gray-200 bg-white p-3 shadow-xl dark:border-white/[0.08] dark:bg-gray-950">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">LOGO库</h3>
-        <button type="button" onClick={onSelectFolder} className="rounded-md border border-gray-200 px-3 py-1 text-xs dark:border-white/[0.08]">选择</button>
+        <button
+          type="button"
+          onClick={onSelectFolder}
+          className="rounded-md border border-gray-200 px-3 py-1 text-xs dark:border-white/[0.08]"
+        >
+          选择
+        </button>
       </div>
       <div className="mb-3 flex gap-2">
-        <input readOnly value={path} className="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs dark:border-white/[0.08] dark:bg-gray-900" />
-        <button type="button" onClick={onRefresh} className="rounded-md border border-gray-200 px-2 text-xs dark:border-white/[0.08]" title="刷新">↻</button>
+        <input
+          readOnly
+          value={path}
+          className="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs dark:border-white/[0.08] dark:bg-gray-900"
+        />
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="rounded-md border border-gray-200 px-2 text-xs dark:border-white/[0.08]"
+          title="刷新"
+        >
+          ↻
+        </button>
       </div>
       <div className="grid grid-cols-3 gap-2 overflow-auto pr-1">
         {assets.map((asset) => (
-          <button key={asset.path} type="button" onClick={() => onPickAsset(asset)} className="min-w-0 rounded-lg border border-gray-200 p-1 text-left dark:border-white/[0.08]">
-            {asset.dataUrl ? <img src={asset.dataUrl} alt="" className="aspect-square w-full rounded-md object-contain" /> : <div className="aspect-square rounded-md bg-gray-100 dark:bg-gray-800" />}
+          <button
+            key={asset.path}
+            type="button"
+            onClick={() => onPickAsset(asset)}
+            className="min-w-0 rounded-lg border border-gray-200 p-1 text-left dark:border-white/[0.08]"
+          >
+            {asset.dataUrl ? (
+              <img src={asset.dataUrl} alt="" className="aspect-square w-full rounded-md object-contain" />
+            ) : (
+              <div className="aspect-square rounded-md bg-gray-100 dark:bg-gray-800" />
+            )}
             <div className="mt-1 truncate text-[11px] text-gray-600 dark:text-gray-300">{asset.name}</div>
           </button>
         ))}
@@ -1821,7 +1940,10 @@ export function PresetManagementTab() {
   const [activeGroupId, setActiveGroupId] = useState(groups[0]?.id ?? '')
   const [query, setQuery] = useState('')
   const [activePresetId, setActivePresetId] = useState(presets[0]?.id ?? '')
-  const visiblePresets = useMemo(() => filterPresetsForLibrary(presets, groups, { query, groupId: activeGroupId || undefined }), [presets, groups, query, activeGroupId])
+  const visiblePresets = useMemo(
+    () => filterPresetsForLibrary(presets, groups, { query, groupId: activeGroupId || undefined }),
+    [presets, groups, query, activeGroupId],
+  )
   const activePreset = presets.find((preset) => preset.id === activePresetId) ?? visiblePresets[0] ?? null
 
   return (
@@ -1830,7 +1952,12 @@ export function PresetManagementTab() {
         <div className="mb-3 text-sm font-semibold">预设组</div>
         <div className="space-y-2">
           {groups.map((group) => (
-            <button key={group.id} type="button" onClick={() => setActiveGroupId(group.id)} className={`w-full rounded-md px-3 py-2 text-left text-sm ${activeGroupId === group.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200' : 'hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}>
+            <button
+              key={group.id}
+              type="button"
+              onClick={() => setActiveGroupId(group.id)}
+              className={`w-full rounded-md px-3 py-2 text-left text-sm ${activeGroupId === group.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200' : 'hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}
+            >
               {group.name}
             </button>
           ))}
@@ -1838,10 +1965,20 @@ export function PresetManagementTab() {
       </section>
       <section className="rounded-lg border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-gray-950">
         <div className="mb-3 text-sm font-semibold">全局水印预设库</div>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索预设" className="mb-3 w-full rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/[0.08] dark:bg-gray-900" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索预设"
+          className="mb-3 w-full rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/[0.08] dark:bg-gray-900"
+        />
         <div className="space-y-2">
           {visiblePresets.map((preset) => (
-            <button key={preset.id} type="button" onClick={() => setActivePresetId(preset.id)} className={`w-full rounded-md px-3 py-2 text-left text-sm ${activePreset?.id === preset.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200' : 'hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}>
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => setActivePresetId(preset.id)}
+              className={`w-full rounded-md px-3 py-2 text-left text-sm ${activePreset?.id === preset.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200' : 'hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}
+            >
               {preset.name}
             </button>
           ))}
@@ -1886,6 +2023,7 @@ git commit -m "feat: add composite preset management shell"
 ### Task 11: Batch Export UI Skeleton
 
 **Files:**
+
 - Create: `src/features/composite/components/BatchExportTab.tsx`
 - Create: `src/features/composite/components/ExportResultsPanel.tsx`
 - Modify: `src/features/composite/storeV2.ts`
@@ -1930,7 +2068,9 @@ export function ExportResultsPanel({ status, completed, total, history }: Export
       <div className="mb-3 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
         <div className="h-full bg-blue-500" style={{ width: `${progress}%` }} />
       </div>
-      <div className="text-sm text-gray-600 dark:text-gray-300">{completed} / {total}</div>
+      <div className="text-sm text-gray-600 dark:text-gray-300">
+        {completed} / {total}
+      </div>
       <div className="mt-4 text-xs text-gray-500">历史记录 {history.length} 条</div>
     </section>
   )
@@ -1959,13 +2099,21 @@ export function BatchExportTab() {
   const total = useCompositeV2Store((state) => state.exportTotal)
   const history = useCompositeV2Store((state) => state.history)
   const setCustomValue = useCompositeV2Store((state) => state.setCustomValue)
-  const selectedGroup = useMemo(() => groups.find((group) => group.id === selectedGroupId) ?? groups[0] ?? null, [groups, selectedGroupId])
+  const selectedGroup = useMemo(
+    () => groups.find((group) => group.id === selectedGroupId) ?? groups[0] ?? null,
+    [groups, selectedGroupId],
+  )
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_300px] grid-rows-[minmax(0,1fr)_auto] gap-4">
       <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-950">
         <h3 className="mb-3 text-sm font-semibold">背景文件夹</h3>
-        <button type="button" className="mb-3 w-full rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/[0.08]">选择文件夹</button>
+        <button
+          type="button"
+          className="mb-3 w-full rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/[0.08]"
+        >
+          选择文件夹
+        </button>
         <div className="truncate text-xs text-gray-500">{backgroundFolder || '未选择'}</div>
         <label className="mt-3 flex items-center gap-2 text-sm">
           <input type="checkbox" checked={recursive} readOnly />
@@ -1981,9 +2129,16 @@ export function BatchExportTab() {
       <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-950">
         <h3 className="mb-3 text-sm font-semibold">本次导出</h3>
         <div className="mb-3 text-sm">{selectedGroup?.name ?? '未选择预设组'}</div>
-        <input value={customValue} onChange={(event) => setCustomValue(event.target.value)} placeholder="custom 参数" className="mb-3 w-full rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/[0.08] dark:bg-gray-900" />
+        <input
+          value={customValue}
+          onChange={(event) => setCustomValue(event.target.value)}
+          placeholder="custom 参数"
+          className="mb-3 w-full rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-white/[0.08] dark:bg-gray-900"
+        />
         <div className="text-xs text-gray-500">已勾选 {enabledPresetIds.length} 个预设</div>
-        <button type="button" className="mt-4 w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white">开始导出</button>
+        <button type="button" className="mt-4 w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white">
+          开始导出
+        </button>
       </section>
       <div className="col-span-3">
         <ExportResultsPanel status={status} completed={completed} total={total} history={history} />
@@ -2017,6 +2172,7 @@ git commit -m "feat: add composite batch export shell"
 ### Task 12: Wire The V2 Workspace Tabs
 
 **Files:**
+
 - Modify: `src/features/composite/CompositeWorkspace.tsx`
 
 - [ ] **Step 1: Replace the current workspace render with V2 tabs**
@@ -2036,8 +2192,20 @@ export default function CompositeWorkspace() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-gray-50 p-4 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
       <div className="mb-4 flex items-center gap-2">
-        <button type="button" onClick={() => setTab('batch')} className={`rounded-md px-4 py-2 text-sm font-medium ${tab === 'batch' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 dark:bg-gray-900 dark:text-gray-200'}`}>批量导出</button>
-        <button type="button" onClick={() => setTab('presets')} className={`rounded-md px-4 py-2 text-sm font-medium ${tab === 'presets' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 dark:bg-gray-900 dark:text-gray-200'}`}>预设管理</button>
+        <button
+          type="button"
+          onClick={() => setTab('batch')}
+          className={`rounded-md px-4 py-2 text-sm font-medium ${tab === 'batch' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 dark:bg-gray-900 dark:text-gray-200'}`}
+        >
+          批量导出
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('presets')}
+          className={`rounded-md px-4 py-2 text-sm font-medium ${tab === 'presets' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 dark:bg-gray-900 dark:text-gray-200'}`}
+        >
+          预设管理
+        </button>
       </div>
       {tab === 'batch' ? <BatchExportTab /> : <PresetManagementTab />}
     </div>
@@ -2085,6 +2253,7 @@ git commit -m "feat: switch composite workspace to v2 tabs"
 ### Task 13: Implement Folder Loading And Preview Selection
 
 **Files:**
+
 - Modify: `src/features/composite/components/BatchExportTab.tsx`
 - Modify: `src/features/composite/storeV2.ts`
 
@@ -2158,6 +2327,7 @@ git commit -m "feat: wire composite background loading"
 ### Task 14: Implement Canvas Rendering For Preview And Export Data URLs
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeRendererV2.ts`
 - Test: focus on pure render plan tests already covered; use manual visual verification for Canvas.
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
@@ -2287,6 +2457,7 @@ git commit -m "feat: render composite v2 previews"
 ### Task 15: Implement Export Runtime With Pause Resume Cancel
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeExportRuntime.ts`
 - Modify: `src/features/composite/components/BatchExportTab.tsx`
 - Modify: `src/features/composite/components/ExportResultsPanel.tsx`
@@ -2310,7 +2481,10 @@ export type CompositeV2ExportRuntimeCallbacks = {
   shouldCancel: () => boolean
 }
 
-export async function runCompositeV2Export(snapshot: CompositeV2ExportSnapshot, callbacks: CompositeV2ExportRuntimeCallbacks) {
+export async function runCompositeV2Export(
+  snapshot: CompositeV2ExportSnapshot,
+  callbacks: CompositeV2ExportRuntimeCallbacks,
+) {
   const items = expandCompositeExportItems(snapshot)
   callbacks.onProgress(0, items.length)
   let completed = 0
@@ -2324,7 +2498,10 @@ export async function runCompositeV2Export(snapshot: CompositeV2ExportSnapshot, 
       if (!backgroundPayload?.dataUrl) throw new Error('背景图读取失败')
       const dataUrl = await renderCompositeV2ToJpegDataUrl({
         backgroundDataUrl: backgroundPayload.dataUrl,
-        backgroundSize: { width: backgroundPayload.width ?? item.outputRule.width, height: backgroundPayload.height ?? item.outputRule.height },
+        backgroundSize: {
+          width: backgroundPayload.width ?? item.outputRule.width,
+          height: backgroundPayload.height ?? item.outputRule.height,
+        },
         preset: item.preset,
         targetSize: { width: item.outputRule.width, height: item.outputRule.height },
         fitMode: snapshot.fitMode,
@@ -2343,11 +2520,23 @@ export async function runCompositeV2Export(snapshot: CompositeV2ExportSnapshot, 
         filenameTemplate: item.outputRule.filenameTemplate,
         preserveSourceDir: snapshot.preserveSourceDir,
       })
-      const outputPath = await window.electronAPI?.pathJoin?.(item.preset.outputRootPath, pathParts.dateFolder, ...pathParts.subfolders, pathParts.filename)
+      const outputPath = await window.electronAPI?.pathJoin?.(
+        item.preset.outputRootPath,
+        pathParts.dateFolder,
+        ...pathParts.subfolders,
+        pathParts.filename,
+      )
       if (!outputPath) throw new Error('输出路径生成失败')
       const saved = await window.electronAPI?.saveCompositeImage?.(outputPath, dataUrl)
       if (!saved) throw new Error('图片写入失败')
-      callbacks.onSuccess({ path: outputPath, presetId: item.preset.id, presetName: item.preset.name, channel: item.outputRule.channelName, size: item.outputRule.name, index: item.index })
+      callbacks.onSuccess({
+        path: outputPath,
+        presetId: item.preset.id,
+        presetName: item.preset.name,
+        channel: item.outputRule.channelName,
+        size: item.outputRule.name,
+        index: item.index,
+      })
     } catch (error) {
       callbacks.onFailure({
         backgroundPath: item.background.path,
@@ -2432,6 +2621,7 @@ git commit -m "feat: add composite v2 export runtime"
 ### Task 16: Add JPG Max-KB Compression To Runtime
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeExportRuntime.ts`
 - Modify: `src/features/composite/lib/compositeRendererV2.ts`
 - Modify: `src/features/composite/components/ExportResultsPanel.tsx`
@@ -2443,7 +2633,7 @@ In `compositeExportRuntime.ts`, add:
 ```ts
 function dataUrlSizeKb(dataUrl: string): number {
   const base64 = dataUrl.split(',')[1] ?? ''
-  return Math.ceil((base64.length * 3 / 4) / 1024)
+  return Math.ceil((base64.length * 3) / 4 / 1024)
 }
 ```
 
@@ -2452,7 +2642,10 @@ function dataUrlSizeKb(dataUrl: string): number {
 Use `chooseJpegQuality` with an async render loop. Because `chooseJpegQuality` currently accepts a sync estimator, add an async helper in runtime:
 
 ```ts
-async function renderWithMaxKb(input: Omit<Parameters<typeof renderCompositeV2ToJpegDataUrl>[0], 'quality'>, maxSizeKb: number) {
+async function renderWithMaxKb(
+  input: Omit<Parameters<typeof renderCompositeV2ToJpegDataUrl>[0], 'quality'>,
+  maxSizeKb: number,
+) {
   let low = 0.5
   let high = 0.9
   let bestDataUrl = await renderCompositeV2ToJpegDataUrl({ ...input, quality: low })
@@ -2509,6 +2702,7 @@ git commit -m "feat: apply composite jpg max kb compression"
 ### Task 17: Finish Preset Editing Interactions
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 - Modify: `src/features/composite/storeV2.ts`
@@ -2583,6 +2777,7 @@ git commit -m "feat: complete composite preset layer editing"
 ### Task 18: Finish Results Details And Persistent History
 
 **Files:**
+
 - Modify: `src/features/composite/components/ExportResultsPanel.tsx`
 - Modify: `src/features/composite/storeV2.ts`
 - Modify: `src/features/composite/lib/compositeExportRuntime.ts`
@@ -2645,6 +2840,7 @@ git commit -m "feat: persist composite export history"
 ### Task 19: Full Verification And Cleanup
 
 **Files:**
+
 - Modify only files needed to fix verification failures.
 
 - [ ] **Step 1: Run focused tests**

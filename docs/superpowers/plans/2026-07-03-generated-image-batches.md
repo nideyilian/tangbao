@@ -13,6 +13,7 @@
 ### Task 1: Pure batch allocation and backfill
 
 **Files:**
+
 - Create: `src/lib/generatedImageBatch.ts`
 - Create: `src/lib/generatedImageBatch.test.ts`
 - Modify: `src/types.ts`
@@ -22,11 +23,16 @@
 Create tests that use local timestamps and assert:
 
 ```ts
-expect(getNextGeneratedImageBatch([
-  { createdAt: july3Morning, filenameBatch: 1 },
-  { createdAt: july3Noon, filenameBatch: 3 },
-  { createdAt: july2, filenameBatch: 9 },
-], july3Evening)).toBe(4)
+expect(
+  getNextGeneratedImageBatch(
+    [
+      { createdAt: july3Morning, filenameBatch: 1 },
+      { createdAt: july3Noon, filenameBatch: 3 },
+      { createdAt: july2, filenameBatch: 9 },
+    ],
+    july3Evening,
+  ),
+).toBe(4)
 
 expect(assignMissingGeneratedImageBatches([olderTask, newerTask], [kuaishouTab]))
   .tasks.map((task) => task.filenameBatch)
@@ -62,7 +68,10 @@ Create `src/lib/generatedImageBatch.ts` with:
 import type { TaskRecord, WorkspaceTab } from '../types'
 import { formatGeneratedImageDate } from './generatedImageFilename'
 
-type BatchTask = Pick<TaskRecord, 'id' | 'createdAt' | 'filenameBatch' | 'scheduledOutputPath' | 'scheduledOutputSubFolder'>
+type BatchTask = Pick<
+  TaskRecord,
+  'id' | 'createdAt' | 'filenameBatch' | 'scheduledOutputPath' | 'scheduledOutputSubFolder'
+>
 
 export function normalizeGeneratedImageBatch(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
@@ -73,10 +82,12 @@ export function getNextGeneratedImageBatch(
   createdAt: number,
 ): number {
   const date = formatGeneratedImageDate(createdAt)
-  return tasks.reduce((maximum, task) => {
-    if (formatGeneratedImageDate(task.createdAt) !== date) return maximum
-    return Math.max(maximum, normalizeGeneratedImageBatch(task.filenameBatch) ?? 0)
-  }, 0) + 1
+  return (
+    tasks.reduce((maximum, task) => {
+      if (formatGeneratedImageDate(task.createdAt) !== date) return maximum
+      return Math.max(maximum, normalizeGeneratedImageBatch(task.filenameBatch) ?? 0)
+    }, 0) + 1
+  )
 }
 
 export function assignMissingGeneratedImageBatches(
@@ -91,9 +102,7 @@ export function assignMissingGeneratedImageBatches(
   }
 
   const groupKey = (task: BatchTask) => {
-    const fallback = task.scheduledOutputSubFolder
-      ?? getPathBaseName(task.scheduledOutputPath)
-      ?? 'image'
+    const fallback = task.scheduledOutputSubFolder ?? getPathBaseName(task.scheduledOutputPath) ?? 'image'
     const scope = scopeByTaskId.get(task.id) ?? `fallback:${fallback}`
     return `${scope}\0${formatGeneratedImageDate(task.createdAt)}`
   }
@@ -129,7 +138,11 @@ export function assignMissingGeneratedImageBatches(
 
 function getPathBaseName(value?: string): string | null {
   if (!value) return null
-  const parts = value.trim().replace(/[\\/]+$/, '').split(/[\\/]+/).filter(Boolean)
+  const parts = value
+    .trim()
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]+/)
+    .filter(Boolean)
   return parts[parts.length - 1] || null
 }
 ```
@@ -156,6 +169,7 @@ git commit -m "feat: add stable generated image batches"
 ### Task 2: Put batch and prompt in the approved filename order
 
 **Files:**
+
 - Modify: `src/lib/generatedImageFilename.ts`
 - Modify: `src/lib/generatedImageFilename.test.ts`
 
@@ -164,15 +178,27 @@ git commit -m "feat: add stable generated image batches"
 Add `batch: 2` to the shared test context and update the exact expectations:
 
 ```ts
-expect(buildGeneratedImageFileNameBase(context, {
-  imageFilenameDatePrefix: true,
-  imageFilenameUsePrompt: false,
-}, 1)).toBe('20260703-快手-2-1')
+expect(
+  buildGeneratedImageFileNameBase(
+    context,
+    {
+      imageFilenameDatePrefix: true,
+      imageFilenameUsePrompt: false,
+    },
+    1,
+  ),
+).toBe('20260703-快手-2-1')
 
-expect(buildGeneratedImageFileNameBase(context, {
-  imageFilenameDatePrefix: true,
-  imageFilenameUsePrompt: true,
-}, 2)).toBe('20260703-快手-2-红色 海报-竖版-2')
+expect(
+  buildGeneratedImageFileNameBase(
+    context,
+    {
+      imageFilenameDatePrefix: true,
+      imageFilenameUsePrompt: true,
+    },
+    2,
+  ),
+).toBe('20260703-快手-2-红色 海报-竖版-2')
 ```
 
 Update sequence-continuation fixtures to match `date-label-batch[-prompt]-image.ext`.
@@ -232,6 +258,7 @@ git commit -m "feat: include task batch in generated filenames"
 ### Task 3: Assign batches when task cards are created
 
 **Files:**
+
 - Modify: `src/store.ts`
 - Modify: `src/store.test.ts`
 
@@ -266,17 +293,16 @@ function getNextTaskFilenameBatch(createdAt: number, targetTabId: string | null,
   const tab = targetTabId ? state.workspaceTabs.find((item) => item.id === targetTabId) : null
   if (tab) return getNextGeneratedImageBatch(tab.tasks, createdAt)
 
-  const unownedTasks = state.tasks.filter((task) =>
-    !state.workspaceTabs.some((item) => item.tasks.some((candidate) => candidate.id === task.id)) &&
-    getTaskFilenameFallbackLabel(task) === fallbackLabel,
+  const unownedTasks = state.tasks.filter(
+    (task) =>
+      !state.workspaceTabs.some((item) => item.tasks.some((candidate) => candidate.id === task.id)) &&
+      getTaskFilenameFallbackLabel(task) === fallbackLabel,
   )
   return getNextGeneratedImageBatch(unownedTasks, createdAt)
 }
 
 function getTaskFilenameFallbackLabel(task: TaskRecord): string {
-  return task.scheduledOutputSubFolder
-    ?? getDirectoryBaseName(task.scheduledOutputPath ?? '')
-    ?? 'image'
+  return task.scheduledOutputSubFolder ?? getDirectoryBaseName(task.scheduledOutputPath ?? '') ?? 'image'
 }
 ```
 
@@ -332,6 +358,7 @@ git commit -m "feat: assign image batches to new task cards"
 ### Task 4: Backfill and persist batches for existing task cards
 
 **Files:**
+
 - Modify: `src/store.ts`
 - Modify: `src/store.test.ts`
 
@@ -340,10 +367,8 @@ git commit -m "feat: assign image batches to new task cards"
 Persist two same-day tasks without `filenameBatch`, restore both into one workspace tab, call `initStore()`, and assert:
 
 ```ts
-expect(useStore.getState().workspaceTabs[0].tasks.map((task) => task.filenameBatch))
-  .toEqual([2, 1])
-expect((await getAllTasks()).map((task) => task.filenameBatch).sort())
-  .toEqual([1, 2])
+expect(useStore.getState().workspaceTabs[0].tasks.map((task) => task.filenameBatch)).toEqual([2, 1])
+expect((await getAllTasks()).map((task) => task.filenameBatch).sort()).toEqual([1, 2])
 ```
 
 Delete the older task after hydration and assert the newer task remains batch `2`.
@@ -400,6 +425,7 @@ git commit -m "feat: backfill image batches for existing tasks"
 ### Task 5: Use the stored batch for saves and downloads
 
 **Files:**
+
 - Modify: `src/store.ts`
 - Modify: `src/store.test.ts`
 - Modify: `src/lib/downloadImages.ts`
@@ -410,7 +436,7 @@ git commit -m "feat: backfill image batches for existing tasks"
 Set `filenameBatch` on download fixtures and expect:
 
 ```ts
-[
+;[
   { imageId: 'a-1', fileNameBase: '20260703-快手-2-A prompt-1' },
   { imageId: 'a-2', fileNameBase: '20260703-快手-2-A prompt-2' },
 ]
@@ -475,6 +501,7 @@ git commit -m "feat: use task batches in saved image names"
 ### Task 6: Full verification
 
 **Files:**
+
 - Verify only
 
 - [ ] **Step 1: Run the complete test suite**

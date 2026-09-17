@@ -13,6 +13,7 @@
 ### Task 1: Tested Stats Calculator
 
 **Files:**
+
 - Create: `src/lib/generationStats.ts`
 - Create: `src/lib/generationStats.test.ts`
 
@@ -37,6 +38,7 @@ Expected: PASS.
 ### Task 2: Header UI
 
 **Files:**
+
 - Modify: `src/components/Header.tsx`
 
 - [ ] **Step 1: Add stats component inside Header**

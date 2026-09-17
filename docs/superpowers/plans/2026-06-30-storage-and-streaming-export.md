@@ -31,6 +31,7 @@
 ### Task 1: Lock the development Origin
 
 **Files:**
+
 - Create: `vite.config.test.ts`
 - Modify: `vite.config.ts`
 
@@ -77,6 +78,7 @@ Expected: 1 test passes.
 ### Task 2: Add bounded legacy-image migration
 
 **Files:**
+
 - Modify: `src/lib/db.ts`
 - Modify: `src/lib/db.test.ts`
 - Create: `src/lib/imageStorageMigration.ts`
@@ -109,23 +111,26 @@ Add:
 ```ts
 export function getLegacyImageBatch(limit: number): Promise<StoredImage[]> {
   if (limit <= 0) return Promise.resolve([])
-  return openDB().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_IMAGES, 'readonly')
-    const request = tx.objectStore(STORE_IMAGES).openCursor()
-    const images: StoredImage[] = []
-    request.onsuccess = () => {
-      const cursor = request.result
-      if (!cursor || images.length >= limit) {
-        resolve(images)
-        return
-      }
-      const image = cursor.value as StoredImage
-      if (image.dataUrl && !image.localPath) images.push(image)
-      if (images.length >= limit) resolve(images)
-      else cursor.continue()
-    }
-    request.onerror = () => reject(request.error)
-  }))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_IMAGES, 'readonly')
+        const request = tx.objectStore(STORE_IMAGES).openCursor()
+        const images: StoredImage[] = []
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor || images.length >= limit) {
+            resolve(images)
+            return
+          }
+          const image = cursor.value as StoredImage
+          if (image.dataUrl && !image.localPath) images.push(image)
+          if (images.length >= limit) resolve(images)
+          else cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+      }),
+  )
 }
 ```
 
@@ -159,12 +164,14 @@ expect(writes[0]).toMatchObject({
 Add a failure case:
 
 ```ts
-await expect(migrateLegacyImages({
-  readBatch: async () => [legacyImage],
-  saveImage: async () => null,
-  replaceImage,
-  batchSize: 1,
-})).rejects.toThrow('legacy-a')
+await expect(
+  migrateLegacyImages({
+    readBatch: async () => [legacyImage],
+    saveImage: async () => null,
+    replaceImage,
+    batchSize: 1,
+  }),
+).rejects.toThrow('legacy-a')
 
 expect(replaceImage).not.toHaveBeenCalled()
 ```
@@ -208,6 +215,7 @@ Expected: all tests pass.
 ### Task 3: Couple cache-file cleanup to image deletion
 
 **Files:**
+
 - Modify: `electron/ipc-handlers.test.ts`
 - Modify: `electron/ipc-handlers.ts`
 - Modify: `electron/preload.ts`
@@ -264,10 +272,12 @@ Register:
 
 ```ts
 ipcMain.handle('store:delete-cache-images', (_event, { filePaths }) =>
-  deleteCacheImageFiles(Array.isArray(filePaths) ? filePaths : []))
+  deleteCacheImageFiles(Array.isArray(filePaths) ? filePaths : []),
+)
 
 ipcMain.handle('store:reconcile-cache-images', (_event, { referencedFileNames }) =>
-  reconcileCacheImageFiles(Array.isArray(referencedFileNames) ? referencedFileNames : []))
+  reconcileCacheImageFiles(Array.isArray(referencedFileNames) ? referencedFileNames : []),
+)
 ```
 
 - [ ] **Step 4: Expose typed renderer bridges**
@@ -323,6 +333,7 @@ Expected: all tests pass.
 ### Task 4: Stream ZIP files in the main process
 
 **Files:**
+
 - Create: `electron/streaming-zip.ts`
 - Create: `electron/streaming-zip.test.ts`
 - Modify: `electron/ipc-handlers.ts`
@@ -424,6 +435,7 @@ Expected: all tests pass.
 ### Task 5: Build a bounded renderer export plan
 
 **Files:**
+
 - Create: `src/lib/dataExport.ts`
 - Create: `src/lib/dataExport.test.ts`
 - Modify: `src/lib/localSave.ts`
@@ -481,8 +493,7 @@ Call `getImage(id)` once per ID, never `getAllImages()`. Derive a safe extension
 Add:
 
 ```ts
-exportZipToPath: (request: ElectronZipExportRequest) =>
-  Promise<{ success: boolean; error?: string }>
+exportZipToPath: (request: ElectronZipExportRequest) => Promise<{ success: boolean; error?: string }>
 ```
 
 to `localSave.ts`, `preload.ts`, and `preload.cjs`, invoking `fs:export-zip`.
@@ -496,6 +507,7 @@ Expected: all tests pass.
 ### Task 6: Integrate migration and streaming export
 
 **Files:**
+
 - Modify: `src/store.test.ts`
 - Modify: `src/store.ts`
 - Modify: `src/App.tsx`
@@ -532,10 +544,12 @@ Arrange task and image metadata, then assert:
 
 ```ts
 await exportDataToPath('/desktop/backup.zip', options)
-expect(exportZipToPath).toHaveBeenCalledWith(expect.objectContaining({
-  destinationPath: '/desktop/backup.zip',
-  entries: [expect.objectContaining({ archivePath: 'images/output-a.png' })],
-}))
+expect(exportZipToPath).toHaveBeenCalledWith(
+  expect.objectContaining({
+    destinationPath: '/desktop/backup.zip',
+    entries: [expect.objectContaining({ archivePath: 'images/output-a.png' })],
+  }),
+)
 expect(getAllImages).not.toHaveBeenCalled()
 ```
 
@@ -581,6 +595,7 @@ Expected: all focused tests pass.
 ### Task 7: Full verification and storage safety audit
 
 **Files:**
+
 - Review all modified files only.
 
 - [ ] **Step 1: Verify no all-image Electron export remains**

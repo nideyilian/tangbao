@@ -13,6 +13,7 @@
 ### Task 1: Rich naming editor behavior
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetNamingFields.test.ts`
 - Modify: `src/features/composite/components/PresetNamingFields.tsx`
 
@@ -22,8 +23,7 @@ Add tests that require:
 
 ```ts
 expect(moveNamingVariable('{date}-{size}', 0, 13)).toBe('{size}-{date}')
-expect(convertNamingVariableToText('{date}-{size}', 0, { date: '20260703' }))
-  .toBe('20260703-{size}')
+expect(convertNamingVariableToText('{date}-{size}', 0, { date: '20260703' })).toBe('20260703-{size}')
 expect(renderer.root.findAllByProps({ contentEditable: true })).toHaveLength(2)
 expect(renderer.root.findAllByProps({ 'data-testid': 'preset-subfolder-preview' })).toHaveLength(0)
 ```
@@ -47,11 +47,7 @@ In `PresetNamingFields.tsx`:
 ```ts
 type TemplateField = 'outputRootPath' | 'filenameTemplate'
 
-export function convertNamingVariableToText(
-  template: string,
-  tokenStart: number,
-  values: Record<string, string>,
-) {
+export function convertNamingVariableToText(template: string, tokenStart: number, values: Record<string, string>) {
   const match = /\{([^{}]+)\}/g
   match.lastIndex = tokenStart
   const token = match.exec(template)
@@ -92,6 +88,7 @@ git commit -m "feat: add rich preset naming editors"
 ### Task 2: Filename-derived export folders
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeExportRuntime.test.ts`
 - Modify: `src/features/composite/lib/compositeExportRuntime.ts`
 
@@ -151,6 +148,7 @@ git commit -m "feat: derive export folders from filenames"
 ### Task 3: Transparent canvas default
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetCanvasEditor.test.tsx`
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
 
@@ -204,6 +202,7 @@ git commit -m "fix: default composite canvas to transparency"
 ### Task 4: Regression verification
 
 **Files:**
+
 - Modify only if a directly related assertion requires alignment.
 
 - [ ] **Step 1: Run composite feature tests**
@@ -242,6 +241,7 @@ Expected: no whitespace errors and no uncommitted product changes.
 ### Task 5: Publish version 0.7.14
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `package-lock.json`
 

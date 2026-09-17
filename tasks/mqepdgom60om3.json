@@ -16,9 +16,7 @@
   "apiProfileName": "骏伯",
   "apiMode": "images",
   "apiModel": "gpt-image-2",
-  "inputImageIds": [
-    "663c3675ca7be8e3340f5171a1385e08127b1a0659fdad2e961bf689b1e181ac"
-  ],
+  "inputImageIds": ["663c3675ca7be8e3340f5171a1385e08127b1a0659fdad2e961bf689b1e181ac"],
   "outputImages": [
     "ee12f74318f30053a70885bf1846c048cb94d455017cdabdf25694de06faa42b",
     "0940f9a7cf8897ce2efef8dcab300a0232cf5e707fc6ae709e0ea86de39373b3",

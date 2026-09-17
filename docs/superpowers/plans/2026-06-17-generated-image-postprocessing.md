@@ -23,6 +23,7 @@
 ## Task 1: Add TaskParams Fields
 
 **Files:**
+
 - Modify: `src/types.ts`
 
 - [ ] **Step 1: Add the TaskParams fields and defaults**
@@ -79,6 +80,7 @@ git commit -m "feat: add image postprocess task params"
 ## Task 2: Add Pure Postprocess Planning
 
 **Files:**
+
 - Create: `src/lib/imagePostprocess.ts`
 - Modify: `src/lib/imagePostprocess.test.ts`
 
@@ -105,52 +107,72 @@ describe('image postprocess plan', () => {
   })
 
   it('normalizes resize dimensions when resize is enabled', () => {
-    const plan = getImagePostprocessPlan(params({
-      postprocess_resize_enabled: true,
-      postprocess_size: '1025x1025',
-    }))
+    const plan = getImagePostprocessPlan(
+      params({
+        postprocess_resize_enabled: true,
+        postprocess_size: '1025x1025',
+      }),
+    )
 
     expect(plan.enabled).toBe(true)
     expect(plan.resize).toEqual({ width: 1024, height: 1024 })
   })
 
   it('rejects auto resize targets when resize is enabled', () => {
-    expect(() => getImagePostprocessPlan(params({
-      postprocess_resize_enabled: true,
-      postprocess_size: 'auto',
-    }))).toThrow('postprocess size')
+    expect(() =>
+      getImagePostprocessPlan(
+        params({
+          postprocess_resize_enabled: true,
+          postprocess_size: 'auto',
+        }),
+      ),
+    ).toThrow('postprocess size')
   })
 
   it('uses selected compression format and quality for JPEG/WebP', () => {
-    expect(getImagePostprocessPlan(params({
-      postprocess_compress_enabled: true,
-      postprocess_format: 'jpeg',
-      postprocess_quality: 80,
-    })).encode).toEqual({ format: 'jpeg', mime: 'image/jpeg', quality: 0.8 })
+    expect(
+      getImagePostprocessPlan(
+        params({
+          postprocess_compress_enabled: true,
+          postprocess_format: 'jpeg',
+          postprocess_quality: 80,
+        }),
+      ).encode,
+    ).toEqual({ format: 'jpeg', mime: 'image/jpeg', quality: 0.8 })
 
-    expect(getImagePostprocessPlan(params({
-      postprocess_compress_enabled: true,
-      postprocess_format: 'webp',
-      postprocess_quality: 55,
-    })).encode).toEqual({ format: 'webp', mime: 'image/webp', quality: 0.55 })
+    expect(
+      getImagePostprocessPlan(
+        params({
+          postprocess_compress_enabled: true,
+          postprocess_format: 'webp',
+          postprocess_quality: 55,
+        }),
+      ).encode,
+    ).toEqual({ format: 'webp', mime: 'image/webp', quality: 0.55 })
   })
 
   it('ignores quality for PNG compression', () => {
-    expect(getImagePostprocessPlan(params({
-      postprocess_compress_enabled: true,
-      postprocess_format: 'png',
-      postprocess_quality: 10,
-    })).encode).toEqual({ format: 'png', mime: 'image/png', quality: undefined })
+    expect(
+      getImagePostprocessPlan(
+        params({
+          postprocess_compress_enabled: true,
+          postprocess_format: 'png',
+          postprocess_quality: 10,
+        }),
+      ).encode,
+    ).toEqual({ format: 'png', mime: 'image/png', quality: undefined })
   })
 
   it('resizes before encoding when both switches are enabled', () => {
-    const plan = getImagePostprocessPlan(params({
-      postprocess_resize_enabled: true,
-      postprocess_size: '1536x1024',
-      postprocess_compress_enabled: true,
-      postprocess_format: 'webp',
-      postprocess_quality: 90,
-    }))
+    const plan = getImagePostprocessPlan(
+      params({
+        postprocess_resize_enabled: true,
+        postprocess_size: '1536x1024',
+        postprocess_compress_enabled: true,
+        postprocess_format: 'webp',
+        postprocess_quality: 90,
+      }),
+    )
 
     expect(plan.enabled).toBe(true)
     expect(plan.resize).toEqual({ width: 1536, height: 1024 })
@@ -231,10 +253,7 @@ function parseNormalizedSize(size: string): PostprocessResizePlan | null {
   return { width, height }
 }
 
-function getEncodePlan(
-  format: TaskParams['output_format'],
-  quality: number | null,
-): PostprocessEncodePlan {
+function getEncodePlan(format: TaskParams['output_format'], quality: number | null): PostprocessEncodePlan {
   const mime = MIME_MAP[format]
   if (!mime) throw new Error('Local postprocess format is invalid')
 
@@ -271,6 +290,7 @@ git commit -m "feat: add image postprocess planning"
 ## Task 3: Add Browser Canvas Processing
 
 **Files:**
+
 - Modify: `src/lib/imagePostprocess.ts`
 - Modify: `src/lib/imagePostprocess.test.ts`
 
@@ -287,10 +307,12 @@ Then append this block at the end of `src/lib/imagePostprocess.test.ts`:
 ```ts
 describe('mergePostprocessedActualParams', () => {
   it('overrides size and output format with final stored values', () => {
-    expect(mergePostprocessedActualParams(
-      { size: '2048x2048', output_format: 'png', quality: 'high' },
-      { size: '1024x1024', output_format: 'webp' },
-    )).toEqual({
+    expect(
+      mergePostprocessedActualParams(
+        { size: '2048x2048', output_format: 'png', quality: 'high' },
+        { size: '1024x1024', output_format: 'webp' },
+      ),
+    ).toEqual({
       size: '1024x1024',
       output_format: 'webp',
       quality: 'high',
@@ -321,10 +343,7 @@ export interface ProcessImageResult {
   actualParams: Partial<TaskParams>
 }
 
-export async function postprocessGeneratedImage(
-  dataUrl: string,
-  params: TaskParams,
-): Promise<ProcessImageResult> {
+export async function postprocessGeneratedImage(dataUrl: string, params: TaskParams): Promise<ProcessImageResult> {
   const plan = getImagePostprocessPlan(params)
   if (!plan.enabled) {
     return { dataUrl, actualParams: {} }
@@ -414,6 +433,7 @@ git commit -m "feat: add generated image postprocessing helper"
 ## Task 4: Use Helper For Final Generated Images
 
 **Files:**
+
 - Modify: `src/store.ts`
 
 - [ ] **Step 1: Add a failing guard test by static search**
@@ -518,7 +538,11 @@ In the `if (n === 1)` block after `callImageApi`, replace the storage loop with:
 ```ts
 const processedActualParamsList: Array<Partial<TaskParams> | undefined> = []
 for (let i = 0; i < result.images.length; i++) {
-  const stored = await processAndStoreGeneratedImage(result.images[i], task.params, result.actualParamsList?.[i] ?? result.actualParams)
+  const stored = await processAndStoreGeneratedImage(
+    result.images[i],
+    task.params,
+    result.actualParamsList?.[i] ?? result.actualParams,
+  )
   outputIds.push(stored.id)
   processedActualParamsList.push(stored.actualParams)
 }
@@ -589,6 +613,7 @@ git commit -m "feat: postprocess final generated images before storage"
 ## Task 5: Fix Electron Local Save Extension
 
 **Files:**
+
 - Modify: `src/lib/localSave.ts`
 - Modify: `src/store.ts`
 
@@ -625,13 +650,25 @@ const saved = await saveImageToLocal(taskId, i, dataUrl, task.params.output_form
 to:
 
 ```ts
-await saveImageToLocal(taskId, imageIndexOffset + i, dataUrl, getImageExtensionFromDataUrl(dataUrl, task.params.output_format), subFolder)
+await saveImageToLocal(
+  taskId,
+  imageIndexOffset + i,
+  dataUrl,
+  getImageExtensionFromDataUrl(dataUrl, task.params.output_format),
+  subFolder,
+)
 ```
 
 and:
 
 ```ts
-const saved = await saveImageToLocal(taskId, i, dataUrl, getImageExtensionFromDataUrl(dataUrl, task.params.output_format), subFolder)
+const saved = await saveImageToLocal(
+  taskId,
+  i,
+  dataUrl,
+  getImageExtensionFromDataUrl(dataUrl, task.params.output_format),
+  subFolder,
+)
 ```
 
 - [ ] **Step 3: Run typecheck**
@@ -654,6 +691,7 @@ git commit -m "fix: save generated images with final mime extension"
 ## Task 6: Add InputBar Controls
 
 **Files:**
+
 - Modify: `src/components/InputBar.tsx`
 
 - [ ] **Step 1: Add local input state**
@@ -701,28 +739,34 @@ const commitPostprocessQuality = useCallback(() => {
 After the existing API compression control, add a compact block:
 
 ```tsx
-<label className="flex flex-col gap-0.5">
+;<label className="flex flex-col gap-0.5">
   <span className="text-gray-400 dark:text-gray-500 ml-1">后处理尺寸</span>
   <button
     type="button"
     onClick={() => setParams({ postprocess_resize_enabled: !params.postprocess_resize_enabled })}
-    className={params.postprocess_resize_enabled ? selectClass : 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-xs transition-all duration-200 shadow-sm'}
+    className={
+      params.postprocess_resize_enabled
+        ? selectClass
+        : 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-xs transition-all duration-200 shadow-sm'
+    }
   >
     {params.postprocess_resize_enabled ? '开启' : '关闭'}
   </button>
 </label>
-{params.postprocess_resize_enabled && (
-  <label className="flex flex-col gap-0.5">
-    <span className="text-gray-400 dark:text-gray-500 ml-1">保存尺寸</span>
-    <button
-      type="button"
-      onClick={() => setPostprocessSizePickerOpen(true)}
-      className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-xs transition-all duration-200 shadow-sm"
-    >
-      {normalizeImageSize(params.postprocess_size) || '选择'}
-    </button>
-  </label>
-)}
+{
+  params.postprocess_resize_enabled && (
+    <label className="flex flex-col gap-0.5">
+      <span className="text-gray-400 dark:text-gray-500 ml-1">保存尺寸</span>
+      <button
+        type="button"
+        onClick={() => setPostprocessSizePickerOpen(true)}
+        className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-xs transition-all duration-200 shadow-sm"
+      >
+        {normalizeImageSize(params.postprocess_size) || '选择'}
+      </button>
+    </label>
+  )
+}
 ```
 
 Use existing styling patterns rather than introducing a new card. If there is already a local `sizePickerOpen` state, add a separate `postprocessSizePickerOpen` state and render a second `SizePickerModal` with `allowAuto={false}`.
@@ -732,47 +776,53 @@ Use existing styling patterns rather than introducing a new card. If there is al
 Add:
 
 ```tsx
-<label className="flex flex-col gap-0.5">
+;<label className="flex flex-col gap-0.5">
   <span className="text-gray-400 dark:text-gray-500 ml-1">本地压缩</span>
   <button
     type="button"
     onClick={() => setParams({ postprocess_compress_enabled: !params.postprocess_compress_enabled })}
-    className={params.postprocess_compress_enabled ? selectClass : 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-xs transition-all duration-200 shadow-sm'}
+    className={
+      params.postprocess_compress_enabled
+        ? selectClass
+        : 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-xs transition-all duration-200 shadow-sm'
+    }
   >
     {params.postprocess_compress_enabled ? '开启' : '关闭'}
   </button>
 </label>
-{params.postprocess_compress_enabled && (
-  <>
-    <label className="flex flex-col gap-0.5">
-      <span className="text-gray-400 dark:text-gray-500 ml-1">本地格式</span>
-      <Select
-        value={params.postprocess_format}
-        onChange={(val) => setParams({ postprocess_format: val as any })}
-        options={[
-          { label: 'PNG', value: 'png' },
-          { label: 'JPEG', value: 'jpeg' },
-          { label: 'WebP', value: 'webp' },
-        ]}
-        className={selectClass}
-      />
-    </label>
-    <label className="flex flex-col gap-0.5">
-      <span className="text-gray-400 dark:text-gray-500 ml-1">本地质量</span>
-      <input
-        value={postprocessQualityInput}
-        onChange={(e) => setPostprocessQualityInput(e.target.value)}
-        onBlur={commitPostprocessQuality}
-        disabled={params.postprocess_format === 'png'}
-        type="number"
-        min={0}
-        max={100}
-        placeholder="0-100"
-        className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] focus:outline-none text-xs transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-      />
-    </label>
-  </>
-)}
+{
+  params.postprocess_compress_enabled && (
+    <>
+      <label className="flex flex-col gap-0.5">
+        <span className="text-gray-400 dark:text-gray-500 ml-1">本地格式</span>
+        <Select
+          value={params.postprocess_format}
+          onChange={(val) => setParams({ postprocess_format: val as any })}
+          options={[
+            { label: 'PNG', value: 'png' },
+            { label: 'JPEG', value: 'jpeg' },
+            { label: 'WebP', value: 'webp' },
+          ]}
+          className={selectClass}
+        />
+      </label>
+      <label className="flex flex-col gap-0.5">
+        <span className="text-gray-400 dark:text-gray-500 ml-1">本地质量</span>
+        <input
+          value={postprocessQualityInput}
+          onChange={(e) => setPostprocessQualityInput(e.target.value)}
+          onBlur={commitPostprocessQuality}
+          disabled={params.postprocess_format === 'png'}
+          type="number"
+          min={0}
+          max={100}
+          placeholder="0-100"
+          className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] focus:outline-none text-xs transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        />
+      </label>
+    </>
+  )
+}
 ```
 
 Keep labels short if the existing source uses mojibake in terminal output; preserve file encoding and avoid broad reformatting.
@@ -782,14 +832,16 @@ Keep labels short if the existing source uses mojibake in terminal output; prese
 Near the existing `SizePickerModal` render, add:
 
 ```tsx
-{postprocessSizePickerOpen && (
-  <SizePickerModal
-    currentSize={params.postprocess_size}
-    allowAuto={false}
-    onSelect={(size) => setParams({ postprocess_size: size })}
-    onClose={() => setPostprocessSizePickerOpen(false)}
-  />
-)}
+{
+  postprocessSizePickerOpen && (
+    <SizePickerModal
+      currentSize={params.postprocess_size}
+      allowAuto={false}
+      onSelect={(size) => setParams({ postprocess_size: size })}
+      onClose={() => setPostprocessSizePickerOpen(false)}
+    />
+  )
+}
 ```
 
 - [ ] **Step 6: Run build**
@@ -812,6 +864,7 @@ git commit -m "feat: add generated image postprocess controls"
 ## Task 7: Final Verification
 
 **Files:**
+
 - Verify only unless fixes are needed.
 
 - [ ] **Step 1: Run focused tests**

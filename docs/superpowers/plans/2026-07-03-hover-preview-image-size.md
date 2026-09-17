@@ -13,6 +13,7 @@
 ### Task 1: Add a tested hover preview component
 
 **Files:**
+
 - Create: `src/components/HoverImagePreview.tsx`
 - Create: `src/components/HoverImagePreview.test.tsx`
 
@@ -36,18 +37,14 @@ const preview = {
 
 describe('HoverImagePreview', () => {
   it('shows the actual pixel dimensions in the upper-right label', () => {
-    const html = renderToStaticMarkup(
-      <HoverImagePreview preview={preview} sizeText="1536 × 1024" />,
-    )
+    const html = renderToStaticMarkup(<HoverImagePreview preview={preview} sizeText="1536 × 1024" />)
 
     expect(html).toContain('aria-label="图片尺寸"')
     expect(html).toContain('1536 × 1024')
   })
 
   it('omits the size label when dimensions are unavailable', () => {
-    const html = renderToStaticMarkup(
-      <HoverImagePreview preview={preview} sizeText="" />,
-    )
+    const html = renderToStaticMarkup(<HoverImagePreview preview={preview} sizeText="" />)
 
     expect(html).not.toContain('aria-label="图片尺寸"')
   })
@@ -94,12 +91,7 @@ export default function HoverImagePreview({ preview, sizeText }: Props) {
         height: preview.height,
       }}
     >
-      <img
-        src={preview.src}
-        data-image-id={preview.imageId}
-        className="h-full w-full object-contain"
-        alt=""
-      />
+      <img src={preview.src} data-image-id={preview.imageId} className="h-full w-full object-contain" alt="" />
       {sizeText && (
         <span
           aria-label="图片尺寸"
@@ -135,6 +127,7 @@ git commit -m "feat: show dimensions on hover previews"
 ### Task 2: Connect actual dimensions from DetailModal
 
 **Files:**
+
 - Modify: `src/components/DetailModal.tsx`
 - Test: `src/components/HoverImagePreview.test.tsx`
 
@@ -149,12 +142,9 @@ import HoverImagePreview from './HoverImagePreview'
 Replace the existing `hoverPreview` block with:
 
 ```tsx
-{hoverPreview && (
-  <HoverImagePreview
-    preview={hoverPreview}
-    sizeText={imageSizes[hoverPreview.imageId] || ''}
-  />
-)}
+{
+  hoverPreview && <HoverImagePreview preview={hoverPreview} sizeText={imageSizes[hoverPreview.imageId] || ''} />
+}
 ```
 
 This uses the existing `onLoad` path that stores `image.naturalWidth + '×' + image.naturalHeight`. No requested-size fallback is allowed.
@@ -182,6 +172,7 @@ git commit -m "feat: connect actual hover image dimensions"
 ### Task 3: Verify and merge the feature branch
 
 **Files:**
+
 - Review: `src/components/HoverImagePreview.tsx`
 - Review: `src/components/HoverImagePreview.test.tsx`
 - Review: `src/components/DetailModal.tsx`
@@ -235,6 +226,7 @@ Expected: the temporary worktree and merged feature branch are removed.
 ### Task 4: Prepare and publish version 0.7.12
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `package-lock.json`
 

@@ -8,14 +8,14 @@
 
 ## 1. 项目概况
 
-| 维度 | 内容 |
-|---|---|
-| 仓库 | `liangkunnhello/tangbao-liangnianban`（TypeScript，MIT 协议） |
-| 定位 | 基于 OpenAI gpt-image-2 API 的图片生成/编辑工具，主打**批量变量提示词** |
-| 版本 | v0.7.51（2026-08-12 创建，2026-08-20 最后推送，0 star / 0 fork / 0 issue，新仓库） |
-| 技术栈 | React 19 + TypeScript + Vite 6 + Tailwind 3 + Zustand 5 + Electron（与当前项目一致） |
-| 部署 | Vercel / Cloudflare Workers / Docker / GitHub Pages（含 PWA `sw.js` + `manifest.webmanifest`） |
-| 来源 | 与当前项目 糖包（nideyilian/tangbao，v0.7.61）**同源 fork**，共同祖先为 [cooksleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) |
+| 维度   | 内容                                                                                                                                                        |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 仓库   | `liangkunnhello/tangbao-liangnianban`（TypeScript，MIT 协议）                                                                                               |
+| 定位   | 基于 OpenAI gpt-image-2 API 的图片生成/编辑工具，主打**批量变量提示词**                                                                                     |
+| 版本   | v0.7.51（2026-08-12 创建，2026-08-20 最后推送，0 star / 0 fork / 0 issue，新仓库）                                                                          |
+| 技术栈 | React 19 + TypeScript + Vite 6 + Tailwind 3 + Zustand 5 + Electron（与当前项目一致）                                                                        |
+| 部署   | Vercel / Cloudflare Workers / Docker / GitHub Pages（含 PWA `sw.js` + `manifest.webmanifest`）                                                              |
+| 来源   | 与当前项目 糖包（nideyilian/tangbao，v0.7.61）**同源 fork**，共同祖先为 [cooksleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) |
 
 ### 1.1 与当前项目的关系（关键结论）
 
@@ -29,11 +29,11 @@
 
 对两个工作树（排除 `node_modules`/`dist`/`release`/日志/临时目录）做逐文件对比：
 
-| 类别 | 数量 | 说明 |
-|---|---|---|
-| 仅远程存在（本地缺失） | 55 个源码/配置文件 | 见 §2 功能清单，即远程的全部增量 |
-| 仅本地存在（远程缺失） | 300+ 个 | 本地独有的素材库体系（`src/features/assetLibrary/*`、`electron/asset-*`）、设计系统 v2、ModelSwitcher、promptVariableColors、迁移脚本等 |
-| 双方都有但内容不同 | 大量核心文件 | `store.ts`（远程 10,186 行 vs 本地约 1.2 万行）、`InputBar.tsx`（远程 4,204 行 vs 本地 4,382 行）、`types.ts`、`App.tsx`、整个 `strategy/*`、`electron/main.ts`、`package.json` 等 |
+| 类别                   | 数量               | 说明                                                                                                                                                                               |
+| ---------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 仅远程存在（本地缺失） | 55 个源码/配置文件 | 见 §2 功能清单，即远程的全部增量                                                                                                                                                   |
+| 仅本地存在（远程缺失） | 300+ 个            | 本地独有的素材库体系（`src/features/assetLibrary/*`、`electron/asset-*`）、设计系统 v2、ModelSwitcher、promptVariableColors、迁移脚本等                                            |
+| 双方都有但内容不同     | 大量核心文件       | `store.ts`（远程 10,186 行 vs 本地约 1.2 万行）、`InputBar.tsx`（远程 4,204 行 vs 本地 4,382 行）、`types.ts`、`App.tsx`、整个 `strategy/*`、`electron/main.ts`、`package.json` 等 |
 
 ### 1.3 依赖差异
 
@@ -79,6 +79,7 @@
 ```
 
 规则（由 `parseVariablePrompt` 强制校验）：
+
 - `可变项：` 必须**单独占一行**（严格模式），否则报错；
 - 每个变量**单独一行**，格式 `{{变量名}}：选项一 / 选项二`（`/` 或 `／` 分隔）；
 - 变量名去重、选项去重；正文中出现但未定义的变量、定义了但正文未用的变量都会产生错误/警告；
@@ -121,12 +122,14 @@
 ## 4. 设计评价
 
 ### 优点
+
 1. **引擎纯净**：`variablePrompt.ts` 是零依赖纯函数模块，解析/校验/展开逻辑集中、可单测、可移植，是教科书式的"可复用内核"设计；
 2. **全链路闭环**：从 AI 反推模板 → 语法强校验 → 尺寸联动 → 多样度展开 → 逐条请求，体验完整，且"格式错误直接拦截"避免了把 `{{}}` 裸奔进图片模型的脏数据；
 3. **展开算法有质量意识**：汉明距离 + 使用频次惩罚的多样度策略，比随机/顺序组合更符合"批量裂变"诉求；
 4. **合规闸门**：排除文字策略考虑到了图片模型会"画字"的现实问题，属于产品洞察。
 
 ### 不足 / 风险
+
 1. **语法对 LLM 输出不友好**："可变项：必须单独占一行""每变量一行"等约束靠 prompt 指令 + 修复重试兜底，LLM 偶尔仍会产出不可解析结果（引擎只能报错，无法部分容错）；
 2. **展开与任务模型耦合**：展开发生在执行器内、按槽位取用，任务记录里只存模板不存展开明细，重试/恢复时需重新展开（确定性种子保证了可复现，但排障时缺少"哪张图用了哪个组合"的持久化证据，仅靠 revisedPrompts 侧面记录）；
 3. **组合爆炸无上限保护**：`combinationCount` 只做展示与溢出保护，用户仍可提交超大组合（如 5×5×5×5=625），需靠 n 限流兜底；

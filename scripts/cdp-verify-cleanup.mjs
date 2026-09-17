@@ -13,7 +13,13 @@ async function getJson(path, method = 'GET') {
     const req = http.request({ host: '127.0.0.1', port: PORT, path, method }, (res) => {
       let data = ''
       res.on('data', (c) => (data += c))
-      res.on('end', () => { try { resolve(JSON.parse(data)) } catch (e) { reject(new Error(data.slice(0, 200))) } })
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data))
+        } catch (e) {
+          reject(new Error(data.slice(0, 200)))
+        }
+      })
     })
     req.on('error', reject)
     req.end()
@@ -39,18 +45,25 @@ try {
     process.exit(1)
   }
   ws = new WebSocket(page.webSocketDebuggerUrl)
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
+  await new Promise((res, rej) => {
+    ws.onopen = res
+    ws.onerror = rej
+  })
   let id = 0
   const pending = new Map()
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data)
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) }
+    if (m.id && pending.has(m.id)) {
+      pending.get(m.id)(m)
+      pending.delete(m.id)
+    }
   }
-  const send = (method, params = {}) => new Promise((res) => {
-    const mid = ++id
-    pending.set(mid, res)
-    ws.send(JSON.stringify({ id: mid, method, params }))
-  })
+  const send = (method, params = {}) =>
+    new Promise((res) => {
+      const mid = ++id
+      pending.set(mid, res)
+      ws.send(JSON.stringify({ id: mid, method, params }))
+    })
 
   // 在页面上下文查询 IDB
   const expr = `(async () => {

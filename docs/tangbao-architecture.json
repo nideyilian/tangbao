@@ -245,7 +245,10 @@
       "from": "electron-main",
       "to": "preload-bridge",
       "label": "创建窗口 / 注入桥接",
-      "via": [[278, 194], [278, 308]],
+      "via": [
+        [278, 194],
+        [278, 308]
+      ],
       "fromSide": "left",
       "toSide": "right",
       "labelAt": [285, 248]
@@ -294,7 +297,10 @@
       "from": "electron-main",
       "to": "github-releases",
       "label": "检查 / 下载更新",
-      "via": [[395, 252], [1085, 252]],
+      "via": [
+        [395, 252],
+        [1085, 252]
+      ],
       "fromSide": "bottom",
       "toSide": "bottom"
     }

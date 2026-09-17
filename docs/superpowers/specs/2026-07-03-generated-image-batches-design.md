@@ -69,4 +69,3 @@ Tests must prove:
 - prompt-enabled names use `date-label-batch-prompt-image`;
 - existing tasks receive deterministic persisted batches; and
 - automatic save, download, and ZIP paths use the same result.
-

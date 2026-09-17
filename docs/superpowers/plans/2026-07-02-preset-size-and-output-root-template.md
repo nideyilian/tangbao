@@ -13,6 +13,7 @@
 ### Task 1: Fixed preset canvas size selector
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetManagementTab.test.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 
@@ -21,7 +22,7 @@
 Add a test that renders `PresetManagementTab`, locates `select[aria-label="基准尺寸"]`, verifies these exact options:
 
 ```ts
-[
+;[
   { value: '1280x720', label: '1280×720' },
   { value: '1080x1920', label: '1080×1920' },
   { value: '800x800', label: '800×800' },
@@ -80,6 +81,7 @@ Expected: PASS.
 ### Task 2: Output root as a caret-aware variable insertion target
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetNamingFields.test.ts`
 - Modify: `src/features/composite/components/PresetNamingFields.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
@@ -89,11 +91,7 @@ Expected: PASS.
 Generalize the existing insertion test table so it includes:
 
 ```ts
-expect(insertNamingVariable(
-  'D:\\Exports\\daily',
-  'date',
-  { start: 11, end: 18 },
-)).toEqual({
+expect(insertNamingVariable('D:\\Exports\\daily', 'date', { start: 11, end: 18 })).toEqual({
   template: 'D:\\Exports\\{date}',
   caret: 17,
 })
@@ -106,8 +104,7 @@ This preserves the existing helper contract while covering an absolute Windows p
 In `PresetManagementTab.test.tsx`, focus the output-root input, set its selection to the end of `D:\Exports\`, click `插入变量 {date}`, and assert:
 
 ```ts
-expect(useCompositeV2Store.getState().presets[0]!.outputRootPath)
-  .toBe('D:\\Exports\\{date}')
+expect(useCompositeV2Store.getState().presets[0]!.outputRootPath).toBe('D:\\Exports\\{date}')
 ```
 
 - [ ] **Step 3: Run the tests and verify RED**
@@ -151,6 +148,7 @@ Expected: PASS.
 ### Task 3: Resolve variables in output root paths
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositePathTemplates.test.ts`
 - Modify: `src/features/composite/lib/compositePathTemplates.ts`
 - Modify: `src/features/composite/lib/compositeExportRuntime.test.ts`
@@ -161,9 +159,8 @@ Expected: PASS.
 Add tests for a new exported function:
 
 ```ts
-expect(resolveCompositeTemplate(
-  'D:\\Exports\\{date}\\{project}\\{unknown}',
-  {
+expect(
+  resolveCompositeTemplate('D:\\Exports\\{date}\\{project}\\{unknown}', {
     date: '20260702',
     channel: '快手',
     size: '1280x720',
@@ -173,8 +170,8 @@ expect(resolveCompositeTemplate(
     sourceDir: 'source',
     custom: '自定义',
     customVariables: { project: '项目A' },
-  },
-)).toBe('D:\\Exports\\20260702\\项目A\\{unknown}')
+  }),
+).toBe('D:\\Exports\\20260702\\项目A\\{unknown}')
 ```
 
 The assertion proves that drive syntax and separators remain untouched and unknown variables remain literal.
@@ -242,10 +239,7 @@ Expected: FAIL because the runtime still passes the unresolved root.
 Create one shared runtime variable object for the export item, use it both in `buildPresetOutputPathParts` and:
 
 ```ts
-const outputRootPath = resolveCompositeTemplate(
-  item.preset.outputRootPath,
-  templateVariables,
-)
+const outputRootPath = resolveCompositeTemplate(item.preset.outputRootPath, templateVariables)
 const directoryParts = [outputRootPath, ...pathParts.subfolders]
 ```
 
@@ -264,6 +258,7 @@ Expected: PASS.
 ### Task 4: Verify all pending work and prepare version 0.7.11
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Include all currently modified and untracked workspace files in the release commit.

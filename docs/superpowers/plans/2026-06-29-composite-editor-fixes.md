@@ -13,6 +13,7 @@
 ### Task 1: Persist And Reload The LOGO Library
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeV2Types.ts`
 - Modify: `src/features/composite/lib/compositeV2Defaults.ts`
 - Modify: `src/features/composite/storeV2.ts`
@@ -52,6 +53,7 @@ Run the Task 1 command and expect all selected tests to pass.
 ### Task 2: Render Layers Without A Sample Background
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeRendererV2.ts`
 - Modify: `src/features/composite/lib/compositeRendererV2.test.ts`
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
@@ -80,6 +82,7 @@ Run the Task 2 command and expect all selected tests to pass.
 ### Task 3: Restore Vertical Anchor Offset
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetLayerPanel.tsx`
 - Modify: `src/features/composite/components/PresetLayerPanel.test.tsx`
 
@@ -106,6 +109,7 @@ Run the Task 3 command and expect the test to pass.
 ### Task 4: Add Per-Channel Select All
 
 **Files:**
+
 - Modify: `src/features/composite/storeV2.ts`
 - Modify: `src/features/composite/storeV2.test.ts`
 - Modify: `src/features/composite/components/BatchExportTab.tsx`
@@ -142,6 +146,7 @@ Run the Task 4 command and expect all selected tests to pass.
 ### Task 5: Full Verification And Desktop Check
 
 **Files:**
+
 - No production changes expected.
 
 - [ ] **Step 1: Run full verification**

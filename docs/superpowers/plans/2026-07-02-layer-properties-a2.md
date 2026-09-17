@@ -13,6 +13,7 @@
 ### Task 1: Lock the desired panel structure with component tests
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetLayerPanel.test.tsx`
 
 - [ ] Add assertions for the selected-layer header and `内容`, `位置与尺寸`, `外观`, `效果` groups.
@@ -23,6 +24,7 @@
 ### Task 2: Define shared stroke behavior with failing tests
 
 **Files:**
+
 - Modify: `src/features/composite/storeV2.test.ts`
 - Modify: `src/features/composite/lib/compositeRendererV2.test.ts`
 - Modify: `src/features/composite/lib/compositeV2Types.ts`
@@ -39,6 +41,7 @@
 ### Task 3: Implement the approved A2 panel
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetLayerPanel.tsx`
 
 - [ ] Add the selected-layer header with type badge, visible toggle, and lock toggle.
@@ -52,6 +55,7 @@
 ### Task 4: Regression verification
 
 **Files:**
+
 - Verify: `src/features/composite/**`
 
 - [ ] Run `npm test -- src/features/composite/components/PresetLayerPanel.test.tsx src/features/composite/lib/compositeRendererV2.test.ts src/features/composite/storeV2.test.ts`.
@@ -61,6 +65,7 @@
 ### Task 5: Visual QA against the selected mock
 
 **Files:**
+
 - Modify: `design-qa.md`
 
 - [ ] Start the local app and open the preset layer panel with a selected LOGO layer.

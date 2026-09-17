@@ -33,6 +33,7 @@
 ### Task 1: Add the composite asset IndexedDB store
 
 **Files:**
+
 - Modify: `src/types.ts`
 - Modify: `src/lib/db.ts`
 - Modify: `src/lib/db.test.ts`
@@ -111,6 +112,7 @@ git commit -m "feat: add composite asset IndexedDB store"
 ### Task 2: Build the composite asset service
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeAssets.ts`
 - Create: `src/features/composite/lib/compositeAssets.test.ts`
 - Modify: `src/features/composite/lib/compositeV2Types.ts`
@@ -122,19 +124,18 @@ Cover:
 ```ts
 it('deduplicates equal blobs by content hash', async () => {
   const putMany = vi.fn().mockResolvedValue(undefined)
-  const ids = await storeCompositeBlobs(
-    [new Blob(['same']), new Blob(['same'])],
-    { putMany },
-  )
+  const ids = await storeCompositeBlobs([new Blob(['same']), new Blob(['same'])], { putMany })
   expect(ids[0]).toBe(ids[1])
   expect(putMany.mock.calls[0][0]).toHaveLength(1)
 })
 
 it('collects every library and preset stored reference', () => {
-  expect(collectCompositeAssetIds({
-    projectLogos: [{ id: 'logo', name: 'Logo', assetId: 'asset-a' }],
-    presets: [{ layers: [{ asset: { kind: 'stored', assetId: 'asset-b' } }] }],
-  })).toEqual(['asset-a', 'asset-b'])
+  expect(
+    collectCompositeAssetIds({
+      projectLogos: [{ id: 'logo', name: 'Logo', assetId: 'asset-a' }],
+      presets: [{ layers: [{ asset: { kind: 'stored', assetId: 'asset-b' } }] }],
+    }),
+  ).toEqual(['asset-a', 'asset-b'])
 })
 ```
 
@@ -157,8 +158,7 @@ Keep legacy shapes in explicitly named migration-only types:
 ```ts
 export type LegacyCompositeProjectLogo = Omit<CompositeV2ProjectLogo, 'assetId'> & { dataUrl: string }
 export type LegacyCompositeAssetRef =
-  | { kind: 'dataUrl'; dataUrl: string; name?: string }
-  | { kind: 'project'; id: string }
+  { kind: 'dataUrl'; dataUrl: string; name?: string } | { kind: 'project'; id: string }
 ```
 
 - [ ] **Step 4: Implement the service**
@@ -172,7 +172,10 @@ export async function storeCompositeBlobs(blobs: Blob[], deps = defaultDeps): Pr
 export async function getCompositeAssetObjectUrl(assetId: string): Promise<string | null>
 export function revokeCompositeAssetObjectUrl(assetId: string): void
 export function collectCompositeAssetIds(state: Pick<CompositeV2State, 'projectLogos' | 'presets'>): string[]
-export function isCompositeAssetReferenced(state: Pick<CompositeV2State, 'projectLogos' | 'presets'>, assetId: string): boolean
+export function isCompositeAssetReferenced(
+  state: Pick<CompositeV2State, 'projectLogos' | 'presets'>,
+  assetId: string,
+): boolean
 ```
 
 Hash `await blob.arrayBuffer()` with SHA-256 and use the existing deterministic fallback style when `crypto.subtle` is unavailable. Return one asset ID per input Blob while deduplicating the records passed to `putCompositeAssets`. Cache object URLs by `assetId`; revoke and remove them on deletion.
@@ -188,6 +191,7 @@ git commit -m "feat: add composite asset service"
 ### Task 3: Migrate legacy Base64 state safely
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeAssetMigration.ts`
 - Create: `src/features/composite/lib/compositeAssetMigration.test.ts`
 - Modify: `src/features/composite/storeV2.ts`
@@ -201,11 +205,15 @@ Test library data URLs, standalone layer data URLs, legacy project references, d
 it('does not change Zustand state when the asset transaction fails', async () => {
   const legacy = createLegacyState()
   const setState = vi.fn()
-  await expect(migrateLegacyCompositeAssets({
-    getState: () => legacy,
-    setState,
-    storeAssets: async () => { throw new Error('quota') },
-  })).rejects.toThrow('quota')
+  await expect(
+    migrateLegacyCompositeAssets({
+      getState: () => legacy,
+      setState,
+      storeAssets: async () => {
+        throw new Error('quota')
+      },
+    }),
+  ).rejects.toThrow('quota')
   expect(setState).not.toHaveBeenCalled()
   expect(legacy.projectLogos[0].dataUrl).toContain('base64')
 })
@@ -265,6 +273,7 @@ git commit -m "feat: migrate composite Base64 assets"
 ### Task 4: Switch the LOGO library and renderers to stored references
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.test.tsx`
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
@@ -334,6 +343,7 @@ git commit -m "feat: load composite assets from IndexedDB"
 ### Task 5: Add reference-aware deletion
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.test.tsx`
 - Modify: `src/features/composite/lib/compositeAssets.ts`
@@ -368,6 +378,7 @@ git commit -m "feat: protect referenced composite assets"
 ### Task 6: Extend ZIP manifests and Electron streaming entries
 
 **Files:**
+
 - Modify: `src/types.ts`
 - Modify: `electron/streaming-zip.ts`
 - Modify: `electron/streaming-zip.test.ts`
@@ -382,11 +393,13 @@ Add a streaming ZIP test:
 await writeStreamingZip({
   destinationPath,
   manifestJson: '{}',
-  entries: [{
-    archivePath: 'composite-assets/asset-a.png',
-    data: new Uint8Array([1, 2, 3]),
-    mtime: 1,
-  }],
+  entries: [
+    {
+      archivePath: 'composite-assets/asset-a.png',
+      data: new Uint8Array([1, 2, 3]),
+      mtime: 1,
+    },
+  ],
 })
 ```
 
@@ -410,10 +423,7 @@ Change entries to a discriminated union:
 export type StreamingZipEntry = {
   archivePath: string
   mtime?: number
-} & (
-  | { sourcePath: string; data?: never }
-  | { sourcePath?: never; data: Uint8Array }
-)
+} & ({ sourcePath: string; data?: never } | { sourcePath?: never; data: Uint8Array })
 ```
 
 Stream `sourcePath` entries as before. Push `data` entries directly through `ZipPassThrough`. Update IPC validation and path authorization without applying filesystem checks to inline entries.
@@ -429,6 +439,7 @@ git commit -m "feat: stream composite assets in backups"
 ### Task 7: Export and import composite configuration with assets
 
 **Files:**
+
 - Modify: `src/features/composite/storeV2.ts`
 - Modify: `src/features/composite/storeV2.test.ts`
 - Modify: `src/store.ts`
@@ -493,6 +504,7 @@ git commit -m "feat: back up composite assets"
 ### Task 8: Full verification
 
 **Files:**
+
 - Verify all files changed above.
 
 - [ ] **Step 1: Confirm no new persisted Base64 paths**

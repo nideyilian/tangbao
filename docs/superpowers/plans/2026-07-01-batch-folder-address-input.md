@@ -23,6 +23,7 @@
 ### Task 1: Explicitly authorize and scan typed folders
 
 **Files:**
+
 - Modify: `electron/ipc-handlers.test.ts`
 - Modify: `electron/ipc-handlers.ts`
 - Modify: `electron/preload.ts`
@@ -83,8 +84,7 @@ In `electron/ipc-handlers.ts`, add:
 
 ```ts
 type CompositeBackgroundScanResult =
-  | { success: true; folderPath: string; files: CompositeBackgroundFile[] }
-  | { success: false; error: string }
+  { success: true; folderPath: string; files: CompositeBackgroundFile[] } | { success: false; error: string }
 
 export function scanEnteredCompositeBackgroundFolder(
   dirPath: string,
@@ -148,6 +148,7 @@ Expected: all Electron IPC helper tests pass.
 ### Task 2: Replace add-then-list with automatic address rows
 
 **Files:**
+
 - Modify: `src/features/composite/components/BatchExportTab.test.tsx`
 - Modify: `src/features/composite/components/BatchExportTab.tsx`
 
@@ -212,9 +213,7 @@ Expected: FAIL because the address-row UI and scan API are not implemented.
 In `BatchExportTab.tsx`:
 
 ```ts
-const [folderInputs, setFolderInputs] = useState<string[]>(
-  backgroundFolders.length ? backgroundFolders : [''],
-)
+const [folderInputs, setFolderInputs] = useState<string[]>(backgroundFolders.length ? backgroundFolders : [''])
 const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 const scanRequestRef = useRef(0)
 ```
@@ -224,13 +223,15 @@ Replace `folderInput`, `handleAddManualFolder`, and the separate “已添加的
 ```ts
 function getUniqueFolders(rows: string[]) {
   const seen = new Set<string>()
-  return rows.map((row) => row.trim()).filter((folder) => {
-    if (!folder) return false
-    const key = folder.replace(/[\\/]+$/, '').toLocaleLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  return rows
+    .map((row) => row.trim())
+    .filter((folder) => {
+      if (!folder) return false
+      const key = folder.replace(/[\\/]+$/, '').toLocaleLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
 }
 
 function scheduleFolderScan(rows: string[]) {
@@ -241,7 +242,7 @@ function scheduleFolderScan(rows: string[]) {
 }
 
 function updateFolderInput(index: number, value: string, immediate = false) {
-  const nextRows = folderInputs.map((row, rowIndex) => rowIndex === index ? value : row)
+  const nextRows = folderInputs.map((row, rowIndex) => (rowIndex === index ? value : row))
   setFolderInputs(nextRows)
   if (immediate) void loadBackgroundFolders(nextRows, recursiveBackgrounds)
   else scheduleFolderScan(nextRows)
@@ -287,6 +288,7 @@ Expected: all batch export component tests pass.
 ### Task 3: Regression and production verification
 
 **Files:**
+
 - Verify only; no planned source changes.
 
 - [ ] **Step 1: Run both focused suites together**

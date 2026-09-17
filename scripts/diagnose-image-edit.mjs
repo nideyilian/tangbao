@@ -9,7 +9,8 @@ const DEFAULT_IMAGE_CANDIDATES = [
   path.resolve(process.cwd(), 'docs/images/example_pc_1.jpg'),
   path.resolve(process.cwd(), 'docs/images/example_pc_2.jpg'),
 ]
-const FALLBACK_TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+const FALLBACK_TINY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 
 function parseArgs(argv) {
   const result = {}
@@ -19,7 +20,7 @@ function parseArgs(argv) {
     const [rawKey, inlineValue] = current.slice(2).split('=', 2)
     const next = inlineValue ?? argv[i + 1]
     const needsAdvance = inlineValue == null && next && !next.startsWith('--')
-    result[rawKey] = needsAdvance ? next : inlineValue ?? 'true'
+    result[rawKey] = needsAdvance ? next : (inlineValue ?? 'true')
     if (needsAdvance) i++
   }
   return result
@@ -29,19 +30,14 @@ function normalizeBaseUrl(baseUrl) {
   const trimmed = String(baseUrl || '').trim()
   if (!trimmed) return ''
 
-  const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`
+  const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`
 
   try {
     const url = new URL(input)
     const pathSegments = url.pathname.split('/').filter(Boolean)
     const v1Index = pathSegments.indexOf('v1')
-    const normalizedSegments = v1Index >= 0
-      ? pathSegments.slice(0, v1Index + 1)
-      : pathSegments.length
-        ? [...pathSegments, 'v1']
-        : []
+    const normalizedSegments =
+      v1Index >= 0 ? pathSegments.slice(0, v1Index + 1) : pathSegments.length ? [...pathSegments, 'v1'] : []
     const pathname = normalizedSegments.length ? `/${normalizedSegments.join('/')}` : ''
     return `${url.origin}${pathname}`
   } catch {
@@ -52,9 +48,7 @@ function normalizeBaseUrl(baseUrl) {
 function buildApiUrl(baseUrl, endpointPath) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
   const cleanPath = String(endpointPath || '').replace(/^\/+/, '')
-  const apiPath = normalizedBaseUrl.endsWith('/v1')
-    ? cleanPath
-    : `v1/${cleanPath}`
+  const apiPath = normalizedBaseUrl.endsWith('/v1') ? cleanPath : `v1/${cleanPath}`
   return `${normalizedBaseUrl}/${apiPath}`
 }
 
@@ -112,7 +106,9 @@ function summarizeBody(text) {
   if (!trimmed) return '(empty body)'
   const maybeJson = tryParseJson(trimmed)
   const normalized = maybeJson ? JSON.stringify(redactLargePayload(maybeJson), null, 2) : trimmed
-  return normalized.length > 4000 ? `${normalized.slice(0, 4000)}\n... [truncated ${normalized.length - 4000} chars]` : normalized
+  return normalized.length > 4000
+    ? `${normalized.slice(0, 4000)}\n... [truncated ${normalized.length - 4000} chars]`
+    : normalized
 }
 
 function tryParseJson(value) {
@@ -340,7 +336,9 @@ async function main() {
   const timeoutMs = Number(args.timeout || process.env.DIAG_TIMEOUT || 70000)
 
   if (!baseUrl || !apiKey) {
-    console.error('Usage: node scripts/diagnose-image-edit.mjs --base-url <url> --api-key <key> [--model gpt-image-2] [--image docs/images/example_pc_1.jpg] [--only test-name] [--timeout 70000]')
+    console.error(
+      'Usage: node scripts/diagnose-image-edit.mjs --base-url <url> --api-key <key> [--model gpt-image-2] [--image docs/images/example_pc_1.jpg] [--only test-name] [--timeout 70000]',
+    )
     process.exitCode = 1
     return
   }

@@ -23,30 +23,30 @@
 
 ## 二、优先级总览
 
-| 优先级 | 主题 | 关键位置 | 影响 |
-|---|---|---|---|
-| P0 | Agent 流式输出引发整树高频重渲染（含 InputBar） | `store.ts:4973-4987`、`AgentWorkspace.tsx:568`、`InputBar.tsx:530` | 打字/出图期间持续卡顿 |
-| P0 | 任意任务更新 → tasks/workspaceTabs 全量数组重建 | `store.ts:8178-8206` | 8+ 个常驻组件每 tick 重渲染 |
-| P0 | Electron 路径白名单可被渲染进程任意绕过 | `ipc-handlers.ts:111-115,403-429,504-536` | 任意文件读写风险 |
-| P0 | 无导航/弹窗防护（will-navigate / setWindowOpenHandler） | `main.ts` | 远程页面获得完整 preload 能力 |
-| P0 | 浏览器端导出/导入全内存 ZIP（OOM） | `store.ts:9043-9148,9497-9500` | 大库直接崩溃 |
-| P0 | 图片以 base64 入库 + 按字符串哈希去重（去重失效） | `db.ts:478-517,425-427` | 存储膨胀、去重形同虚设 |
-| P0 | 恢复轮询把已停止任务"复活"为 done 并重启已停止的 Agent 轮次 | `store.ts:3967-3995,8977-9005` | 用户停止操作被覆盖（数据正确性） |
-| P0 | FAL/custom 恢复轮询可并发双轮询，重复存储/覆盖图片 | `store.ts:3850-3856,3997-4011` | 重复写图 + 输出被先后覆盖 |
-| P0 | `completeAgentImageTask` TOCTOU：停止后迟到成功仍写 done | `store.ts:6314-6342` | 与失败路径守卫不对称 |
-| P1 | persist 每次 setState 全量 partialize + JSON.stringify（Web 直接写 localStorage） | `store.ts:3402-3434` | 生成期每秒多次序列化数百 KB |
-| P1 | executeTask 无任务级 AbortController，取消后仍在途提交 | `store.ts:7221-8161` | 无法中止在途请求；取消后图片落库成孤儿 |
-| P1 | submitAgentMessage 双重提交 TOCTOU（守卫在 await 之前） | `store.ts:5971-5974,6059-6084` | 双击并行两个 running 轮次 |
-| P1 | purge 与素材同步队列 TOCTOU，墓碑失效 | `assetLibraryRepository.ts:223-230`、`db.ts:904-917` | 已删素材复活 |
-| P1 | asset-kernel 镜像无重试、仅 count 比对 | `assetLibraryRepository.ts:73-81,163-184` | 主备库静默不一致 |
-| P1 | 主进程 node:sqlite 同步阻塞 + 全表扫描 | `asset-catalog.ts:236-342` | 主线程卡顿 |
-| P1 | 图片网格 tile 总是加载原图、无解码并发上限 | `GalleryImageTile.tsx:54-57,85` | 100-300MB 峰值内存 |
-| P1 | 无单实例锁、console-message 签名过时、preload 双源漂移 | `main.ts:166-170`、`electron/preload.cjs` vs `preload.ts` | 双开竞态 / 主进程异常噪音 / dev-prod 不一致 |
-| P1 | 无 CSP + api:fetch 无主机白名单 + 远程字体 | `index.html`、`api-transport.ts:31-60`、`src/index.css:1-2` | XSS 放大面、隐私外泄 |
-| P2 | 无 ESLint/Prettier、CI 不跑测试、electron 无类型检查 | 仓库根、`.github/workflows/release.yml` | 回归全靠自觉 |
-| P2 | 巨型单文件（store.ts 9801 行等 15 个 100KB+ 文件） | 见 §六 | 维护成本高 |
-| P2 | 编码损坏（mojibake）5 处，含用户可见错误串 | `src/lib/imagePostprocess.ts:195` 等 | 用户看到乱码 |
-| P3 | 死依赖（zundo、framer-motion、lenis）、死文件（test-zundo.ts） | 根目录、package.json | 包体积与混淆 |
+| 优先级 | 主题                                                                              | 关键位置                                                           | 影响                                        |
+| ------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------- |
+| P0     | Agent 流式输出引发整树高频重渲染（含 InputBar）                                   | `store.ts:4973-4987`、`AgentWorkspace.tsx:568`、`InputBar.tsx:530` | 打字/出图期间持续卡顿                       |
+| P0     | 任意任务更新 → tasks/workspaceTabs 全量数组重建                                   | `store.ts:8178-8206`                                               | 8+ 个常驻组件每 tick 重渲染                 |
+| P0     | Electron 路径白名单可被渲染进程任意绕过                                           | `ipc-handlers.ts:111-115,403-429,504-536`                          | 任意文件读写风险                            |
+| P0     | 无导航/弹窗防护（will-navigate / setWindowOpenHandler）                           | `main.ts`                                                          | 远程页面获得完整 preload 能力               |
+| P0     | 浏览器端导出/导入全内存 ZIP（OOM）                                                | `store.ts:9043-9148,9497-9500`                                     | 大库直接崩溃                                |
+| P0     | 图片以 base64 入库 + 按字符串哈希去重（去重失效）                                 | `db.ts:478-517,425-427`                                            | 存储膨胀、去重形同虚设                      |
+| P0     | 恢复轮询把已停止任务"复活"为 done 并重启已停止的 Agent 轮次                       | `store.ts:3967-3995,8977-9005`                                     | 用户停止操作被覆盖（数据正确性）            |
+| P0     | FAL/custom 恢复轮询可并发双轮询，重复存储/覆盖图片                                | `store.ts:3850-3856,3997-4011`                                     | 重复写图 + 输出被先后覆盖                   |
+| P0     | `completeAgentImageTask` TOCTOU：停止后迟到成功仍写 done                          | `store.ts:6314-6342`                                               | 与失败路径守卫不对称                        |
+| P1     | persist 每次 setState 全量 partialize + JSON.stringify（Web 直接写 localStorage） | `store.ts:3402-3434`                                               | 生成期每秒多次序列化数百 KB                 |
+| P1     | executeTask 无任务级 AbortController，取消后仍在途提交                            | `store.ts:7221-8161`                                               | 无法中止在途请求；取消后图片落库成孤儿      |
+| P1     | submitAgentMessage 双重提交 TOCTOU（守卫在 await 之前）                           | `store.ts:5971-5974,6059-6084`                                     | 双击并行两个 running 轮次                   |
+| P1     | purge 与素材同步队列 TOCTOU，墓碑失效                                             | `assetLibraryRepository.ts:223-230`、`db.ts:904-917`               | 已删素材复活                                |
+| P1     | asset-kernel 镜像无重试、仅 count 比对                                            | `assetLibraryRepository.ts:73-81,163-184`                          | 主备库静默不一致                            |
+| P1     | 主进程 node:sqlite 同步阻塞 + 全表扫描                                            | `asset-catalog.ts:236-342`                                         | 主线程卡顿                                  |
+| P1     | 图片网格 tile 总是加载原图、无解码并发上限                                        | `GalleryImageTile.tsx:54-57,85`                                    | 100-300MB 峰值内存                          |
+| P1     | 无单实例锁、console-message 签名过时、preload 双源漂移                            | `main.ts:166-170`、`electron/preload.cjs` vs `preload.ts`          | 双开竞态 / 主进程异常噪音 / dev-prod 不一致 |
+| P1     | 无 CSP + api:fetch 无主机白名单 + 远程字体                                        | `index.html`、`api-transport.ts:31-60`、`src/index.css:1-2`        | XSS 放大面、隐私外泄                        |
+| P2     | 无 ESLint/Prettier、CI 不跑测试、electron 无类型检查                              | 仓库根、`.github/workflows/release.yml`                            | 回归全靠自觉                                |
+| P2     | 巨型单文件（store.ts 9801 行等 15 个 100KB+ 文件）                                | 见 §六                                                             | 维护成本高                                  |
+| P2     | 编码损坏（mojibake）5 处，含用户可见错误串                                        | `src/lib/imagePostprocess.ts:195` 等                               | 用户看到乱码                                |
+| P3     | 死依赖（zundo、framer-motion、lenis）、死文件（test-zundo.ts）                    | 根目录、package.json                                               | 包体积与混淆                                |
 
 ---
 
@@ -218,17 +218,17 @@
 
 1. **巨型单文件**（>100KB，均为单一组件/模块的"god file"）：
 
-   | 文件 | 规模 | 行数 |
-   |---|---|---|
-   | `src/store.ts` | 417KB | 9801 |
-   | `src/components/SettingsModal.tsx` | 224KB | 3730 |
-   | `src/components/InputBar.tsx` | 183KB | 3904 |
-   | `src/features/strategy/adapters/GallerySopBatchModal.tsx` | 171KB | 3131 |
-   | `src/features/strategy/SopManagementCenter.tsx` | 75KB | ~1600 |
-   | `src/components/AgentWorkspace.tsx` | 74KB | ~1600 |
-   | `src/lib/agentApi.ts` | 74KB | 1795 |
-   | `src/components/DetailModal.tsx` | 66KB | ~1500 |
-   | `src/components/FavoriteCollections.tsx` | 64KB | ~1300 |
+   | 文件                                                      | 规模  | 行数  |
+   | --------------------------------------------------------- | ----- | ----- |
+   | `src/store.ts`                                            | 417KB | 9801  |
+   | `src/components/SettingsModal.tsx`                        | 224KB | 3730  |
+   | `src/components/InputBar.tsx`                             | 183KB | 3904  |
+   | `src/features/strategy/adapters/GallerySopBatchModal.tsx` | 171KB | 3131  |
+   | `src/features/strategy/SopManagementCenter.tsx`           | 75KB  | ~1600 |
+   | `src/components/AgentWorkspace.tsx`                       | 74KB  | ~1600 |
+   | `src/lib/agentApi.ts`                                     | 74KB  | 1795  |
+   | `src/components/DetailModal.tsx`                          | 66KB  | ~1500 |
+   | `src/components/FavoriteCollections.tsx`                  | 64KB  | ~1300 |
 
    这些文件同时是上面性能问题的温床（订阅与计算无法局部化）。**建议**：按"组件壳 + 子组件 + lib"渐进拆分，优先拆 InputBar 与 SettingsModal；拆分过程同步做窄选择优化，一举两得。
 
@@ -299,105 +299,105 @@
 
 ### ✅ Phase 1 — 快速见效（已完成，163/1133 测试通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | `console-message` 事件双形态兼容处理（修复 Electron 32+ 下主进程 TypeError） | `electron/main.ts` |
-| 2 | 打包后窗口图标路径 `../public/` → `../dist/` | `electron/main.ts` |
-| 3 | 单实例锁（`requestSingleInstanceLock` + `second-instance` 唤起窗口） | `electron/main.ts` |
-| 4 | `before-quit` 等待 sqlite 关闭（更新安装流程除外，避免破坏 electron-updater） | `electron/main.ts` |
-| 5 | 删除生产 debug console.log | `electron/main.ts` |
-| 6 | 乱码错误串"图片导出失败" | `src/lib/imagePostprocess.ts` |
-| 7 | 乱码 JSDoc 注释 | `src/types.ts` |
-| 8 | TaskCard `s.settings` → `s.settings.alwaysShowRetryButton` 窄选择 | `src/components/TaskCard.tsx` |
-| 9 | `updateTaskInStore` 移除每次 patch 的 O(n) `countSuccessfulOutputImages` + 死函数 `maybeOpenSupportPrompt` | `src/store.ts` |
-| 10 | 删除死依赖 zundo/framer-motion/lenis/core-js 与死文件 test-zundo.ts、ui/demo.tsx、ui/images-scrolling-animation.tsx（同步移除 catalog.ts 条目）、孤儿配置 vite.web.config.ts、过时 preload.cjs（dev/prod 统一用构建产物） | 多处 |
-| 11 | CI 测试门禁（release.yml 增加 test + electron 类型检查；新增 ci.yml PR 工作流） | `.github/workflows/` |
-| 12 | electron 层接入类型检查（tsconfig 覆盖全部 11 个文件、ESM 模块解析、node:sqlite 最小声明、修复暴露的 8 处类型错误：streaming-zip 联合类型、preload spread、export-zip 条目） | `electron/`、`package.json` |
-| 13 | sortOrder SQL 注入面枚举校验 | `electron/asset-catalog.ts` |
+| #   | 修复                                                                                                                                                                                                                      | 文件                          |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| 1   | `console-message` 事件双形态兼容处理（修复 Electron 32+ 下主进程 TypeError）                                                                                                                                              | `electron/main.ts`            |
+| 2   | 打包后窗口图标路径 `../public/` → `../dist/`                                                                                                                                                                              | `electron/main.ts`            |
+| 3   | 单实例锁（`requestSingleInstanceLock` + `second-instance` 唤起窗口）                                                                                                                                                      | `electron/main.ts`            |
+| 4   | `before-quit` 等待 sqlite 关闭（更新安装流程除外，避免破坏 electron-updater）                                                                                                                                             | `electron/main.ts`            |
+| 5   | 删除生产 debug console.log                                                                                                                                                                                                | `electron/main.ts`            |
+| 6   | 乱码错误串"图片导出失败"                                                                                                                                                                                                  | `src/lib/imagePostprocess.ts` |
+| 7   | 乱码 JSDoc 注释                                                                                                                                                                                                           | `src/types.ts`                |
+| 8   | TaskCard `s.settings` → `s.settings.alwaysShowRetryButton` 窄选择                                                                                                                                                         | `src/components/TaskCard.tsx` |
+| 9   | `updateTaskInStore` 移除每次 patch 的 O(n) `countSuccessfulOutputImages` + 死函数 `maybeOpenSupportPrompt`                                                                                                                | `src/store.ts`                |
+| 10  | 删除死依赖 zundo/framer-motion/lenis/core-js 与死文件 test-zundo.ts、ui/demo.tsx、ui/images-scrolling-animation.tsx（同步移除 catalog.ts 条目）、孤儿配置 vite.web.config.ts、过时 preload.cjs（dev/prod 统一用构建产物） | 多处                          |
+| 11  | CI 测试门禁（release.yml 增加 test + electron 类型检查；新增 ci.yml PR 工作流）                                                                                                                                           | `.github/workflows/`          |
+| 12  | electron 层接入类型检查（tsconfig 覆盖全部 11 个文件、ESM 模块解析、node:sqlite 最小声明、修复暴露的 8 处类型错误：streaming-zip 联合类型、preload spread、export-zip 条目）                                              | `electron/`、`package.json`   |
+| 13  | sortOrder SQL 注入面枚举校验                                                                                                                                                                                              | `electron/asset-catalog.ts`   |
 
 ### ✅ Phase 2 — 恢复/停止路径正确性（已完成，163/1133 测试通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | `updateTaskInStore` 增加前置状态条件参数 `expected?: (task) => boolean`，await 后迟到结果无法覆盖已停止任务 | `src/store.ts` |
-| 2 | 恢复轮询在途集合 `falRecoveryInFlight`/`customRecoveryInFlight`，杜绝并发双轮询；`scheduleFalRecovery` 在途检查 | `src/store.ts` |
-| 3 | `completeRecoveredFalTask/CustomTask` 开头与写库双守卫（`falRecoverable/customRecoverable === true`），停止/删除后不得"复活"为 done | `src/store.ts` |
-| 4 | 恢复入口拒绝非 recoverable 任务；恢复可重试错误先移出在途再调度（避免重试永久停止） | `src/store.ts` |
-| 5 | `completeAgentImageTask` 写 done 前要求 `status === 'running'`（与失败路径守卫对齐） | `src/store.ts` |
-| 6 | `updateTaskInStore` 集中清理：任务变不可恢复（done / recoverable=false）自动清恢复定时器与 watchdog | `src/store.ts` |
-| 7 | 删除路径（removeTask/removeMultipleTasks/clearFailedTasks/clearData）显式清三个定时器 + 在途集合 | `src/store.ts` |
-| 8 | `submitAgentMessage` 双重提交：updater 内二次校验（关闭 await 间隙），被拦截时提示并返回 | `src/store.ts` |
+| #   | 修复                                                                                                                                | 文件           |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| 1   | `updateTaskInStore` 增加前置状态条件参数 `expected?: (task) => boolean`，await 后迟到结果无法覆盖已停止任务                         | `src/store.ts` |
+| 2   | 恢复轮询在途集合 `falRecoveryInFlight`/`customRecoveryInFlight`，杜绝并发双轮询；`scheduleFalRecovery` 在途检查                     | `src/store.ts` |
+| 3   | `completeRecoveredFalTask/CustomTask` 开头与写库双守卫（`falRecoverable/customRecoverable === true`），停止/删除后不得"复活"为 done | `src/store.ts` |
+| 4   | 恢复入口拒绝非 recoverable 任务；恢复可重试错误先移出在途再调度（避免重试永久停止）                                                 | `src/store.ts` |
+| 5   | `completeAgentImageTask` 写 done 前要求 `status === 'running'`（与失败路径守卫对齐）                                                | `src/store.ts` |
+| 6   | `updateTaskInStore` 集中清理：任务变不可恢复（done / recoverable=false）自动清恢复定时器与 watchdog                                 | `src/store.ts` |
+| 7   | 删除路径（removeTask/removeMultipleTasks/clearFailedTasks/clearData）显式清三个定时器 + 在途集合                                    | `src/store.ts` |
+| 8   | `submitAgentMessage` 双重提交：updater 内二次校验（关闭 await 间隙），被拦截时提示并返回                                            | `src/store.ts` |
 
 ### ✅ Phase 3 — 泄漏与连接复用（已完成，163/1133 测试通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | Agent 流式状态清理：轮次完成/出错/删除对话时统一 `clearAgentTextFlushTimer` + `clearAgentStreamingText`，防止 `agentStreamingTexts` 键值永久驻留与陈旧 80ms flush 把残缺 delta 追加到终态消息 | `src/store.ts` |
-| 2 | IndexedDB 连接复用：模块级缓存（按 `indexedDB` 全局引用为键，测试 stubGlobal 自动失效）；`onversionchange` 自动关闭重置；`indexedDB` 不可用时返回已拒绝 Promise（绝不同步抛错，修复了缓存引入的未处理拒绝） | `src/lib/db.ts` |
+| #   | 修复                                                                                                                                                                                                        | 文件            |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| 1   | Agent 流式状态清理：轮次完成/出错/删除对话时统一 `clearAgentTextFlushTimer` + `clearAgentStreamingText`，防止 `agentStreamingTexts` 键值永久驻留与陈旧 80ms flush 把残缺 delta 追加到终态消息               | `src/store.ts`  |
+| 2   | IndexedDB 连接复用：模块级缓存（按 `indexedDB` 全局引用为键，测试 stubGlobal 自动失效）；`onversionchange` 自动关闭重置；`indexedDB` 不可用时返回已拒绝 Promise（绝不同步抛错，修复了缓存引入的未处理拒绝） | `src/lib/db.ts` |
 
 ### ✅ Phase 4 — Electron 安全加固（已完成，163/1133 测试通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **IPC 发送方校验**：新增 `ipc-guard.ts`（`assertTrustedSender`：主窗口主 frame + 自身源校验），`ipc-handlers.ts` 约 60 个 handler 全部经 `handleChecked`/`onChecked` 包装；`api-transport.ts` 两个 api:fetch 通道、`main.ts` 自有 5 个 handler、`asset-kernel.ts` 的 trusted() 一并接入 | `electron/ipc-guard.ts`（新）、`ipc-handlers.ts`、`api-transport.ts`、`main.ts`、`asset-kernel.ts` |
-| 2 | **导航/弹窗防护**：`will-navigate` 拒绝非白名单 URL（dev 仅 dev server、prod 仅 file://）；`setWindowOpenHandler` 一律 deny，http(s) 链接交系统浏览器；`web-contents-created` 全局施加 | `electron/main.ts` |
-| 3 | **CSP（打包版）**：`onHeadersReceived` 下发（script-src 'self'、object-src 'none'、base-uri/frame-ancestors/form-action 收紧；style/img/font/connect 按功能放宽并注明原因）；dev 模式不启用避免破坏 HMR | `electron/main.ts` |
-| 4 | **tangbao:// 协议 MIME 白名单**：仅 `image/*` 按原类型下发，其余一律 `application/octet-stream`（防 DB 中被替换为 HTML 后在 secure 源执行脚本） | `electron/asset-kernel.ts` |
-| 5 | **路径白名单收紧（部分）**：移除 `distributeCompositeFile` 的目标目录自动加根（分发目标必为已授权来源目录的子目录，功能不受影响）；`scanEnteredCompositeBackgroundFolder`/`authorizeCompositeOutputDirectory` 的自动加根保留（用户输入目录/输出根目录的产品流程依赖，已在报告中标注残余风险，彻底方案需改为系统对话框流程） | `electron/ipc-handlers.ts` |
+| #   | 修复                                                                                                                                                                                                                                                                                                                        | 文件                                                                                               |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 1   | **IPC 发送方校验**：新增 `ipc-guard.ts`（`assertTrustedSender`：主窗口主 frame + 自身源校验），`ipc-handlers.ts` 约 60 个 handler 全部经 `handleChecked`/`onChecked` 包装；`api-transport.ts` 两个 api:fetch 通道、`main.ts` 自有 5 个 handler、`asset-kernel.ts` 的 trusted() 一并接入                                     | `electron/ipc-guard.ts`（新）、`ipc-handlers.ts`、`api-transport.ts`、`main.ts`、`asset-kernel.ts` |
+| 2   | **导航/弹窗防护**：`will-navigate` 拒绝非白名单 URL（dev 仅 dev server、prod 仅 file://）；`setWindowOpenHandler` 一律 deny，http(s) 链接交系统浏览器；`web-contents-created` 全局施加                                                                                                                                      | `electron/main.ts`                                                                                 |
+| 3   | **CSP（打包版）**：`onHeadersReceived` 下发（script-src 'self'、object-src 'none'、base-uri/frame-ancestors/form-action 收紧；style/img/font/connect 按功能放宽并注明原因）；dev 模式不启用避免破坏 HMR                                                                                                                     | `electron/main.ts`                                                                                 |
+| 4   | **tangbao:// 协议 MIME 白名单**：仅 `image/*` 按原类型下发，其余一律 `application/octet-stream`（防 DB 中被替换为 HTML 后在 secure 源执行脚本）                                                                                                                                                                             | `electron/asset-kernel.ts`                                                                         |
+| 5   | **路径白名单收紧（部分）**：移除 `distributeCompositeFile` 的目标目录自动加根（分发目标必为已授权来源目录的子目录，功能不受影响）；`scanEnteredCompositeBackgroundFolder`/`authorizeCompositeOutputDirectory` 的自动加根保留（用户输入目录/输出根目录的产品流程依赖，已在报告中标注残余风险，彻底方案需改为系统对话框流程） | `electron/ipc-handlers.ts`                                                                         |
 
 **仍待处理（安全）**：api:fetch 主机白名单（S5，需基于配置文件的 baseUrl 构建主进程白名单）；Windows 代码签名/updater 签名校验（S7，发布流程事项）。
 
 ### ✅ Phase 5 — 写盘合并与缩略图优先（已完成，163/1133 测试通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **瞬态字段写盘合并**：`updateTaskInStore` 中仅含瞬态字段（progressStage/progressMessage/progressUpdatedAt/streamPartialImageIds）的 patch 走 300ms 合并写盘（单飞+排队，写盘时读取当前内存状态），非瞬态 patch（status/outputImages/error 等）保持立即写盘；`pagehide` 时尽力 flush——单次生成 10~30+ 次整任务 IDB 重写收敛为少量合并写 | `src/store.ts` |
-| 2 | **workspaceTabs 身份保持**：任务不属于任何 tab 时不再重建数组，订阅者不随进度 tick 无谓重渲染 | `src/store.ts` |
-| 3 | **网格缩略图优先**：`GalleryImageTile` 挂载只加载缩略图，原图改为 `pointerenter`（hover 交互意图）按需加载——消除可见区 20-40 个 tile 同时解码 2K/4K 原图的 100-300MB 峰值内存；更新对应交互测试为新行为 | `src/components/GalleryImageTile.tsx` + 测试 |
-| 4 | **高频进度字段拆分 runtimeStore**：`updateTaskProgress` 只写 `useRuntimeStore.taskProgress`（带相等短路），不再重建 tasks 数组、不触发 s.tasks 订阅者重渲染、不写 IndexedDB；`taskProgressDisplay`/`TaskCard`/`DetailModal`/`GalleryTaskNavigator` 读取实时进度（任务对象字段仅作兼容回退）；任务 done/删除时清理避免泄漏；相关测试更新为断言 runtimeStore | `src/stores/runtimeStore.ts`、`src/store.ts`、`src/lib/taskProgressDisplay.ts`、`TaskCard.tsx`、`DetailModal.tsx`、`GalleryTaskNavigator.tsx`、`store.test.ts` |
+| #   | 修复                                                                                                                                                                                                                                                                                                                                                       | 文件                                                                                                                                                           |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **瞬态字段写盘合并**：`updateTaskInStore` 中仅含瞬态字段（progressStage/progressMessage/progressUpdatedAt/streamPartialImageIds）的 patch 走 300ms 合并写盘（单飞+排队，写盘时读取当前内存状态），非瞬态 patch（status/outputImages/error 等）保持立即写盘；`pagehide` 时尽力 flush——单次生成 10~30+ 次整任务 IDB 重写收敛为少量合并写                     | `src/store.ts`                                                                                                                                                 |
+| 2   | **workspaceTabs 身份保持**：任务不属于任何 tab 时不再重建数组，订阅者不随进度 tick 无谓重渲染                                                                                                                                                                                                                                                              | `src/store.ts`                                                                                                                                                 |
+| 3   | **网格缩略图优先**：`GalleryImageTile` 挂载只加载缩略图，原图改为 `pointerenter`（hover 交互意图）按需加载——消除可见区 20-40 个 tile 同时解码 2K/4K 原图的 100-300MB 峰值内存；更新对应交互测试为新行为                                                                                                                                                    | `src/components/GalleryImageTile.tsx` + 测试                                                                                                                   |
+| 4   | **高频进度字段拆分 runtimeStore**：`updateTaskProgress` 只写 `useRuntimeStore.taskProgress`（带相等短路），不再重建 tasks 数组、不触发 s.tasks 订阅者重渲染、不写 IndexedDB；`taskProgressDisplay`/`TaskCard`/`DetailModal`/`GalleryTaskNavigator` 读取实时进度（任务对象字段仅作兼容回退）；任务 done/删除时清理避免泄漏；相关测试更新为断言 runtimeStore | `src/stores/runtimeStore.ts`、`src/store.ts`、`src/lib/taskProgressDisplay.ts`、`TaskCard.tsx`、`DetailModal.tsx`、`GalleryTaskNavigator.tsx`、`store.test.ts` |
 
 ### ✅ Phase 6 — 网格重算缓存化 + 内容哈希去重（已完成，163/1133 测试通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **瀑布流布局内容戳记缓存**：`buildGalleryMasonryLayout` 以（aspectRatios 数值序列 + columns/width/gap）为键做单槽缓存——瞬态更新（streamPartialImageIds 每帧）不改变这些输入时直接复用布局对象，下游 `visibleMasonryItems` useMemo 短路；避免每帧 O(images × columns) 重排 + 大量对象分配。正确性论证：布局位置只取决于 ratios 序列，图片增删导致 ratios 变化即自动重算 | `src/lib/galleryMasonryLayout.ts` |
-| 2 | **筛选 JSON.stringify 去重**：`filterGalleryTasks` 引入 per-task `WeakMap` 的 params 字符串缓存（任务对象引用不变则复用）——每次任务更新不再对全部任务重复 JSON.stringify(params)。**注意**：审计初拟的"筛选结果引用稳定缓存"方案因会让下游卡片拿到过期任务对象而被否决，改为保留全量重算 + 消除最贵单项 | `src/lib/galleryTaskFilter.ts` |
-| 3 | **storeImage 内容哈希去重**：去重 id 从"base64 字符串哈希"改为"解码字节 SHA-256"（`imageFingerprint.computeContentHash`）——同图重新编码/重新压缩/换 MIME 后字节一致仍能去重；重复上传且已有本地文件时跳过冗余文件写入（查重前置到写文件之前）；`InputBar`/`compositeExportRuntime` 的引用 id 同步切换，删除废弃的 `hashDataUrl`（含旧 fallback）；旧字符串哈希 id 记录无需迁移 | `src/lib/db.ts`、`src/components/InputBar.tsx`、`src/features/composite/lib/compositeExportRuntime.ts` |
+| #   | 修复                                                                                                                                                                                                                                                                                                                                                                           | 文件                                                                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| 1   | **瀑布流布局内容戳记缓存**：`buildGalleryMasonryLayout` 以（aspectRatios 数值序列 + columns/width/gap）为键做单槽缓存——瞬态更新（streamPartialImageIds 每帧）不改变这些输入时直接复用布局对象，下游 `visibleMasonryItems` useMemo 短路；避免每帧 O(images × columns) 重排 + 大量对象分配。正确性论证：布局位置只取决于 ratios 序列，图片增删导致 ratios 变化即自动重算         | `src/lib/galleryMasonryLayout.ts`                                                                      |
+| 2   | **筛选 JSON.stringify 去重**：`filterGalleryTasks` 引入 per-task `WeakMap` 的 params 字符串缓存（任务对象引用不变则复用）——每次任务更新不再对全部任务重复 JSON.stringify(params)。**注意**：审计初拟的"筛选结果引用稳定缓存"方案因会让下游卡片拿到过期任务对象而被否决，改为保留全量重算 + 消除最贵单项                                                                        | `src/lib/galleryTaskFilter.ts`                                                                         |
+| 3   | **storeImage 内容哈希去重**：去重 id 从"base64 字符串哈希"改为"解码字节 SHA-256"（`imageFingerprint.computeContentHash`）——同图重新编码/重新压缩/换 MIME 后字节一致仍能去重；重复上传且已有本地文件时跳过冗余文件写入（查重前置到写文件之前）；`InputBar`/`compositeExportRuntime` 的引用 id 同步切换，删除废弃的 `hashDataUrl`（含旧 fallback）；旧字符串哈希 id 记录无需迁移 | `src/lib/db.ts`、`src/components/InputBar.tsx`、`src/features/composite/lib/compositeExportRuntime.ts` |
 
 ### ✅ Phase 7 — 浏览器端流式 ZIP 导出/导入（已完成，163/1133 测试通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **导出改流式 ZIP**：`exportData` 浏览器分支不再 `getAllImages()` 全表 + 全量字节驻留 + `zipSync` 同步压缩；改为 `getAllImageIds` + `batchGetImages`（16 条一批，批间让出事件循环）+ fflate `Zip` 增量写入——图片/缩略图/合成资源用 `ZipPassThrough`（存储模式：本身已是压缩格式，避免压缩内存翻倍），manifest 用 `ZipDeflate`；峰值内存从 ≈3-4× 库大小降为 zip 输出 + 单批图片；条目 mtime 加 1980-2099 合法性校验 | `src/store.ts`、`src/lib/db.ts`（新增 `batchGetImageThumbnails`） |
-| 2 | **导入改两遍流式解压**：`importData` 不再 `unzipSync` 全量展开——第一遍 `scanZipArchive` 只解压 manifest + 收集条目路径清单（未 start() 的条目不解压不驻留）；`validateBackupArchive` 改为路径清单校验（新增 `archivePaths` 参数）；第二遍逐条目解压，图片/缩略图 ≤32/64 条一批 `commitImportedRecords` 落库后即弃，合成资源保留给 restoreCompositeBackup；`bytesToDataUrl` 改分块转换；删除死代码 `generateExportZipBuffer`（审计确认无调用者）；`unzipSync`/`zipSync` 依赖移除 | `src/store.ts`、`src/lib/backupImport.ts` |
-| 3 | **语义说明**：导入原子性由"单事务全量"降为"逐批提交"（审计已指出导入本无整体原子性），失败时已落库图片保留、任务不提交；旧版 zipSync 备份（deflate 条目）与新备份（stored 条目）均可正常导入（UnzipInflate + UnzipPassThrough 双注册） | — |
+| #   | 修复                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 文件                                                              |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1   | **导出改流式 ZIP**：`exportData` 浏览器分支不再 `getAllImages()` 全表 + 全量字节驻留 + `zipSync` 同步压缩；改为 `getAllImageIds` + `batchGetImages`（16 条一批，批间让出事件循环）+ fflate `Zip` 增量写入——图片/缩略图/合成资源用 `ZipPassThrough`（存储模式：本身已是压缩格式，避免压缩内存翻倍），manifest 用 `ZipDeflate`；峰值内存从 ≈3-4× 库大小降为 zip 输出 + 单批图片；条目 mtime 加 1980-2099 合法性校验                                                               | `src/store.ts`、`src/lib/db.ts`（新增 `batchGetImageThumbnails`） |
+| 2   | **导入改两遍流式解压**：`importData` 不再 `unzipSync` 全量展开——第一遍 `scanZipArchive` 只解压 manifest + 收集条目路径清单（未 start() 的条目不解压不驻留）；`validateBackupArchive` 改为路径清单校验（新增 `archivePaths` 参数）；第二遍逐条目解压，图片/缩略图 ≤32/64 条一批 `commitImportedRecords` 落库后即弃，合成资源保留给 restoreCompositeBackup；`bytesToDataUrl` 改分块转换；删除死代码 `generateExportZipBuffer`（审计确认无调用者）；`unzipSync`/`zipSync` 依赖移除 | `src/store.ts`、`src/lib/backupImport.ts`                         |
+| 3   | **语义说明**：导入原子性由"单事务全量"降为"逐批提交"（审计已指出导入本无整体原子性），失败时已落库图片保留、任务不提交；旧版 zipSync 备份（deflate 条目）与新备份（stored 条目）均可正常导入（UnzipInflate + UnzipPassThrough 双注册）                                                                                                                                                                                                                                          | —                                                                 |
 
 ### ✅ Phase 8 — purge TOCTOU 事务化 + 墓碑批量查询（已完成，164 文件 / 1136 用例通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **素材写锁（TOCTOU 修复核心）**：新增 `assetWriteLock.ts`（promise 链互斥，不可重入）；`upsertFromTask` 的"读墓碑快照 → 构建 → 写素材"、`executeAssetPurge` 的"删素材 + 写墓碑"事务、`deleteGeneratedAsset` 的"删资产 + 孤儿 blob GC"、`putGeneratedAsset(s)` 全部持有同一把锁——purge 提交后同步队列不可能再用旧墓碑快照把已删素材"复活"；`persistIdentityAndMirror` 拆出 Unlocked 内部实现避免嵌套死锁（设计约定：嵌套持锁场景由最外层统一持锁）；附锁单元测试（串行化/失败不卡死/排队不放行） | `src/lib/assetWriteLock.ts`（新）+ 测试、`src/lib/assetLibraryRepository.ts`、`src/lib/assetPurge.ts` |
-| 2 | **墓碑按 imageId 批量查询**：DB_VERSION 12→13 迁移（新建/旧库均补 `imageId` 索引）；新增 `batchGetAssetTombstones(imageIds)` 走索引查询，替代 `upsertFromTask` 每次同步的全表扫描（几十个候选槽位 vs 全表）；测试 mock 同步更新 | `src/lib/db.ts`、`src/lib/assetLibraryRepository.ts`、相关测试 mock |
-| 3 | **deleteGeneratedAsset 竞态修复**：孤儿 blob 清理（按引用推断）纳入写锁，与并发 `persistIdentityAndMirror` 串行，不再误删共享 blob | `src/lib/assetLibraryRepository.ts` |
+| #   | 修复                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 文件                                                                                                  |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 1   | **素材写锁（TOCTOU 修复核心）**：新增 `assetWriteLock.ts`（promise 链互斥，不可重入）；`upsertFromTask` 的"读墓碑快照 → 构建 → 写素材"、`executeAssetPurge` 的"删素材 + 写墓碑"事务、`deleteGeneratedAsset` 的"删资产 + 孤儿 blob GC"、`putGeneratedAsset(s)` 全部持有同一把锁——purge 提交后同步队列不可能再用旧墓碑快照把已删素材"复活"；`persistIdentityAndMirror` 拆出 Unlocked 内部实现避免嵌套死锁（设计约定：嵌套持锁场景由最外层统一持锁）；附锁单元测试（串行化/失败不卡死/排队不放行） | `src/lib/assetWriteLock.ts`（新）+ 测试、`src/lib/assetLibraryRepository.ts`、`src/lib/assetPurge.ts` |
+| 2   | **墓碑按 imageId 批量查询**：DB_VERSION 12→13 迁移（新建/旧库均补 `imageId` 索引）；新增 `batchGetAssetTombstones(imageIds)` 走索引查询，替代 `upsertFromTask` 每次同步的全表扫描（几十个候选槽位 vs 全表）；测试 mock 同步更新                                                                                                                                                                                                                                                                 | `src/lib/db.ts`、`src/lib/assetLibraryRepository.ts`、相关测试 mock                                   |
+| 3   | **deleteGeneratedAsset 竞态修复**：孤儿 blob 清理（按引用推断）纳入写锁，与并发 `persistIdentityAndMirror` 串行，不再误删共享 blob                                                                                                                                                                                                                                                                                                                                                              | `src/lib/assetLibraryRepository.ts`                                                                   |
 
 ### ✅ Phase 9 — 任务取消 + 镜像一致性 + 主进程减负 + ESLint 门禁（已完成，164 文件 / 1136 用例通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **executeTask 任务级 AbortController**：`taskAbortControllers` Map + `stopTask()`（中止在途请求 + 清理恢复定时器）；signal 透传 `CallApiOptions`（新增字段）→ `callImageApi` → OpenAI 兼容（3 处请求路径经 `linkTaskSignal` 链接到超时 controller）与 fal（步骤间检查）；`runWithConcurrencyAndRetry`/`retryTransientRequest`/`retryWithBackoff` 支持 signal 且退避等待可中止；编排主循环每轮检查；AbortError 在 catch 中收敛为"任务已停止"（保留已生成图片）；finally 释放控制器 | `src/store.ts`、`src/lib/imageApiShared.ts`、`src/lib/api.ts`、`openaiCompatibleImageApi.ts`、`falAiImageApi.ts` |
-| 2 | **asset-kernel 镜像重试队列 + 内容级校验**：`persistIdentityAndMirrorUnlocked` 的 `assetCatalogUpsert` 与 `deleteGeneratedAsset` 的 `assetCatalogDelete` 失败不再静默，进入带退避的重试队列（上限 5 次，超限记日志）；`hydrate` 在 count 一致时新增内容级校验——比较最近 200 条（updatedAt 倒序，IndexedDB 索引 vs SQLite 查询）是否一致，捕捉"数量相同但内容落后"的镜像漂移 | `src/lib/assetLibraryRepository.ts`、`src/lib/db.ts`（新增 `getRecentGeneratedAssets`） |
-| 3 | **主进程减负（低风险先行）**：`AssetCatalog.getCounts` 加 5s TTL 缓存（写入路径失效）——query/recommend 不再每次全表 SUM + 两趟 json_each 分组；背景图扫描 `getImageSizeSync` 改为**文件头解析**（PNG IHDR / JPEG SOF / WEBP VP8/VP8L/VP8X），替代 `nativeImage.createFromPath` 全量解码（上千张图不再阻塞主进程数秒），删除逐文件 console.log | `electron/asset-catalog.ts`、`electron/ipc-handlers.ts` |
-| 4 | **ESLint/Prettier 门禁**：新增 `eslint.config.js`（flat config：js + typescript-eslint recommended + react-hooks；rules-of-hooks 为 error，exhaustive-deps / no-explicit-any 为 warn，存量噪音规则降级 warn）、`.prettierrc`、`.prettierignore`、`lint`/`format`/`format:check` scripts；**顺带修复 3 个真实问题**：① DetailModal 在 early return 后调用 hook（rules-of-hooks error，hook 移到 return 之前）② streaming-zip 的 async Promise executor 反模式（审计 R5，改 sync executor + async run() + catch(fail)）③ WorkspaceTabManagerModal 的 require() 改动态 import；`eslint --fix` 自动清理可修复项；CI（ci.yml + release.yml）增加 lint 步骤；当前 **0 errors / 189 warnings**（any 51 处等存量待后续收敛） | `eslint.config.js`（新）、`.prettierrc`（新）、`package.json`、`.github/workflows/`、`DetailModal.tsx`、`streaming-zip.ts`、`WorkspaceTabManagerModal.tsx`、`GalleryImageTile.tsx`、`InputBar.tsx` 等 |
+| #   | 修复                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 文件                                                                                                                                                                                                  |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **executeTask 任务级 AbortController**：`taskAbortControllers` Map + `stopTask()`（中止在途请求 + 清理恢复定时器）；signal 透传 `CallApiOptions`（新增字段）→ `callImageApi` → OpenAI 兼容（3 处请求路径经 `linkTaskSignal` 链接到超时 controller）与 fal（步骤间检查）；`runWithConcurrencyAndRetry`/`retryTransientRequest`/`retryWithBackoff` 支持 signal 且退避等待可中止；编排主循环每轮检查；AbortError 在 catch 中收敛为"任务已停止"（保留已生成图片）；finally 释放控制器                                                                                                                                                                                                                                    | `src/store.ts`、`src/lib/imageApiShared.ts`、`src/lib/api.ts`、`openaiCompatibleImageApi.ts`、`falAiImageApi.ts`                                                                                      |
+| 2   | **asset-kernel 镜像重试队列 + 内容级校验**：`persistIdentityAndMirrorUnlocked` 的 `assetCatalogUpsert` 与 `deleteGeneratedAsset` 的 `assetCatalogDelete` 失败不再静默，进入带退避的重试队列（上限 5 次，超限记日志）；`hydrate` 在 count 一致时新增内容级校验——比较最近 200 条（updatedAt 倒序，IndexedDB 索引 vs SQLite 查询）是否一致，捕捉"数量相同但内容落后"的镜像漂移                                                                                                                                                                                                                                                                                                                                          | `src/lib/assetLibraryRepository.ts`、`src/lib/db.ts`（新增 `getRecentGeneratedAssets`）                                                                                                               |
+| 3   | **主进程减负（低风险先行）**：`AssetCatalog.getCounts` 加 5s TTL 缓存（写入路径失效）——query/recommend 不再每次全表 SUM + 两趟 json_each 分组；背景图扫描 `getImageSizeSync` 改为**文件头解析**（PNG IHDR / JPEG SOF / WEBP VP8/VP8L/VP8X），替代 `nativeImage.createFromPath` 全量解码（上千张图不再阻塞主进程数秒），删除逐文件 console.log                                                                                                                                                                                                                                                                                                                                                                        | `electron/asset-catalog.ts`、`electron/ipc-handlers.ts`                                                                                                                                               |
+| 4   | **ESLint/Prettier 门禁**：新增 `eslint.config.js`（flat config：js + typescript-eslint recommended + react-hooks；rules-of-hooks 为 error，exhaustive-deps / no-explicit-any 为 warn，存量噪音规则降级 warn）、`.prettierrc`、`.prettierignore`、`lint`/`format`/`format:check` scripts；**顺带修复 3 个真实问题**：① DetailModal 在 early return 后调用 hook（rules-of-hooks error，hook 移到 return 之前）② streaming-zip 的 async Promise executor 反模式（审计 R5，改 sync executor + async run() + catch(fail)）③ WorkspaceTabManagerModal 的 require() 改动态 import；`eslint --fix` 自动清理可修复项；CI（ci.yml + release.yml）增加 lint 步骤；当前 **0 errors / 189 warnings**（any 51 处等存量待后续收敛） | `eslint.config.js`（新）、`.prettierrc`（新）、`package.json`、`.github/workflows/`、`DetailModal.tsx`、`streaming-zip.ts`、`WorkspaceTabManagerModal.tsx`、`GalleryImageTile.tsx`、`InputBar.tsx` 等 |
 
 ### ✅ Phase 10 — Prettier 全量格式化 + ESLint 存量收敛 + 发布质量三项（已完成，164 文件 / 1136 用例通过，构建通过）
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **Prettier 全量格式化**：`npm run format` 统一 364 个文件的风格（单引号/无分号/120 宽），`format:check` 可作 CI 门禁；格式化后 tsc/eslint/tests 全绿 | 全仓 + `.prettierrc`/`.prettierignore` |
-| 2 | **ESLint 存量收敛**：清零并**重新收紧为 error** 三条规则——`no-useless-escape`（runner.ts 正则字符类、agentBatchImport.ts `[/-]`）、`preserve-caught-error`（8 处错误补 `{ cause }`：agentApi 超时×3、imageApiShared×3、storeSopGeneration、falAiImageApi）、`no-control-regex`（7 处文件名控制字符剥离为刻意行为，加豁免注释）；当前 **0 errors / 162 warnings**（no-explicit-any 111、exhaustive-deps 37、no-useless-assignment 14 待后续收敛） | `eslint.config.js`、runner.ts、agentBatchImport.ts、agentApi.ts、imageApiShared.ts、falAiImageApi.ts、storeSopGeneration.ts 等 |
-| 3 | **窗口状态持久化**：窗口 bounds（位置/尺寸）在 resize/move 防抖 500ms 保存、关闭时落盘 `userData/window-state.json`，启动时恢复（校验数值范围，minWidth/minHeight 兜底） | `electron/main.ts` |
-| 4 | **渲染进程崩溃恢复退避**：60s 内 ≥3 次崩溃停止自动 reload（原为无限循环），加载内置错误提示页；`decideRendererRecovery` 返回 `{reload:false}` 分支 + 测试覆盖 | `electron/renderer-crash-recovery.ts` + 测试、`electron/main.ts` |
-| 5 | **Electron fuses 加固**：`@electron/fuses` 在打包产物上禁用 RunAsNode / Node 选项环境变量 / CLI inspect，启用 Cookie 加密 + asar 完整性校验 + 仅从 asar 加载；`scripts/apply-fuses.mjs` 自动探测 win/mac/linux 产物，接入 `electron:build`（无产物时安全跳过） | `scripts/apply-fuses.mjs`（新）、`package.json` |
+| #   | 修复                                                                                                                                                                                                                                                                                                                                                                                                                                             | 文件                                                                                                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **Prettier 全量格式化**：`npm run format` 统一 364 个文件的风格（单引号/无分号/120 宽），`format:check` 可作 CI 门禁；格式化后 tsc/eslint/tests 全绿                                                                                                                                                                                                                                                                                             | 全仓 + `.prettierrc`/`.prettierignore`                                                                                         |
+| 2   | **ESLint 存量收敛**：清零并**重新收紧为 error** 三条规则——`no-useless-escape`（runner.ts 正则字符类、agentBatchImport.ts `[/-]`）、`preserve-caught-error`（8 处错误补 `{ cause }`：agentApi 超时×3、imageApiShared×3、storeSopGeneration、falAiImageApi）、`no-control-regex`（7 处文件名控制字符剥离为刻意行为，加豁免注释）；当前 **0 errors / 162 warnings**（no-explicit-any 111、exhaustive-deps 37、no-useless-assignment 14 待后续收敛） | `eslint.config.js`、runner.ts、agentBatchImport.ts、agentApi.ts、imageApiShared.ts、falAiImageApi.ts、storeSopGeneration.ts 等 |
+| 3   | **窗口状态持久化**：窗口 bounds（位置/尺寸）在 resize/move 防抖 500ms 保存、关闭时落盘 `userData/window-state.json`，启动时恢复（校验数值范围，minWidth/minHeight 兜底）                                                                                                                                                                                                                                                                         | `electron/main.ts`                                                                                                             |
+| 4   | **渲染进程崩溃恢复退避**：60s 内 ≥3 次崩溃停止自动 reload（原为无限循环），加载内置错误提示页；`decideRendererRecovery` 返回 `{reload:false}` 分支 + 测试覆盖                                                                                                                                                                                                                                                                                    | `electron/renderer-crash-recovery.ts` + 测试、`electron/main.ts`                                                               |
+| 5   | **Electron fuses 加固**：`@electron/fuses` 在打包产物上禁用 RunAsNode / Node 选项环境变量 / CLI inspect，启用 Cookie 加密 + asar 完整性校验 + 仅从 asar 加载；`scripts/apply-fuses.mjs` 自动探测 win/mac/linux 产物，接入 `electron:build`（无产物时安全跳过）                                                                                                                                                                                   | `scripts/apply-fuses.mjs`（新）、`package.json`                                                                                |
 
 ### 📋 utilityProcess 化 asset-catalog 评估（含运行期修正）
 
@@ -410,27 +410,27 @@
 
 > ⚠️ **运行期回退记录（2026-08-16）**：第 1 项「感知哈希移入 indexer」在实机运行时报 `SyntaxError: The requested module 'electron' does not provide an export named 'nativeImage'` —— **Electron utility process 的 electron 模块不提供 `nativeImage` 导出**（已核实：indexer 由 `utilityProcess.fork` 以 Node ESM 加载，无法使用主进程的 nativeImage）。已回退：`perceptualHash` 恢复在主进程计算（`asset-kernel.ts`），indexer 恢复纯文本向量（`asset-indexer.ts`），消息不再携带 localPath。**结论**：感知哈希迁移的可行路径是「渲染进程计算（renderer 已有 imageFingerprint 像素管线）后随 upsert 上报」或「主进程保留 + 异步化」，utilityProcess 方案不可行。
 
-| # | 修复 | 文件 |
-|---|---|---|
-| 1 | **感知哈希移入 indexer（已回退）**：尝试将 `perceptualHash` 移至 `asset-indexer.ts` 并在主进程取消逐图解码——运行时确认 utility process 不支持 `nativeImage`（SyntaxError），**已回退**；恢复主进程计算，代码中留注释记录限制 | `electron/asset-indexer.ts`、`electron/asset-kernel.ts`（回退后） |
-| 2 | **Prettier CI 门禁**：`format:check` 接入 ci.yml 与 release.yml | `.github/workflows/` |
-| 3 | **no-explicit-any 源码清零**：非测试源码 55 → **0**（19 个文件 57 处：`as any` → 精确类型、`catch (error: any)` → instanceof 收窄、`errJson: any` → Record 收窄、store.ts 13 处冗余断言直接删除，连带修正 Select.onChange 收紧后的 2 处调用方）；剩余 57 处全在测试文件（mock 惯用法，按要求保留）；eslint 总量从 162 warnings 降至 **0 errors / 108 warnings** | 19 个源码文件 |
-| 4 | **签名工程化**：`electron-builder.config.cjs` 取代 package.json 静态 build 块——Windows 有 `CSC_LINK`/`CSC_KEY_PASSWORD` 时自动签名（`signAndEditExecutable` 条件化）+ `publisherName` 写入（electron-updater Windows 发布者校验）；mac 有 `APPLE_ID` 时自动公证（hardenedRuntime + notarize）；配置头注释文档化无签名风险；`scripts/apply-fuses.mjs` 已对 win-unpacked 产物实测生效 | `electron-builder.config.cjs`（新）、`package.json` |
-| 5 | **exhaustive-deps 评估结论**：37 处多为有意的 mount-once 效果或行为敏感项（盲加依赖有死循环/行为回归风险），保持 warn 待人工逐处评审；`no-useless-assignment` 14 处同理（多为防御性初始化） | — |
-| 6 | **构建产物损坏修复（运行检测发现）**：preload.cjs 曾出现内容交错 + 非法 `export default`（SyntaxError: Unexpected token ':'）——根因是 dev server 进程被强杀时 vite-plugin-electron 半写构建产物；`npm run build` 重新生成后 `node --check` 通过。**注意**：dev 模式下强杀进程后若遇 preload 报错，重建即可 | `dist-electron/`（重建产物） |
+| #   | 修复                                                                                                                                                                                                                                                                                                                                                                                | 文件                                                              |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1   | **感知哈希移入 indexer（已回退）**：尝试将 `perceptualHash` 移至 `asset-indexer.ts` 并在主进程取消逐图解码——运行时确认 utility process 不支持 `nativeImage`（SyntaxError），**已回退**；恢复主进程计算，代码中留注释记录限制                                                                                                                                                        | `electron/asset-indexer.ts`、`electron/asset-kernel.ts`（回退后） |
+| 2   | **Prettier CI 门禁**：`format:check` 接入 ci.yml 与 release.yml                                                                                                                                                                                                                                                                                                                     | `.github/workflows/`                                              |
+| 3   | **no-explicit-any 源码清零**：非测试源码 55 → **0**（19 个文件 57 处：`as any` → 精确类型、`catch (error: any)` → instanceof 收窄、`errJson: any` → Record 收窄、store.ts 13 处冗余断言直接删除，连带修正 Select.onChange 收紧后的 2 处调用方）；剩余 57 处全在测试文件（mock 惯用法，按要求保留）；eslint 总量从 162 warnings 降至 **0 errors / 108 warnings**                     | 19 个源码文件                                                     |
+| 4   | **签名工程化**：`electron-builder.config.cjs` 取代 package.json 静态 build 块——Windows 有 `CSC_LINK`/`CSC_KEY_PASSWORD` 时自动签名（`signAndEditExecutable` 条件化）+ `publisherName` 写入（electron-updater Windows 发布者校验）；mac 有 `APPLE_ID` 时自动公证（hardenedRuntime + notarize）；配置头注释文档化无签名风险；`scripts/apply-fuses.mjs` 已对 win-unpacked 产物实测生效 | `electron-builder.config.cjs`（新）、`package.json`               |
+| 5   | **exhaustive-deps 评估结论**：37 处多为有意的 mount-once 效果或行为敏感项（盲加依赖有死循环/行为回归风险），保持 warn 待人工逐处评审；`no-useless-assignment` 14 处同理（多为防御性初始化）                                                                                                                                                                                         | —                                                                 |
+| 6   | **构建产物损坏修复（运行检测发现）**：preload.cjs 曾出现内容交错 + 非法 `export default`（SyntaxError: Unexpected token ':'）——根因是 dev server 进程被强杀时 vite-plugin-electron 半写构建产物；`npm run build` 重新生成后 `node --check` 通过。**注意**：dev 模式下强杀进程后若遇 preload 报错，重建即可                                                                          | `dist-electron/`（重建产物）                                      |
 
 ### 🖥️ 运行检测（2026-08-16 复跑全量验证 + 实机启动）
 
-| 检测项 | 结果 |
-|---|---|
-| 全量验证管线（tests / tsc×2 / eslint / build） | ✅ 164 文件 / 1137 用例、0 类型错误、0 lint 错误 |
-| Vite dev server（127.0.0.1:41731） | ✅ 309ms ready，HTTP 200，main.tsx 正常转换 |
-| 浏览器端实际渲染（无头截图 `app-screenshot.png`） | ✅ 工作区标签/统计栏/提示词输入/生成设置/词条库/日程表完整渲染，无白屏无报错 |
-| 打包版 Electron（fuses 加固后 `release/win-unpacked/糖包 V2.exe`） | ✅ 成功启动（main/GPU/renderer/utility 四进程），窗口标题 糖包 Image，内存 ~121MB |
-| 打包版数据层 | ✅ 桌面截图确认素材库显示 7 张真实素材、项目（APP/短剧）——IndexedDB + asset-kernel SQLite 工作正常 |
-| **单实例锁实证** | ✅ 二次启动被拦截正确退出（exit 0，聚焦已有窗口） |
-| 崩溃诊断 | ✅ `diagnostics/renderer-crashes.jsonl` 不存在 = 运行期间零渲染进程崩溃 |
-| 清理 | ✅ 应用实例与 dev server 均已停止（证据截图保留：`app-screenshot.png`、`desktop-capture.png`） |
+| 检测项                                                             | 结果                                                                                               |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| 全量验证管线（tests / tsc×2 / eslint / build）                     | ✅ 164 文件 / 1137 用例、0 类型错误、0 lint 错误                                                   |
+| Vite dev server（127.0.0.1:41731）                                 | ✅ 309ms ready，HTTP 200，main.tsx 正常转换                                                        |
+| 浏览器端实际渲染（无头截图 `app-screenshot.png`）                  | ✅ 工作区标签/统计栏/提示词输入/生成设置/词条库/日程表完整渲染，无白屏无报错                       |
+| 打包版 Electron（fuses 加固后 `release/win-unpacked/糖包 V2.exe`） | ✅ 成功启动（main/GPU/renderer/utility 四进程），窗口标题 糖包 Image，内存 ~121MB                  |
+| 打包版数据层                                                       | ✅ 桌面截图确认素材库显示 7 张真实素材、项目（APP/短剧）——IndexedDB + asset-kernel SQLite 工作正常 |
+| **单实例锁实证**                                                   | ✅ 二次启动被拦截正确退出（exit 0，聚焦已有窗口）                                                  |
+| 崩溃诊断                                                           | ✅ `diagnostics/renderer-crashes.jsonl` 不存在 = 运行期间零渲染进程崩溃                            |
+| 清理                                                               | ✅ 应用实例与 dev server 均已停止（证据截图保留：`app-screenshot.png`、`desktop-capture.png`）     |
 
 ### ⏳ 待后续阶段（见 §八/§九）
 
@@ -444,4 +444,4 @@
 
 ---
 
-*附：本报告结论来自 5 路并行审计（状态层、Electron/IPC、持久化层、渲染性能）+ 依赖与工程化审计，关键结论经人工复核。测试全量 163 文件 / 1133 用例通过。*
+_附：本报告结论来自 5 路并行审计（状态层、Electron/IPC、持久化层、渲染性能）+ 依赖与工程化审计，关键结论经人工复核。测试全量 163 文件 / 1133 用例通过。_

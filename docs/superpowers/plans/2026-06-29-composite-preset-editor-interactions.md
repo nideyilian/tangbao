@@ -13,6 +13,7 @@
 ### Task 1: Separate LOGO And Image Layers
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeV2Types.ts`
 - Modify: `src/features/composite/storeV2.ts`
 - Modify: `src/features/composite/storeV2.test.ts`
@@ -24,11 +25,7 @@
 - [ ] Add `CompositeV2MediaLayer` shared fields, `CompositeV2ImageLayer` and `CompositeV2LogoLayer` discriminants, plus:
 
 ```ts
-replaceOrAddLogoLayer: (
-  presetId: string,
-  asset: CompositeV2ImageAssetRef,
-  selectedLayerId?: string,
-) => string
+replaceOrAddLogoLayer: (presetId: string, asset: CompositeV2ImageAssetRef, selectedLayerId?: string) => string
 ```
 
 - [ ] Render both media types through the same renderer branch and label them separately in the layer inspector.
@@ -37,6 +34,7 @@ replaceOrAddLogoLayer: (
 ### Task 2: Content-Sized Black Text Layers
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeTextLayout.ts`
 - Create: `src/features/composite/lib/compositeTextLayout.test.ts`
 - Modify: `src/features/composite/lib/compositeV2Types.ts`
@@ -62,6 +60,7 @@ Use Canvas `measureText` in production and an injected line measurer in unit tes
 ### Task 3: LOGO Replacement And Inline Text Editing
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.test.tsx`
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
@@ -76,6 +75,7 @@ Use Canvas `measureText` in production and an injected line measurer in unit tes
 ### Task 4: Rebuild The Preset Management Layout
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.test.tsx`
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
@@ -92,6 +92,7 @@ Use Canvas `measureText` in production and an injected line measurer in unit tes
 ### Task 5: Verification And Desktop QA
 
 **Files:**
+
 - No production changes expected.
 
 - [ ] Run:

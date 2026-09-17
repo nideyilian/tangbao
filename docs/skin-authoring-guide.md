@@ -62,45 +62,51 @@
 所有 Token 在 `src/design-system/styles.css` 的 `:root` 与 `.dark` 块中有完整默认值。皮肤只需覆盖你想改的项。
 
 ### 3.1 字体（"真正的皮肤"必备）
-| Token | 作用 | 说明 |
-| --- | --- | --- |
-| `--font-ui-sans` | **全局中英文主体字体** | `tailwind.config.js` 中 `font-sans` 即引用它，覆盖后全站生效 |
-| `--font-mono` | 等宽字体（代码块等） | |
-| `--ds-font-sans` | 设计系统组件字体（镜映 `--font-ui-sans`） | 与 `--font-ui-sans` 同步覆盖 |
-| `--ds-font-size-xs/sm/md/lg/xl/2xl` | 字号阶梯 | `md` 为基准正文 |
-| `--ds-line-height-tight/normal/relaxed` | 行高阶梯 | 手绘皮肤调大以获得书写感 |
-| `--ds-font-weight-regular/medium/semibold/bold` | 字重阶梯 | |
+
+| Token                                           | 作用                                      | 说明                                                         |
+| ----------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------ |
+| `--font-ui-sans`                                | **全局中英文主体字体**                    | `tailwind.config.js` 中 `font-sans` 即引用它，覆盖后全站生效 |
+| `--font-mono`                                   | 等宽字体（代码块等）                      |                                                              |
+| `--ds-font-sans`                                | 设计系统组件字体（镜映 `--font-ui-sans`） | 与 `--font-ui-sans` 同步覆盖                                 |
+| `--ds-font-size-xs/sm/md/lg/xl/2xl`             | 字号阶梯                                  | `md` 为基准正文                                              |
+| `--ds-line-height-tight/normal/relaxed`         | 行高阶梯                                  | 手绘皮肤调大以获得书写感                                     |
+| `--ds-font-weight-regular/medium/semibold/bold` | 字重阶梯                                  |                                                              |
 
 > 字体必须离线可用：优先使用系统字体栈；确需自定义字体时，将裁剪后的 WOFF2 随应用打包，并用 `@font-face` + `font-display: swap` 加载。皮肤 CSS 禁止远程 `@import url(...)`，避免离线失败、供应链变化和首次渲染阻塞。
 
 ### 3.2 圆角
-| Token | 默认 | 用途 |
-| --- | --- | --- |
+
+| Token                                        | 默认                    | 用途                                                                                       |
+| -------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
 | `--ds-radius-sm / md / lg / xl / 2xl / full` | `0.375→1.5rem / 9999px` | 各类组件圆角；手绘皮肤改为 8 值抖动边框（`255px 15px 225px 15px / 15px 225px 15px 255px`） |
-| 自定义 `--ds-radius-sketch*` | — | 可在皮肤内新增专属圆角 Token 供组件覆盖使用 |
+| 自定义 `--ds-radius-sketch*`                 | —                       | 可在皮肤内新增专属圆角 Token 供组件覆盖使用                                                |
 
 ### 3.3 阴影
-| Token | 默认 | 用途 |
-| --- | --- | --- |
+
+| Token                      | 默认     | 用途                                              |
+| -------------------------- | -------- | ------------------------------------------------- |
 | `--ds-shadow-sm / md / lg` | 模糊投影 | 手绘皮肤去掉模糊、改为硬边偏移（马克笔/蜡笔落影） |
-| `--ds-shadow-focus` | 焦点环 | 聚焦描边 |
+| `--ds-shadow-focus`        | 焦点环   | 聚焦描边                                          |
 
 ### 3.4 颜色（语义 Token）
-| 分组 | Token |
-| --- | --- |
-| 中性/表面 | `--ds-color-canvas` `--ds-color-surface` `--ds-color-surface-subtle` `--ds-color-surface-raised` |
-| 文字 | `--ds-color-text` `--ds-color-text-muted` `--ds-color-text-subtle` `--ds-color-text-inverse` |
-| 描边 | `--ds-color-border` `--ds-color-border-strong` |
-| 主色 | `--ds-color-primary` `--ds-color-primary-hover` `--ds-color-primary-subtle` `--ds-color-primary-gradient`（线性渐变，主按钮背景）`--ds-color-focus` |
-| 语义状态 | `--ds-color-success[-hover/-subtle]` `--ds-color-warning[-subtle]` `--ds-color-danger[-hover/-subtle]` `--ds-color-info[-subtle]` |
-| 选择态 | `--ds-color-selection-surface` `--ds-color-selection-border` `--ds-color-selection-text` |
-| 遮罩 | `--ds-color-scrim` |
+
+| 分组      | Token                                                                                                                                               |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 中性/表面 | `--ds-color-canvas` `--ds-color-surface` `--ds-color-surface-subtle` `--ds-color-surface-raised`                                                    |
+| 文字      | `--ds-color-text` `--ds-color-text-muted` `--ds-color-text-subtle` `--ds-color-text-inverse`                                                        |
+| 描边      | `--ds-color-border` `--ds-color-border-strong`                                                                                                      |
+| 主色      | `--ds-color-primary` `--ds-color-primary-hover` `--ds-color-primary-subtle` `--ds-color-primary-gradient`（线性渐变，主按钮背景）`--ds-color-focus` |
+| 语义状态  | `--ds-color-success[-hover/-subtle]` `--ds-color-warning[-subtle]` `--ds-color-danger[-hover/-subtle]` `--ds-color-info[-subtle]`                   |
+| 选择态    | `--ds-color-selection-surface` `--ds-color-selection-border` `--ds-color-selection-text`                                                            |
+| 遮罩      | `--ds-color-scrim`                                                                                                                                  |
 
 ### 3.5 shadcn 兼容桥（旧组件用）
+
 `--background --foreground --muted --muted-foreground --border --input --primary --primary-foreground --sidebar --sidebar-foreground`
 深色块需同步覆盖对应的 `--background/--foreground/--border/--input/--primary/--sidebar` 等。
 
 ### 3.6 品牌色板桥
+
 `--skin-blue-50 … --skin-blue-950`（按主色 H/S 推导明度阶梯）。侧边栏等旧组件的 `bg-blue-*` 工具类经 `index.css` 映射到这套变量。
 
 ---
@@ -110,6 +116,7 @@
 要做到字体 + 圆角 + 阴影 + 组件描边风格整体改变，在标准 Token 覆盖之外，还需在皮肤文件里**直接写组件覆盖规则**（前缀 `:root[data-skin='<id>']`）。以下为经过验证的可用选择器清单：
 
 ### 4.1 卡片/浮层类（统一描边 + 圆角 + 硬阴影）
+
 ```css
 :root[data-skin='<id>'] .ds-card,
 :root[data-skin='<id>'] .ds-surface,
@@ -122,7 +129,7 @@
 :root[data-skin='<id>'] .ds-table-container,
 :root[data-skin='<id>'] .ds-code-block,
 :root[data-skin='<id>'] .ds-fieldset {
-  border-radius: var(--ds-radius-sketch);   /* 自定义圆角 */
+  border-radius: var(--ds-radius-sketch); /* 自定义圆角 */
   border: 2px solid hsl(var(--ds-color-ink)); /* 自定义描边色（可新增 --ds-color-ink） */
   box-shadow: 3px 4px 0 hsl(var(--ds-color-ink) / 0.16); /* 硬边阴影 */
 }
@@ -132,6 +139,7 @@
 ```
 
 ### 4.2 控件类（按钮/输入/选择/芯片）
+
 ```css
 :root[data-skin='<id>'] .ds-button,
 :root[data-skin='<id>'] .ds-icon-button,
@@ -156,6 +164,7 @@
 ```
 
 ### 4.3 细节修饰（可选）
+
 ```css
 /* 聚焦：墨色描边 */
 :root[data-skin='<id>'] .ds-input:focus-visible,
@@ -171,10 +180,14 @@
   border-top-color: hsl(var(--ds-color-ink) / 0.45);
 }
 /* 标签页下划线色 */
-:root[data-skin='<id>'] .ds-tabs__item::after { background: hsl(var(--ds-color-ink)); }
+:root[data-skin='<id>'] .ds-tabs__item::after {
+  background: hsl(var(--ds-color-ink));
+}
 /* 选中缩略图描边 */
 :root[data-skin='<id>'] .ds-thumbnail--selected {
-  box-shadow: 0 0 0 2px hsl(var(--ds-color-surface)), 0 0 0 4px hsl(var(--ds-color-ink));
+  box-shadow:
+    0 0 0 2px hsl(var(--ds-color-surface)),
+    0 0 0 4px hsl(var(--ds-color-ink));
 }
 /* Markdown 引用块墨线 */
 :root[data-skin='<id>'] .markdown-renderer :where(blockquote) {
@@ -213,6 +226,7 @@
 ```
 
 要点：
+
 - 选择器特异性（`:root + [data-skin] + 类` ≈ 0,3,0）高于 Tailwind 单类工具类，**无需 `!important`**。
 - `dark:` 变体编译为 `.dark\:bg-gray-900`，选择器里需用 `\:` 转义 `:`；作用域前缀加 `.dark`。
 - Ring 颜色覆盖写 `--tw-ring-color`（不要写 `box-shadow`）。
@@ -224,6 +238,7 @@
 - **图标色类也要覆盖**：图标用 `currentColor` 着色，颜色由 `text-*` 决定。除 `text-gray-*` / `text-blue-*` 外，常见还有 `text-slate-*` / `text-zinc-*` / `text-neutral-*`，必须把它们一并映射到 `--ds-color-text / -muted / -subtle`（深色 `dark:text-*` 变体同理），否则这些图标不会跟随皮肤（详见 §4.5）。
 
 > 经验：换肤后若某块界面"没变"，先用开发者工具看它的真实类名，多半是漏了 `/opacity` 或 `focus-within:` / `hover:` / `dark:` 这类**带修饰符的变体类**。
+
 - 该段应**只作用域于你要做"真皮肤"的新皮肤**（用 `:is(:root[data-skin='<id>'], ...)` 列举），避免改动默认及其它既有皮肤外观。
 
 > 提示：皮肤里可**新增私有 Token**（如手绘皮肤的 `--ds-color-ink`、`--ds-radius-sketch`、`--ds-radius-sketch-sm`），它们只在当前皮肤作用域内有效，不影响其他皮肤。
@@ -234,14 +249,27 @@
 
 ```css
 /* 图标灰阶 → 皮肤文字层级（浅色），按明暗档位映射到 -text / -muted / -subtle */
-:is(:root[data-skin='<id>']) :is(.text-gray-700, .text-gray-500, .text-gray-400,
-    .text-slate-700, .text-slate-500, .text-slate-400,
-    .text-zinc-700, .text-zinc-500, .text-zinc-400,
-    .text-neutral-700, .text-neutral-500, .text-neutral-400) {
+:is(:root[data-skin='<id>'])
+  :is(
+    .text-gray-700,
+    .text-gray-500,
+    .text-gray-400,
+    .text-slate-700,
+    .text-slate-500,
+    .text-slate-400,
+    .text-zinc-700,
+    .text-zinc-500,
+    .text-zinc-400,
+    .text-neutral-700,
+    .text-neutral-500,
+    .text-neutral-400
+  ) {
   color: var(--ds-color-text);
 }
 /* 品牌色图标 → 主色 */
-:is(:root[data-skin='<id>']) :is(.text-blue-500, .text-blue-600) { color: var(--ds-color-primary); }
+:is(:root[data-skin='<id>']) :is(.text-blue-500, .text-blue-600) {
+  color: var(--ds-color-primary);
+}
 /* 深色镜像同理：dark:text-slate-900 等也重定向为亮文字，避免深底深字 */
 ```
 
@@ -291,10 +319,15 @@
   --ds-color-primary-subtle: 220 80% 95%;
   --ds-color-primary-gradient: linear-gradient(180deg, hsl(220 80% 56%) 0%, hsl(220 80% 46%) 100%);
   --ds-color-focus: 220 80% 50%;
-  --ds-color-success: 142 71% 45%;  --ds-color-success-subtle: 142 45% 95%;
-  --ds-color-warning: 36 100% 50%;  --ds-color-warning-subtle: 38 60% 95%;
-  --ds-color-danger: 1 100% 59%;    --ds-color-danger-hover: 1 100% 64%;  --ds-color-danger-subtle: 1 60% 96%;
-  --ds-color-info: 199 95% 62%;     --ds-color-info-subtle: 199 60% 95%;
+  --ds-color-success: 142 71% 45%;
+  --ds-color-success-subtle: 142 45% 95%;
+  --ds-color-warning: 36 100% 50%;
+  --ds-color-warning-subtle: 38 60% 95%;
+  --ds-color-danger: 1 100% 59%;
+  --ds-color-danger-hover: 1 100% 64%;
+  --ds-color-danger-subtle: 1 60% 96%;
+  --ds-color-info: 199 95% 62%;
+  --ds-color-info-subtle: 199 60% 95%;
   --ds-color-selection-surface: 220 80% 95%;
   --ds-color-selection-border: 220 55% 80%;
   --ds-color-selection-text: 0 0% 10%;
@@ -334,10 +367,15 @@
   --ds-color-primary-subtle: 220 80% 20%;
   --ds-color-primary-gradient: linear-gradient(180deg, hsl(220 80% 64%) 0%, hsl(220 80% 54%) 100%);
   --ds-color-focus: 220 80% 60%;
-  --ds-color-success: 142 73% 47%;  --ds-color-success-subtle: 142 40% 22%;
-  --ds-color-warning: 54 100% 52%;  --ds-color-warning-subtle: 54 50% 22%;
-  --ds-color-danger: 1 100% 60%;    --ds-color-danger-hover: 1 100% 66%;  --ds-color-danger-subtle: 1 50% 24%;
-  --ds-color-info: 199 100% 68%;    --ds-color-info-subtle: 199 55% 22%;
+  --ds-color-success: 142 73% 47%;
+  --ds-color-success-subtle: 142 40% 22%;
+  --ds-color-warning: 54 100% 52%;
+  --ds-color-warning-subtle: 54 50% 22%;
+  --ds-color-danger: 1 100% 60%;
+  --ds-color-danger-hover: 1 100% 66%;
+  --ds-color-danger-subtle: 1 50% 24%;
+  --ds-color-info: 199 100% 68%;
+  --ds-color-info-subtle: 199 55% 22%;
   --ds-color-selection-surface: 220 80% 20%;
   --ds-color-selection-border: 220 60% 42%;
   --ds-color-selection-text: 0 0% 93%;

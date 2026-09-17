@@ -13,6 +13,7 @@
 ### Task 1: Main-process authorization helper
 
 **Files:**
+
 - Modify: `electron/ipc-handlers.ts`
 - Modify: `electron/ipc-handlers.test.ts`
 
@@ -23,9 +24,11 @@ Add:
 ```ts
 it('authorizes arbitrary absolute composite output directories', async () => {
   const mod = await import('./ipc-handlers')
-  const authorize = (mod as {
-    authorizeCompositeOutputDirectory?: (value: unknown) => boolean
-  }).authorizeCompositeOutputDirectory
+  const authorize = (
+    mod as {
+      authorizeCompositeOutputDirectory?: (value: unknown) => boolean
+    }
+  ).authorizeCompositeOutputDirectory
 
   expect(authorize).toBeTypeOf('function')
   expect(authorize!(path.join(os.tmpdir(), 'manual-composite-output'))).toBe(true)
@@ -60,10 +63,8 @@ export function authorizeCompositeOutputDirectory(value: unknown): boolean {
 Register the IPC endpoint:
 
 ```ts
-ipcMain.handle(
-  'composite:authorize-output-directory',
-  async (_event, { dirPath }: { dirPath?: unknown }) =>
-    authorizeCompositeOutputDirectory(dirPath),
+ipcMain.handle('composite:authorize-output-directory', async (_event, { dirPath }: { dirPath?: unknown }) =>
+  authorizeCompositeOutputDirectory(dirPath),
 )
 ```
 
@@ -87,6 +88,7 @@ git commit -m "feat: authorize absolute composite output roots"
 ### Task 2: Preload API contract
 
 **Files:**
+
 - Modify: `electron/preload.ts`
 - Modify: `electron/preload.cjs`
 - Modify: `src/lib/localSave.ts`
@@ -135,6 +137,7 @@ git commit -m "feat: expose composite output authorization"
 ### Task 3: Authorize resolved roots during export
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeExportRuntime.ts`
 - Modify: `src/features/composite/lib/compositeExportRuntime.test.ts`
 
@@ -160,8 +163,9 @@ it('rejects roots that cannot be authorized', async () => {
     authorizeCompositeOutputDirectory: vi.fn(async () => false),
   } as unknown as NonNullable<Window['electronAPI']>
 
-  await expect(authorizeCompositeOutputRoot(api, 'relative/output', new Set()))
-    .rejects.toThrow('输出目录必须是绝对路径')
+  await expect(authorizeCompositeOutputRoot(api, 'relative/output', new Set())).rejects.toThrow(
+    '输出目录必须是绝对路径',
+  )
 })
 ```
 
@@ -226,6 +230,7 @@ git commit -m "fix: auto authorize composite export roots"
 ### Task 4: Full verification
 
 **Files:**
+
 - Verify only
 
 - [ ] **Step 1: Run all tests**
@@ -264,4 +269,3 @@ same root in one run -> one IPC call
 different roots -> separate IPC calls
 authorization occurs before collision detection and writing
 ```
-

@@ -13,6 +13,7 @@
 ### Task 1: Define and test template-relative insertion
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetNamingFields.test.ts`
 - Modify: `src/features/composite/components/PresetNamingFields.tsx`
 
@@ -65,11 +66,7 @@ export type NamingTemplateSelection = {
   end: number
 }
 
-export function insertNamingVariable(
-  template: string,
-  name: string,
-  selection: NamingTemplateSelection | null,
-) {
+export function insertNamingVariable(template: string, name: string, selection: NamingTemplateSelection | null) {
   const token = `{${name}}`
   if (!selection) {
     return { template: `${template}${token}`, caret: template.length + token.length }
@@ -97,6 +94,7 @@ Expected: all focused tests pass.
 ### Task 2: Preserve and consume the editor selection
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetNamingFields.tsx`
 - Modify: `src/features/composite/components/PresetNamingFields.test.ts`
 
@@ -109,17 +107,19 @@ const preset = createDefaultCompositeV2Preset(1)
 let renderer: ReturnType<typeof create>
 
 act(() => {
-  renderer = create(createElement(PresetNamingFields, {
-    preset,
-    previewValues: {
-      date: '20260701',
-      channel: '渠道',
-      size: '1280x720',
-      preset: preset.name,
-      index: '1',
-    },
-    onUpdate: () => {},
-  }))
+  renderer = create(
+    createElement(PresetNamingFields, {
+      preset,
+      previewValues: {
+        date: '20260701',
+        channel: '渠道',
+        size: '1280x720',
+        preset: preset.name,
+        index: '1',
+      },
+      onUpdate: () => {},
+    }),
+  )
 })
 
 const dateButton = renderer!.root.findByProps({ 'aria-label': '插入变量 {date}' })
@@ -146,9 +146,12 @@ behavior.
 Add a preset-scoped ref:
 
 ```ts
-const savedSelectionRef = useRef<({
-  presetId: string
-} & NamingTemplateSelection) | null>(null)
+const savedSelectionRef = useRef<
+  | ({
+      presetId: string
+    } & NamingTemplateSelection)
+  | null
+>(null)
 ```
 
 Add:
@@ -173,9 +176,7 @@ Replace unconditional append with:
 ```ts
 function insertVariable(name: string) {
   const saved = savedSelectionRef.current
-  const selection = saved?.presetId === preset.id
-    ? { start: saved.start, end: saved.end }
-    : null
+  const selection = saved?.presetId === preset.id ? { start: saved.start, end: saved.end } : null
   const inserted = insertNamingVariable(namingTemplate, name, selection)
 
   pendingSelectionRef.current = { start: inserted.caret, end: inserted.caret }
@@ -210,6 +211,7 @@ Expected: all focused tests pass.
 ### Task 3: Reject duplicate names and clear preset-scoped drafts
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetNamingFields.tsx`
 - Modify: `src/features/composite/components/PresetNamingFields.test.ts`
 
@@ -218,23 +220,22 @@ Expected: all focused tests pass.
 Add this helper to the test file:
 
 ```ts
-function renderFields(
-  preset = createDefaultCompositeV2Preset(1),
-  onUpdate = vi.fn(),
-) {
+function renderFields(preset = createDefaultCompositeV2Preset(1), onUpdate = vi.fn()) {
   let renderer: ReturnType<typeof create>
   act(() => {
-    renderer = create(createElement(PresetNamingFields, {
-      preset,
-      previewValues: {
-        date: '20260701',
-        channel: '渠道',
-        size: '1280x720',
-        preset: preset.name,
-        index: '1',
-      },
-      onUpdate,
-    }))
+    renderer = create(
+      createElement(PresetNamingFields, {
+        preset,
+        previewValues: {
+          date: '20260701',
+          channel: '渠道',
+          size: '1280x720',
+          preset: preset.name,
+          index: '1',
+        },
+        onUpdate,
+      }),
+    )
   })
   return { renderer: renderer!, onUpdate }
 }
@@ -267,15 +268,15 @@ it('rejects an existing custom variable name instead of updating it', () => {
   }
   const { renderer, onUpdate } = renderFields(preset)
 
-  act(() => renderer.root.findByProps({ 'aria-label': '自定义变量名' }).props.onChange({
-    target: { value: 'project' },
-  }))
+  act(() =>
+    renderer.root.findByProps({ 'aria-label': '自定义变量名' }).props.onChange({
+      target: { value: 'project' },
+    }),
+  )
   act(() => renderer.root.findByProps({ 'aria-label': '添加自定义变量' }).props.onClick())
 
   expect(onUpdate).not.toHaveBeenCalled()
-  expect(preset.customVariables).toEqual([
-    { id: 'custom-project', name: 'project', value: '项目A' },
-  ])
+  expect(preset.customVariables).toEqual([{ id: 'custom-project', name: 'project', value: '项目A' }])
 })
 ```
 
@@ -287,26 +288,32 @@ it('clears unsubmitted custom-variable state when the preset changes', () => {
   const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Preset B' }
   const { renderer, onUpdate } = renderFields(presetA)
 
-  act(() => renderer.root.findByProps({ 'aria-label': '自定义变量名' }).props.onChange({
-    target: { value: 'date' },
-  }))
-  act(() => renderer.root.findByProps({ 'aria-label': '自定义变量值' }).props.onChange({
-    target: { value: '草稿值' },
-  }))
+  act(() =>
+    renderer.root.findByProps({ 'aria-label': '自定义变量名' }).props.onChange({
+      target: { value: 'date' },
+    }),
+  )
+  act(() =>
+    renderer.root.findByProps({ 'aria-label': '自定义变量值' }).props.onChange({
+      target: { value: '草稿值' },
+    }),
+  )
   act(() => renderer.root.findByProps({ 'aria-label': '添加自定义变量' }).props.onClick())
 
   act(() => {
-    renderer.update(createElement(PresetNamingFields, {
-      preset: presetB,
-      previewValues: {
-        date: '20260701',
-        channel: '渠道',
-        size: '1280x720',
-        preset: presetB.name,
-        index: '1',
-      },
-      onUpdate,
-    }))
+    renderer.update(
+      createElement(PresetNamingFields, {
+        preset: presetB,
+        previewValues: {
+          date: '20260701',
+          channel: '渠道',
+          size: '1280x720',
+          preset: presetB.name,
+          index: '1',
+        },
+        onUpdate,
+      }),
+    )
   })
 
   expect(renderer.root.findByProps({ 'aria-label': '自定义变量名' }).props.value).toBe('')
@@ -346,19 +353,13 @@ const customNameErrorId = `preset-custom-variable-name-error-${preset.id}`
 In `addCustomVariable`, after normalization:
 
 ```ts
-if (
-  BUILT_IN_VARIABLE_NAMES.has(name)
-  || customVariables.some((variable) => variable.name === name)
-) {
+if (BUILT_IN_VARIABLE_NAMES.has(name) || customVariables.some((variable) => variable.name === name)) {
   setCustomNameError('变量名已被使用')
   return
 }
 
 onUpdate({
-  customVariables: [
-    ...customVariables,
-    { id: `custom-${Date.now()}-${name}`, name, value: customValue },
-  ],
+  customVariables: [...customVariables, { id: `custom-${Date.now()}-${name}`, name, value: customValue }],
 })
 setCustomName('')
 setCustomValue('')
@@ -408,6 +409,7 @@ Expected: all focused tests pass.
 ### Task 4: Regression and build verification
 
 **Files:**
+
 - Verify: `src/features/composite/components/PresetNamingFields.tsx`
 - Verify: `src/features/composite/components/PresetNamingFields.test.ts`
 - Verify: `src/features/composite/components/PresetManagementTab.test.tsx`

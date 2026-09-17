@@ -13,6 +13,7 @@
 ### Task 1: Lock the full-height layout contract with tests
 
 **Files:**
+
 - Modify: `src/features/composite/CompositeWorkspace.test.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.test.tsx`
 
@@ -38,15 +39,12 @@ it('fills the viewport below the fixed application header', () => {
 Extend the existing `uses a stacked library rail beside a full preview workspace` test:
 
 ```tsx
-const workspace = renderer!.root.find(
-  (node) => node.props['data-layout'] === 'preset-management-workspace',
-)
+const workspace = renderer!.root.find((node) => node.props['data-layout'] === 'preset-management-workspace')
 expect(workspace.props.className).toContain('h-full')
 expect(workspace.props.className).not.toContain('min-h-[680px]')
 
 const fixedMinimumHeightNodes = renderer!.root.findAll(
-  (node) => typeof node.props.className === 'string'
-    && node.props.className.includes('min-h-[680px]'),
+  (node) => typeof node.props.className === 'string' && node.props.className.includes('min-h-[680px]'),
 )
 expect(fixedMinimumHeightNodes).toHaveLength(0)
 ```
@@ -71,6 +69,7 @@ git commit -m "test: define full-height composite workspace layout"
 ### Task 2: Apply the minimum full-height layout change
 
 **Files:**
+
 - Modify: `src/features/composite/CompositeWorkspace.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 - Modify: `src/features/composite/components/PresetCanvasEditor.tsx`
@@ -88,7 +87,7 @@ Change the `main` class in `CompositeWorkspace.tsx` to:
 Change the preset workspace class in `PresetManagementTab.tsx` to:
 
 ```tsx
-className="grid h-full min-h-0 min-w-[1180px] flex-1 grid-cols-[300px_minmax(0,1fr)] gap-4 overflow-hidden"
+className = 'grid h-full min-h-0 min-w-[1180px] flex-1 grid-cols-[300px_minmax(0,1fr)] gap-4 overflow-hidden'
 ```
 
 - [ ] **Step 3: Let the canvas editor shrink inside the preset grid**

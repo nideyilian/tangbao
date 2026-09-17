@@ -16,14 +16,18 @@ const outFile = process.argv[4]
 const dark = process.argv.includes('--dark')
 
 // 1) 启动 Chrome with remote debugging
-const chrome = spawn(CHROME, [
-  '--headless=new',
-  '--disable-gpu',
-  '--no-sandbox',
-  `--remote-debugging-port=${PORT}`,
-  '--window-size=1440,900',
-  'about:blank',
-], { stdio: 'ignore' })
+const chrome = spawn(
+  CHROME,
+  [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-sandbox',
+    `--remote-debugging-port=${PORT}`,
+    '--window-size=1440,900',
+    'about:blank',
+  ],
+  { stdio: 'ignore' },
+)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -33,7 +37,11 @@ async function getJson(path, method = 'GET') {
       let data = ''
       res.on('data', (c) => (data += c))
       res.on('end', () => {
-        try { resolve(JSON.parse(data)) } catch (e) { reject(new Error(`parse fail ${path}: ${data.slice(0, 200)}`)) }
+        try {
+          resolve(JSON.parse(data))
+        } catch (e) {
+          reject(new Error(`parse fail ${path}: ${data.slice(0, 200)}`))
+        }
       })
     })
     req.on('error', reject)
@@ -45,7 +53,12 @@ let ws
 try {
   // 2) 等待 debugging 端口就绪
   for (let i = 0; i < 30; i++) {
-    try { const v = await getJson('/json/version'); if (v.webSocketDebuggerUrl) break } catch { /* retry */ }
+    try {
+      const v = await getJson('/json/version')
+      if (v.webSocketDebuggerUrl) break
+    } catch {
+      /* retry */
+    }
     await sleep(300)
   }
 
@@ -53,7 +66,10 @@ try {
   const tabs = await getJson('/json/new?' + encodeURIComponent(url), 'PUT')
   const wsUrl = tabs.webSocketDebuggerUrl
   ws = new WebSocket(wsUrl)
-  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject })
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve
+    ws.onerror = reject
+  })
 
   let id = 0
   const pending = new Map()
@@ -64,11 +80,12 @@ try {
       pending.delete(msg.id)
     }
   }
-  const send = (method, params = {}) => new Promise((resolve) => {
-    const mid = ++id
-    pending.set(mid, resolve)
-    ws.send(JSON.stringify({ id: mid, method, params }))
-  })
+  const send = (method, params = {}) =>
+    new Promise((resolve) => {
+      const mid = ++id
+      pending.set(mid, resolve)
+      ws.send(JSON.stringify({ id: mid, method, params }))
+    })
 
   await sleep(1500) // 等页面首帧
 

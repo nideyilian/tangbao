@@ -49,12 +49,7 @@ Zustand、Electron 和当前数据库只在项目适配层使用，不是核心�
 ### 4.1 注册应用模式
 
 ```ts
-export type AppMode =
-  | 'gallery'
-  | 'strategy'
-  | 'ordering'
-  | 'postprocess'
-  | 'agent'
+export type AppMode = 'gallery' | 'strategy' | 'ordering' | 'postprocess' | 'agent'
 ```
 
 持久化恢复逻辑也要把 `ordering` 加入合法模式白名单。
@@ -78,21 +73,23 @@ export type AppMode =
 ```tsx
 import { lazy, Suspense } from 'react'
 
-const OrderingWorkspace = lazy(
-  () => import('./features/ordering/adapters/RequirementOrderingWorkspace'),
-)
+const OrderingWorkspace = lazy(() => import('./features/ordering/adapters/RequirementOrderingWorkspace'))
 
-{appMode === 'ordering' && (
-  <Suspense fallback={null}>
-    <OrderingWorkspace />
-  </Suspense>
-)}
+{
+  appMode === 'ordering' && (
+    <Suspense fallback={null}>
+      <OrderingWorkspace />
+    </Suspense>
+  )
+}
 ```
 
 画廊专属组件按模式显示：
 
 ```tsx
-{(appMode === 'gallery' || appMode === 'agent') && <InputBar />}
+{
+  ;(appMode === 'gallery' || appMode === 'agent') && <InputBar />
+}
 ```
 
 词条侧栏、画廊工具栏和其他浮层使用同样条件，防止覆盖下单工作区。
@@ -103,10 +100,10 @@ const OrderingWorkspace = lazy(
 
 `OrderingCatalog` 包含三个目录：
 
-| 类型 | 必要内容 |
-| --- | --- |
-| `OrderingProduct` | 产品事实、人群、场景、禁用项、发布状态 |
-| `OrderingChannel` | 支持尺寸、渠道要求、禁用项、发布状态 |
+| 类型                   | 必要内容                                |
+| ---------------------- | --------------------------------------- |
+| `OrderingProduct`      | 产品事实、人群、场景、禁用项、发布状态  |
+| `OrderingChannel`      | 支持尺寸、渠道要求、禁用项、发布状态    |
 | `OrderingMaterialType` | 固定或智能策略、兼容产品/渠道、支持尺寸 |
 
 核心规划器只读取这些契约，不关心目录来自数据库、接口还是本地配置。

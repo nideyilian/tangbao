@@ -87,25 +87,25 @@ type TaskGridItem =
 
 批次显示状态规则：
 
-| 条件 | 批次状态 |
-| --- | --- |
-| 存在排队或运行中的子任务 | 生成中 |
-| 全部成功 | 已完成 |
-| 全部失败或取消 | 失败 |
+| 条件                                 | 批次状态 |
+| ------------------------------------ | -------- |
+| 存在排队或运行中的子任务             | 生成中   |
+| 全部成功                             | 已完成   |
+| 全部失败或取消                       | 失败     |
 | 同时存在成功与失败，且没有运行中任务 | 部分完成 |
 
 搜索、状态筛选应基于子任务集合计算：只要一个子任务匹配搜索词或状态筛选，批次卡片就应保留；卡片内需展示匹配结果数，避免用户误以为筛选失效。
 
 ## 6. 代码改动范围
 
-| 文件 | 改动 |
-| --- | --- |
-| `src/lib/sopBatchTaskGrouping.ts`（新增） | 任务分组、排序、状态汇总、筛选映射等纯函数。 |
-| `src/lib/sopBatchTaskGrouping.test.ts`（新增） | 覆盖分组键、顺序、状态汇总、普通任务回退与筛选语义。 |
-| `src/components/TaskGrid.tsx` | 使用展示项而非平铺任务渲染；接入批量卡片、批次详情打开、选择映射与批量删除确认。 |
-| `src/components/SopBatchTaskCard.tsx`（新增） | 渲染单张聚合卡片、拼贴缩略图、进度与失败状态。 |
-| `src/components/SopBatchDetailModal.tsx`（新增） | 展示批次内全部任务；点击图片调用现有 `setDetailTaskId(task.id)`。 |
-| `src/components/TaskCard.tsx` | 保留普通任务和收藏视图中的单图 SOP 标识，不承担批次聚合职责。 |
+| 文件                                             | 改动                                                                             |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `src/lib/sopBatchTaskGrouping.ts`（新增）        | 任务分组、排序、状态汇总、筛选映射等纯函数。                                     |
+| `src/lib/sopBatchTaskGrouping.test.ts`（新增）   | 覆盖分组键、顺序、状态汇总、普通任务回退与筛选语义。                             |
+| `src/components/TaskGrid.tsx`                    | 使用展示项而非平铺任务渲染；接入批量卡片、批次详情打开、选择映射与批量删除确认。 |
+| `src/components/SopBatchTaskCard.tsx`（新增）    | 渲染单张聚合卡片、拼贴缩略图、进度与失败状态。                                   |
+| `src/components/SopBatchDetailModal.tsx`（新增） | 展示批次内全部任务；点击图片调用现有 `setDetailTaskId(task.id)`。                |
+| `src/components/TaskCard.tsx`                    | 保留普通任务和收藏视图中的单图 SOP 标识，不承担批次聚合职责。                    |
 
 `GallerySopBatchModal.tsx`、`TaskRecord`、`submitTaskWithData` 与已有任务持久化结构无需修改；当前 `sopBatch` 元数据足以完成聚合。
 

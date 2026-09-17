@@ -28,93 +28,93 @@
 
 ### 2.1 基础
 
-| 组件 | 用途 | 变体 | 强制规则 |
-| --- | --- | --- | --- |
-| `Button` | 提交、创建、保存和命令 | primary / secondary / ghost / danger / loading | 每个区域最多一个主按钮；加载时锁定并声明 `aria-busy` |
-| `IconButton` | 紧凑工具栏动作 | sm / md / lg | 必须提供 `aria-label`；陌生图标同时使用 Tooltip |
-| `Surface` | 表达表面层级 | default / subtle / raised | 不能仅为“加圆角”使用；真正浮起时才使用 raised |
+| 组件         | 用途                   | 变体                                           | 强制规则                                             |
+| ------------ | ---------------------- | ---------------------------------------------- | ---------------------------------------------------- |
+| `Button`     | 提交、创建、保存和命令 | primary / secondary / ghost / danger / loading | 每个区域最多一个主按钮；加载时锁定并声明 `aria-busy` |
+| `IconButton` | 紧凑工具栏动作         | sm / md / lg                                   | 必须提供 `aria-label`；陌生图标同时使用 Tooltip      |
+| `Surface`    | 表达表面层级           | default / subtle / raised                      | 不能仅为“加圆角”使用；真正浮起时才使用 raised        |
 
 ### 2.2 布局
 
-| 组件 | 用途 | 变体 | 强制规则 |
-| --- | --- | --- | --- |
-| `Container` | 统一页面宽度和边距 | sm / md / lg / full | 画布类工作区可使用 full，阅读内容不得无边界拉伸 |
-| `Stack` | 垂直节奏 | gap 4–48 | 同组紧、异组松；不能用空 div 代替间距 |
-| `Inline` | 行内动作和元数据 | wrap / nowrap / align / justify | DOM 顺序必须与视觉顺序相同 |
-| `Grid` | 响应式同类项目 | minColumnWidth / gap | 用于卡片和缩略图，不用于混合层级内容 |
-| `SplitPane` | 侧栏和主工作区 | start / end | 767px 以下回落单列；避免双重滚动 |
-| `ScrollArea` | 必需的面板内滚动 | maxHeight | 可键盘聚焦并显示焦点；页面主滚动优先 |
-| `Divider` | 明确内容分组 | horizontal / vertical | 留白足够时不额外添加分隔线 |
+| 组件         | 用途               | 变体                            | 强制规则                                        |
+| ------------ | ------------------ | ------------------------------- | ----------------------------------------------- |
+| `Container`  | 统一页面宽度和边距 | sm / md / lg / full             | 画布类工作区可使用 full，阅读内容不得无边界拉伸 |
+| `Stack`      | 垂直节奏           | gap 4–48                        | 同组紧、异组松；不能用空 div 代替间距           |
+| `Inline`     | 行内动作和元数据   | wrap / nowrap / align / justify | DOM 顺序必须与视觉顺序相同                      |
+| `Grid`       | 响应式同类项目     | minColumnWidth / gap            | 用于卡片和缩略图，不用于混合层级内容            |
+| `SplitPane`  | 侧栏和主工作区     | start / end                     | 767px 以下回落单列；避免双重滚动                |
+| `ScrollArea` | 必需的面板内滚动   | maxHeight                       | 可键盘聚焦并显示焦点；页面主滚动优先            |
+| `Divider`    | 明确内容分组       | horizontal / vertical           | 留白足够时不额外添加分隔线                      |
 
 ### 2.3 表单
 
-| 组件 | 用途 | 变体 | 强制规则 |
-| --- | --- | --- | --- |
-| `TextField` | 单行名称、路径和参数 | helper / error / required / readOnly | 可见 label；错误与输入框语义关联 |
-| `TextArea` | 提示词、说明和模板 | helper / error / required | 不用 placeholder 代替 label；允许调整高度 |
-| `Checkbox` | 独立布尔项或多选 | primary / danger / indeterminate | 使用原生 checkbox；标签扩大点击区域 |
-| `Switch` | 立即生效的开关 | label start / end | 需要提交的表单项应使用 Checkbox |
-| `RadioGroup` | 2–5 个互斥选项 | vertical / horizontal | 使用 fieldset/legend 和同名 radio |
-| `SegmentedControl` | 2–4 个紧凑模式 | sm / md | 只用于短标签和当前视图，不作为顶层导航 |
-| `SelectField` | 普通单选列表 | helper / error / disabled | 优先原生 select；复杂动作继续使用高级 Select |
-| `SearchField` | 过滤当前集合 | clearable | 使用 `type=search` 和完整可访问名称 |
-| `Fieldset` | 相关设置组 | description / actions | 多字段共同描述一个设置时使用 |
-| `Stepper` | 小范围数字微调 | min / max / step | 增减按钮必须有完整名称和边界状态 |
-| `ColorSchemeSwitcher` | 在皮肤（配色方案）间切换整体视觉 | sm / md | 顶栏/设置选择 默认/Apple/小米；仅切配色而非深浅主题 |
-| `ColorPresetGrid` | 以卡片网格选择配色预设 | columns 2/3/4 | 设置页「主题」区块展示渐变预览与选中态 |
+| 组件                  | 用途                             | 变体                                 | 强制规则                                            |
+| --------------------- | -------------------------------- | ------------------------------------ | --------------------------------------------------- |
+| `TextField`           | 单行名称、路径和参数             | helper / error / required / readOnly | 可见 label；错误与输入框语义关联                    |
+| `TextArea`            | 提示词、说明和模板               | helper / error / required            | 不用 placeholder 代替 label；允许调整高度           |
+| `Checkbox`            | 独立布尔项或多选                 | primary / danger / indeterminate     | 使用原生 checkbox；标签扩大点击区域                 |
+| `Switch`              | 立即生效的开关                   | label start / end                    | 需要提交的表单项应使用 Checkbox                     |
+| `RadioGroup`          | 2–5 个互斥选项                   | vertical / horizontal                | 使用 fieldset/legend 和同名 radio                   |
+| `SegmentedControl`    | 2–4 个紧凑模式                   | sm / md                              | 只用于短标签和当前视图，不作为顶层导航              |
+| `SelectField`         | 普通单选列表                     | helper / error / disabled            | 优先原生 select；复杂动作继续使用高级 Select        |
+| `SearchField`         | 过滤当前集合                     | clearable                            | 使用 `type=search` 和完整可访问名称                 |
+| `Fieldset`            | 相关设置组                       | description / actions                | 多字段共同描述一个设置时使用                        |
+| `Stepper`             | 小范围数字微调                   | min / max / step                     | 增减按钮必须有完整名称和边界状态                    |
+| `ColorSchemeSwitcher` | 在皮肤（配色方案）间切换整体视觉 | sm / md                              | 顶栏/设置选择 默认/Apple/小米；仅切配色而非深浅主题 |
+| `ColorPresetGrid`     | 以卡片网格选择配色预设           | columns 2/3/4                        | 设置页「主题」区块展示渐变预览与选中态              |
 
 ### 2.4 反馈
 
-| 组件 | 用途 | 变体 | 强制规则 |
-| --- | --- | --- | --- |
-| `Badge` | 短状态或分类 | neutral / info / success / warning / danger | 文本必须脱离颜色仍可理解 |
-| `StatusIndicator` | 在线、运行、完成和失败 | neutral / info / success / warning / danger | 状态圆点是装饰，文字提供语义 |
-| `Alert` | 区域级说明和恢复指导 | info / success / warning / danger | 说明原因、影响和下一步 |
-| `ToastMessage` | 非阻断全局反馈 | info / success / warning / danger | 不抢焦点；危险错误使用 `alert` |
-| `Spinner` | 短时不确定等待 | sm / md / lg | 预计超过 1 秒且结构已知时改用 Skeleton |
-| `Progress` | 批处理、导出和上传进度 | determinate / indeterminate / tones | 提供完整 progressbar 数值属性 |
-| `Skeleton` | 为异步内容保留空间 | 任意形状 | 接近最终布局；减少动态时停止动画 |
-| `EmptyState` | 解释空集合和下一步 | icon / description / action | 回答是什么、为什么为空、下一步做什么 |
-| `ErrorState` | 整个区域失败 | retry / details | 必须提供恢复路径；技术细节不能取代用户说明 |
-| `Kbd` | 展示已实现的快捷键 | — | 快捷键不能成为唯一操作入口 |
+| 组件              | 用途                   | 变体                                        | 强制规则                                   |
+| ----------------- | ---------------------- | ------------------------------------------- | ------------------------------------------ |
+| `Badge`           | 短状态或分类           | neutral / info / success / warning / danger | 文本必须脱离颜色仍可理解                   |
+| `StatusIndicator` | 在线、运行、完成和失败 | neutral / info / success / warning / danger | 状态圆点是装饰，文字提供语义               |
+| `Alert`           | 区域级说明和恢复指导   | info / success / warning / danger           | 说明原因、影响和下一步                     |
+| `ToastMessage`    | 非阻断全局反馈         | info / success / warning / danger           | 不抢焦点；危险错误使用 `alert`             |
+| `Spinner`         | 短时不确定等待         | sm / md / lg                                | 预计超过 1 秒且结构已知时改用 Skeleton     |
+| `Progress`        | 批处理、导出和上传进度 | determinate / indeterminate / tones         | 提供完整 progressbar 数值属性              |
+| `Skeleton`        | 为异步内容保留空间     | 任意形状                                    | 接近最终布局；减少动态时停止动画           |
+| `EmptyState`      | 解释空集合和下一步     | icon / description / action                 | 回答是什么、为什么为空、下一步做什么       |
+| `ErrorState`      | 整个区域失败           | retry / details                             | 必须提供恢复路径；技术细节不能取代用户说明 |
+| `Kbd`             | 展示已实现的快捷键     | —                                           | 快捷键不能成为唯一操作入口                 |
 
 ### 2.5 导航
 
-| 组件 | 用途 | 变体 | 强制规则 |
-| --- | --- | --- | --- |
-| `Tabs` | 同一上下文内的并列内容 | sm / md / stretch | tablist/tab 语义；方向键切换 |
-| `Toolbar` | 相关命令组 | — | 使用 `role=toolbar` 和明确名称 |
-| `PageHeader` | 页面标题、说明和主行动 | breadcrumbs / eyebrow / actions | 页面唯一 h1；主行动唯一 |
-| `SectionHeader` | 页面内区域标题和动作 | description / actions | 保持标题层级连续 |
-| `Breadcrumbs` | 三级以上层级路径 | link / button / current | 当前位置使用 `aria-current=page` |
-| `NavList` | 设置、素材和管理侧栏 | icon / badge / disabled | 当前位置清晰；不与同层级 Tabs 混用 |
+| 组件            | 用途                   | 变体                            | 强制规则                           |
+| --------------- | ---------------------- | ------------------------------- | ---------------------------------- |
+| `Tabs`          | 同一上下文内的并列内容 | sm / md / stretch               | tablist/tab 语义；方向键切换       |
+| `Toolbar`       | 相关命令组             | —                               | 使用 `role=toolbar` 和明确名称     |
+| `PageHeader`    | 页面标题、说明和主行动 | breadcrumbs / eyebrow / actions | 页面唯一 h1；主行动唯一            |
+| `SectionHeader` | 页面内区域标题和动作   | description / actions           | 保持标题层级连续                   |
+| `Breadcrumbs`   | 三级以上层级路径       | link / button / current         | 当前位置使用 `aria-current=page`   |
+| `NavList`       | 设置、素材和管理侧栏   | icon / badge / disabled         | 当前位置清晰；不与同层级 Tabs 混用 |
 
 ### 2.6 数据展示
 
-| 组件 | 用途 | 变体 | 强制规则 |
-| --- | --- | --- | --- |
-| `Card` | 独立信息单元 | header / content / footer | Card 本身不伪装按钮；使用内部链接或按钮 |
-| `Panel` | 工作台设置和属性区域 | header / content / footer | 输出 section/h2；简单分组使用 Surface |
-| `ListRow` | 标签页、任务、预设和历史 | leading / meta / actions / selected | 可点击时使用真实按钮或链接 |
-| `Stat` | 总数、成功、失败和耗时 | trend | 标签始终可见；数字使用 tabular figures |
-| `KeyValue` | 参数和只读元数据 | — | 使用 dt/dd；可编辑值改用表单 |
-| `Thumbnail` | 固定比例图像预览 | ratio / selected | 必须提供 alt；比例避免布局跳动 |
-| `AspectRatio` | 媒体比例容器 | ratio | 不用于文本内容 |
-| `Disclosure` | 帮助和进阶设置 | open / closed | 关键内容默认可见；使用原生 details/summary |
-| `CodeBlock` | 模板、JSON 和代码 | language | 使用 pre/code；保留空白并允许滚动 |
-| `Table` | 列间比较数据 | head / body / row / cell | 保留原生表格结构；窄屏容器可滚动 |
+| 组件          | 用途                     | 变体                                | 强制规则                                   |
+| ------------- | ------------------------ | ----------------------------------- | ------------------------------------------ |
+| `Card`        | 独立信息单元             | header / content / footer           | Card 本身不伪装按钮；使用内部链接或按钮    |
+| `Panel`       | 工作台设置和属性区域     | header / content / footer           | 输出 section/h2；简单分组使用 Surface      |
+| `ListRow`     | 标签页、任务、预设和历史 | leading / meta / actions / selected | 可点击时使用真实按钮或链接                 |
+| `Stat`        | 总数、成功、失败和耗时   | trend                               | 标签始终可见；数字使用 tabular figures     |
+| `KeyValue`    | 参数和只读元数据         | —                                   | 使用 dt/dd；可编辑值改用表单               |
+| `Thumbnail`   | 固定比例图像预览         | ratio / selected                    | 必须提供 alt；比例避免布局跳动             |
+| `AspectRatio` | 媒体比例容器             | ratio                               | 不用于文本内容                             |
+| `Disclosure`  | 帮助和进阶设置           | open / closed                       | 关键内容默认可见；使用原生 details/summary |
+| `CodeBlock`   | 模板、JSON 和代码        | language                            | 使用 pre/code；保留空白并允许滚动          |
+| `Table`       | 列间比较数据             | head / body / row / cell            | 保留原生表格结构；窄屏容器可滚动           |
 
 ### 2.7 浮层
 
-| 组件 | 用途 | 变体 | 强制规则 |
-| --- | --- | --- | --- |
-| `Dialog` | 确认、短表单和高风险任务 | sm / md / lg / xl | 锁定焦点、Escape 关闭、关闭后归还焦点 |
-| `DialogWorkspace` | 复杂弹窗内部工作区 | single / split / triple | 所有 Tab 共用同一 pane 语法，不在弹窗内再套页面背景 |
-| `DialogPane` | 复杂弹窗内的侧栏、列表、内容或状态区 | sidebar / content / canvas / scroll | pane 顺序等于阅读顺序；不为装饰套卡片 |
-| `Drawer` | 属性、素材库和窄屏侧栏 | left / right / bottom / sm / md / lg | 保留主上下文；继承 Dialog 焦点管理 |
-| `Tooltip` | 解释陌生图标或控件 | top / right / bottom / left | 深色气泡（无边框）；仅补充信息；键盘聚焦可显示 |
-| `Popover` | 筛选、颜色、尺寸和短设置 | arrow | 打开状态和位置由业务调用方管理 |
-| `Menu` | 右键和更多命令 | item / danger / separator / shortcut | 方向键、Home、End 移动焦点 |
+| 组件              | 用途                                 | 变体                                 | 强制规则                                            |
+| ----------------- | ------------------------------------ | ------------------------------------ | --------------------------------------------------- |
+| `Dialog`          | 确认、短表单和高风险任务             | sm / md / lg / xl                    | 锁定焦点、Escape 关闭、关闭后归还焦点               |
+| `DialogWorkspace` | 复杂弹窗内部工作区                   | single / split / triple              | 所有 Tab 共用同一 pane 语法，不在弹窗内再套页面背景 |
+| `DialogPane`      | 复杂弹窗内的侧栏、列表、内容或状态区 | sidebar / content / canvas / scroll  | pane 顺序等于阅读顺序；不为装饰套卡片               |
+| `Drawer`          | 属性、素材库和窄屏侧栏               | left / right / bottom / sm / md / lg | 保留主上下文；继承 Dialog 焦点管理                  |
+| `Tooltip`         | 解释陌生图标或控件                   | top / right / bottom / left          | 深色气泡（无边框）；仅补充信息；键盘聚焦可显示      |
+| `Popover`         | 筛选、颜色、尺寸和短设置             | arrow                                | 打开状态和位置由业务调用方管理                      |
+| `Menu`            | 右键和更多命令                       | item / danger / separator / shortcut | 方向键、Home、End 移动焦点                          |
 
 工具提示统一为「深色气泡」视觉：背景 `--ds-color-text`、文字 `--ds-color-text-inverse`、
 圆角 `--ds-radius-md`、无边框。两种渲染方式共用同一视觉，行为统一由 `useTooltip(options?)` 控制：
@@ -131,7 +131,9 @@
 <Dialog title="管理中心">
   <Tabs aria-label="管理中心功能" />
   <DialogWorkspace layout="triple">
-    <DialogPane as="aside" tone="sidebar">分组或导航</DialogPane>
+    <DialogPane as="aside" tone="sidebar">
+      分组或导航
+    </DialogPane>
     <DialogPane tone="content">列表或配置</DialogPane>
     <DialogPane tone="content">编辑表单或状态</DialogPane>
   </DialogWorkspace>
@@ -234,84 +236,84 @@ Dialog → Fieldset（参数区）→ 预估摘要（Stat/KeyValue）→ 主行�
 
 ### 3.1 全局组件
 
-| 模块 | 决策 | 对应共享组件 |
-| --- | --- | --- |
-| AgentBatchPlannerModal | compose | Dialog / Fieldset / TextField / SelectField / Button / Alert |
-| AgentBatchQueueRunner | retain | Progress / ToastMessage / StatusIndicator |
-| AgentImageGrid | compose | Grid / Thumbnail / AspectRatio / EmptyState |
-| AgentWorkspace | retain | SplitPane / Toolbar / StatusIndicator / Alert / Progress / Thumbnail |
-| Checkbox | migrate | Checkbox |
-| ConfirmDialog | compose | Dialog / Button / Checkbox / Alert |
-| DetailModal | retain | Dialog / Tabs / KeyValue / Thumbnail / Toolbar |
-| ErrorBoundary | compose | ErrorState / Button |
-| FavoriteCollections | retain | Grid / Card / Thumbnail / Dialog / SearchField / Menu |
-| Header | retain | Toolbar / Tabs / Stat / IconButton / Tooltip |
-| HelpModal | compose | Dialog / Tabs / Disclosure / CodeBlock |
-| HoverImagePreview | retain | Popover / Thumbnail |
-| ImageContextMenu | compose | Menu / Kbd |
-| InputBar | retain | TextArea / Toolbar / Button / SelectField / Stepper / Tooltip / Popover |
-| Lightbox | retain | Dialog / Toolbar / IconButton / StatusIndicator |
-| MarkdownRenderer | retain | CodeBlock / Table |
-| MaskEditorModal | retain | Dialog / Toolbar / Button / Progress |
-| PostprocessV2Workspace | retain | SplitPane / Tabs / Panel / Toolbar |
-| PostprocessWorkspace | retain | SplitPane / Tabs / Panel / Toolbar |
-| PromptInputDialog | compose | Dialog / TextArea / Button |
-| PromptVariableEditor | retain | 无对应共享原语（富文本 contentEditable 编辑器，fieldset/表单字段不适用） |
-| RandomPromptModal | retain | Dialog / Tabs / SearchField / ListRow / EmptyState |
-| ScheduleModal | retain | Dialog / Tabs / Toolbar / ListRow / Popover |
-| ScheduleRunner | retain | ToastMessage / StatusIndicator / Progress |
-| SearchBar | compose | Toolbar / SearchField / SelectField / IconButton |
-| Select | retain | SelectField / Popover / Menu |
-| SettingsModal | retain | Dialog / Tabs / Fieldset / TextField / SelectField / Switch / Alert |
-| SizePickerModal | compose | Dialog / Grid / SegmentedControl / Button |
-| SopBatchDetailModal | compose | Dialog / Grid / Thumbnail / StatusIndicator / Progress |
-| SopBatchTaskCard | compose | Card / Thumbnail / StatusIndicator / Toolbar |
-| SupportPromptModal | compose | Dialog / Alert / Button |
-| TaskCard | retain | Card / Thumbnail / StatusIndicator / Toolbar / Menu |
-| TaskGrid | retain | Grid / Skeleton / EmptyState |
-| Toast | migrate | ToastMessage |
-| UpdateReleaseNotesModal | compose | Dialog / Disclosure / Button |
-| VarEntryEditor | compose | Dialog / TextField / ListRow / Button |
-| ViewportTooltip | retain | Tooltip |
-| WordLibraryManagerModal | retain | Dialog / Tabs / SearchField / ListRow / EmptyState |
-| WordLibrarySidebar | retain | SplitPane / Panel / SearchField / NavList |
-| WordLibrarySidebarToggle | migrate | IconButton / Tooltip |
-| WorkspaceTabBar | retain | Panel / SearchField / ListRow / Menu / Toolbar |
-| WorkspaceTabManagerModal | retain | Dialog / SearchField / ListRow / Menu / EmptyState |
-| AppPageRail | retain | 无对应共享原语（固定翻页导航 rail，无滚动容器） |
-| WordLibraryDerivativePanel | retain | Button / SegmentedControl / Disclosure / Alert |
-| WordLibraryQuickPanel | retain | SearchField / SegmentedControl / ListRow / EmptyState |
+| 模块                       | 决策    | 对应共享组件                                                             |
+| -------------------------- | ------- | ------------------------------------------------------------------------ |
+| AgentBatchPlannerModal     | compose | Dialog / Fieldset / TextField / SelectField / Button / Alert             |
+| AgentBatchQueueRunner      | retain  | Progress / ToastMessage / StatusIndicator                                |
+| AgentImageGrid             | compose | Grid / Thumbnail / AspectRatio / EmptyState                              |
+| AgentWorkspace             | retain  | SplitPane / Toolbar / StatusIndicator / Alert / Progress / Thumbnail     |
+| Checkbox                   | migrate | Checkbox                                                                 |
+| ConfirmDialog              | compose | Dialog / Button / Checkbox / Alert                                       |
+| DetailModal                | retain  | Dialog / Tabs / KeyValue / Thumbnail / Toolbar                           |
+| ErrorBoundary              | compose | ErrorState / Button                                                      |
+| FavoriteCollections        | retain  | Grid / Card / Thumbnail / Dialog / SearchField / Menu                    |
+| Header                     | retain  | Toolbar / Tabs / Stat / IconButton / Tooltip                             |
+| HelpModal                  | compose | Dialog / Tabs / Disclosure / CodeBlock                                   |
+| HoverImagePreview          | retain  | Popover / Thumbnail                                                      |
+| ImageContextMenu           | compose | Menu / Kbd                                                               |
+| InputBar                   | retain  | TextArea / Toolbar / Button / SelectField / Stepper / Tooltip / Popover  |
+| Lightbox                   | retain  | Dialog / Toolbar / IconButton / StatusIndicator                          |
+| MarkdownRenderer           | retain  | CodeBlock / Table                                                        |
+| MaskEditorModal            | retain  | Dialog / Toolbar / Button / Progress                                     |
+| PostprocessV2Workspace     | retain  | SplitPane / Tabs / Panel / Toolbar                                       |
+| PostprocessWorkspace       | retain  | SplitPane / Tabs / Panel / Toolbar                                       |
+| PromptInputDialog          | compose | Dialog / TextArea / Button                                               |
+| PromptVariableEditor       | retain  | 无对应共享原语（富文本 contentEditable 编辑器，fieldset/表单字段不适用） |
+| RandomPromptModal          | retain  | Dialog / Tabs / SearchField / ListRow / EmptyState                       |
+| ScheduleModal              | retain  | Dialog / Tabs / Toolbar / ListRow / Popover                              |
+| ScheduleRunner             | retain  | ToastMessage / StatusIndicator / Progress                                |
+| SearchBar                  | compose | Toolbar / SearchField / SelectField / IconButton                         |
+| Select                     | retain  | SelectField / Popover / Menu                                             |
+| SettingsModal              | retain  | Dialog / Tabs / Fieldset / TextField / SelectField / Switch / Alert      |
+| SizePickerModal            | compose | Dialog / Grid / SegmentedControl / Button                                |
+| SopBatchDetailModal        | compose | Dialog / Grid / Thumbnail / StatusIndicator / Progress                   |
+| SopBatchTaskCard           | compose | Card / Thumbnail / StatusIndicator / Toolbar                             |
+| SupportPromptModal         | compose | Dialog / Alert / Button                                                  |
+| TaskCard                   | retain  | Card / Thumbnail / StatusIndicator / Toolbar / Menu                      |
+| TaskGrid                   | retain  | Grid / Skeleton / EmptyState                                             |
+| Toast                      | migrate | ToastMessage                                                             |
+| UpdateReleaseNotesModal    | compose | Dialog / Disclosure / Button                                             |
+| VarEntryEditor             | compose | Dialog / TextField / ListRow / Button                                    |
+| ViewportTooltip            | retain  | Tooltip                                                                  |
+| WordLibraryManagerModal    | retain  | Dialog / Tabs / SearchField / ListRow / EmptyState                       |
+| WordLibrarySidebar         | retain  | SplitPane / Panel / SearchField / NavList                                |
+| WordLibrarySidebarToggle   | migrate | IconButton / Tooltip                                                     |
+| WorkspaceTabBar            | retain  | Panel / SearchField / ListRow / Menu / Toolbar                           |
+| WorkspaceTabManagerModal   | retain  | Dialog / SearchField / ListRow / Menu / EmptyState                       |
+| AppPageRail                | retain  | 无对应共享原语（固定翻页导航 rail，无滚动容器）                          |
+| WordLibraryDerivativePanel | retain  | Button / SegmentedControl / Disclosure / Alert                           |
+| WordLibraryQuickPanel      | retain  | SearchField / SegmentedControl / ListRow / EmptyState                    |
 
 ### 3.2 Assistant、Composite、Ordering、Requirement、Strategy
 
-| 模块 | 决策 | 对应共享组件 |
-| --- | --- | --- |
-| AssistantActionBar | retain | Toolbar / SegmentedControl / Switch / Fieldset / Alert / Progress / CodeBlock |
-| BatchExportTab | compose | Fieldset / TextField / SelectField / Progress / Alert |
-| DistributionSettingsPanel | compose | Panel / Fieldset / Switch / TextField |
-| ExportResultsPanel | compose | Panel / Progress / StatusIndicator / Alert / Table |
-| FloatingLayerToolbar | migrate | Toolbar / Button / IconButton / Tooltip |
-| FloatingLogoLibrary | compose | Panel / Grid / Thumbnail / IconButton / Tooltip |
-| GlobalOutputRulesPanel | compose | Panel / Fieldset / SelectField / TextField |
-| PresetCanvasEditor | retain | Toolbar / AspectRatio / Popover / StatusIndicator |
-| PresetLayerPanel | retain | Panel / ListRow / Fieldset / Stepper / Menu |
-| PresetManagementTab | retain | Tabs / Panel / ListRow / Menu / EmptyState |
-| PresetNamingFields | retain | Fieldset / TextField / Badge / Popover / Alert |
-| CompositeWorkspace | retain | SplitPane / Tabs / Panel / Toolbar |
-| RequirementOrderingWorkspace | retain | PageHeader / Tabs / Container |
-| OrderingCreate | retain | PageHeader / Card / Fieldset / SegmentedControl / Thumbnail |
-| OrderingHistory | retain | PageHeader / Table / StatusIndicator / Drawer / EmptyState |
-| RequirementPrototype AppShell | retain | Container / PageHeader / NavList / Card / Table |
-| Requirement QueueRunner | retain | Progress / ToastMessage / StatusIndicator |
-| GallerySopBatchModal | retain | Dialog / Fieldset / Thumbnail / Progress / Alert |
-| GallerySopManagementCenter | retain | PageHeader / SplitPane / Panel |
-| RequirementStrategyWorkspace | retain | PageHeader / SplitPane / Panel |
-| StoreStrategyImage | retain | Thumbnail / AspectRatio |
-| SopManagementCenter | retain | PageHeader / SearchField / ListRow / Panel / EmptyState |
-| SopPresetPickerModal | compose | Dialog / SearchField / ListRow / EmptyState |
-| StrategyEditor | retain | Fieldset / TextField / TextArea / Switch / Disclosure |
-| StrategyGrid | compose | Grid / Card / StatusIndicator / EmptyState |
-| StrategyTree | retain | NavList / ListRow / TextField / Menu |
+| 模块                          | 决策    | 对应共享组件                                                                  |
+| ----------------------------- | ------- | ----------------------------------------------------------------------------- |
+| AssistantActionBar            | retain  | Toolbar / SegmentedControl / Switch / Fieldset / Alert / Progress / CodeBlock |
+| BatchExportTab                | compose | Fieldset / TextField / SelectField / Progress / Alert                         |
+| DistributionSettingsPanel     | compose | Panel / Fieldset / Switch / TextField                                         |
+| ExportResultsPanel            | compose | Panel / Progress / StatusIndicator / Alert / Table                            |
+| FloatingLayerToolbar          | migrate | Toolbar / Button / IconButton / Tooltip                                       |
+| FloatingLogoLibrary           | compose | Panel / Grid / Thumbnail / IconButton / Tooltip                               |
+| GlobalOutputRulesPanel        | compose | Panel / Fieldset / SelectField / TextField                                    |
+| PresetCanvasEditor            | retain  | Toolbar / AspectRatio / Popover / StatusIndicator                             |
+| PresetLayerPanel              | retain  | Panel / ListRow / Fieldset / Stepper / Menu                                   |
+| PresetManagementTab           | retain  | Tabs / Panel / ListRow / Menu / EmptyState                                    |
+| PresetNamingFields            | retain  | Fieldset / TextField / Badge / Popover / Alert                                |
+| CompositeWorkspace            | retain  | SplitPane / Tabs / Panel / Toolbar                                            |
+| RequirementOrderingWorkspace  | retain  | PageHeader / Tabs / Container                                                 |
+| OrderingCreate                | retain  | PageHeader / Card / Fieldset / SegmentedControl / Thumbnail                   |
+| OrderingHistory               | retain  | PageHeader / Table / StatusIndicator / Drawer / EmptyState                    |
+| RequirementPrototype AppShell | retain  | Container / PageHeader / NavList / Card / Table                               |
+| Requirement QueueRunner       | retain  | Progress / ToastMessage / StatusIndicator                                     |
+| GallerySopBatchModal          | retain  | Dialog / Fieldset / Thumbnail / Progress / Alert                              |
+| GallerySopManagementCenter    | retain  | PageHeader / SplitPane / Panel                                                |
+| RequirementStrategyWorkspace  | retain  | PageHeader / SplitPane / Panel                                                |
+| StoreStrategyImage            | retain  | Thumbnail / AspectRatio                                                       |
+| SopManagementCenter           | retain  | PageHeader / SearchField / ListRow / Panel / EmptyState                       |
+| SopPresetPickerModal          | compose | Dialog / SearchField / ListRow / EmptyState                                   |
+| StrategyEditor                | retain  | Fieldset / TextField / TextArea / Switch / Disclosure                         |
+| StrategyGrid                  | compose | Grid / Card / StatusIndicator / EmptyState                                    |
+| StrategyTree                  | retain  | NavList / ListRow / TextField / Menu                                          |
 
 ## 4. 高级组件边界
 
@@ -328,13 +330,7 @@ Dialog → Fieldset（参数区）→ 预估摘要（Stat/KeyValue）→ 主行�
 ## 5. 使用与治理
 
 ```tsx
-import {
-  Alert,
-  Button,
-  Fieldset,
-  SelectField,
-  TextField,
-} from '../design-system'
+import { Alert, Button, Fieldset, SelectField, TextField } from '../design-system'
 ```
 
 新增共享组件前必须满足：

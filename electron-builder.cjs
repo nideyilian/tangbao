@@ -38,9 +38,7 @@ function githubApiRequest(method, apiPath, token, body) {
           accept: 'application/vnd.github+json',
           'user-agent': 'tangbao-release-hook',
           authorization: `Bearer ${token}`,
-          ...(payload
-            ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
-            : {}),
+          ...(payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}),
         },
       },
       (response) => {

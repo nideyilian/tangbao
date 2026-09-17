@@ -3914,8 +3914,7 @@ export default function SettingsModal() {
                       <div>
                         <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">导入旧版数据</h4>
                         <p className="mt-1 text-xs leading-relaxed text-ds-muted dark:text-ds-muted">
-                          从旧版本数据目录（糖包 / tangbao / 糖包 V2
-                          等）恢复标签工作区、生图任务、词条库与素材库；
+                          从旧版本数据目录（糖包 / tangbao / 糖包 V2 等）恢复标签工作区、生图任务、词条库与素材库；
                           支持跨开发/安装模式迁移数据文件。只复制不覆盖，可随时重复执行。
                         </p>
                       </div>

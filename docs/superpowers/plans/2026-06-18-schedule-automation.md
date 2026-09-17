@@ -13,6 +13,7 @@
 ### Task 1: Schedule Core Utilities
 
 **Files:**
+
 - Create: `src/lib/schedule.ts`
 - Test: `src/lib/schedule.test.ts`
 - Modify: `src/types.ts`
@@ -74,21 +75,25 @@ describe('schedule utilities', () => {
       { id: 'collection-b', name: '头像', createdAt: 1, updatedAt: 1 },
     ]
 
-    expect(resolveScheduleOutputTarget({
-      favoriteOutputPath: 'D:\\Exports\\Posters',
-      collectionId: 'collection-a',
-      taskCollectionIds: ['collection-b'],
-      collections,
-      defaultCollectionId: 'collection-b',
-    })).toEqual({ path: 'D:\\Exports\\Posters' })
+    expect(
+      resolveScheduleOutputTarget({
+        favoriteOutputPath: 'D:\\Exports\\Posters',
+        collectionId: 'collection-a',
+        taskCollectionIds: ['collection-b'],
+        collections,
+        defaultCollectionId: 'collection-b',
+      }),
+    ).toEqual({ path: 'D:\\Exports\\Posters' })
 
-    expect(resolveScheduleOutputTarget({
-      favoriteOutputPath: '',
-      collectionId: 'collection-a',
-      taskCollectionIds: ['collection-b'],
-      collections,
-      defaultCollectionId: 'collection-b',
-    })).toEqual({ subFolder: '海报' })
+    expect(
+      resolveScheduleOutputTarget({
+        favoriteOutputPath: '',
+        collectionId: 'collection-a',
+        taskCollectionIds: ['collection-b'],
+        collections,
+        defaultCollectionId: 'collection-b',
+      }),
+    ).toEqual({ subFolder: '海报' })
   })
 })
 ```
@@ -114,6 +119,7 @@ Expected: PASS.
 ### Task 2: Store Schedule State and Favorite Output Paths
 
 **Files:**
+
 - Modify: `src/store.ts`
 - Test: `src/store.test.ts`
 
@@ -128,8 +134,19 @@ it('persists default schedule rows in persisted state', () => {
 })
 
 it('adds a schedule item and clamps count to at least one', () => {
-  useStore.setState({ schedule: { rows: createDefaultScheduleRows(), items: [], activeWeekStart: '2026-06-15', modalOpen: false } })
-  const id = useStore.getState().addScheduleItem({ taskId: 'task-a', collectionId: 'collection-a', date: '2026-06-18', rowId: 'row-1', count: 0, time: null })
+  useStore.setState({
+    schedule: { rows: createDefaultScheduleRows(), items: [], activeWeekStart: '2026-06-15', modalOpen: false },
+  })
+  const id = useStore
+    .getState()
+    .addScheduleItem({
+      taskId: 'task-a',
+      collectionId: 'collection-a',
+      date: '2026-06-18',
+      rowId: 'row-1',
+      count: 0,
+      time: null,
+    })
   expect(useStore.getState().schedule.items.find((item) => item.id === id)).toMatchObject({ count: 1, order: 0 })
 })
 ```
@@ -155,6 +172,7 @@ Expected: PASS.
 ### Task 3: Scheduled Submission and Local Save Metadata
 
 **Files:**
+
 - Modify: `src/store.ts`
 - Modify: `src/lib/localSave.ts`
 - Test: `src/store.test.ts`
@@ -188,6 +206,7 @@ Expected: PASS.
 ### Task 4: Schedule Modal UI
 
 **Files:**
+
 - Create: `src/components/ScheduleModal.tsx`
 - Modify: `src/App.tsx`
 - Modify: `src/components/WorkspaceTabBar.tsx`
@@ -216,6 +235,7 @@ Expected: PASS.
 ### Task 5: Runtime Scheduler
 
 **Files:**
+
 - Create: `src/components/ScheduleRunner.tsx`
 - Modify: `src/App.tsx`
 - Test: `src/lib/schedule.test.ts`
@@ -245,6 +265,7 @@ Expected: PASS.
 ### Task 6: Final Verification
 
 **Files:**
+
 - All touched implementation files.
 
 - [ ] **Step 1: Run focused tests**

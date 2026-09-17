@@ -54,9 +54,7 @@ function request(url, method = 'GET', headers = {}) {
         }
         const chunks = []
         res.on('data', (chunk) => chunks.push(chunk))
-        res.on('end', () =>
-          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }),
-        )
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }))
       },
     )
     req.on('error', reject)

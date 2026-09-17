@@ -11,14 +11,14 @@
 
 ## 必须覆盖的全局规则
 
-| 全局规则 | 页面覆盖 | 业务理由 | 删除条件 |
-| --- | --- | --- | --- |
-| 4.7 应用壳与主导航 | 引入独立顶部 sticky 导航（`PageHeader` + 角色 `navConfig`），与 legacy `Header` 的 `SegmentedControl` 是**两套并存**切换机制（admin 可在两者间跳转） | 需求中心需要角色化导航 | 导航统一为一套 |
-| 4.4 / 4.6 登录与权限 | 独立登录态与角色模型（optimizer/strategist/admin，密码 demo123），未登录拦截所有子页 | 企业内多角色协作 | 权限模型移除 |
-| 4.7 内容宽度 | 不同路由不同宽度：`strategy` 路由 `main p-0` 全宽，其余 `max-w-[1600px] p-5` | 策略编辑需全宽，其他需约束 | 统一宽度 |
-| 4.7 嵌套 | 完整 legacy 工作区（含 `WorkspaceTabBar`、`Header`、`TaskGrid`、`InputBar`、各 `appMode`、全局弹窗）作为 `legacy` prop 传入；仅 `route==='legacy'` 且 admin 时渲染 `requirement-legacy-shell` 包裹传统工具 | 平滑迁移，传统工具保留在壳内 | legacy 通道移除 |
-| 6.6 / 全局弹窗 | 全局弹窗（`DetailModal`/`Lightbox`/`Toast` 等）由 App 根挂载，壳层与 legacy 共用，不重复挂载 | 单一弹窗源 | — |
-| 2.8 复用一致性 | `strategy`/`order`/`orders` 在壳内复用 `StrategyWorkspace`、`RequirementOrderingCreatePage`/`HistoryPage`，需保证壳内（无 docked-panels 留白）与 legacy 独立运行视觉一致 | 避免双套实现漂移 | — |
+| 全局规则             | 页面覆盖                                                                                                                                                                                                   | 业务理由                     | 删除条件        |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | --------------- |
+| 4.7 应用壳与主导航   | 引入独立顶部 sticky 导航（`PageHeader` + 角色 `navConfig`），与 legacy `Header` 的 `SegmentedControl` 是**两套并存**切换机制（admin 可在两者间跳转）                                                       | 需求中心需要角色化导航       | 导航统一为一套  |
+| 4.4 / 4.6 登录与权限 | 独立登录态与角色模型（optimizer/strategist/admin，密码 demo123），未登录拦截所有子页                                                                                                                       | 企业内多角色协作             | 权限模型移除    |
+| 4.7 内容宽度         | 不同路由不同宽度：`strategy` 路由 `main p-0` 全宽，其余 `max-w-[1600px] p-5`                                                                                                                               | 策略编辑需全宽，其他需约束   | 统一宽度        |
+| 4.7 嵌套             | 完整 legacy 工作区（含 `WorkspaceTabBar`、`Header`、`TaskGrid`、`InputBar`、各 `appMode`、全局弹窗）作为 `legacy` prop 传入；仅 `route==='legacy'` 且 admin 时渲染 `requirement-legacy-shell` 包裹传统工具 | 平滑迁移，传统工具保留在壳内 | legacy 通道移除 |
+| 6.6 / 全局弹窗       | 全局弹窗（`DetailModal`/`Lightbox`/`Toast` 等）由 App 根挂载，壳层与 legacy 共用，不重复挂载                                                                                                               | 单一弹窗源                   | —               |
+| 2.8 复用一致性       | `strategy`/`order`/`orders` 在壳内复用 `StrategyWorkspace`、`RequirementOrderingCreatePage`/`HistoryPage`，需保证壳内（无 docked-panels 留白）与 legacy 独立运行视觉一致                                   | 避免双套实现漂移             | —               |
 
 ## 页面状态
 

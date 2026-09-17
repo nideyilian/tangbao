@@ -13,6 +13,7 @@
 ### Task 1: Define and validate the workspace backup snapshot
 
 **Files:**
+
 - Modify: `src/types.ts`
 - Create: `src/lib/workspaceBackup.ts`
 - Create: `src/lib/workspaceBackup.test.ts`
@@ -22,12 +23,7 @@
 Create fixtures with two tabs, one group, one empty tab, and one task per populated tab. Assert:
 
 ```ts
-const snapshot = createWorkspaceBackupState(
-  [tabA, tabB, emptyTab],
-  [group],
-  tabB.id,
-  true,
-)
+const snapshot = createWorkspaceBackupState([tabA, tabB, emptyTab], [group], tabB.id, true)
 
 expect(snapshot.tabs.map(({ id, taskIds }) => ({ id, taskIds }))).toEqual([
   { id: tabA.id, taskIds: ['task-a'] },
@@ -35,11 +31,7 @@ expect(snapshot.tabs.map(({ id, taskIds }) => ({ id, taskIds }))).toEqual([
   { id: emptyTab.id, taskIds: [] },
 ])
 
-expect(restoreWorkspaceBackupState(
-  snapshot,
-  [taskA, taskB],
-  new Set(['input-a', 'input-b']),
-)).toMatchObject({
+expect(restoreWorkspaceBackupState(snapshot, [taskA, taskB], new Set(['input-a', 'input-b']))).toMatchObject({
   activeTabId: tabB.id,
   groups: [group],
   tabs: [
@@ -137,6 +129,7 @@ Expected: PASS.
 ### Task 2: Export v5 manifests with workspace ownership
 
 **Files:**
+
 - Modify: `src/lib/backupImport.ts`
 - Modify: `src/lib/backupImport.test.ts`
 - Modify: `src/store.ts`
@@ -216,6 +209,7 @@ Expected: PASS.
 ### Task 3: Replace tasks and restore exact tab ownership
 
 **Files:**
+
 - Modify: `src/lib/db.ts`
 - Modify: `src/lib/db.test.ts`
 - Modify: `src/lib/backupImport.ts`
@@ -249,10 +243,12 @@ Assert:
 
 ```ts
 expect((await getAllTasks()).map((task) => task.id)).toEqual(['task-a', 'task-b'])
-expect(useStore.getState().workspaceTabs.map((tab) => ({
-  id: tab.id,
-  taskIds: tab.tasks.map((task) => task.id),
-}))).toEqual([
+expect(
+  useStore.getState().workspaceTabs.map((tab) => ({
+    id: tab.id,
+    taskIds: tab.tasks.map((task) => task.id),
+  })),
+).toEqual([
   { id: 'tab-a', taskIds: ['task-a'] },
   { id: 'tab-b', taskIds: ['task-b'] },
   { id: 'tab-empty', taskIds: [] },
@@ -302,10 +298,7 @@ In `importData`, compute:
 
 ```ts
 const replaceWorkspace =
-  data.version >= 5 &&
-  Boolean(data.workspaceState) &&
-  options.importConfig === true &&
-  options.importTasks === true
+  data.version >= 5 && Boolean(data.workspaceState) && options.importConfig === true && options.importTasks === true
 ```
 
 Pass `replaceTasks: replaceWorkspace` to `commitImportedRecords`.
@@ -336,6 +329,7 @@ Expected: PASS.
 ### Task 4: Verify the complete change
 
 **Files:**
+
 - Verify all files modified by Tasks 1–3.
 
 - [ ] **Step 1: Run the full test suite**

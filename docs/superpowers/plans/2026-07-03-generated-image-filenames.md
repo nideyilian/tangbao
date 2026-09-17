@@ -13,6 +13,7 @@
 ### Task 1: Pure filename policy
 
 **Files:**
+
 - Create: `src/lib/generatedImageFilename.ts`
 - Test: `src/lib/generatedImageFilename.test.ts`
 
@@ -31,6 +32,7 @@ The sanitizer replaces `[<>:"/\\|?*\x00-\x1f]+`, collapses `\s+`, and truncates 
 ### Task 2: Persisted settings and UI
 
 **Files:**
+
 - Modify: `src/types.ts`
 - Modify: `src/lib/apiProfiles.ts`
 - Modify: `src/lib/apiProfiles.test.ts`
@@ -45,6 +47,7 @@ The sanitizer replaces `[<>:"/\\|?*\x00-\x1f]+`, collapses `\s+`, and truncates 
 ### Task 3: Exact generated-image download entries
 
 **Files:**
+
 - Modify: `src/lib/downloadImages.ts`
 - Create: `src/lib/downloadImages.test.ts`
 
@@ -59,6 +62,7 @@ The optional filter must also support stream partial image IDs. ZIP duplicate pr
 ### Task 4: Electron automatic-save continuation
 
 **Files:**
+
 - Modify: `src/lib/localSave.ts`
 - Modify: `src/lib/localSave.test.ts`
 - Modify: `src/store.ts`
@@ -77,6 +81,7 @@ Directory-read failure falls back to sequence `1`; the existing save error repor
 ### Task 5: Route all generated-image downloads
 
 **Files:**
+
 - Modify: `src/components/DetailModal.tsx`
 - Modify: `src/components/ImageContextMenu.tsx`
 - Modify: `src/components/InputBar.tsx`

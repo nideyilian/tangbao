@@ -4,7 +4,8 @@ import { join, extname, sep } from 'node:path'
 const PATTERNS = {
   gray: /\b(?:bg-white|bg-gray-\d+|text-gray-\d+|border-gray-\d+|bg-slate-\d+|text-slate-\d+|border-slate-\d+|bg-zinc-\d+|text-zinc-\d+|border-zinc-\d+|bg-neutral-\d+|text-neutral-\d+|border-neutral-\d+)\b/g,
   brandBlue: /\b(?:bg-blue-\d+|text-blue-\d+|border-blue-\d+|ring-blue-\d+)\b/g,
-  semantic: /\b(?:bg-emerald-\d+|text-emerald-\d+|bg-amber-\d+|text-amber-\d+|bg-red-\d+|text-red-\d+|bg-rose-\d+|text-rose-\d+)\b/g,
+  semantic:
+    /\b(?:bg-emerald-\d+|text-emerald-\d+|bg-amber-\d+|text-amber-\d+|bg-red-\d+|text-red-\d+|bg-rose-\d+|text-rose-\d+)\b/g,
   rounded: /\brounded-(?:xl|2xl|3xl)\b/g,
   hex: /#[0-9a-fA-F]{3,8}\b/g,
 }
@@ -25,7 +26,10 @@ function walk(dir, out = []) {
 const cur = {}
 for (const f of walk('src')) {
   const src = readFileSync(f, 'utf8')
-  const key = f.split(sep).join('/').replace(/^src\//, '')
+  const key = f
+    .split(sep)
+    .join('/')
+    .replace(/^src\//, '')
   for (const [name, re] of Object.entries(PATTERNS)) {
     re.lastIndex = 0
     const n = (src.match(re) || []).length

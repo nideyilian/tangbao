@@ -19,7 +19,7 @@
 | 类别       | 首要症结                                             | 一句话结论                                                    |
 | ---------- | ---------------------------------------------------- | ------------------------------------------------------------- |
 | 界面卡顿   | 主进程同步 fs（92 处）+ 批量目录读取无上限           | 卡的不是 React，是 Electron 主进程事件循环被同步 I/O 占住     |
-| 图片加载慢 | 全图统一经 base64 data URL，单张经历 5 次字节复制    | 已有更优的 `tangbao://` 磁盘协议，任务输出图却完全没接上       |
+| 图片加载慢 | 全图统一经 base64 data URL，单张经历 5 次字节复制    | 已有更优的 `tangbao://` 磁盘协议，任务输出图却完全没接上      |
 | 操作延迟   | `getNextTaskFilenameBatch` 三层嵌套扫描 + 跨进程双写 | 每张图命名都要做一次三层嵌套查找；单张图落库要跨 4 次进程边界 |
 
 **最高性价比的单项修复**：`listCompositeImageFiles`（`electron/ipc-handlers.ts:740`）——它没有任何上限地同步读满整个目录，是唯一能一次操作就冻住整个应用的路径。**修复只需给读取加上限并改异步，不动任何业务语义。**
@@ -377,7 +377,7 @@ Electron 下图片记录的 `dataUrl` 已置空（`db.ts:1082` `dataUrl: localPa
 | B2   | `grid` 缩略图通道未启用                                     | 全图库滚动加载量 ×3–5                | 高     | **高**（原评「极低」有误） | **P1** ✅已修                                                    |
 | A3   | `getNextTaskFilenameBatch` 三层嵌套                         | 批量出图时的命名链路                 | 中     | 低                         | **P1** ✅已修                                                    |
 | C1   | 单次生成 4+ 次跨进程写                                      | 操作响应延迟                         | 中     | 中                         | **P3**（原评 P1 有误：实测只省 0.1–0.4ms/张，见修复 8）          |
-| 🔴   | **缩略图同步编码**（`canvas.toDataURL` 阻塞主线程 71ms/张） | 生成期掉帧 / 批量出图叠加            | 高     | 低                         | **P1** ✅已修（修复 8 量测中发现，修复 9 处理）                   |
+| 🔴   | **缩略图同步编码**（`canvas.toDataURL` 阻塞主线程 71ms/张） | 生成期掉帧 / 批量出图叠加            | 高     | 低                         | **P1** ✅已修（修复 8 量测中发现，修复 9 处理）                  |
 | A5   | `computeContentHash` 主线程 atob 循环                       | 批量导入/生成期卡顿                  | 中     | 低                         | **P2** ✅已修（真机实测降到 4.7ms/张，不再是大头）               |
 | B3   | 缓存计费口径偏差，命中率低                                  | 缓存利用率偏低                       | 中     | 低                         | **P2**（刻意保守高估，需先定内存预算）                           |
 | A4   | 大组件订阅整个 `tasks`                                      | 重渲染                               | 中     | 中                         | **P3**（前提弱化：高频进度已走 `runtimeStore`，见修复 8 未做表） |
@@ -556,7 +556,7 @@ Electron 下图片记录的 `dataUrl` 已置空（`db.ts:1082` `dataUrl: localPa
 
 | 文件                                    | 职责                                                                                                                    |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `electron/local-image-protocol.ts`      | `tangbao://image/` 主机名实现：路径校验 → 扩展名白名单 → 异步读取 → 带 `immutable` 强缓存下发                            |
+| `electron/local-image-protocol.ts`      | `tangbao://image/` 主机名实现：路径校验 → 扩展名白名单 → 异步读取 → 带 `immutable` 强缓存下发                           |
 | `src/lib/localImageUrl.ts`              | 渲染进程侧地址构造（`buildLocalImageUrl` / `isLocalImageUrl`），含「不在服务范围内就不发 URL」的前置过滤                |
 | `src/store.ts` `resolveImageDisplaySrc` | 展示用地址解析：优先协议 URL，否则回退 `ensureImageCached` 的 dataUrl（去重 + 与 `loadAndCacheImage` 同口径的目录兜底） |
 
@@ -579,8 +579,8 @@ Electron 下图片记录的 `dataUrl` 已置空（`db.ts:1082` `dataUrl: localPa
 | 库根下 `library.json`            | ❌ 404（目录边界生效）                    |
 | `cache-images\fake.html`         | ❌ 404（扩展名白名单）                    |
 | `cache-images\..\library.json`   | ❌ 404（路径穿越被拦）                    |
-| `tangbao://assets/…`              | ❌ 404（分流未抢资产分支）                |
-| `fetch('tangbao://…')`            | 🚫 被 CSP 拦（符合设计）                  |
+| `tangbao://assets/…`             | ❌ 404（分流未抢资产分支）                |
+| `fetch('tangbao://…')`           | 🚫 被 CSP 拦（符合设计）                  |
 | `data:` 图                       | ✅ 正常（既有路径无回归）                 |
 | `drawImage` + `getImageData`     | ⚠️ `SecurityError` → **协议图会污染画布** |
 
@@ -831,14 +831,15 @@ grid 磁盘未命中 → 排一个后台回填任务 → 立刻用 full 兜底�
 **一句话**：把 `canvas.toDataURL` 换成 `canvas.toBlob`。编码量没变、总耗时没变，但 5 张连续缩略图
 编码时主线程的冻结从 **553.8ms** 降到 **32ms**（0 个 >50ms 冻结帧）。
 
-| 文件                    | 改动                                                                                                                                                                                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 文件                     | 改动                                                                                                                                                                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/lib/canvasImage.ts` | 新增 `blobToDataUrl`（`blob.arrayBuffer()` + 原生 `Uint8Array.prototype.toBase64`，回退分块 `btoa`）与 `canvasToWebpDataUrl`（优先 `toBlob`；不支持/编码失败回退 `toDataURL`，保持原语义）；`createImageThumbnailDataUrl` 改走后者，`grid` 通道一并受益 |
-| `src/lib/db.ts`          | `createImageThumbnail` 的 `canvas.toDataURL('image/webp', THUMBNAIL_QUALITY)` → `await canvasToWebpDataUrl(canvas, THUMBNAIL_QUALITY)`                                                                                    |
+| `src/lib/db.ts`          | `createImageThumbnail` 的 `canvas.toDataURL('image/webp', THUMBNAIL_QUALITY)` → `await canvasToWebpDataUrl(canvas, THUMBNAIL_QUALITY)`                                                                                                                  |
 
 **真机量测**（`%TEMP%\tangbao-encode-probe`，Electron 43 / Chromium 150）：1024×1024 源图（渐变 + 像素噪声
-+ 600 条高频线条，避免纯色被 WebP 压到失真），`q0.82`，5 个独立 canvas 样本，编码前各预热一次。
-除耗时外**挂了 rAF 帧探针**记录主线程最长冻结 —— 这才是用户能感知的量。
+
+- 600 条高频线条，避免纯色被 WebP 压到失真），`q0.82`，5 个独立 canvas 样本，编码前各预热一次。
+  除耗时外**挂了 rAF 帧探针**记录主线程最长冻结 —— 这才是用户能感知的量。
 
 | 口径                        | 改前 `toDataURL`                            | 改后 `toBlob`                         |
 | --------------------------- | ------------------------------------------- | ------------------------------------- |
@@ -849,9 +850,9 @@ grid 磁盘未命中 → 排一个后台回填任务 → 立刻用 full 兜底�
 
 `blob → dataURL` 这一步单独量过，两条实现同量级但原生路径快一半，故取后者：
 
-| 实现                                   | 单次均值（极值）    |
-| -------------------------------------- | ------------------- |
-| `FileReader.readAsDataURL`             | 1.04ms（0.8–1.3）   |
+| 实现                                   | 单次均值（极值）      |
+| -------------------------------------- | --------------------- |
+| `FileReader.readAsDataURL`             | 1.04ms（0.8–1.3）     |
 | `blob.arrayBuffer()` + 原生 `toBase64` | **0.56ms**（0.4–0.7） |
 
 **要纠正修复 8 的一处误读**：那里写「`toBlob` 产出更小（263KB vs 351KB）」把 base64 膨胀当成了编码器优势。

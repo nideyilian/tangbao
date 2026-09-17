@@ -166,7 +166,11 @@ app.whenReady().then(async () => {
     } catch (e) {
       unknownError = String(e)
     }
-    check('未知方法返回明确错误', unknownError !== null && unknownError.includes('unknown catalog method'), unknownError)
+    check(
+      '未知方法返回明确错误',
+      unknownError !== null && unknownError.includes('unknown catalog method'),
+      unknownError,
+    )
 
     await w.close()
     check('close 正常退出', true)
@@ -175,10 +179,7 @@ app.whenReady().then(async () => {
     const bad = await forkWith(path.join(process.cwd(), 'definitely-missing-dir-xyz', 'x.sqlite'))
     let initError = null
     try {
-      await Promise.race([
-        bad.ready,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('ready timeout')), 5_000)),
-      ])
+      await Promise.race([bad.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('ready timeout')), 5_000))])
     } catch (e) {
       initError = String(e)
     }

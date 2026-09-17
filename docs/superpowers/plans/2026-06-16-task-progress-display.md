@@ -23,6 +23,7 @@
 ## Task 1: Progress Display Helper
 
 **Files:**
+
 - Create: `src/lib/taskProgressDisplay.test.ts`
 - Create: `src/lib/taskProgressDisplay.ts`
 - Modify: `src/types.ts`
@@ -54,7 +55,9 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
 
 describe('getTaskProgressDisplay', () => {
   it('shows request progress for a running task before provider acknowledgment', () => {
-    const display = getTaskProgressDisplay(task({ progressStage: 'requesting', apiProfileName: '默认', apiModel: 'gpt-image-1' }))
+    const display = getTaskProgressDisplay(
+      task({ progressStage: 'requesting', apiProfileName: '默认', apiModel: 'gpt-image-1' }),
+    )
     expect(display.cardLabel).toBe('发送请求中')
     expect(display.detailDescription).toContain('默认 / gpt-image-1')
   })
@@ -78,16 +81,18 @@ describe('getTaskProgressDisplay', () => {
   })
 
   it('shows insufficient count and per-image reasons for partial failures', () => {
-    const display = getTaskProgressDisplay(task({
-      status: 'done',
-      outputImages: ['img-1', 'img-2'],
-      batchItemStatuses: ['done', 'done', 'error', 'error'],
-      batchItemErrors: [
-        { index: 2, error: '请求超时' },
-        { index: 3, error: '内容被拒绝' },
-      ],
-      finishedAt: 2,
-    }))
+    const display = getTaskProgressDisplay(
+      task({
+        status: 'done',
+        outputImages: ['img-1', 'img-2'],
+        batchItemStatuses: ['done', 'done', 'error', 'error'],
+        batchItemErrors: [
+          { index: 2, error: '请求超时' },
+          { index: 3, error: '内容被拒绝' },
+        ],
+        finishedAt: 2,
+      }),
+    )
     expect(display.cardLabel).toBe('数量不够')
     expect(display.detailDescription).toContain('请求 4 张，实际生成 2 张')
     expect(display.reasons).toEqual(['第 3 张：请求超时', '第 4 张：内容被拒绝'])
@@ -133,6 +138,7 @@ Expected: all helper tests pass.
 ## Task 2: Store Progress Writes
 
 **Files:**
+
 - Modify: `src/store.test.ts`
 - Modify: `src/store.ts`
 
@@ -205,6 +211,7 @@ Expected: store tests pass.
 ## Task 3: UI Integration
 
 **Files:**
+
 - Modify: `src/components/TaskCard.tsx`
 - Modify: `src/components/DetailModal.tsx`
 
@@ -259,6 +266,7 @@ Expected: build succeeds.
 ## Task 4: Final Verification
 
 **Files:**
+
 - No new code files unless verification exposes issues.
 
 - [ ] **Step 1: Run focused tests**

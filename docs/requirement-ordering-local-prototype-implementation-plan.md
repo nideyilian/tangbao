@@ -701,16 +701,16 @@ npm.cmd run build
 
 ## 12. 交付切片与依赖
 
-| 切片 | 依赖 | 可独立演示的结果 |
-| --- | --- | --- |
-| A. Auth + AppShell | 无 | 三种角色登录和导航 |
-| B. Strategy Catalog | A | 配置草稿、审批和发布 |
-| C. Order Planner | A+B | 鼠标下单和组合预览 |
-| D. Generation Queue | C | 真实生成、进度和结果 |
-| E. Order History | D | 我的需求、详情和复制 |
-| F. Knowledge Import | A+B | 文件夹、数据映射和分析 |
-| G. Knowledge Review | F | 聚类、审核和发布 |
-| H. Admin + QA | A–G | 监控、审计和完整验收 |
+| 切片                | 依赖 | 可独立演示的结果       |
+| ------------------- | ---- | ---------------------- |
+| A. Auth + AppShell  | 无   | 三种角色登录和导航     |
+| B. Strategy Catalog | A    | 配置草稿、审批和发布   |
+| C. Order Planner    | A+B  | 鼠标下单和组合预览     |
+| D. Generation Queue | C    | 真实生成、进度和结果   |
+| E. Order History    | D    | 我的需求、详情和复制   |
+| F. Knowledge Import | A+B  | 文件夹、数据映射和分析 |
+| G. Knowledge Review | F    | 聚类、审核和发布       |
+| H. Admin + QA       | A–G  | 监控、审计和完整验收   |
 
 每个切片完成后应可运行，不提交只有静态页面、没有数据闭环的大批量代码。
 
@@ -741,4 +741,3 @@ npm.cmd run build
 - 1280 × 720、1440 × 900、亮色、暗色和减少动画模式完成 UI 检查。
 - 代码中不存在硬编码 API 密钥。
 - 规则、知识和订单快照可从审计记录追溯。
-

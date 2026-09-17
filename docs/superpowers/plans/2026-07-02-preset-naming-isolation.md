@@ -13,6 +13,7 @@
 ### Task 1: Normalize preset naming data and migrate legacy state
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeV2Types.ts`
 - Modify: `src/features/composite/lib/compositeV2Defaults.ts`
 - Modify: `src/features/composite/storeV2.ts`
@@ -33,12 +34,23 @@ it('creates presets with explicit naming fields', () => {
 })
 
 it('migrates legacy per-preset variables without merging their values', () => {
-  const migrated = migrateCompositeV2PersistedState({
-    presets: [
-      { ...legacyPresetA, namingTemplate: '{project}', customVariables: [{ id: 'a', name: 'project', value: '项目A' }] },
-      { ...legacyPresetB, namingTemplate: '{project}', customVariables: [{ id: 'b', name: 'project', value: '项目B' }] },
-    ],
-  }, 1)
+  const migrated = migrateCompositeV2PersistedState(
+    {
+      presets: [
+        {
+          ...legacyPresetA,
+          namingTemplate: '{project}',
+          customVariables: [{ id: 'a', name: 'project', value: '项目A' }],
+        },
+        {
+          ...legacyPresetB,
+          namingTemplate: '{project}',
+          customVariables: [{ id: 'b', name: 'project', value: '项目B' }],
+        },
+      ],
+    },
+    1,
+  )
   expect(migrated.presets?.map((preset) => preset.customVariableValues)).toEqual([
     { project: '项目A' },
     { project: '项目B' },
@@ -86,18 +98,20 @@ Initialize new/default presets with explicit templates and `{}` values.
 Add an exported pure helper used by Zustand `migrate`:
 
 ```ts
-export function migrateCompositeV2PersistedState(
-  persistedState: unknown,
-  version: number,
-): CompositeV2PersistedState {
+export function migrateCompositeV2PersistedState(persistedState: unknown, version: number): CompositeV2PersistedState {
   const legacy = persistedState as LegacyCompositeV2PersistedState
   const presets = (legacy.presets ?? []).map((preset) => ({
     ...preset,
     subfolderTemplate: preset.subfolderTemplate || preset.namingTemplate || DEFAULT_SUBFOLDER_TEMPLATE,
     filenameTemplate: preset.filenameTemplate || preset.namingTemplate || DEFAULT_FILENAME_TEMPLATE,
-    customVariableValues: preset.customVariableValues
-      ?? Object.fromEntries((preset.customVariables?.length ? preset.customVariables : legacy.customVariables ?? [])
-        .map((variable) => [variable.name, variable.value])),
+    customVariableValues:
+      preset.customVariableValues ??
+      Object.fromEntries(
+        (preset.customVariables?.length ? preset.customVariables : (legacy.customVariables ?? [])).map((variable) => [
+          variable.name,
+          variable.value,
+        ]),
+      ),
   }))
   return { ...legacy, presets } as CompositeV2PersistedState
 }
@@ -125,6 +139,7 @@ git commit -m "fix: isolate preset naming data"
 ### Task 2: Update preset-specific variable values safely
 
 **Files:**
+
 - Modify: `src/features/composite/storeV2.ts`
 - Test: `src/features/composite/storeV2.test.ts`
 
@@ -206,6 +221,7 @@ git commit -m "fix: scope naming values to presets"
 ### Task 3: Separate raw templates from resolved preview in the editor
 
 **Files:**
+
 - Modify: `src/features/composite/components/PresetNamingFields.tsx`
 - Modify: `src/features/composite/components/PresetManagementTab.tsx`
 - Test: `src/features/composite/components/PresetNamingFields.test.ts`
@@ -224,12 +240,13 @@ it('shows raw directory and filename templates with a separate preview', () => {
     customVariableValues: { project: '项目A' },
   }
   const { renderer } = renderFields(preset)
-  expect(renderer.root.findByProps({ 'aria-label': `预设目录模板 ${preset.name}` }).props.value)
-    .toBe('{project}/{size}')
-  expect(renderer.root.findByProps({ 'aria-label': `预设文件名模板 ${preset.name}` }).props.value)
-    .toBe('{preset}-{index}')
-  expect(renderer.root.findByProps({ 'data-testid': 'preset-naming-preview' }).children.join(''))
-    .toContain('项目A')
+  expect(renderer.root.findByProps({ 'aria-label': `预设目录模板 ${preset.name}` }).props.value).toBe(
+    '{project}/{size}',
+  )
+  expect(renderer.root.findByProps({ 'aria-label': `预设文件名模板 ${preset.name}` }).props.value).toBe(
+    '{preset}-{index}',
+  )
+  expect(renderer.root.findByProps({ 'data-testid': 'preset-naming-preview' }).children.join('')).toContain('项目A')
 })
 
 it('switches to the selected preset values without updating the previous preset', () => {
@@ -250,20 +267,22 @@ it('switches to the selected preset values without updating the previous preset'
   const onUpdatePreset = vi.fn()
   const { renderer } = renderFields(presetA, [], onUpdatePreset)
 
-  act(() => renderer.update(createElement(PresetNamingFields, {
-    preset: presetB,
-    customVariables: [],
-    previewValues: { date: '20260702', channel: '渠道', size: '1280x720', preset: presetB.name, index: '1' },
-    onUpdatePreset,
-    onAddCustomVariable: vi.fn(),
-    onUpdateCustomVariableValue: vi.fn(),
-    onRemoveCustomVariable: vi.fn(),
-  })))
+  act(() =>
+    renderer.update(
+      createElement(PresetNamingFields, {
+        preset: presetB,
+        customVariables: [],
+        previewValues: { date: '20260702', channel: '渠道', size: '1280x720', preset: presetB.name, index: '1' },
+        onUpdatePreset,
+        onAddCustomVariable: vi.fn(),
+        onUpdateCustomVariableValue: vi.fn(),
+        onRemoveCustomVariable: vi.fn(),
+      }),
+    ),
+  )
 
-  expect(renderer.root.findByProps({ 'aria-label': `预设目录模板 ${presetB.name}` }).props.value)
-    .toBe('B/{project}')
-  expect(renderer.root.findByProps({ 'aria-label': `预设文件名模板 ${presetB.name}` }).props.value)
-    .toBe('B-{index}')
+  expect(renderer.root.findByProps({ 'aria-label': `预设目录模板 ${presetB.name}` }).props.value).toBe('B/{project}')
+  expect(renderer.root.findByProps({ 'aria-label': `预设文件名模板 ${presetB.name}` }).props.value).toBe('B-{index}')
   expect(onUpdatePreset).not.toHaveBeenCalled()
 })
 ```
@@ -316,8 +335,7 @@ Pass the selected preset ID to value updates:
   previewValues={namingPreviewValues}
   onUpdatePreset={(patch) => store.updatePreset(activePreset.id, patch)}
   onAddCustomVariable={(name, value) => store.addCustomVariable(name, value, activePreset.id)}
-  onUpdateCustomVariableValue={(name, value) =>
-    store.setPresetCustomVariableValue(activePreset.id, name, value)}
+  onUpdateCustomVariableValue={(name, value) => store.setPresetCustomVariableValue(activePreset.id, name, value)}
   onRemoveCustomVariable={store.removeCustomVariable}
 />
 ```
@@ -342,6 +360,7 @@ git commit -m "fix: separate preset naming inputs and preview"
 ### Task 4: Make export use only the current preset naming configuration
 
 **Files:**
+
 - Modify: `src/features/composite/lib/compositeExportRuntime.ts`
 - Modify: `src/features/composite/lib/compositePathTemplates.ts`
 - Test: `src/features/composite/lib/compositePathTemplates.test.ts`
@@ -365,16 +384,19 @@ it('does not fall back to legacy namingTemplate during export', async () => {
     filenameTemplate: '{source}',
     customVariableValues: {},
   }
-  const parts = buildPresetOutputPathParts({
-    preset,
-    outputRule: { channelName: '百度', name: '1280x720' },
-    background: { name: 'source.png', relativeDir: '' },
-    date: '20260702',
-    index: 1,
-    custom: '',
-  } as CompositeV2ExportItem, {
-    preserveSourceDir: false,
-  })
+  const parts = buildPresetOutputPathParts(
+    {
+      preset,
+      outputRule: { channelName: '百度', name: '1280x720' },
+      background: { name: 'source.png', relativeDir: '' },
+      date: '20260702',
+      index: 1,
+      custom: '',
+    } as CompositeV2ExportItem,
+    {
+      preserveSourceDir: false,
+    },
+  )
   expect(parts).toEqual({
     subfolders: [preset.name],
     filename: 'source.jpg',
@@ -440,6 +462,7 @@ git commit -m "fix: export with preset-scoped naming"
 ### Task 5: Verify compatibility and complete the branch
 
 **Files:**
+
 - Verify all modified files
 
 - [ ] **Step 1: Run focused composite tests**

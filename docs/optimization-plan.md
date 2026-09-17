@@ -8,12 +8,12 @@
 
 ## 0. 分级字典与阅读方式
 
-| 级别 | 定义 | 响应要求 |
-| --- | --- | --- |
-| **致命（P0）** | 用户数据丢失 / 不可恢复 / 可执行任意代码 | 立即修，发 hotfix |
-| **高（P1）** | 有可观测后果：卡顿、静默失败、对外承诺未兑现 | 本轮必做 |
-| **中（P2）** | 明显该修，当前量级下后果可控，但会持续放大 | 排进 1–2 个迭代 |
-| **低（P3）** | 纵深防御 / 洁癖 / 未来可能出事 | 有余力再做 |
+| 级别           | 定义                                         | 响应要求          |
+| -------------- | -------------------------------------------- | ----------------- |
+| **致命（P0）** | 用户数据丢失 / 不可恢复 / 可执行任意代码     | 立即修，发 hotfix |
+| **高（P1）**   | 有可观测后果：卡顿、静默失败、对外承诺未兑现 | 本轮必做          |
+| **中（P2）**   | 明显该修，当前量级下后果可控，但会持续放大   | 排进 1–2 个迭代   |
+| **低（P3）**   | 纵深防御 / 洁癖 / 未来可能出事               | 有余力再做        |
 
 **结论概览**：本次体检 **未发现 P0**。
 **P1 只有 2 条**，且互为因果 —— `O-1` 是没落地的功能，`O-2` 是让它能悄悄溜过 CI 的门禁缺口。
@@ -21,14 +21,14 @@
 
 **与体检报告的编号映射**（便于对照，非一一对应 —— 方案侧做了合并与降级）：
 
-| 体检报告 | 本方案 | 变化 |
-| --- | --- | --- |
-| P1-1 | O-1 | 提升为第 1 顺位，补充了「虚标」证据链 |
-| P1-2 | O-3 | 独立成条，排在性能主线之后收尾 |
-| P2-10（门禁） | **O-2**（升 P1） | **升级**：它是 O-1 能溜过 CI 的根因 |
-| P2-4（静默失败） | O-6 | 降成本：中 → 低（发现 `App.tsx:95-106` 已有带节流的监听器） |
+| 体检报告           | 本方案            | 变化                                                                |
+| ------------------ | ----------------- | ------------------------------------------------------------------- |
+| P1-1               | O-1               | 提升为第 1 顺位，补充了「虚标」证据链                               |
+| P1-2               | O-3               | 独立成条，排在性能主线之后收尾                                      |
+| P2-10（门禁）      | **O-2**（升 P1）  | **升级**：它是 O-1 能溜过 CI 的根因                                 |
+| P2-4（静默失败）   | O-6               | 降成本：中 → 低（发现 `App.tsx:95-106` 已有带节流的监听器）         |
 | P2-8（组件巨型化） | **O-17**（降 P3） | **降级**：「文件大」本身不是问题，痛点已在 O-5 覆盖，不建议单独立项 |
-| P2-9（产物卫生） | O-10 | 保持 |
+| P2-9（产物卫生）   | O-10              | 保持                                                                |
 
 **带 ℹ 标记处为「待确认项」**，共 13 条，需要杰哥拍板或补 measured data 才能定。**未确认前不要动手。**
 
@@ -63,6 +63,7 @@
 ```
 
 配套两件事：
+
 1. **补结构性断言测试**（不能只测工具函数本身，那样 O-1 这次就没测出来）：
    在 `src/lib/db.test.ts` 里给 `storeImage` / `createImageThumbnail` 打桩 `HTMLCanvasElement.prototype.toDataURL`
    为「被调用即抛/记 flag」，断言 **一张图入库后 `toDataURL` 未被触碰**。
@@ -77,11 +78,11 @@
 
 ### 风险与副作用
 
-| 风险 | 说明 | 缓解 |
-| --- | --- | --- |
-| 返回值语义变化 | `canvasToWebpDataUrl` 内部先 `toBlob` 再转 dataUrl，产物 base64 应与 `toDataURL` 等价 | 现有 `canvasImage.test.ts` 已覆盖 base64 正确性；再加一条「两者对同一 canvas 产出同一份字节」的对比断言 |
-| 回退路径被走到 | `canvasToWebpDataUrl` 在 `toBlob` 不可用/抛错时回退 `toDataURL`（`canvasImage.ts:167-169`） | 这正是设计意图；Electron 43（Chromium 150）确定支持，回退仅兜底 |
-| 缩略图 md/hash 变化 | 若编码字节有任何差异，会影响依赖缩略图内容的去重/指纹逻辑 | ℹ-2：**需确认是否存在以缩略图 dataUrl 做 hash 的路径**。目前已知 `storeImage` 的 id 用的是**原图** `computeContentHash(dataUrl)`（`db.ts:1170`），不依赖缩略图，故判断无影响 |
+| 风险                | 说明                                                                                        | 缓解                                                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 返回值语义变化      | `canvasToWebpDataUrl` 内部先 `toBlob` 再转 dataUrl，产物 base64 应与 `toDataURL` 等价       | 现有 `canvasImage.test.ts` 已覆盖 base64 正确性；再加一条「两者对同一 canvas 产出同一份字节」的对比断言                                                                      |
+| 回退路径被走到      | `canvasToWebpDataUrl` 在 `toBlob` 不可用/抛错时回退 `toDataURL`（`canvasImage.ts:167-169`） | 这正是设计意图；Electron 43（Chromium 150）确定支持，回退仅兜底                                                                                                              |
+| 缩略图 md/hash 变化 | 若编码字节有任何差异，会影响依赖缩略图内容的去重/指纹逻辑                                   | ℹ-2：**需确认是否存在以缩略图 dataUrl 做 hash 的路径**。目前已知 `storeImage` 的 id 用的是**原图** `computeContentHash(dataUrl)`（`db.ts:1170`），不依赖缩略图，故判断无影响 |
 
 ### 依赖
 
@@ -117,6 +118,7 @@ O-1 之所以能一路通过 `npm run verify`（235 测试文件 / 2247 用例�
 ### 改法（分两步，先观察后收紧）
 
 **Step 1（立即，零风险）**
+
 ```js
 // eslint.config.js:46
 -  '@typescript-eslint/no-unused-vars': 'off',
@@ -126,6 +128,7 @@ O-1 之所以能一路通过 `npm run verify`（235 测试文件 / 2247 用例�
 +    caughtErrors: 'none',         // 不强制消费 catch 变量
 +  }],
 ```
+
 先用 `warn`：既能立刻把 `db.ts:31` 这类化石暴露出来，又不会在午饭点把 `npm run verify` 打成红的。
 
 **Step 2（观察 1–2 个迭代后）**
@@ -143,11 +146,11 @@ O-1 之所以能一路通过 `npm run verify`（235 测试文件 / 2247 用例�
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| 存量告警洪水导致大家习惯性忽略 | Step 1 只开 `warn`；Step 2 前必须先清存量。ℹ-3 需先量一次存量 |
-| `ignoreRestSiblings`/`args: none` 放得太松，漏掉真问题 | 保留最小收窄规则即可，别一上来就全开 |
-| CI 因 lint 失败中断发版 | 用 `warn` 阶段不阻塞；切 `error` 要单独立一次 PR 并先清存量 |
+| 风险                                                   | 缓解                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------- |
+| 存量告警洪水导致大家习惯性忽略                         | Step 1 只开 `warn`；Step 2 前必须先清存量。ℹ-3 需先量一次存量 |
+| `ignoreRestSiblings`/`args: none` 放得太松，漏掉真问题 | 保留最小收窄规则即可，别一上来就全开                          |
+| CI 因 lint 失败中断发版                                | 用 `warn` 阶段不阻塞；切 `error` 要单独立一次 PR 并先清存量   |
 
 ### 依赖
 
@@ -172,15 +175,16 @@ O-1 之所以能一路通过 `npm run verify`（235 测试文件 / 2247 用例�
 
 ```ts
 for (const fileName of toRead) {
-  const result = await readFileBuffer(filePath)          // 已经是字节
+  const result = await readFileBuffer(filePath) // 已经是字节
   const bytes = new Uint8Array(result.data)
   let binary = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) {       // 主线程逐 chunk 拼字符串
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    // 主线程逐 chunk 拼字符串
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
   }
-  const dataUrl = `data:${mime};base64,${btoa(binary)}`  // 主线程同步 base64
-  const id = await computeContentHash(dataUrl)           // 又要把 dataUrl 解回字节
-  await storeImage(dataUrl)                              // ← 内含 O-1 的同步编码
+  const dataUrl = `data:${mime};base64,${btoa(binary)}` // 主线程同步 base64
+  const id = await computeContentHash(dataUrl) // 又要把 dataUrl 解回字节
+  await storeImage(dataUrl) // ← 内含 O-1 的同步编码
   imageIds.push(id)
 }
 ```
@@ -200,11 +204,12 @@ preload 回来的是 `ArrayBuffer` → 拼串 → `btoa` → `storeImage` 内部
 export async function storeImage(
   dataUrl: string,
   source: NonNullable<StoredImage['source']> = 'upload',
-  bytes?: Uint8Array,          // 新增：调用方已有字节时直传，跳过重复解码
+  bytes?: Uint8Array, // 新增：调用方已有字节时直传，跳过重复解码
 ): Promise<string>
 ```
-   内部：`computeContentHash` 与 `saveRawCacheImageToLocal` 在有 `bytes` 时直接用字节，不再走 dataUrl 解码。
-   **`dataUrl` 签名保持不动 → 19 个调用点零改动**，新入参只给新路径用（避免一次性大改）。
+
+内部：`computeContentHash` 与 `saveRawCacheImageToLocal` 在有 `bytes` 时直接用字节，不再走 dataUrl 解码。
+**`dataUrl` 签名保持不动 → 19 个调用点零改动**，新入参只给新路径用（避免一次性大改）。
 
 2. `InputBar.tsx:2455-2485` 改为：去掉 `String.fromCharCode` 拼串 + `btoa` 整段；把 `result.data` 的 `Uint8Array` 直传。
 3. 循环改限并发（`Promise.all` 控制窗口 3–4），把 IPC / IO 等待重叠起来。
@@ -219,11 +224,11 @@ export async function storeImage(
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| `storeImage` 加参数后行为分叉（有 bytes / 无 bytes 两条路） | 保持旧签名完全不变，`bytes` 缺省走原路径；两条路都加测试 |
-| 并发写库触发竞态 | ℹ-4；若 `putImageRecords` 无 upsert 语义，降级为「并发读 + 串行写」 |
-| `MAX_FOLDER_IMAGES` 上限语义变化 | 保持上限不变，只改执行方式 |
+| 风险                                                        | 缓解                                                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------------- |
+| `storeImage` 加参数后行为分叉（有 bytes / 无 bytes 两条路） | 保持旧签名完全不变，`bytes` 缺省走原路径；两条路都加测试            |
+| 并发写库触发竞态                                            | ℹ-4；若 `putImageRecords` 无 upsert 语义，降级为「并发读 + 串行写」 |
+| `MAX_FOLDER_IMAGES` 上限语义变化                            | 保持上限不变，只改执行方式                                          |
 
 ### 依赖
 
@@ -257,9 +262,10 @@ export async function storeImage(
 export async function renderCompositePresetToDataUrl(preset, quality = 0.92) {
   const canvas = document.createElement('canvas')
   await renderCompositePresetToCanvas(preset, canvas)
-  return blobToDataUrl(await canvasToBlob(canvas, 'image/jpeg', quality))  // 复用 canvasImage.ts 已有实现
+  return blobToDataUrl(await canvasToBlob(canvas, 'image/jpeg', quality)) // 复用 canvasImage.ts 已有实现
 }
 ```
+
 更彻底的做法是 `OffscreenCanvas` + Worker，但那要改 MCP 与渲染链路，**本轮不建议**（见「不做的事」）。
 
 ℹ-5 **待确认**：这两个函数的返回值是否被直接喂给需要 dataUrl 的下游
@@ -271,9 +277,9 @@ export async function renderCompositePresetToDataUrl(preset, quality = 0.92) {
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| jpeg 编码器选择泄漏到调用方 | 保持函数返回类型不变（仍返回 dataUrl 字符串），调用方零改动 |
+| 风险                           | 缓解                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| jpeg 编码器选择泄漏到调用方    | 保持函数返回类型不变（仍返回 dataUrl 字符串），调用方零改动              |
 | 大 canvas 的 `toBlob` 内存峰值 | `toBlob` 与 `toDataURL` 编码量一致，差异只在主线程占用；内存峰值基本持平 |
 
 ### 依赖
@@ -326,11 +332,11 @@ feature 拆分时没有把「收藏域」的所有权划清，主 store 保留�
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
+| 风险                                   | 缓解                                                                                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | **用户已有收藏数据（最高优先级风险）** | 迁移前必须在**真实老库**上验证，且 `electron/legacy-data-*.ts` 已有 `.bak` 备份机制要对这条路径生效 |
-| 分步改动期间出现不一致中间态 | 每步可独立发版；第 1 步保证 UI 不变，只有第 3 步动数据 |
-| 主 store 断依赖后需要调整 8+ 处调用 | 范围内明确；建议单独立一个 PR |
+| 分步改动期间出现不一致中间态           | 每步可独立发版；第 1 步保证 UI 不变，只有第 3 步动数据                                              |
+| 主 store 断依赖后需要调整 8+ 处调用    | 范围内明确；建议单独立一个 PR                                                                       |
 
 ### 依赖
 
@@ -355,7 +361,7 @@ feature 拆分时没有把「收藏域」的所有权划清，主 store 保留�
 ```ts
 // src/store.ts:416
 function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
-  const queued = localImageSaveQueue.catch(() => {}).then(operation)   // 前一项失败不传递
+  const queued = localImageSaveQueue.catch(() => {}).then(operation) // 前一项失败不传递
   localImageSaveQueue = queued
   return queued
 }
@@ -384,16 +390,14 @@ function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
 // src/store.ts:416
 function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
   const queued = localImageSaveQueue
-    .catch(() => {})                                   // 队列隔离：保留原语义（前项失败不毒化后续）
+    .catch(() => {}) // 队列隔离：保留原语义（前项失败不毒化后续）
     .then(operation)
     .catch((error) => {
       // 新增：复用 App.tsx 已在监听的既有通道（自带 5s 节流，不会 Toast 洪水）
-      window.dispatchEvent(
-        new CustomEvent('tangbao:persist-error', { detail: { namespace: 'localImage' } }),
-      )
-      throw error                                      // 新增：让本项调用方感知失败
+      window.dispatchEvent(new CustomEvent('tangbao:persist-error', { detail: { namespace: 'localImage' } }))
+      throw error // 新增：让本项调用方感知失败
     })
-  localImageSaveQueue = queued.catch(() => {})         // 队列链条独立吞错，后续项照常执行
+  localImageSaveQueue = queued.catch(() => {}) // 队列链条独立吞错，后续项照常执行
   return queued
 }
 ```
@@ -411,11 +415,11 @@ function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| 调用方没处理新抛出的错误 → 未捕获异常 | 必须同时排查 `enqueueLocalImageSave` 的全部调用点是否 `await`；ℹ-7 **待确认调用点数量与是否有未 await 的** |
-| ~~Toast 洪水（批量导入失败 50 张）~~ | **此项风险不成立**：`App.tsx:98-101` 已内置 5 秒节流窗口。复核对即可，无需额外处理 |
-| 文案「程序正在自动重试」对图片写盘不准确 | ℹ-13 待确认是否按 `namespace` 区分文案 |
+| 风险                                     | 缓解                                                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 调用方没处理新抛出的错误 → 未捕获异常    | 必须同时排查 `enqueueLocalImageSave` 的全部调用点是否 `await`；ℹ-7 **待确认调用点数量与是否有未 await 的** |
+| ~~Toast 洪水（批量导入失败 50 张）~~     | **此项风险不成立**：`App.tsx:98-101` 已内置 5 秒节流窗口。复核对即可，无需额外处理                         |
+| 文案「程序正在自动重试」对图片写盘不准确 | ℹ-13 待确认是否按 `namespace` 区分文案                                                                     |
 
 ### 依赖
 
@@ -437,15 +441,16 @@ function enqueueLocalImageSave(operation: () => Promise<void>): Promise<void> {
 
 ```ts
 // electron/catalog-migration.ts:97-122
-for (const pair of pairs) {                       // db / thumbs / backups 三对
+for (const pair of pairs) {
+  // db / thumbs / backups 三对
   if (!existsSync(pair.source)) continue
   if (existsSync(pair.target)) {
-    moveDirContents(pair.source, pair.target)      // 合并语义：目标已有同名文件则跳过
+    moveDirContents(pair.source, pair.target) // 合并语义：目标已有同名文件则跳过
   } else {
     try {
       renameSync(pair.source, pair.target)
     } catch {
-      moveDirContents(pair.source, pair.target)    // 跨卷：逐文件复制
+      moveDirContents(pair.source, pair.target) // 跨卷：逐文件复制
       rmSync(pair.source, { recursive: true, force: true })
     }
   }
@@ -484,11 +489,11 @@ for (const pair of pairs) {                       // db / thumbs / backups 三�
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| 加了 size 校验，跨卷迁移变慢 | 只对 file 条目做 `statSync` size 对比，成本远低于重试一次迁移；超大库可接受 |
-| 改动触及已有测试期望（`catalog-migration.test.ts`） | 现有测试需同步更新；改动前后行为对用户一致 |
-| 精确回滚清单本身写错 → 误删新库根文件 | 回滚只删"本次已复制到目标"的文件，且加 `TRY=/record` dry-run 测试覆盖 |
+| 风险                                                | 缓解                                                                        |
+| --------------------------------------------------- | --------------------------------------------------------------------------- |
+| 加了 size 校验，跨卷迁移变慢                        | 只对 file 条目做 `statSync` size 对比，成本远低于重试一次迁移；超大库可接受 |
+| 改动触及已有测试期望（`catalog-migration.test.ts`） | 现有测试需同步更新；改动前后行为对用户一致                                  |
+| 精确回滚清单本身写错 → 误删新库根文件               | 回滚只删"本次已复制到目标"的文件，且加 `TRY=/record` dry-run 测试覆盖       |
 
 ### 依赖
 
@@ -515,6 +520,7 @@ for (const pair of pairs) {                       // db / thumbs / backups 三�
 `sanitizeFolderName`（`localSave.ts:540`）、`sanitizeFileName`（`watermarkWorkbench.ts:153`）。
 
 **4 份 `escapeHtml`**（且**语义不一致**）：
+
 - `InputBar.tsx:362`：转义 `& < > "`（**不转义 `'`**）
 - `features/composite/components/PresetNamingFields.tsx:47`：转义 `& < > "`（**不转义 `'`**）
 - `features/requirementPrototype/manifests.ts:15`：委派给 `escapeXml`（XML 场景，字符集不同，合理独立）
@@ -548,11 +554,11 @@ for (const pair of pairs) {                       // db / thumbs / backups 三�
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| **无脑合并导致文件名行为变化（最高风险）** | 严禁无脑合并；先列 6 处差异表逐个确认；每处替换配一条「改前后同一输入产出同一结果」的对照测试 |
-| escapeHtml 合并后属性/文本上下文混用导致漏转义 | 保留两个语义明确的函数名（Text / Attribute），不合并成一个含糊的 `escapeHtml` |
-| 触及面广（至少 12 个文件） | 批量替换并使用项目规定的检查流程；建议分 3 个 PR（escape / sanitize / blob） |
+| 风险                                           | 缓解                                                                                          |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **无脑合并导致文件名行为变化（最高风险）**     | 严禁无脑合并；先列 6 处差异表逐个确认；每处替换配一条「改前后同一输入产出同一结果」的对照测试 |
+| escapeHtml 合并后属性/文本上下文混用导致漏转义 | 保留两个语义明确的函数名（Text / Attribute），不合并成一个含糊的 `escapeHtml`                 |
+| 触及面广（至少 12 个文件）                     | 批量替换并使用项目规定的检查流程；建议分 3 个 PR（escape / sanitize / blob）                  |
 
 ### 依赖
 
@@ -595,9 +601,9 @@ for (const pair of pairs) {                       // db / thumbs / backups 三�
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| 挪动公共组件导致 import 路径失效 | 全仓 import 一次替换；TS 编译会捕获遗漏 |
+| 风险                                                                            | 缓解                                                    |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 挪动公共组件导致 import 路径失效                                                | 全仓 import 一次替换；TS 编译会捕获遗漏                 |
 | `design-system` 目录有合规测试（tokensContract / compliance）可能对新成员有要求 | 若进 `design-system/`，需过 `src/design-system/` 下测试 |
 
 ### 依赖
@@ -636,10 +642,10 @@ for (const pair of pairs) {                       // db / thumbs / backups 三�
 
 ### 风险与副作用
 
-| 风险 | 缓解 |
-| --- | --- |
-| 误删尚未发布的当前版本包 | 删除前先列完整清单与时间戳；本次要删的都是 v0.8.11/v0.8.14，与 v0.8.19 无关 |
-| 删掉马上要用的中间产物 | ℹ-11 **待确认**：`dist-verify/`、`electron-dist/` 是否还有在用？需杰哥一句话确认 |
+| 风险                     | 缓解                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| 误删尚未发布的当前版本包 | 删除前先列完整清单与时间戳；本次要删的都是 v0.8.11/v0.8.14，与 v0.8.19 无关      |
+| 删掉马上要用的中间产物   | ℹ-11 **待确认**：`dist-verify/`、`electron-dist/` 是否还有在用？需杰哥一句话确认 |
 
 ### 依赖
 
@@ -655,17 +661,17 @@ for (const pair of pairs) {                       // db / thumbs / backups 三�
 
 # 三、P3 —— 有余力再做
 
-| ID | 问题 | 位置 | 改法 | 触发条件 |
-| --- | --- | --- | --- | --- |
-| O-11 | 写类 IPC handler 用 `assertAllowedPath`（不 realpath），理论符号链接逃逸 | `electron/ipc-handlers.ts:245`，涉及 `fs:save-image`(1355)、`fs:save-json`(1154)、`fs:save-text`(1167)、`fs:write-json-text`(1437)、`fs:link-file`(1138)、`fs:ensure-dir`(1180) | 写类统一改用 `assertAllowedRealPath`（删除/分发/导出类 **已经在用**，见 933/1040/1692/1721） | 需攻击者先在被允许根内植入 junction，**远程网页无法独立完成**；优先级低但改动小，可搭车 O-7 一起做 |
-| O-12 | 解密后的 API 密钥经 IPC 明文回传渲染进程 | `electron/main.ts:553`、`asset-kernel.ts:510` | 改为「主进程持 Key 代发请求」而非下发明文；或至少加一次性句柄 | 仅当渲染进程遭 XSS 时才有意义；`safeStorage`(DPAPI) 存储本身是对的 |
-| O-13 | 本地 API token 文件 `asset-api.json`（mode 0o600，明文随机值）可被同用户进程读取 | `electron/asset-api-server.ts:143`、`asset-kernel.ts:485` | 迁到 `safeStorage` 或加读取限制 | 已绑 `127.0.0.1` + Bearer token（`timingSafeEqual`）+ Origin 白名单，**远程与 DNS-rebinding 都挡住了**；同用户恶意软件本来就能直接读文件，边际收益有限 |
-| O-14 | `partialize` 忽略 `version` 形参 | `src/store.ts:4530` | 显式接收并使用 `version`，迁移函数按版本号分派 | 未来加 v5 时才会踩；建议随 O-5 顺手改 |
-| O-15 | `AssetBatchView` 的批次组内列表未切片 | `AssetBatchView.tsx:1192,1222` | 复用 `AssetGrid.tsx:390` 已有的窗口化 | 批次组超大时才有体感；**先量实际组大小再决定是否动**（ℹ-12） |
-| O-16 | `electron-builder ^26.15.3` 配 `electron ^43.4.0` | `package.json:62-63` | 下次 `npm run release:dry` 时确认是否输出 "Electron version not supported" 类告警 | **未联网核实，不构成缺陷断言**；`release/` 最后一次成功产物是 v0.8.11，建议真跑一次确认 |
-| O-17 | 巨型组件拆分：`InputBar.tsx`(5503) / `SettingsModal.tsx`(5375) / `GallerySopBatchModal.tsx`(4110) | — | 按 tab/modal 拆子组件；`renderVariablePrompt/parseVariablePrompt` 有 4 处重复引用可合并 | **不建议单独立项**。见「不做的事」 |
-| O-18 | `features/` 下只有 2 个 `index.ts`，跨 feature 深引内部实现 | `strategy/adapters/storeSopGeneration.ts:8,20`、`requirementPrototype/knowledgeAnalysis.ts:3` | 给每个 feature 建 barrel 公共出口 | 洁癖级；收益在"下次大改期"才体现 |
-| O-19 | 主进程 God object：`ipc-handlers.ts`(1877)、`asset-catalog.ts`(1286) | — | 按 IPC 域拆分 handler | 洁癖级；风险高于收益 |
+| ID   | 问题                                                                                              | 位置                                                                                                                                                                            | 改法                                                                                         | 触发条件                                                                                                                                               |
+| ---- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| O-11 | 写类 IPC handler 用 `assertAllowedPath`（不 realpath），理论符号链接逃逸                          | `electron/ipc-handlers.ts:245`，涉及 `fs:save-image`(1355)、`fs:save-json`(1154)、`fs:save-text`(1167)、`fs:write-json-text`(1437)、`fs:link-file`(1138)、`fs:ensure-dir`(1180) | 写类统一改用 `assertAllowedRealPath`（删除/分发/导出类 **已经在用**，见 933/1040/1692/1721） | 需攻击者先在被允许根内植入 junction，**远程网页无法独立完成**；优先级低但改动小，可搭车 O-7 一起做                                                     |
+| O-12 | 解密后的 API 密钥经 IPC 明文回传渲染进程                                                          | `electron/main.ts:553`、`asset-kernel.ts:510`                                                                                                                                   | 改为「主进程持 Key 代发请求」而非下发明文；或至少加一次性句柄                                | 仅当渲染进程遭 XSS 时才有意义；`safeStorage`(DPAPI) 存储本身是对的                                                                                     |
+| O-13 | 本地 API token 文件 `asset-api.json`（mode 0o600，明文随机值）可被同用户进程读取                  | `electron/asset-api-server.ts:143`、`asset-kernel.ts:485`                                                                                                                       | 迁到 `safeStorage` 或加读取限制                                                              | 已绑 `127.0.0.1` + Bearer token（`timingSafeEqual`）+ Origin 白名单，**远程与 DNS-rebinding 都挡住了**；同用户恶意软件本来就能直接读文件，边际收益有限 |
+| O-14 | `partialize` 忽略 `version` 形参                                                                  | `src/store.ts:4530`                                                                                                                                                             | 显式接收并使用 `version`，迁移函数按版本号分派                                               | 未来加 v5 时才会踩；建议随 O-5 顺手改                                                                                                                  |
+| O-15 | `AssetBatchView` 的批次组内列表未切片                                                             | `AssetBatchView.tsx:1192,1222`                                                                                                                                                  | 复用 `AssetGrid.tsx:390` 已有的窗口化                                                        | 批次组超大时才有体感；**先量实际组大小再决定是否动**（ℹ-12）                                                                                           |
+| O-16 | `electron-builder ^26.15.3` 配 `electron ^43.4.0`                                                 | `package.json:62-63`                                                                                                                                                            | 下次 `npm run release:dry` 时确认是否输出 "Electron version not supported" 类告警            | **未联网核实，不构成缺陷断言**；`release/` 最后一次成功产物是 v0.8.11，建议真跑一次确认                                                                |
+| O-17 | 巨型组件拆分：`InputBar.tsx`(5503) / `SettingsModal.tsx`(5375) / `GallerySopBatchModal.tsx`(4110) | —                                                                                                                                                                               | 按 tab/modal 拆子组件；`renderVariablePrompt/parseVariablePrompt` 有 4 处重复引用可合并      | **不建议单独立项**。见「不做的事」                                                                                                                     |
+| O-18 | `features/` 下只有 2 个 `index.ts`，跨 feature 深引内部实现                                       | `strategy/adapters/storeSopGeneration.ts:8,20`、`requirementPrototype/knowledgeAnalysis.ts:3`                                                                                   | 给每个 feature 建 barrel 公共出口                                                            | 洁癖级；收益在"下次大改期"才体现                                                                                                                       |
+| O-19 | 主进程 God object：`ipc-handlers.ts`(1877)、`asset-catalog.ts`(1286)                              | —                                                                                                                                                                               | 按 IPC 域拆分 handler                                                                        | 洁癖级；风险高于收益                                                                                                                                   |
 
 ---
 
@@ -695,6 +701,7 @@ Wave 3（结构重构，唯一高成本）
 ```
 
 **硬性partial order（不能违反）**：
+
 - `O-1 ⟵ O-3`（O-3 依赖 O-1）
 - `O-2 ⟵ O-8`（O-8 依赖 O-2 的 lint 能力）
 - `O-1 ⟵ O-2`（**建议**，非技术依赖：让 O-1 的验收有一条纪律保障）
@@ -705,53 +712,53 @@ Wave 3（结构重构，唯一高成本）
 
 # 五、验收矩阵总表
 
-| ID | 可量化验收标准 | 通过线 |
-| --- | --- | --- |
-| O-1 | ① 新增结构测试：入库一张 1672×941 PNG 时 `toDataURL` 调用次数 | **= 0** |
-| | ② 真机帧探针：连续入库 5 张，主线程最长任务 | **≤ 50ms**（基线 553.8ms） |
-| | ③ `db.ts:31` 的 `canvasToWebpDataUrl` import 状态 | **已使用**（配合 O-2 时 lint 无告警） |
-| O-2 | ① 改完立即 lint 是否报出 `db.ts:31` | **必须报出** |
-| | ② O-1 落地后该告警 | **消失** |
-| | ③ `npm run verify` | **全绿**（warn 不阻塞） |
-| O-3 | ① 代码块内 `btoa(` / `String.fromCharCode` 出现次数 | **= 0** |
-| | ② 真机导入 50 张（2–4MB/张）主线程最长任务 | **≤ 80ms**（需先量基线） |
-| | ③ 同一批样本的 id 与改动前 | **逐张一致** |
-| O-4 | ① 两处 `canvas.toDataURL` | **= 0** |
-| | ② 连续导出 5 张合成图，主线程最长任务降幅 | **≥ 80%** |
-| | ③ 导出产物字节 | **与改动前完全一致**（sha256） |
-| O-5 | ① `grep "useAssetLibraryStore" src/store.ts` | **= 0** |
-| | ② 真实老库升级前后收藏数据 | **脚本比对逐条相等** |
-| | ③ `npm test` 新增 mock 数 | **= 0**（保证是真行为断言） |
-| O-6 | ① 制造写入失败是否出现可见提示 | **必须出现** |
-| | ② 批量导入 50 张失败时 Toast 数 | **≤ 1 条**（汇总） |
-| O-7 | ① 模拟第 k 个文件失败：旧库根完整性 + 新库根孤儿文件 | **完整 / 0 个** |
-| | ② 真机跨卷切换中途杀进程 | **旧库根数据完整、可正常打开** |
-| O-8 | ① 自定义 `escapeHtml` 实现数 | **4 → 1**（+ manifests 按领域独立） |
-| | ② 每个替换点的「新旧同输入同输出」对照测试 | **全部通过** |
-| | ③ InputBar / PresetNamingFields 的 innerHTML DOM | **结构不变** |
-| O-9 | ① `grep "from '../components/" src/lib/` | **= 0** |
-| O-10 | ① `release/` 内非当前版本包 | **= 0** |
-| | ② 磁盘回收 | **≥ 250MB** |
+| ID   | 可量化验收标准                                                | 通过线                                |
+| ---- | ------------------------------------------------------------- | ------------------------------------- |
+| O-1  | ① 新增结构测试：入库一张 1672×941 PNG 时 `toDataURL` 调用次数 | **= 0**                               |
+|      | ② 真机帧探针：连续入库 5 张，主线程最长任务                   | **≤ 50ms**（基线 553.8ms）            |
+|      | ③ `db.ts:31` 的 `canvasToWebpDataUrl` import 状态             | **已使用**（配合 O-2 时 lint 无告警） |
+| O-2  | ① 改完立即 lint 是否报出 `db.ts:31`                           | **必须报出**                          |
+|      | ② O-1 落地后该告警                                            | **消失**                              |
+|      | ③ `npm run verify`                                            | **全绿**（warn 不阻塞）               |
+| O-3  | ① 代码块内 `btoa(` / `String.fromCharCode` 出现次数           | **= 0**                               |
+|      | ② 真机导入 50 张（2–4MB/张）主线程最长任务                    | **≤ 80ms**（需先量基线）              |
+|      | ③ 同一批样本的 id 与改动前                                    | **逐张一致**                          |
+| O-4  | ① 两处 `canvas.toDataURL`                                     | **= 0**                               |
+|      | ② 连续导出 5 张合成图，主线程最长任务降幅                     | **≥ 80%**                             |
+|      | ③ 导出产物字节                                                | **与改动前完全一致**（sha256）        |
+| O-5  | ① `grep "useAssetLibraryStore" src/store.ts`                  | **= 0**                               |
+|      | ② 真实老库升级前后收藏数据                                    | **脚本比对逐条相等**                  |
+|      | ③ `npm test` 新增 mock 数                                     | **= 0**（保证是真行为断言）           |
+| O-6  | ① 制造写入失败是否出现可见提示                                | **必须出现**                          |
+|      | ② 批量导入 50 张失败时 Toast 数                               | **≤ 1 条**（汇总）                    |
+| O-7  | ① 模拟第 k 个文件失败：旧库根完整性 + 新库根孤儿文件          | **完整 / 0 个**                       |
+|      | ② 真机跨卷切换中途杀进程                                      | **旧库根数据完整、可正常打开**        |
+| O-8  | ① 自定义 `escapeHtml` 实现数                                  | **4 → 1**（+ manifests 按领域独立）   |
+|      | ② 每个替换点的「新旧同输入同输出」对照测试                    | **全部通过**                          |
+|      | ③ InputBar / PresetNamingFields 的 innerHTML DOM              | **结构不变**                          |
+| O-9  | ① `grep "from '../components/" src/lib/`                      | **= 0**                               |
+| O-10 | ① `release/` 内非当前版本包                                   | **= 0**                               |
+|      | ② 磁盘回收                                                    | **≥ 250MB**                           |
 
 ---
 
 # 六、待确认项清单（需杰哥拍板或补 measured data）
 
-| ℹ | 事项 | 影响 | 谁来定 |
-| --- | --- | --- | --- |
-| ℹ-1 | `RELEASE.md` v0.8.19「生成完成那一刻不再卡界面」这句**是否需要修正措辞** | 对外文案准确性 | 杰哥 |
-| ℹ-2 | 是否存在**以缩略图 dataUrl 做 hash/指纹**的路径 | O-1 是否有副作用 | 我可再查一轮（当前判断：无，因 id 用原图 `computeContentHash`） |
-| ℹ-3 | 打开 `noUnusedLocals` 后的**存量错误量** | O-2 Step 2 是否可行 | 跑一次 `tsc` 才知道 |
-| ℹ-4 | `putImageRecords` 是否具备 **upsert 语义** | O-3 能否真并发；若无则降级为「并发读 + 串行写」 | 我可再查一轮 |
-| ℹ-5 | composite 两个渲染函数的**返回值下游是否需要 dataUrl** | O-4 能否彻底去掉 `blobToDataUrl` | 我可再查一轮 |
-| ℹ-6 | `FavoriteCollections.tsx`（1717 行）**读的是主 store 还是 assetLibrary store** | O-5 第 1 步能否「先切读后迁数据」 | 我可再查一轮 |
-| ℹ-7 | `enqueueLocalImageSave` 的全部调用点**是否有未 `await` 的** | O-6 抛错后是否会引入未捕获异常 | 我可再查一轮 |
-| ℹ-8 | `moveLibraryData` 的 **pair 顺序是否调整**（把 `db` 放最后） | O-7 最坏情况的恢复成本 | 杰哥（涉及现有测试期望） |
-| ℹ-9 | 6 份 sanitize 的**截断长度与保留字符集是否一致** | O-8 能否合并成一个函数，还是只抽公共内核 | 我可再查一轮 |
-| ℹ-10 | `ViewportTooltip` 的**引用方数量** | O-9 的成本 | 我可再查一轮 |
-| ℹ-11 | `dist-verify/`、`electron-dist/` **是否还在用** | O-10 删除范围 | 杰哥一句话 |
-| ℹ-12 | `AssetBatchView` 批次组的**实际最大规模** | O-15 是否值得做 | 用量测回答 |
-| ℹ-13 | `App.tsx:104` 的持久化错误 Toast 文案「本地状态保存失败，程序正在自动重试」对**图片写盘**是否准确（不会自动重试） | O-6 是否需要按 `namespace` 分发不同文案 | 杰哥 |
+| ℹ    | 事项                                                                                                              | 影响                                            | 谁来定                                                          |
+| ---- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
+| ℹ-1  | `RELEASE.md` v0.8.19「生成完成那一刻不再卡界面」这句**是否需要修正措辞**                                          | 对外文案准确性                                  | 杰哥                                                            |
+| ℹ-2  | 是否存在**以缩略图 dataUrl 做 hash/指纹**的路径                                                                   | O-1 是否有副作用                                | 我可再查一轮（当前判断：无，因 id 用原图 `computeContentHash`） |
+| ℹ-3  | 打开 `noUnusedLocals` 后的**存量错误量**                                                                          | O-2 Step 2 是否可行                             | 跑一次 `tsc` 才知道                                             |
+| ℹ-4  | `putImageRecords` 是否具备 **upsert 语义**                                                                        | O-3 能否真并发；若无则降级为「并发读 + 串行写」 | 我可再查一轮                                                    |
+| ℹ-5  | composite 两个渲染函数的**返回值下游是否需要 dataUrl**                                                            | O-4 能否彻底去掉 `blobToDataUrl`                | 我可再查一轮                                                    |
+| ℹ-6  | `FavoriteCollections.tsx`（1717 行）**读的是主 store 还是 assetLibrary store**                                    | O-5 第 1 步能否「先切读后迁数据」               | 我可再查一轮                                                    |
+| ℹ-7  | `enqueueLocalImageSave` 的全部调用点**是否有未 `await` 的**                                                       | O-6 抛错后是否会引入未捕获异常                  | 我可再查一轮                                                    |
+| ℹ-8  | `moveLibraryData` 的 **pair 顺序是否调整**（把 `db` 放最后）                                                      | O-7 最坏情况的恢复成本                          | 杰哥（涉及现有测试期望）                                        |
+| ℹ-9  | 6 份 sanitize 的**截断长度与保留字符集是否一致**                                                                  | O-8 能否合并成一个函数，还是只抽公共内核        | 我可再查一轮                                                    |
+| ℹ-10 | `ViewportTooltip` 的**引用方数量**                                                                                | O-9 的成本                                      | 我可再查一轮                                                    |
+| ℹ-11 | `dist-verify/`、`electron-dist/` **是否还在用**                                                                   | O-10 删除范围                                   | 杰哥一句话                                                      |
+| ℹ-12 | `AssetBatchView` 批次组的**实际最大规模**                                                                         | O-15 是否值得做                                 | 用量测回答                                                      |
+| ℹ-13 | `App.tsx:104` 的持久化错误 Toast 文案「本地状态保存失败，程序正在自动重试」对**图片写盘**是否准确（不会自动重试） | O-6 是否需要按 `namespace` 分发不同文案         | 杰哥                                                            |
 
 ---
 

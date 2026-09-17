@@ -43,11 +43,17 @@ function sendJson(res, status, payload, options = {}) {
 }
 
 async function sendSse(res, events, options = {}) {
-  res.writeHead(200, appendCors({
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-store',
-    Connection: 'keep-alive',
-  }, options.cors !== false))
+  res.writeHead(
+    200,
+    appendCors(
+      {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-store',
+        Connection: 'keep-alive',
+      },
+      options.cors !== false,
+    ),
+  )
 
   for (const event of events) {
     res.write(`data: ${JSON.stringify(event)}\n\n`)
@@ -129,25 +135,41 @@ function createOpenAIResponse(req, mode, n = 1) {
   if (mode === 'b64') {
     return {
       created,
-      data: Array.from({ length: n }, (_, i) => ({ b64_json: tinyPngBase64, revised_prompt: `mock b64 image ${i + 1}` })),
+      data: Array.from({ length: n }, (_, i) => ({
+        b64_json: tinyPngBase64,
+        revised_prompt: `mock b64 image ${i + 1}`,
+      })),
     }
   }
 
   if (mode === 'empty') return { created, data: [] }
   if (mode === 'wrong-shape') return createRandomShape(req, false)
-  if (mode === 'no-recognizable') return { created, data: Array.from({ length: n }, (_, i) => ({ id: 42 + i, name: `example-${i + 1}.jpg`, mime: 'image/png' })) }
+  if (mode === 'no-recognizable')
+    return {
+      created,
+      data: Array.from({ length: n }, (_, i) => ({ id: 42 + i, name: `example-${i + 1}.jpg`, mime: 'image/png' })),
+    }
 
   if (mode === 'url-404') {
-    return { created, data: Array.from({ length: n }, (_, i) => ({ url: `${getBaseUrl(req)}/images/missing.png?cors=1&i=${i}` })) }
+    return {
+      created,
+      data: Array.from({ length: n }, (_, i) => ({ url: `${getBaseUrl(req)}/images/missing.png?cors=1&i=${i}` })),
+    }
   }
 
   if (mode === 'url-redirect-cors-block') {
-    return { created, data: Array.from({ length: n }, (_, i) => ({ url: `${getBaseUrl(req)}/images/redirect?cors=0&i=${i}` })) }
+    return {
+      created,
+      data: Array.from({ length: n }, (_, i) => ({ url: `${getBaseUrl(req)}/images/redirect?cors=0&i=${i}` })),
+    }
   }
 
   return {
     created,
-    data: Array.from({ length: n }, (_, i) => ({ url: getImageUrl(req, mode === 'url-ok', i), revised_prompt: `mock ${mode} ${i + 1}` })),
+    data: Array.from({ length: n }, (_, i) => ({
+      url: getImageUrl(req, mode === 'url-ok', i),
+      revised_prompt: `mock ${mode} ${i + 1}`,
+    })),
   }
 }
 
@@ -188,30 +210,36 @@ function createImagesStreamEvents(req, mode, n, isEdit) {
 }
 
 function createResponsesStreamEvents(mode) {
-  const partials = mode === 'empty'
-    ? []
-    : [0, 1].map((index) => ({
-        type: 'response.image_generation_call.partial_image',
-        output_index: 0,
-        item_id: 'mock-image-generation',
-        partial_image_index: index,
-        partial_image_b64: tinyPngBase64,
-      }))
+  const partials =
+    mode === 'empty'
+      ? []
+      : [0, 1].map((index) => ({
+          type: 'response.image_generation_call.partial_image',
+          output_index: 0,
+          item_id: 'mock-image-generation',
+          partial_image_index: index,
+          partial_image_b64: tinyPngBase64,
+        }))
 
   return [
     ...partials,
     {
       type: 'response.completed',
       response: {
-        output: mode === 'empty' ? [] : [{
-          type: 'image_generation_call',
-          status: 'completed',
-          revised_prompt: `mock ${mode} response image`,
-          result: tinyPngBase64,
-          output_format: 'png',
-          quality: 'auto',
-          size: '1024x1024',
-        }],
+        output:
+          mode === 'empty'
+            ? []
+            : [
+                {
+                  type: 'image_generation_call',
+                  status: 'completed',
+                  revised_prompt: `mock ${mode} response image`,
+                  result: tinyPngBase64,
+                  output_format: 'png',
+                  quality: 'auto',
+                  size: '1024x1024',
+                },
+              ],
       },
     },
   ]
@@ -242,7 +270,8 @@ async function handleApi(req, res, url) {
     return
   }
 
-  const wantsStream = (body.json && typeof body.json === 'object' && body.json.stream === true) ||
+  const wantsStream =
+    (body.json && typeof body.json === 'object' && body.json.stream === true) ||
     /name="stream"[\s\S]*?\r?\n\r?\ntrue/.test(body.text)
   if (wantsStream) {
     await sendSse(res, createImagesStreamEvents(req, mode, n, url.pathname.endsWith('/v1/images/edits')))
@@ -285,7 +314,10 @@ async function handleCustom(req, res, url) {
     sendJson(res, 200, {
       status: 'success',
       data: {
-        images: Array.from({ length: n }, (_, i) => createRandomShape(req, mode === 'url-ok' || mode === 'b64', i).data),
+        images: Array.from(
+          { length: n },
+          (_, i) => createRandomShape(req, mode === 'url-ok' || mode === 'b64', i).data,
+        ),
       },
     })
     return
@@ -296,11 +328,14 @@ async function handleCustom(req, res, url) {
 
 function handleImage(req, res, url) {
   const cors = url.searchParams.get('cors') === '1'
-  const headers = appendCors({
-    'Cache-Control': 'no-store',
-    'Content-Type': 'image/png',
-    'Content-Length': String(tinyPng.length),
-  }, cors)
+  const headers = appendCors(
+    {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'image/png',
+      'Content-Length': String(tinyPng.length),
+    },
+    cors,
+  )
 
   if (url.pathname === '/images/redirect') {
     send(res, 302, appendCors({ Location: `/images/mock.png?cors=${cors ? '1' : '0'}` }, cors), '')
@@ -321,18 +356,23 @@ function handleImage(req, res, url) {
 }
 
 function handleIndex(req, res) {
-  sendJson(res, 200, {
-    name: 'gpt-image-playground mock image API',
-    openaiCompatibleBaseUrls: [
-      `${getBaseUrl(req)}/url-cors-block`,
-      `${getBaseUrl(req)}/url-ok`,
-      `${getBaseUrl(req)}/b64`,
-      `${getBaseUrl(req)}/wrong-shape`,
-      `${getBaseUrl(req)}/api-no-cors`,
-    ],
-    customEndpoint: `${getBaseUrl(req)}/custom/random-image`,
-    modes: [...pathModes].sort(),
-  }, { pretty: true })
+  sendJson(
+    res,
+    200,
+    {
+      name: 'gpt-image-playground mock image API',
+      openaiCompatibleBaseUrls: [
+        `${getBaseUrl(req)}/url-cors-block`,
+        `${getBaseUrl(req)}/url-ok`,
+        `${getBaseUrl(req)}/b64`,
+        `${getBaseUrl(req)}/wrong-shape`,
+        `${getBaseUrl(req)}/api-no-cors`,
+      ],
+      customEndpoint: `${getBaseUrl(req)}/custom/random-image`,
+      modes: [...pathModes].sort(),
+    },
+    { pretty: true },
+  )
 }
 
 const server = http.createServer(async (req, res) => {

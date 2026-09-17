@@ -1,7 +1,7 @@
 name: Bug 反馈
 description: 报告本项目自身可复现的 Bug
-title: "[Bug] "
-labels: ["bug"]
+title: '[Bug] '
+labels: ['bug']
 body:
   - type: markdown
     attributes:

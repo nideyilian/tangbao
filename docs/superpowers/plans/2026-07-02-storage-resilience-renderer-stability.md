@@ -28,6 +28,7 @@
 ### Task 1: Add renderer crash diagnostics and safe mode
 
 **Files:**
+
 - Create: `electron/renderer-crash-recovery.ts`
 - Create: `electron/renderer-crash-recovery.test.ts`
 - Modify: `electron/main.ts:148`
@@ -84,6 +85,7 @@ Expected: PASS.
 ### Task 2: Replace progressive accumulation with a bounded render window
 
 **Files:**
+
 - Create: `src/lib/taskGridVirtualWindow.ts`
 - Create: `src/lib/taskGridVirtualWindow.test.ts`
 - Modify: `src/components/TaskGrid.tsx:29`
@@ -97,14 +99,16 @@ import { getGridWindow } from './taskGridVirtualWindow'
 
 describe('getGridWindow', () => {
   it('keeps only visible rows plus overscan', () => {
-    expect(getGridWindow({
-      itemCount: 10_000,
-      columns: 3,
-      rowHeight: 176,
-      scrollTop: 17_600,
-      viewportHeight: 800,
-      overscanRows: 3,
-    })).toEqual({ start: 282, end: 333, totalHeight: 586_784 })
+    expect(
+      getGridWindow({
+        itemCount: 10_000,
+        columns: 3,
+        rowHeight: 176,
+        scrollTop: 17_600,
+        viewportHeight: 800,
+        overscanRows: 3,
+      }),
+    ).toEqual({ start: 282, end: 333, totalHeight: 586_784 })
   })
 })
 ```
@@ -132,6 +136,7 @@ Expected: PASS and mounted card count remains bounded.
 ### Task 3: Stop global thumbnail backfill
 
 **Files:**
+
 - Modify: `src/store.ts:3654`
 - Modify: `src/components/TaskCard.tsx:251`
 - Modify: `src/store.test.ts`
@@ -153,6 +158,7 @@ Expected: PASS; only mounted cards request thumbnails.
 ### Task 4: Introduce byte-budgeted image caches
 
 **Files:**
+
 - Create: `src/lib/byteLruCache.ts`
 - Create: `src/lib/byteLruCache.test.ts`
 - Modify: `src/store.ts:85`
@@ -184,6 +190,7 @@ Expected: PASS with deterministic eviction and URL revocation.
 ### Task 5: Make IndexedDB writes resolve on transaction commit
 
 **Files:**
+
 - Modify: `src/lib/db.ts:34`
 - Modify: `src/lib/db.test.ts`
 
@@ -204,6 +211,7 @@ Expected: PASS, including the abort-after-request-success case.
 ### Task 6: Add storage metrics and high/low-water cleanup
 
 **Files:**
+
 - Create: `src/lib/storageStats.ts`
 - Create: `src/lib/storageCleanup.ts`
 - Create: `src/lib/storageCleanup.test.ts`
@@ -245,6 +253,7 @@ Expected: PASS; protected records are never selected.
 ### Task 7: Define a versioned complete backup manifest
 
 **Files:**
+
 - Create: `src/lib/backupManifest.ts`
 - Create: `src/lib/backupManifest.test.ts`
 - Modify: `src/types.ts:560`
@@ -289,6 +298,7 @@ Expected: PASS with matching SHA-256 values.
 ### Task 8: Fix automatic backup retention and recovery detection
 
 **Files:**
+
 - Modify: `electron/ipc-handlers.ts:722`
 - Modify: `electron/ipc-handlers.test.ts`
 - Modify: `src/App.tsx:81`
@@ -314,6 +324,7 @@ Expected: PASS; no empty retention placeholders and no pre-hydration backup.
 ### Task 9: Stage and atomically commit imports
 
 **Files:**
+
 - Create: `src/lib/backupImport.ts`
 - Create: `src/lib/backupImport.test.ts`
 - Modify: `src/store.ts:7459`
@@ -345,6 +356,7 @@ Expected: PASS; every injected failure leaves production data unchanged.
 ### Task 10: Add migration registry and save-path migration
 
 **Files:**
+
 - Create: `src/lib/migrations/registry.ts`
 - Create: `src/lib/migrations/registry.test.ts`
 - Create: `src/lib/migrations/v3ToV4.ts`

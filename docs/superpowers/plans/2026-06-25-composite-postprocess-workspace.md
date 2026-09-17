@@ -30,6 +30,7 @@
 ## Task 1: Core Types And Defaults
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeTypes.ts`
 - Create: `src/features/composite/lib/compositeDefaults.ts`
 - Test: `src/features/composite/lib/compositeDefaults.test.ts`
@@ -72,6 +73,7 @@ Expected: PASS.
 ## Task 2: Preset Tree Logic
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositePresetTree.ts`
 - Test: `src/features/composite/lib/compositePresetTree.test.ts`
 
@@ -98,6 +100,7 @@ Expected: PASS.
 ## Task 3: Distribution And Asset Planning
 
 **Files:**
+
 - Create: `src/features/composite/lib/compositeAssets.ts`
 - Create: `src/features/composite/lib/compositeDistribution.ts`
 - Create: `src/features/composite/lib/compositeExportHistory.ts`
@@ -128,6 +131,7 @@ Expected: PASS.
 ## Task 4: Composite Store And Renderer
 
 **Files:**
+
 - Create: `src/features/composite/store.ts`
 - Create: `src/features/composite/lib/compositeRenderer.ts`
 
@@ -146,6 +150,7 @@ No separate renderer unit test is required because jsdom Canvas support is limit
 ## Task 5: Electron Composite IPC
 
 **Files:**
+
 - Modify: `electron/preload.ts`
 - Modify: `electron/ipc-handlers.ts`
 - Modify: `src/vite-env.d.ts`
@@ -165,6 +170,7 @@ Extend `window.electronAPI` with the composite methods.
 ## Task 6: Composite Workspace UI
 
 **Files:**
+
 - Create: `src/features/composite/CompositeWorkspace.tsx`
 - Modify: `src/App.tsx`
 
@@ -183,6 +189,7 @@ Change the lazy import in `src/App.tsx` from `PostprocessV2Workspace` to `Compos
 ## Task 7: Verification
 
 **Files:**
+
 - Existing and new test files.
 
 - [ ] **Step 1: Run focused composite tests**

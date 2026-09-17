@@ -8,11 +8,11 @@
 
 ### 1.1 存储层级
 
-| 存储层级          | 技术实现                  | 数据内容                                             | 持久化位置                                 |
-| ----------------- | ------------------------- | ---------------------------------------------------- | ------------------------------------------ |
-| **内存缓存**      | `Map<string, string>`     | 图片 dataUrl、缩略图                                 | 运行时内存                                 |
-| **IndexedDB**     | 原生 IDB API              | 任务、图片、缩略图、Agent 对话                       | 浏览器/ Electron 内部                      |
-| **本地文件系统**  | Electron IPC + Node.js fs | 任务元数据(JSON)、图片、提示词、Agent Markdown、备份 | `%APPDATA%/糖包/local-saves/`              |
+| 存储层级          | 技术实现                  | 数据内容                                             | 持久化位置                    |
+| ----------------- | ------------------------- | ---------------------------------------------------- | ----------------------------- |
+| **内存缓存**      | `Map<string, string>`     | 图片 dataUrl、缩略图                                 | 运行时内存                    |
+| **IndexedDB**     | 原生 IDB API              | 任务、图片、缩略图、Agent 对话                       | 浏览器/ Electron 内部         |
+| **本地文件系统**  | Electron IPC + Node.js fs | 任务元数据(JSON)、图片、提示词、Agent Markdown、备份 | `%APPDATA%/糖包/local-saves/` |
 | **Zustand Store** | persist 中间件            | 应用设置、状态                                       | `%APPDATA%/糖包/tangbao.json` |
 
 ### 1.2 IndexedDB 结构 (`src/lib/db.ts`)

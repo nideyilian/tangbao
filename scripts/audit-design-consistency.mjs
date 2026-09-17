@@ -79,7 +79,14 @@ const EXACT = [
 
 const NEUTRAL = ['gray', 'slate', 'zinc', 'neutral']
 const BRAND = ['blue', 'violet', 'purple']
-const SEMANTIC_MAP = { emerald: 'success', green: 'success', amber: 'warning', yellow: 'warning', red: 'danger', rose: 'danger' }
+const SEMANTIC_MAP = {
+  emerald: 'success',
+  green: 'success',
+  amber: 'warning',
+  yellow: 'warning',
+  red: 'danger',
+  rose: 'danger',
+}
 
 // 统计"可迁移旧类"：命中 TOKEN_RE 且映射函数返回非 null 的才算可迁移
 const TOKEN_RE =
@@ -134,8 +141,7 @@ function countMigratable(src) {
 }
 
 /* ============ B. 控件高度 ============ */
-const HEIGHT_RE =
-  /(?<![\w-])(?:min-)?h-(?:7|8|9|10|11|12|14|16)(?![\w-])/g
+const HEIGHT_RE = /(?<![\w-])(?:min-)?h-(?:7|8|9|10|11|12|14|16)(?![\w-])/g
 const HEIGHT_PX_RE = /(?<![\w-])(?:min-)?h-\[(?:40|42|44|48|50|52|56|60|64)px\](?![\w-])/g
 const CONTROL_TOKEN_RE = /--ds-control-|\bds-control\b/g
 
@@ -212,13 +218,45 @@ const totals = rows.reduce(
     acc.hexCount += r.hexCount
     return acc
   },
-  { files: 0, lines: 0, legacyTotal: 0, legacyExact: 0, legacyTokenClass: 0, heightFiles: 0, heightClasses: 0, dsUsage: 0, svgFiles: 0, svgCount: 0, lucideFiles: 0, lucideCount: 0, lobeFiles: 0, textWhite: 0, textBlack: 0, hexCount: 0 },
+  {
+    files: 0,
+    lines: 0,
+    legacyTotal: 0,
+    legacyExact: 0,
+    legacyTokenClass: 0,
+    heightFiles: 0,
+    heightClasses: 0,
+    dsUsage: 0,
+    svgFiles: 0,
+    svgCount: 0,
+    lucideFiles: 0,
+    lucideCount: 0,
+    lobeFiles: 0,
+    textWhite: 0,
+    textBlack: 0,
+    hexCount: 0,
+  },
 )
 
-const topLegacy = [...rows].sort((a, b) => b.legacyTotal - a.legacyTotal).slice(0, 15).map((r) => ({ file: r.file, legacyTotal: r.legacyTotal, dsUsage: r.dsUsage }))
-const topHeight = [...rows].filter((r) => r.heightCount > 0).sort((a, b) => b.heightCount - a.heightCount).slice(0, 15).map((r) => ({ file: r.file, heightCount: r.heightCount, heights: r.heightClasses.slice(0, 8) }))
-const topSvg = [...rows].filter((r) => r.svgCount > 0).sort((a, b) => b.svgCount - a.svgCount).slice(0, 15).map((r) => ({ file: r.file, svgCount: r.svgCount, lucideImportCount: r.lucideImportCount }))
-const topHex = [...rows].filter((r) => r.hexCount > 0).sort((a, b) => b.hexCount - a.hexCount).slice(0, 15).map((r) => ({ file: r.file, hexCount: r.hexCount }))
+const topLegacy = [...rows]
+  .sort((a, b) => b.legacyTotal - a.legacyTotal)
+  .slice(0, 15)
+  .map((r) => ({ file: r.file, legacyTotal: r.legacyTotal, dsUsage: r.dsUsage }))
+const topHeight = [...rows]
+  .filter((r) => r.heightCount > 0)
+  .sort((a, b) => b.heightCount - a.heightCount)
+  .slice(0, 15)
+  .map((r) => ({ file: r.file, heightCount: r.heightCount, heights: r.heightClasses.slice(0, 8) }))
+const topSvg = [...rows]
+  .filter((r) => r.svgCount > 0)
+  .sort((a, b) => b.svgCount - a.svgCount)
+  .slice(0, 15)
+  .map((r) => ({ file: r.file, svgCount: r.svgCount, lucideImportCount: r.lucideImportCount }))
+const topHex = [...rows]
+  .filter((r) => r.hexCount > 0)
+  .sort((a, b) => b.hexCount - a.hexCount)
+  .slice(0, 15)
+  .map((r) => ({ file: r.file, hexCount: r.hexCount }))
 
 const report = { totals, topLegacy, topHeight, topSvg, topHex, rows }
 
@@ -249,7 +287,8 @@ console.log(`  手写内联 <svg> 文件: ${totals.svgFiles}，<svg> 总数: ${t
 console.log(`  lucide-react 导入文件: ${totals.lucideFiles}，import 语句数: ${totals.lucideCount}`)
 console.log(`  其他图标库文件: ${totals.lobeFiles}`)
 console.log('  <svg> 最多文件 Top 10:')
-for (const r of topSvg.slice(0, 10)) console.log(`    ${r.file}: <svg> ${r.svgCount}  lucide导入 ${r.lucideImportCount}`)
+for (const r of topSvg.slice(0, 10))
+  console.log(`    ${r.file}: <svg> ${r.svgCount}  lucide导入 ${r.lucideImportCount}`)
 console.log('')
 console.log('--- D. 配色 ---')
 console.log(`  写死 hex: ${totals.hexCount}  text-white: ${totals.textWhite}  text-black: ${totals.textBlack}`)
