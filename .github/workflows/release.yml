@@ -41,13 +41,27 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Build and publish (Windows)
+      - name: Build (Windows)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_DRAFT: false
           EP_PRE_RELEASE: false
-        run: npx electron-builder --publish always --win
+        run: npx electron-builder --publish never --win
+
+      # 上传不用 electron-builder 的 --publish always：其内置 HTTP 客户端对 ~100MB 的
+      # Setup exe 会在慢速链路上抛 Request timed out（v0.1.0 连续 3 次失败均在此处），
+      # blockmap 这类小文件却总是成功。softprops/action-gh-release 走 Release 上传 API，
+      # 对大文件更稳，且对已存在附件会自动覆盖。
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          files: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
 
       # latest.yml 是 electron-updater 判断「有没有新版本」的唯一入口，缺了它所有存量用户
       # 都收不到更新，而构建本身仍然显示 success（v0.8.15 就是这么坏的：自动更新与安装包
@@ -99,9 +113,9 @@ jobs:
 
           $required = @(
             'latest.yml',
-            "糖包-V2-Setup-$version.exe",
-            "糖包-V2-Setup-$version.exe.blockmap",
-            "糖包-V2-$version.exe"
+            "Tangbao-Setup-$version-x64.exe",
+            "Tangbao-Setup-$version-x64.exe.blockmap",
+            "Tangbao-Portable-$version-x64.exe"
           )
           foreach ($name in $required) {
             if (-not $assets.ContainsKey($name)) { throw "Release $tag 缺少附件：$name" }
@@ -138,7 +152,7 @@ jobs:
             $match = [regex]::Match($ymlText, 'size:\s*(\d+)')
             if ($match.Success) {
               $ymlSize = [int64]$match.Groups[1].Value
-              $assetSize = [int64]$assets["糖包-V2-Setup-$version.exe"].size
+              $assetSize = [int64]$assets["Tangbao-Setup-$version-x64.exe"].size
               if ($ymlSize -ne $assetSize) {
                 throw "安装包大小与 latest.yml 不一致（yml=$ymlSize 附件=$assetSize）"
               }

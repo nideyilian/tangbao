@@ -169,7 +169,11 @@ module.exports = {
     allowToChangeInstallationDirectory: true,
     // 开始菜单 / 桌面快捷方式显示中文名（安装目录与 exe 名保持 ASCII，避免更新链路编码问题）
     shortcutName: '糖包',
+    // 产物文件名用 ASCII（latest.yml 的下载链接对中文文件名要过 URL 编码，纯 ASCII 最稳）；
+    // nsis 与 portable 必须各自命名，否则两个目标产出同名 exe 互相覆盖
+    artifactName: 'Tangbao-Setup-${version}-${arch}.${ext}',
   },
-  // 产物文件名用 ASCII（latest.yml 的下载链接对中文文件名要过 URL 编码，纯 ASCII 最稳）
-  artifactName: 'Tangbao-${version}-${arch}.${ext}',
+  portable: {
+    artifactName: 'Tangbao-Portable-${version}-${arch}.${ext}',
+  },
 }
