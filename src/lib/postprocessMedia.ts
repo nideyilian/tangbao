@@ -190,6 +190,55 @@ export interface PostprocessMediaConfig {
   autoCompanionClean: boolean
 }
 
+/**
+ * 某个项目树节点（产品线 / 产品 / 方向）对后处理参数的**局部覆盖**。
+ *
+ * 与 `PostprocessMediaConfig` 的差别：只允许覆盖「逐方向可变」的字段——
+ * 渠道字典（`media`）是全局共享规格表，产出目标（`selectedCollectionIds`）在自动匹配模式下
+ * 由图片归属推导，两者都**不该**被节点覆盖。
+ *
+ * 未出现的字段（`undefined`）表示「不表态」，沿继承链向上取值：方向 → 产品 → 产品线 → 全局默认。
+ * 要显式表达「这个方向就是不带水印」，用 `watermarkPresetId: null`——`undefined` 才是继承。
+ */
+export interface PostprocessNodeOverride {
+  /** 该方向启用的媒体 id（含 `clean`）；undefined = 继承 */
+  selectedMediaIds?: string[]
+  /** 手选方向；`null` = 按源图尺寸自动判定 */
+  direction?: OutputDirection | null
+  /** 输出目录（绝对路径）；空串 = 用默认输出位置 */
+  outputDir?: string
+  namePattern?: string
+  creator?: string
+  /** 水印预设 id；`null` = 该方向不加水印 */
+  watermarkPresetId?: string | null
+  autoCompanionClean?: boolean
+  /** 该方向是否参与自动后处理；false = 归属此方向的图片不产出变体 */
+  enabled?: boolean
+}
+
+/**
+ * 把节点覆盖叠加到基线配置上（纯函数，不改写入参）。
+ *
+ * `enabled` 是节点自有概念、不属于 `PostprocessMediaConfig`，故不参与合并，由调用方单独读取。
+ */
+export function applyPostprocessOverride(
+  base: PostprocessMediaConfig,
+  override: PostprocessNodeOverride | undefined,
+): PostprocessMediaConfig {
+  if (!override) return base
+  return {
+    media: base.media,
+    selectedMediaIds: override.selectedMediaIds ?? base.selectedMediaIds,
+    selectedCollectionIds: base.selectedCollectionIds,
+    direction: override.direction === undefined ? base.direction : override.direction,
+    outputDir: override.outputDir ?? base.outputDir,
+    namePattern: override.namePattern ?? base.namePattern,
+    creator: override.creator ?? base.creator,
+    watermarkPresetId: override.watermarkPresetId === undefined ? base.watermarkPresetId : override.watermarkPresetId,
+    autoCompanionClean: override.autoCompanionClean ?? base.autoCompanionClean,
+  }
+}
+
 export interface BuildPostprocessOutputsInput {
   /** 勾选的媒体 id（含 `clean`）；重复项会被去重，顺序即产出顺序 */
   mediaIds: string[]

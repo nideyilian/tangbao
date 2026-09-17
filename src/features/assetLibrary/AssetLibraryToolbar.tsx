@@ -2,6 +2,7 @@ import { memo, useRef, useState, type ReactNode } from 'react'
 import type { AssetLibraryFilters, AssetSortKey, AssetSourceMode, PinnedFilter } from '../../types'
 import {
   Badge,
+  Button,
   Menu,
   MenuItem,
   MenuSeparator,
@@ -29,6 +30,7 @@ import { useAssetLibraryStore, type AssetGridDensity, type AssetGroupBy } from '
 import { COLOR_LABEL_OPTIONS } from './colorLabels'
 import { pinnedFilterKey, pinnedFilterLabel } from './pinnedFilters'
 import FilterControlStrip from './FilterControlStrip'
+import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
 import { useStore } from '../../store'
 
 export interface AssetLibraryToolbarProps {
@@ -183,6 +185,8 @@ function AssetLibraryToolbar({
       )}
 
       {isCollectionScope && <IncludeSubcollectionsSwitch />}
+
+      <ProjectTreeEntryButton />
 
       {similarLabel && onClearSimilar && (
         <Badge tone="info">
@@ -807,6 +811,19 @@ function FavoriteToggleButton() {
         </button>
       </Badge>
     </div>
+  )
+}
+
+/** 「项目树」入口：打开统一的产品线 → 产品 → 方向 管理表格（结构与参数一处改、全局生效）。 */
+function ProjectTreeEntryButton() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+        项目树
+      </Button>
+      {open && <ProjectTreeWorkbench onClose={() => setOpen(false)} />}
+    </>
   )
 }
 

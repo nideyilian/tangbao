@@ -146,6 +146,29 @@ export function resolvePostprocessProjectTargets(
   return targets
 }
 
+/**
+ * 判断某个节点是否落在**启用范围内**。
+ *
+ * 勾选是「哪些方向要跑后处理」的硬性开关（不是产出目标——产出目标由图片归属决定）：
+ * 节点自身被勾选，或它的**任一祖先**被勾选，都算命中。勾「产品线」就等于整条产品线上
+ * 的方向全部启用，不必逐个方向勾一遍。
+ *
+ * 节点不存在 / 在回收站里一律返回 false：宁可不出图，也不在一棵已经不存在的树上瞎产出。
+ */
+export function isCollectionWithinSelection(
+  collections: AssetCollection[] | Map<string, AssetCollection>,
+  collectionId: string,
+  selectedIds: string[],
+): boolean {
+  if (selectedIds.length === 0) return false
+  const byId = collections instanceof Map ? collections : new Map(collections.map((item) => [item.id, item]))
+  const node = byId.get(collectionId)
+  if (!node || node.trashedAt) return false
+  const selected = new Set(selectedIds)
+  // 根 → 自身的路径里任意一环被勾选即命中
+  return resolveCollectionPath(byId, collectionId).some((item) => selected.has(item.id))
+}
+
 /** 勾选里已经不存在（被删/被清空的回收站）的 id，供 UI 提示。 */
 export function findMissingProjectCollectionIds(collections: AssetCollection[], selectedIds: string[]): string[] {
   const byId = new Map(collections.map((collection) => [collection.id, collection]))

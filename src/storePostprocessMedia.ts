@@ -434,7 +434,12 @@ export function selectPostprocessOutputPlan(
   })
 }
 
-/** 后处理是否已具备运行条件：至少勾了一个项目 + 至少能产出一个变体。 */
+/**
+ * 后处理是否已具备运行条件：启用范围非空（至少勾了一个项目/方向）+ 至少能产出一个变体。
+ *
+ * 勾选是**启用范围**而不是产出目标——有归属的图片按归属方向产出，这里的 `selectedCollectionIds`
+ * 只负责回答「有没有启用」以及「无归属的图往哪儿放」。
+ */
 export function isPostprocessReady(
   config: PostprocessMediaConfig,
   source?: PostprocessOutputSource,

@@ -4,6 +4,7 @@ import {
   buildPostprocessProjectTree,
   findMissingProjectCollectionIds,
   flattenPostprocessProjectTree,
+  isCollectionWithinSelection,
   resolveCollectionPath,
   resolvePostprocessProjectTargets,
 } from './postprocessProjectTree'
@@ -155,5 +156,46 @@ describe('findMissingProjectCollectionIds', () => {
     const collections = threeLevelTree()
     collections[0].trashedAt = Date.now()
     expect(findMissingProjectCollectionIds(collections, ['line-a', 'product-a', 'ghost'])).toEqual(['line-a', 'ghost'])
+  })
+})
+
+describe('isCollectionWithinSelection', () => {
+  it('自身被勾选即命中', () => {
+    const collections = threeLevelTree()
+    expect(isCollectionWithinSelection(collections, 'direction-a', ['direction-a'])).toBe(true)
+  })
+
+  it('勾了祖先等于整条分支启用（勾产品线 → 旗下方向都命中）', () => {
+    const collections = threeLevelTree()
+    expect(isCollectionWithinSelection(collections, 'direction-a', ['line-a'])).toBe(true)
+    expect(isCollectionWithinSelection(collections, 'direction-b', ['product-a'])).toBe(true)
+    expect(isCollectionWithinSelection(collections, 'product-b', ['line-b'])).toBe(true)
+  })
+
+  it('勾了别的分支不影响本分支', () => {
+    const collections = threeLevelTree()
+    expect(isCollectionWithinSelection(collections, 'direction-a', ['line-b'])).toBe(false)
+    expect(isCollectionWithinSelection(collections, 'direction-a', ['direction-b'])).toBe(false)
+  })
+
+  it('勾了子孙不代表祖先启用（方向启用不该连带整条产品线）', () => {
+    const collections = threeLevelTree()
+    expect(isCollectionWithinSelection(collections, 'line-a', ['direction-a'])).toBe(false)
+  })
+
+  it('空勾选 / 节点不存在 / 节点在回收站一律 false', () => {
+    const collections = threeLevelTree()
+    expect(isCollectionWithinSelection(collections, 'direction-a', [])).toBe(false)
+    expect(isCollectionWithinSelection(collections, 'direction-a', ['ghost'])).toBe(false)
+    expect(isCollectionWithinSelection(collections, 'ghost', ['line-a'])).toBe(false)
+
+    collections[1].trashedAt = Date.now()
+    expect(isCollectionWithinSelection(collections, 'product-a', ['line-a'])).toBe(false)
+  })
+
+  it('接受 Map 形态的树', () => {
+    const collections = threeLevelTree()
+    const byId = new Map(collections.map((item) => [item.id, item]))
+    expect(isCollectionWithinSelection(byId, 'direction-a', ['line-a'])).toBe(true)
   })
 })

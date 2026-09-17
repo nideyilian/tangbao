@@ -18,9 +18,15 @@ import {
   sanitizeFolderName,
   saveCompositeImage,
 } from '../../lib/localSave'
-import { resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
+import { isCollectionWithinSelection, resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
 import { buildSourceVariantPlans, type PostprocessVariantPlan } from '../../lib/postprocessRunner'
-import { selectPostprocessOutputPlan, usePostprocessMediaStore } from '../../storePostprocessMedia'
+import {
+  getPostprocessMediaConfigSnapshot,
+  selectPostprocessOutputPlan,
+  usePostprocessMediaStore,
+} from '../../storePostprocessMedia'
+import { resolveProjectPostprocessSlice } from '../projectTree/params'
+import type { ProjectNodeParamsMap } from '../projectTree/types'
 import { renderWithMaxKb } from '../composite/lib/compositeExportRuntime'
 import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
@@ -68,6 +74,15 @@ export interface RunTaskPostprocessInput {
   imageIds: string[]
   /** 素材库项目树（内置三级结构 + 用户自建），用于解析 `{line}/{product}/{direction}` */
   collections: AssetCollection[]
+  /** 项目树参数覆盖表（`useProjectTreeParamsStore`）；每张图按归属方向逐级继承出生效配置 */
+  projectParams?: ProjectNodeParamsMap
+  /**
+   * 解析某张图**归属的方向节点 id**（由调用方从素材的 `collectionIds` 里取最深的一个）。
+   *
+   * 这是「执行后处理时无需手动选项目」的落点：有归属就按归属方向的参数与目录产出，
+   * 返回 null / 不传则退回全局默认配置（兼容手工触发与旧数据）。
+   */
+  resolveImageCollectionId?: (imageId: string) => string | null
   /** 已产出过的源图 id：重复触发不重复产出 */
   alreadyProducedImageIds?: string[]
   /** 生成时间（ms），供 `{date}` 取值 */
@@ -91,31 +106,46 @@ function emptyResult(): TaskPostprocessResult {
 /**
  * 执行后处理产出。
  *
- * 提前返回的三种情形都不算失败：非 Electron、没勾项目、没有输出源图。
- * 「没勾项目」刻意返回空——没有项目就没有产出目标，不拿匿名目标硬凑一份出来。
+ * 参数**逐张图**解析：按图片归属的方向节点，沿「方向 → 产品 → 产品线 → 全局默认」继承出生效配置。
+ * 归属由调用方通过 `resolveImageCollectionId` 注入（取自素材的 `collectionIds`），
+ * 所以正常流程下用户不需要在任何面板里再勾一次项目。
+ *
+ * 勾选（`selectedCollectionIds`）在这套模型里是**启用范围**而不是产出目标：
+ * 图片归属方向被勾选（或它任一祖先被勾选）才产出，否则跳过。
+ * 没有这一步，一棵几十个方向的树上只要图归档到哪儿就产出到哪儿，磁盘会先炸。
+ *
+ * 提前返回的两种情形都不算失败：非 Electron、没有输出源图。
+ * 「启用范围为空」时同样直接返回——没启用就不产出，与输入栏的「未启用」显示保持一致。
  */
 export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promise<TaskPostprocessResult> {
   const result = emptyResult()
   if (!isElectron() || input.imageIds.length === 0) return result
 
-  const config = usePostprocessMediaStore.getState()
-  const projects = resolvePostprocessProjectTargets(input.collections, config.selectedCollectionIds)
-  if (projects.length === 0) return result
-
-  const preset = config.watermarkPresetId ? resolveWatermarkPreset(config.watermarkPresetId) : null
-  if (config.watermarkPresetId && !preset) {
-    // 预设被删掉了。刻意**不**静默降级成无水印——那等于给用户交付了错误的投放素材。
-    result.warnings.push('后处理已跳过：引用的水印预设不存在')
-    return result
-  }
+  const baseConfig = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
+  const params = input.projectParams ?? {}
+  if (baseConfig.selectedCollectionIds.length === 0) return result
 
   const api = typeof window !== 'undefined' ? window.electronAPI : undefined
-  const outputRoot = await resolveOutputRoot(config.outputDir)
-  if (!api || !outputRoot) {
-    result.warnings.push('后处理已跳过：无法创建输出目录')
+  if (!api) {
+    result.warnings.push('后处理已跳过：非桌面环境')
     return result
   }
-  await api.authorizeCompositeOutputDirectory?.(outputRoot)
+
+  /** 同一批图多半共用输出目录，按配置串缓存，避免每张图都走一次目录创建与授权。 */
+  const outputRootCache = new Map<string, string | null>()
+  const resolveOutputRootCached = async (configured: string): Promise<string | null> => {
+    const key = configured.trim()
+    const cached = outputRootCache.get(key)
+    if (cached !== undefined) return cached
+    const root = await resolveOutputRoot(configured)
+    outputRootCache.set(key, root)
+    return root
+  }
+
+  /** 配置级问题（预设被删、方向关闭）每批只提示一次，不逐图刷屏。 */
+  const warnOnce = (message: string) => {
+    if (!result.warnings.includes(message)) result.warnings.push(message)
+  }
 
   const produced = new Set(input.alreadyProducedImageIds ?? [])
   let sequence = 1
@@ -130,7 +160,46 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       continue
     }
 
-    const selected = selectPostprocessOutputPlan(config, { width: source.width, height: source.height }, projects)
+    const collectionId = input.resolveImageCollectionId?.(imageId) ?? null
+    // 归属方向不在启用范围内 → 跳过。判定放在解析参数之前：没启用的方向连参数都不必解析。
+    if (
+      collectionId &&
+      !isCollectionWithinSelection(input.collections, collectionId, baseConfig.selectedCollectionIds)
+    ) {
+      warnOnce('部分源图已跳过：所属方向未启用后处理（在项目树里勾选该方向或其上级即可启用）')
+      continue
+    }
+
+    const slice = resolveProjectPostprocessSlice(input.collections, params, collectionId, baseConfig)
+    if (!slice.enabled) {
+      warnOnce('部分源图已跳过：所属方向关闭了自动后处理')
+      continue
+    }
+
+    // 有归属就用归属方向本身做产出目标——这正是「无需手动选择」的含义；
+    // 没有归属（手工拖入、旧数据）才退回全局勾选的项目。
+    const targetIds = collectionId ? [collectionId] : slice.config.selectedCollectionIds
+    const projects = resolvePostprocessProjectTargets(input.collections, targetIds)
+    if (projects.length === 0) {
+      warnOnce('部分源图已跳过：找不到对应的项目目标')
+      continue
+    }
+
+    const preset = slice.config.watermarkPresetId ? resolveWatermarkPreset(slice.config.watermarkPresetId) : null
+    if (slice.config.watermarkPresetId && !preset) {
+      // 预设被删掉了。刻意**不**静默降级成无水印——那等于给用户交付了错误的投放素材。
+      warnOnce('部分源图已跳过：引用的水印预设不存在')
+      continue
+    }
+
+    const outputRoot = await resolveOutputRootCached(slice.config.outputDir)
+    if (!outputRoot) {
+      warnOnce('部分源图已跳过：无法创建输出目录')
+      continue
+    }
+    await api.authorizeCompositeOutputDirectory?.(outputRoot)
+
+    const selected = selectPostprocessOutputPlan(slice.config, { width: source.width, height: source.height }, projects)
     for (const mediaId of selected.skippedMediaIds) {
       if (!result.skippedMediaIds.includes(mediaId)) result.skippedMediaIds.push(mediaId)
     }
@@ -138,7 +207,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     const { plans, nextSequence } = buildSourceVariantPlans({
       source: { imageId, index, width: source.width, height: source.height },
       units: selected.units,
-      config,
+      config: slice.config,
       startSequence: sequence,
       createdAt: input.createdAt,
     })

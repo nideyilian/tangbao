@@ -125,6 +125,8 @@ import { getTaskSourceMode, type AssetTaskContext } from './lib/generatedAssetOr
 import { upsertFromTask } from './lib/assetLibraryRepository'
 import { assetCommands } from './lib/assetCommands'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
+import { pickDeepestCollectionId } from './features/projectTree/params'
+import { useProjectTreeParamsStore } from './features/projectTree/storeProjectTreeParams'
 import { loadGalleryViewMode, saveGalleryViewMode, type GalleryViewMode } from './lib/galleryPreferences'
 import { isScrollActive } from './lib/scrollActivity'
 import { buildLocalImageUrl, isLocalImageUrl, localImageUrlToDataUrl } from './lib/localImageUrl'
@@ -752,6 +754,49 @@ async function saveTaskToLocalFSNow(taskId: string) {
 /** 已产出过后处理的源图键（`${taskId}:${imageId}`）：流式追加与恢复重跑都只处理一次 */
 const postprocessedSourceKeys = new Set<string>()
 
+/** 等素材归属落地的总时长与步长（仅批次任务用，见 `resolveImageOwnership`）。 */
+const OWNERSHIP_WAIT_TOTAL_MS = 2000
+const OWNERSHIP_WAIT_STEP_MS = 250
+
+/**
+ * 解析每张图的归属方向（`Asset.collectionIds` 里最深的一条）。
+ *
+ * 为什么要等：批次任务的素材归档走异步队列（`assetSyncQueue → archiveTaskToBatchFolder`），
+ * 与「任务保存完成 → 触发后处理」是并发的两条线。不等的话首轮几乎必然拿不到归属，
+ * 后处理会静默退回全局默认参数——用户看到的现象就是「树上配的方向参数没生效」。
+ *
+ * 等待是有界的，且只在**一张都拿不到**归属时继续等：一旦有任何一张拿到，
+ * 说明归档已经跑过一轮，剩下的按当前结果走即可，不再多花时间。
+ */
+async function resolveImageOwnership(
+  imageIds: string[],
+  options: { waitForOwnership: boolean },
+): Promise<Map<string, string | null>> {
+  const collect = (): Map<string, string | null> => {
+    const state = useAssetLibraryStore.getState()
+    const assetByImageId = new Map<string, GeneratedAsset>()
+    for (const asset of Object.values(state.assetsById)) {
+      if (!assetByImageId.has(asset.imageId)) assetByImageId.set(asset.imageId, asset)
+    }
+    const result = new Map<string, string | null>()
+    for (const imageId of imageIds) {
+      const asset = assetByImageId.get(imageId)
+      result.set(imageId, asset ? pickDeepestCollectionId(state.collections, asset.collectionIds) : null)
+    }
+    return result
+  }
+
+  let ownership = collect()
+  if (!options.waitForOwnership) return ownership
+
+  for (let waited = 0; waited < OWNERSHIP_WAIT_TOTAL_MS; waited += OWNERSHIP_WAIT_STEP_MS) {
+    if ([...ownership.values()].some((id) => id)) break
+    await new Promise((resolve) => setTimeout(resolve, OWNERSHIP_WAIT_STEP_MS))
+    ownership = collect()
+  }
+  return ownership
+}
+
 /**
  * 任务完成后按后处理配置产出各渠道变体。
  *
@@ -765,8 +810,10 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
   if (imageIds.length === 0) return
 
   const config = usePostprocessMediaStore.getState()
-  // 未启用（没勾项目或没勾媒体）时不产出：没勾项目就没有产出目标
-  if (config.selectedCollectionIds.length === 0 || config.selectedMediaIds.length === 0) return
+  const projectParams = useProjectTreeParamsStore.getState().params
+  // 勾选项 = 后处理的**启用范围**（不是产出目标——产出目标由图片归属决定）。
+  // 一个都没勾就是不启用：不看树上有多少参数，否则「没勾却照跑」会与输入栏的「未启用」自相矛盾。
+  if (config.selectedCollectionIds.length === 0) return
 
   const produced = new Set((task.postprocessOutputs ?? []).map((item) => item.rawImageId))
   const targets = imageIds.filter(
@@ -775,6 +822,14 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
   if (targets.length === 0) return
   // 先占位再执行：本函数是 fire-and-forget，防同一批图被两次触发重复产出
   targets.forEach((imageId) => postprocessedSourceKeys.add(`${taskId}:${imageId}`))
+
+  const ownership = await resolveImageOwnership(targets, {
+    // 批次任务会自动归档到项目文件夹，归属能决定参数、输出目录和 `{line}/{product}/{direction}` 命名段，
+    // 所以即使树上还没配参数也要等一下（`resolveImageOwnership` 一拿到归属就提前退出，不是干等 2s）。
+    waitForOwnership: Boolean(task.sopBatch),
+  })
+  // 等待期间归档可能新建了项目文件夹，这里取最新的树
+  const collections = useAssetLibraryStore.getState().collections
 
   const readSource = async (imageId: string, index: number): Promise<TaskPostprocessSource | null> => {
     const rec = await getImage(imageId)
@@ -801,7 +856,10 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
     const result = await runTaskPostprocess({
       taskId,
       imageIds: targets,
-      collections: useAssetLibraryStore.getState().collections,
+      collections,
+      projectParams,
+      // 图片来源 → 所在方向：取素材归属里最深的一条，后处理据此自动取参数与输出目录
+      resolveImageCollectionId: (imageId) => ownership.get(imageId) ?? null,
       alreadyProducedImageIds: [...produced],
       createdAt: task.createdAt,
       readSource,

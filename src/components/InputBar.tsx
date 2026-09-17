@@ -3657,13 +3657,15 @@ export default function InputBar() {
         <button
           type="button"
           onClick={() => setShowPostprocessSettings(true)}
-          title="后处理：按「项目 × 媒体 × 尺寸」批量产出各渠道变体"
+          title="后处理：勾选的方向自动产出各渠道变体，参数与目录按图片所在方向取值"
           className={pillClass}
         >
           <ImagesIcon className="h-3.5 w-3.5 shrink-0 text-ds-muted" />
           <span className="text-ds-muted">后处理</span>
           <span className={valueClass}>
-            {postprocessProjectCount > 0 ? `${postprocessProjectCount} 项目 · ${postprocessMediaCount} 媒体` : '未启用'}
+            {postprocessProjectCount > 0
+              ? `已启用 ${postprocessProjectCount} 处 · ${postprocessMediaCount} 媒体`
+              : '未启用'}
           </span>
         </button>
         {!gallerySopModeActive && (

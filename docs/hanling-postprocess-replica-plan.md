@@ -279,18 +279,28 @@ export function buildPostprocessOutputs(input): PostprocessOutputPlan // 对应 
 ### 阶段三：后处理设置 UI（对齐 `Nu()` 面板）
 
 **✅ 阶段三已实现（2026-09-17）**：`src/components/PostprocessSettingsModal.tsx` +
-`src/lib/postprocessProjectTree.ts`（13 用例）+ 面板组件测试（13 用例）。
+`src/lib/postprocessProjectTree.ts`（13 用例）+ 面板组件测试（17 用例）。
 
 - 入口：生成面板参数行（`InputBar.renderParamSummary`）新增「后处理」胶囊按钮，紧邻「审核规则」，
   显示 `N 项目 · N 媒体` / `未启用`。
-- 面板结构（单列滚动，即时写入 store，无草稿态）：
+- **外壳走设计系统的 `Dialog`**（portal 到 `document.body`）：遮罩、ESC、焦点陷阱、滚动锁与焦点回归
+  统一交给 `overlayManager` 的 overlay 栈（多层弹窗只响应最上层）。面板**不再**手搓 `ds-modal-*`
+  骨架、自接 `useCloseOnEscape` / `useDialogFocusTrap` / `usePreventBackgroundScroll`——
+  那套只做视觉，不参与 overlay 栈管理。`catalog.ts` 的 `targets` 已同步成实际使用的组件清单。
+- 控件全部换成设计系统件：分段标题 `SectionHeader`、开关 `Switch`、输入 `TextField` / `SelectField`、
+  按钮 `Button` / `IconButton`、警告 `Alert tone="warning"`、空态 `EmptyState`、卡片 `Surface`。
+- 面板结构（`Dialog size="lg"`，内容区单列滚动，即时写入 store，无草稿态）：
   ```
   项目（AssetCollection 项目树，可勾任意层级，产品线默认展开）
-  方向（跟随尺寸 / 横版 / 竖版 / 方形）
+  方向（跟随尺寸 / 横版 / 竖版 / 方形 → SegmentedControl）
   媒体（全选 / 仅保留纯净版；每个媒体下只读展示「宽x高 · ≤上限KB」）
   输出与命名（目录 + 命名模板 + token 快捷插入 + 创作者 + 水印预设 + 纯净版伴随）
   产出预览（逐条列出「项目 / 媒体 / 尺寸 / 文件名」，超过 6 条可展开）
   ```
+- **测试必须用 `react-dom/client` + 真实 DOM 查询，不能用 `react-test-renderer`**：
+  后者不支持 `createPortal` 到真实 DOM 节点——它的宿主配置把 container 当作 `{ children: [] }`，
+  对 `document.body` 取 `children.indexOf` 会抛 `TypeError: parentInstance.children.indexOf is not a function`。
+  照 `design-system/overlays.test.tsx` 测 `Dialog` 的写法（`createRoot` + `document.querySelector`）。
 - 提示文案沿用核心语义：「同时选择项目与媒体后启用。沿用对应水印、尺寸和命名，保留未处理原图以供下一轮修改。」
 - **项目维度在本阶段补齐**：`buildPostprocessOutputs` 增加可选 `projects`，
   单元带可选 `project: {collectionId, line, product, direction}`，展开成
