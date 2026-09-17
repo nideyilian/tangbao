@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { act, create } from 'react-test-renderer'
 import { DEFAULT_PARAMS, type SopBatchSnapshot, type TaskRecord } from '../../../types'
 import GallerySopBatchModal, { getGallerySopPromptRunStorageKey } from './GallerySopBatchModal'
-import { SOP_PROGRESSIVE_PROMPT_BATCH_SIZE } from '../sopPromptBatch'
+import { SOP_PROGRESSIVE_PROMPT_BATCH_SIZE, SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE } from '../sopPromptBatch'
 import { SOP_SERIES_ANCHOR_INSTRUCTION } from '../../../lib/sopSeriesAnchor'
 
 const generateMocks = vi.hoisted(() => ({
@@ -1835,5 +1835,14 @@ describe('GallerySopBatchModal folder isolation', () => {
       'dispatch-member',
       'dispatch-member',
     ])
+
+    // 系列图一次只请求 1 组提示词（一组 = 一条含 3 段的内容，由客户端拆成 3 条成员提示词），
+    // 而不是一次要模型规划多组 —— 组间差异必须逐组独立规划，母图锚定也只等本组首图。
+    expect(generateMocks.generatePromptsFromSopStore).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'sop-series' }),
+      2,
+      '',
+      expect.objectContaining({ maxBatchSize: SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE }),
+    )
   })
 })

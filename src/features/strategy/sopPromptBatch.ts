@@ -12,12 +12,26 @@ export const SOP_PROMPT_BATCH_MAX_ATTEMPTS = 2
 export const MAX_SOP_IMAGES_PER_PROMPT = 20
 export const SOP_HIGH_VOLUME_WARNING_THRESHOLD = 20
 /**
- * 渐进派发（边生成提示词边出图）时单次模型请求的批次单位数（系列模式下单位是「组」）。
- * 之前是 1：每生成一组都要付一次完整的模型往返，组数多时提示词阶段被拉成一条直线；
- * 放大到 3 后往返次数降为 1/3，同时保留「每 3 组反馈一次」的渐进感。
- * 批次缺额（截断/重复被去重后不足）由 generateSopPromptBatches 的补缺循环兜底。
+ * 普通 SOP 渐进派发（边生成提示词边出图）时单次模型请求的提示词条数。
+ *
+ * 固定「一次 1 条」：普通 SOP 没有组内一致性约束，逐条请求才能让每条提示词都在
+ * 前一条已落库的上下文里生成，也保持「生成一条 → 发一条图」的节奏可控。
+ * **不要把系列图的批量方式套用到这里**：曾经把该值放大到 3 以减少模型往返，
+ * 结果普通 SOP 一次吐 3 条，逐条粒度丢失。本值只服务非系列场景。
  */
-export const SOP_PROGRESSIVE_PROMPT_BATCH_SIZE = 3
+export const SOP_PROGRESSIVE_PROMPT_BATCH_SIZE = 1
+
+/**
+ * 系列图渐进派发时单次模型请求的「组」数（不是条数）。
+ *
+ * 固定「一次 1 组」：一组 = 模型输出的一条含 3 段成员提示词的内容
+ * （`fixed` / `fixedCopy` / `prompts[3]`），由 parseSopSeriesPromptBatchResponse
+ * 拆分成 3 条成员提示词，再按「第 1 条出母图 → 母图完成后用第 2、3 条出副图」派发。
+ * 不批量成多组的原因：组间未锁定维度的差异需要模型逐组独立规划，一次要求它规划多组时
+ * 组间会退化成机械复用同一套构图与色彩；同时母图锚定只需等本组首图，不必被其他组拖住。
+ * 批次缺额（截断 / 重复被去重后不足）由 generateSopPromptBatches 的补缺循环兜底。
+ */
+export const SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE = 1
 
 export interface SopPromptSourceLike {
   id: string

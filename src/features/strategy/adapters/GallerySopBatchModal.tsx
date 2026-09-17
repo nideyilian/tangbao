@@ -58,6 +58,7 @@ import {
   selectSopPromptSources,
   SOP_HIGH_VOLUME_WARNING_THRESHOLD,
   SOP_PROGRESSIVE_PROMPT_BATCH_SIZE,
+  SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE,
 } from '../sopPromptBatch'
 import { normalizeSeriesConfig } from '../sopGeneration'
 import type { SopSeriesConfig } from '../types'
@@ -1982,8 +1983,16 @@ export default function GallerySopBatchModal({
           referenceImages: sourceImage ? [{ name: sourceRun.source.label, dataUrl: sourceImage.dataUrl }] : undefined,
           exact: false,
           existingPrompts: [...existingPrompts, ...nextPrompts.map((item) => item.promptText.trim()).filter(Boolean)],
-          // 变量提示词模式是本地展开，一次生成全部再逐条提交；AI 渐进模式用小批量（原为 1，每组建模都要付一次完整模型往返）
-          maxBatchSize: !isVariablePromptSop && progressiveDispatch ? SOP_PROGRESSIVE_PROMPT_BATCH_SIZE : undefined,
+          // 变量提示词模式是本地展开，一次生成全部再逐条提交。
+          // AI 渐进模式一律「逐单位」请求，且两种场景的批量方式互不套用：
+          // 普通 SOP 一次 1 条提示词；系列图一次 1 组（一条含 3 段的内容拆成 3 条成员提示词）。
+          // 普通场景批量会丢逐条粒度，系列场景批量会让多组共抢一次组间规划、并拖住母图锚定。
+          maxBatchSize:
+            !isVariablePromptSop && progressiveDispatch
+              ? activeSeriesMode
+                ? SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE
+                : SOP_PROGRESSIVE_PROMPT_BATCH_SIZE
+              : undefined,
           // 系列模式下 generationCount 是「组数」，变量展开要按每组张数换算成条数
           outputUnitSize: activeSeriesMode ? seriesCount : 1,
           beforeBatch: waitWhileGenerationPaused,

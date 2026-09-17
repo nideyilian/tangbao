@@ -13,7 +13,9 @@ import {
   parseSopPromptBatchResponse,
   parseSopSeriesPromptBatchResponse,
   selectSopPromptSources,
+  SOP_PROGRESSIVE_PROMPT_BATCH_SIZE,
   SOP_PROMPT_GENERATOR_INSTRUCTION,
+  SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE,
   stripSopSeriesFixedPrefix,
 } from './sopPromptBatch'
 import type { SopLibraryItem } from './types'
@@ -741,5 +743,19 @@ describe('SOP prompt batch', () => {
     // 整块复用时以 FIXED 为准，不再下发 LOCKED，避免同一段内容出现两次
     expect(request).toContain('<FIXED>')
     expect(request).not.toContain('<LOCKED>')
+  })
+})
+
+/**
+ * 渐进派发的批次单位是硬规则，这里用字面量锁死：
+ * 断言写成引用常量的话，把常量改大也会一起通过，门禁等于没有。
+ */
+describe('渐进派发批次单位', () => {
+  it('普通 SOP 一次只生成 1 条提示词，不套用系列图的批量方式', () => {
+    expect(SOP_PROGRESSIVE_PROMPT_BATCH_SIZE).toBe(1)
+  })
+
+  it('系列图一次只生成 1 组（一条含 3 段的内容拆成 3 条成员提示词）', () => {
+    expect(SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE).toBe(1)
   })
 })
