@@ -738,6 +738,12 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Grid', 'Skeleton', 'EmptyState'],
   },
   {
+    module: 'src/components/TaskPostprocessModal.tsx',
+    responsibility: '任务后处理产出清单弹层，可逐条打开所在文件夹',
+    decision: 'compose',
+    targets: ['Dialog', 'ListRow', 'IconButton'],
+  },
+  {
     module: 'src/components/TaskParamSummary.tsx',
     responsibility: '任务参数摘要标签',
     decision: 'compose',

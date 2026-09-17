@@ -22,6 +22,8 @@ import { CodeIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 import PromptVariableEditor from './PromptVariableEditor'
 import { Card, IconButton } from '../design-system'
+import { FolderOpenIcon } from '../design-system/icons'
+import TaskPostprocessModal from './TaskPostprocessModal'
 
 interface Props {
   task: TaskRecord
@@ -83,6 +85,7 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
   const [swipeActionActive, setSwipeActionActive] = useState(false)
   const [swipeDirection, setSwipeDirection] = useState<-1 | 0 | 1>(0)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
+  const [postprocessOpen, setPostprocessOpen] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const alwaysShowRetryButton = useStore((s) => s.settings.alwaysShowRetryButton)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
@@ -98,6 +101,8 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
   const pendingSwipeOffsetRef = useRef(0)
   const swipeFrameRef = useRef<number | null>(null)
   const displayTaskStatus = task.status === 'error' && hasCompletedTaskOutputs(task) ? 'done' : task.status
+  /** 后处理产出数量；只在有产出时渲染徽章，卡片高度不受影响（列表按固定行高虚拟化） */
+  const postprocessCount = task.postprocessOutputs?.length ?? 0
 
   const updateSwipeDirection = (nextDirection: -1 | 0 | 1) => {
     if (swipeDirectionRef.current === nextDirection) return
@@ -923,6 +928,23 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                     )}
                   </span>
                 )}
+                {/* 后处理产出：卡片内只放计数，清单进弹层（固定行高约束） */}
+                {postprocessCount > 0 && (
+                  <button
+                    type="button"
+                    className="gallery-task-tag gallery-task-tag--primary flex cursor-pointer items-center gap-1 px-1.5 py-0.5 rounded text-xs flex-shrink-0"
+                    title="查看后处理产出的渠道文件"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPostprocessOpen(true)
+                    }}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    onTouchEnd={(e) => e.stopPropagation()}
+                  >
+                    <FolderOpenIcon className="gallery-task-tag__icon w-3 h-3 flex-shrink-0" />
+                    <span>{`后处理 ${postprocessCount}`}</span>
+                  </button>
+                )}
               </div>
               {/* 操作按钮 */}
               <div
@@ -1040,6 +1062,7 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
           </div>
         </div>
       </Card>
+      {postprocessOpen && <TaskPostprocessModal task={task} onClose={() => setPostprocessOpen(false)} />}
     </div>
   )
 }

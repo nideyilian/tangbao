@@ -58,6 +58,64 @@ const task: TaskRecord = {
 }
 
 describe('TaskCard', () => {
+  const collectTexts = (renderer: ReturnType<typeof create>) =>
+    renderer.root.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children)
+
+  it('后处理产出以计数徽章呈现，无产出时不渲染徽章', async () => {
+    storeMocks.ensureImageThumbnailCached.mockResolvedValue(undefined)
+    storeMocks.resolveImageDisplaySrc.mockResolvedValue('data:image/png;base64,original')
+    let withoutBadge!: ReturnType<typeof create>
+    await act(async () => {
+      withoutBadge = create(
+        <TaskCard task={task} onReuse={vi.fn()} onEditOutputs={vi.fn()} onDelete={vi.fn()} onClick={vi.fn()} />,
+      )
+    })
+    mountedRenderers.push(withoutBadge)
+    expect(collectTexts(withoutBadge)).not.toContain('后处理 2')
+
+    const taskWithOutputs: TaskRecord = {
+      ...task,
+      postprocessOutputs: [
+        {
+          rawImageId: 'image-1',
+          path: 'D:\\out\\a.jpg',
+          mediaId: 'clean',
+          mediaName: '纯净版',
+          sizeId: 'clean-1024x1024',
+          width: 1024,
+          height: 1024,
+          clean: true,
+          createdAt: 1,
+        },
+        {
+          rawImageId: 'image-1',
+          path: 'D:\\out\\b.jpg',
+          mediaId: 'gdt',
+          mediaName: '广点通',
+          sizeId: 'gdt-1280x720',
+          width: 1280,
+          height: 720,
+          clean: false,
+          createdAt: 2,
+        },
+      ],
+    }
+    let withBadge!: ReturnType<typeof create>
+    await act(async () => {
+      withBadge = create(
+        <TaskCard
+          task={taskWithOutputs}
+          onReuse={vi.fn()}
+          onEditOutputs={vi.fn()}
+          onDelete={vi.fn()}
+          onClick={vi.fn()}
+        />,
+      )
+    })
+    mountedRenderers.push(withBadge)
+    expect(collectTexts(withBadge)).toContain('后处理 2')
+  })
+
   it('falls back to the original image when a single output has no thumbnail', async () => {
     storeMocks.ensureImageThumbnailCached.mockResolvedValueOnce(undefined)
     storeMocks.resolveImageDisplaySrc.mockResolvedValueOnce('data:image/png;base64,original')
