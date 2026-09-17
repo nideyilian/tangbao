@@ -274,8 +274,16 @@ import { reconcileBackupWorkspaceImages, validateBackupArchive } from './lib/bac
 import { runMigration } from './lib/migrations/registry'
 import { shouldDeleteOrphanImage } from './lib/storageCleanup'
 import { createWorkspaceBackupState, restoreWorkspaceBackupState } from './lib/workspaceBackup'
-import { buildGeneratedImageFileNameBase, findNextGeneratedImageSequence } from './lib/generatedImageFilename'
-import { assignMissingGeneratedImageBatches, getNextGeneratedImageBatch } from './lib/generatedImageBatch'
+import {
+  buildGeneratedImageFileNameBase,
+  findNextGeneratedImageSequence,
+  getSeriesGroupImageSequence,
+} from './lib/generatedImageFilename'
+import {
+  assignMissingGeneratedImageBatches,
+  getNextGeneratedImageBatch,
+  resolveSeriesGroupGeneratedImageNaming,
+} from './lib/generatedImageBatch'
 import { useRequirementPrototype } from './features/requirementPrototype/store'
 import { getSopAiRevisionAttachmentReferences, removeSopAiRevisionAttachments } from './features/strategy/sopAiRevision'
 
@@ -482,6 +490,32 @@ function getTaskLocalSaveBatchFolder(createdAt: number, filenameBatch: number): 
 }
 
 /**
+ * 任务保存命名上下文：批次号（= 文件名里的组标识）+ 批次目录。
+ *
+ * 系列图（一组多张）会拆成多条成员任务提交，同一个系列的成员必须共用**同一个批次号**，
+ * 文件名才稳定为「X-组序号-组内顺序序号」，图片也落在同一个批次目录里而不是分散存放
+ * （见 `resolveSeriesGroupGeneratedImageNaming`）。非系列任务、以及组内首个成员，
+ * 按常规领取新批次号。
+ */
+function resolveTaskGeneratedImageNaming(
+  createdAt: number,
+  tabIdToUpdate: string | null,
+  sopBatch: TaskRecord['sopBatch'],
+): { filenameBatch: number; localSaveBatchFolder: string | undefined } {
+  const seriesGroupNaming = resolveSeriesGroupGeneratedImageNaming(useStore.getState().tasks, sopBatch)
+  if (seriesGroupNaming) {
+    return {
+      filenameBatch: seriesGroupNaming.filenameBatch,
+      localSaveBatchFolder:
+        seriesGroupNaming.localSaveBatchFolder ??
+        getTaskLocalSaveBatchFolder(createdAt, seriesGroupNaming.filenameBatch),
+    }
+  }
+  const filenameBatch = getNextTaskFilenameBatch(createdAt, tabIdToUpdate)
+  return { filenameBatch, localSaveBatchFolder: getTaskLocalSaveBatchFolder(createdAt, filenameBatch) }
+}
+
+/**
  * 「树状工作区 → 文件夹」：任务所属标签页在分组下的目录段（[分组名, 标签页名]）。
  * 标签页无分组时只有标签页名；标签页已删除时回退到提交时快照的标签页名。
  */
@@ -621,6 +655,9 @@ async function saveTaskImagesToLocalFSNow(taskId: string, imageIds: string[], im
 
   const saved: Record<string, string> = {}
   let savedCount = 0
+  // 系列图：组内顺序序号由「组内第几名成员 × 每成员张数 + 任务内图片序号」直接决定（1 起连续），
+  // 组标识沿用同组共享的批次号；普通任务沿用目录续号。
+  const series = task.sopBatch?.series
   for (let index = 0; index < imageIds.length; index++) {
     const imageId = imageIds[index]
     const imageIndex = imageIndexOffset + index
@@ -635,7 +672,10 @@ async function saveTaskImagesToLocalFSNow(taskId: string, imageIds: string[], im
       dataUrl ?? 'data:image/png;base64,',
       rec?.localPath?.split('.').pop()?.toLowerCase() || task.params?.output_format || 'png',
     )
-    const fileNameBase = buildGeneratedImageFileNameBase(context, settings, startSequence + savedCount)
+    const sequence =
+      getSeriesGroupImageSequence(series, task.sopBatch?.imagesPerPrompt ?? task.params?.n, imageIndex) ??
+      startSequence + savedCount
+    const fileNameBase = buildGeneratedImageFileNameBase(context, settings, sequence)
     let savedPath: string | null = null
     if (rec?.localPath) {
       // 硬链接：同一物理文件、两个目录入口
@@ -5325,6 +5365,22 @@ export async function retryGeneratedAssetLibraryMigration(
       updatedAt: Date.now(),
     })
     await useAssetLibraryStore.getState().hydrate()
+    // 内置「产品线 - 产品 - 方向」三级结构：首次启动写入一次（走迁移 journal，
+    // 用户此后删除/改名/移动的内置文件夹不会被自动重建），需要找回时走设置页的显式补齐入口。
+    try {
+      const { runBuiltinProjectTreeMigration } = await import('./lib/builtinProjectTreeSync')
+      const builtinCollections = await runBuiltinProjectTreeMigration()
+      if (builtinCollections.length > 0) {
+        useAssetLibraryStore.getState().upsertCollections(builtinCollections)
+      }
+    } catch (error) {
+      console.warn('[builtin-project-tree] 内置结构写入失败', error)
+    }
+    // 项目文件夹树是唯一主源：挂上变化订阅并做一次全量对齐，把结构镜像到 SOP 管理分组树（只增不删）。
+    void import('./lib/sopGroupSync').then((module) => {
+      module.installSopGroupMirrorAutoSync()
+      module.requestSopGroupMirrorSync()
+    })
     // 一次性清理历史遗留的"参考图素材"（幂等；下次启动无残留时直接返回 0）
     await import('./lib/referenceAssetCleanup')
       .then((module) => module.cleanupReferenceOnlyAssets())
@@ -6234,7 +6290,7 @@ export async function submitTaskWithData(
   )
   const createdAt = Date.now()
   const taskId = genId()
-  const filenameBatch = getNextTaskFilenameBatch(createdAt, tabIdToUpdate)
+  const { filenameBatch, localSaveBatchFolder } = resolveTaskGeneratedImageNaming(createdAt, tabIdToUpdate, sopBatch)
   const task: TaskRecord = {
     id: taskId,
     prompt: prompt.trim(),
@@ -6262,7 +6318,7 @@ export async function submitTaskWithData(
     scheduledOutputPath,
     scheduledOutputSubFolder,
     defaultCollectionId,
-    localSaveBatchFolder: getTaskLocalSaveBatchFolder(createdAt, filenameBatch),
+    localSaveBatchFolder,
   }
 
   const latestTasks = useStore.getState().tasks
@@ -11041,11 +11097,14 @@ export async function retryTask(
     const createdAt = Date.now()
     const taskId = genId()
     createdTaskId = taskId
-    const filenameBatch = getNextTaskFilenameBatch(createdAt, tabIdToUpdate)
+    const sopBatch = options.sopBatch ?? (task.sopBatch ? { ...task.sopBatch } : undefined)
+    // 系列图单张重试沿用同组批次号：新图仍归入原组（组内顺号自动续号）而不是另起一组；
+    // 「重新生成」整批会带新的 batchId，因此不会命中旧任务
+    const { filenameBatch, localSaveBatchFolder } = resolveTaskGeneratedImageNaming(createdAt, tabIdToUpdate, sopBatch)
     const newTask: TaskRecord = {
       id: taskId,
       prompt: task.prompt,
-      sopBatch: options.sopBatch ?? (task.sopBatch ? { ...task.sopBatch } : undefined),
+      sopBatch,
       params: normalizedParams,
       apiProvider: activeProfile.provider,
       apiProfileId: activeProfile.id,
@@ -11064,7 +11123,7 @@ export async function retryTask(
       finishedAt: null,
       elapsed: null,
       defaultCollectionId: task.defaultCollectionId,
-      localSaveBatchFolder: getTaskLocalSaveBatchFolder(createdAt, filenameBatch),
+      localSaveBatchFolder,
     }
 
     const latestTasks = useStore.getState().tasks

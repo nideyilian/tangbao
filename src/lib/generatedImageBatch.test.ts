@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { TaskRecord, WorkspaceTab } from '../types'
 import { DEFAULT_PARAMS } from '../types'
-import { assignMissingGeneratedImageBatches, getNextGeneratedImageBatch } from './generatedImageBatch'
+import {
+  assignMissingGeneratedImageBatches,
+  getNextGeneratedImageBatch,
+  resolveSeriesGroupGeneratedImageNaming,
+} from './generatedImageBatch'
 
 function task(overrides: Partial<TaskRecord> & Pick<TaskRecord, 'id' | 'createdAt'>): TaskRecord {
   return {
@@ -104,5 +108,62 @@ describe('generated image batches', () => {
     const result = assignMissingGeneratedImageBatches([kuaishou, xiaohongshu], [])
 
     expect(result.tasks.map((item) => item.filenameBatch)).toEqual([1, 1])
+  })
+
+  describe('series group naming', () => {
+    const series = (groupIndex: number, seriesIndex: number) => ({
+      seriesId: `run-1-${groupIndex}`,
+      groupIndex,
+      groupCount: 2,
+      seriesIndex,
+      seriesCount: 2,
+    })
+    const sopBatch = {
+      batchId: 'sop-batch-1',
+      sopId: 'sop-1',
+      sopName: '系列 SOP',
+      promptIndex: 1,
+      promptCount: 4,
+      series: series(1, 1),
+    }
+
+    it('returns null without series metadata or for the first member of a group', () => {
+      expect(resolveSeriesGroupGeneratedImageNaming([], undefined)).toBeNull()
+      expect(resolveSeriesGroupGeneratedImageNaming([], { batchId: 'sop-batch-1' })).toBeNull()
+      expect(resolveSeriesGroupGeneratedImageNaming([], sopBatch)).toBeNull()
+    })
+
+    it('reuses the first sibling batch and batch folder for the rest of the group', () => {
+      const naming = resolveSeriesGroupGeneratedImageNaming(
+        [
+          task({
+            id: 'other-run',
+            createdAt: july3Morning,
+            filenameBatch: 9,
+            sopBatch: { ...sopBatch, batchId: 'sop-batch-9' },
+          }),
+          task({
+            id: 'other-group',
+            createdAt: july3Morning,
+            filenameBatch: 8,
+            sopBatch: { ...sopBatch, series: series(2, 1) },
+          }),
+          task({ id: 'no-batch', createdAt: july3Morning, sopBatch }),
+          task({
+            id: 'group-lead',
+            createdAt: july3Morning,
+            filenameBatch: 3,
+            localSaveBatchFolder: '20260703-080000-batch-003',
+            sopBatch,
+          }),
+        ],
+        { ...sopBatch, series: series(1, 2) },
+      )
+
+      expect(naming).toEqual({
+        filenameBatch: 3,
+        localSaveBatchFolder: '20260703-080000-batch-003',
+      })
+    })
   })
 })

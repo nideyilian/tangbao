@@ -22,6 +22,7 @@ import {
   type SopReferenceImage,
 } from './sopGeneration'
 import { sopLibraryId } from './sopLibrary'
+import { collectSopGroupSubtreeIds } from './sopGroupTree'
 import { getSopCoverCandidates } from './sopCover'
 import { getAllSopBatchSnapshots, getAllSopGenerationRecords, putSopGenerationRecord } from '../../lib/db'
 import { createImageThumbnailDataUrl } from '../../lib/canvasImage'
@@ -234,14 +235,18 @@ export default function SopManagementCenter({
             ? items
             : selectedGroupId === 'ungrouped'
               ? items.filter((item) => !item.groupId)
-              : items.filter((item) => item.groupId === selectedGroupId)
+              : (() => {
+                  // 分组树：选中父分组时连同各级子分组里的 SOP 一起显示，否则点开产品线会看到空列表
+                  const subtreeIds = new Set(collectSopGroupSubtreeIds(groups, selectedGroupId))
+                  return items.filter((item) => !!item.groupId && subtreeIds.has(item.groupId))
+                })()
     const query = search.trim().toLocaleLowerCase()
     return query
       ? groupedItems.filter((item) =>
           `${item.name} ${item.description} ${item.content}`.toLocaleLowerCase().includes(query),
         )
       : groupedItems
-  }, [items, search, selectedGroupId])
+  }, [groups, items, search, selectedGroupId])
   const filteredMetaInstructions = useMemo(() => {
     const query = metaSearch.trim().toLocaleLowerCase()
     return query
@@ -427,7 +432,15 @@ export default function SopManagementCenter({
     }
     if (name && name !== group.name) {
       onSaveGroup({ ...group, name, updatedAt: Date.now() })
-      showToast('分组已重命名', 'success')
+      // 镜像分组（由项目文件夹投影而来）改名要写回主源，否则下次镜像会把旧名字推回来；
+      // 独立分组（用户自建、未绑定文件夹）保持原样，只改 SOP 侧。
+      if (group.collectionId) {
+        void import('../assetLibrary/store').then(({ useAssetLibraryStore }) =>
+          useAssetLibraryStore.getState().renameCollection(group.collectionId!, name),
+        )
+      } else {
+        showToast('分组已重命名', 'success')
+      }
     }
     setEditingGroupId(null)
   }
@@ -626,15 +639,28 @@ export default function SopManagementCenter({
     runAfterUnsavedConfirmation(select)
   }
 
+  /**
+   * 新建子文件夹。
+   * 分组树是项目文件夹树的投影，所以这里先在素材库项目树里建文件夹（唯一主源），再镜像出分组，
+   * 保证左侧栏与 SOP 管理两边一一对应。父级取当前选中分组所绑定的文件夹。
+   */
   const addGroup = () => {
-    const name = '新建分组'
-    const now = Date.now()
-    const group = { id: sopLibraryId('group'), name, createdAt: now, updatedAt: now }
-    onSaveGroup(group)
-    setSelectedGroupId(group.id)
-    setEditingGroupId(group.id)
-    setEditingGroupName(name)
-    showToast('已新建分组', 'success')
+    void (async () => {
+      const selectedGroup = groups.find((item) => item.id === selectedGroupId)
+      const parentCollectionId = selectedGroup?.collectionId ?? null
+      const { useAssetLibraryStore } = await import('../assetLibrary/store')
+      const created = await useAssetLibraryStore.getState().createCollection('新建文件夹', parentCollectionId)
+      if (!created) return
+      const [{ syncSopGroupsWithProjectTree }, { getMirrorGroupId }] = await Promise.all([
+        import('../../lib/sopGroupSync'),
+        import('../../lib/sopGroupMirror'),
+      ])
+      await syncSopGroupsWithProjectTree()
+      const mirrorGroupId = getMirrorGroupId(created.id)
+      setSelectedGroupId(mirrorGroupId)
+      setEditingGroupId(mirrorGroupId)
+      setEditingGroupName(created.name)
+    })()
   }
 
   const openGroupContextMenu = (
@@ -669,12 +695,20 @@ export default function SopManagementCenter({
   const deleteGroupFromMenu = (group: SopGroup) => {
     closeGroupContextMenu()
     openConfirmDialog({
-      title: '删除 SOP 分组？',
-      message: `将删除分组「${group.name}」，组内 SOP 会转为未分组。`,
+      title: group.collectionId ? '删除文件夹？' : '删除 SOP 分组？',
+      message: group.collectionId
+        ? `将删除文件夹「${group.name}」及其子文件夹（可在素材库回收站恢复），组内 SOP 会转为未分组。`
+        : `将删除分组「${group.name}」，组内 SOP 会转为未分组。`,
       confirmText: '确认删除',
       tone: 'danger',
       action: () => {
         onDeleteGroup(group.id)
+        // 镜像分组：同步把对应项目文件夹移入回收站，否则下次镜像会把它重新建出来
+        if (group.collectionId) {
+          void import('../assetLibrary/store').then(({ useAssetLibraryStore }) =>
+            useAssetLibraryStore.getState().deleteCollection(group.collectionId!),
+          )
+        }
         showToast(`已删除分组「${group.name}」`, 'success')
       },
     })

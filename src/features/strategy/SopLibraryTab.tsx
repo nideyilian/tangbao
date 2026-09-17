@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Badge,
   Button,
@@ -17,6 +17,8 @@ import {
 } from '../../design-system'
 import {
   CheckIcon as Check,
+  ChevronDownIcon as ChevronDown,
+  ChevronRightIcon as ChevronRight,
   CopyIcon as Copy,
   FileImageIcon as FileImage,
   HistoryIcon as History,
@@ -34,10 +36,26 @@ import { useCloseOnEscape } from '../../hooks/useCloseOnEscape'
 import { useStore } from '../../store'
 import type { TaskRecord } from '../../types'
 import type { SopGroup, SopLibraryItem } from './types'
+import { buildSopGroupTree, flattenSopGroupTree } from './sopGroupTree'
 import SopImageStack from './SopImageStack'
 import SopTextEditor from './SopTextEditor'
 
 const SOP_DRAG_TYPE = 'application/x-tangbao-sop-ids'
+/** 分组树折叠状态的本地存储键（纯 UI 偏好，与素材库侧栏的折叠键互不影响）。 */
+const SOP_GROUP_COLLAPSED_STORAGE_KEY = 'tangbao.sop-group-collapsed'
+/** 分组树每一级的缩进像素，配合展开箭头体现层级。 */
+const SOP_GROUP_INDENT = 14
+
+function loadCollapsedGroupIds(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(SOP_GROUP_COLLAPSED_STORAGE_KEY)
+    if (!raw) return new Set()
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? new Set(parsed.filter((id): id is string => typeof id === 'string')) : new Set()
+  } catch {
+    return new Set()
+  }
+}
 
 export type SopLibraryTabProps = {
   groups: SopGroup[]
@@ -136,7 +154,32 @@ export default function SopLibraryTab({
   const showToast = useStore((state) => state.showToast)
   const [editorMenuOpen, setEditorMenuOpen] = useState(false)
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => loadCollapsedGroupIds())
   const editorMenuRef = useRef<HTMLDivElement>(null)
+
+  // 折叠状态持久化（纯 UI 偏好，不进业务数据）
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SOP_GROUP_COLLAPSED_STORAGE_KEY, JSON.stringify([...collapsedGroupIds]))
+    } catch {
+      /* 忽略写入失败（隐私模式等） */
+    }
+  }, [collapsedGroupIds])
+
+  /** 分组树按展开状态展平成行列表；折叠的分组整棵子树跳过。 */
+  const groupTreeRows = useMemo(
+    () => flattenSopGroupTree(buildSopGroupTree(groups), collapsedGroupIds),
+    [groups, collapsedGroupIds],
+  )
+
+  const toggleGroupCollapsed = (groupId: string) => {
+    setCollapsedGroupIds((current) => {
+      const next = new Set(current)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
+  }
 
   useCloseOnEscape(editorMenuOpen, () => setEditorMenuOpen(false))
 
@@ -219,15 +262,19 @@ export default function SopLibraryTab({
               <span className="text-xs opacity-70">{group.count}</span>
             </button>
           ))}
-          {groups.map((group) => {
+          {groupTreeRows.map(({ group, depth, hasChildren }) => {
             const isEditing = editingGroupId === group.id
+            const collapsed = collapsedGroupIds.has(group.id)
+            const indent = { paddingLeft: depth * SOP_GROUP_INDENT }
             if (isEditing) {
               return (
                 <div
                   key={group.id}
                   className="sop-center-group-row sop-center-group-row--editing flex items-center gap-1"
                   data-selected={selectedGroupId === group.id || undefined}
+                  style={indent}
                 >
+                  <span className="sop-center-group-tree-toggle" aria-hidden="true" />
                   <input
                     ref={renameInputRef}
                     value={editingGroupName}
@@ -258,21 +305,38 @@ export default function SopLibraryTab({
               )
             }
             return (
-              <ListRow
-                key={group.id}
-                className="sop-center-group-row"
-                selected={selectedGroupId === group.id}
-                title={group.name}
-                data-sop-drop-group={group.id}
-                data-drag-over={dragOverGroupId === group.id || undefined}
-                onDragOver={(event) => handleGroupDragOver(event, group.id)}
-                onDragLeave={(event) => handleGroupDragLeave(event, group.id)}
-                onDrop={(event) => handleGroupDrop(event, group.id)}
-                interactive={{
-                  onClick: () => selectGroup(group.id),
-                }}
-                onContextMenu={(event) => openGroupContextMenu(event, group.id)}
-              />
+              <div key={group.id} className="sop-center-group-tree-node" style={indent}>
+                {hasChildren ? (
+                  <button
+                    type="button"
+                    className="sop-center-group-tree-toggle"
+                    aria-label={`${collapsed ? '展开' : '收起'}${group.name}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      toggleGroupCollapsed(group.id)
+                    }}
+                  >
+                    {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                ) : (
+                  <span className="sop-center-group-tree-toggle" aria-hidden="true" />
+                )}
+                <ListRow
+                  className="sop-center-group-row sop-center-group-tree-row"
+                  selected={selectedGroupId === group.id}
+                  title={group.name}
+                  data-sop-drop-group={group.id}
+                  data-drag-over={dragOverGroupId === group.id || undefined}
+                  onDragOver={(event) => handleGroupDragOver(event, group.id)}
+                  onDragLeave={(event) => handleGroupDragLeave(event, group.id)}
+                  onDrop={(event) => handleGroupDrop(event, group.id)}
+                  interactive={{
+                    onClick: () => selectGroup(group.id),
+                  }}
+                  onContextMenu={(event) => openGroupContextMenu(event, group.id)}
+                />
+              </div>
             )
           })}
         </div>

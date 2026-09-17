@@ -55,6 +55,36 @@ export function buildGeneratedImageFileNameBase(
   return `${buildGeneratedImageFileNamePrefix(context, settings)}-${Math.max(1, Math.trunc(sequence))}`
 }
 
+/**
+ * 系列图（一组多张）的**组内顺序序号**（1 起）。
+ *
+ * 命名固定为「X-组序号-组内顺序序号」：组序号沿用批次号（同组所有成员共享，见
+ * `resolveSeriesGroupGeneratedImageNaming`），这里负责追加组内顺序：
+ * 组内第几名成员 × 每成员张数 + 任务内图片序号 + 1，与提交顺序、出图先后无关，
+ * 因此同组的序号稳定、连续且不重复。
+ *
+ * 非系列任务返回 null，由调用方沿用目录续号（`findNextGeneratedImageSequence`）。
+ */
+export function getSeriesGroupImageSequence(
+  series: { seriesIndex: number } | null | undefined,
+  imagesPerPrompt: number | null | undefined,
+  imageIndexInTask: number,
+): number | null {
+  if (!series) return null
+  const memberIndex = toPositiveInt(series.seriesIndex) - 1
+  const perMember = toPositiveInt(imagesPerPrompt)
+  const indexInTask =
+    typeof imageIndexInTask === 'number' && Number.isFinite(imageIndexInTask)
+      ? Math.max(0, Math.trunc(imageIndexInTask))
+      : 0
+  return memberIndex * perMember + indexInTask + 1
+}
+
+function toPositiveInt(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 1
+  return Math.max(1, Math.trunc(value))
+}
+
 export function findNextGeneratedImageSequence(
   fileNames: string[],
   context: GeneratedImageFilenameContext,

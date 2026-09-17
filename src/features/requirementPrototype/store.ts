@@ -33,6 +33,7 @@ import type { StrategyAsset, StrategyPreset } from '../strategy/types'
 import type { SopGroup, SopLibraryItem, SopMetaInstruction, SopVersion } from '../strategy/types'
 import {
   mergeSopMetaInstructions,
+  normalizeSopGroups,
   seedSopGroups,
   seedSopLibrary,
   seedSopMetaInstructions,
@@ -130,14 +131,15 @@ interface RequirementPrototypeState {
   saveUser: (user: RequirementUser) => void
 }
 
-export const REQUIREMENT_PROTOTYPE_STORE_VERSION = 5
+/** v6：SOP 分组升级为层级树（新增 parentId / collectionId），旧数据在 migrate 里补齐层级字段。 */
+export const REQUIREMENT_PROTOTYPE_STORE_VERSION = 6
 
 export function migrateRequirementPrototypeState(persistedState: unknown) {
   const state = persistedState as Partial<RequirementPrototypeState>
   return {
     ...state,
     strategyAssets: (state.strategyAssets ?? []).map((strategy) => normalizeStrategyAsset(strategy)),
-    sopGroups: state.sopGroups?.length ? state.sopGroups : seedSopGroups(),
+    sopGroups: normalizeSopGroups(state.sopGroups?.length ? state.sopGroups : seedSopGroups()),
     sopLibrary: state.sopLibrary?.length ? state.sopLibrary : seedSopLibrary(),
     sopMetaInstructions: mergeSopMetaInstructions(state.sopMetaInstructions),
     sopVersionHistory: state.sopVersionHistory ?? {},

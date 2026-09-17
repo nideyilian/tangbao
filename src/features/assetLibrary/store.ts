@@ -630,6 +630,8 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
                     'success',
                   )
               }
+              // 归档可能新建了项目文件夹：触发一次镜像，让 SOP 管理的分组树跟上项目树
+              void import('../../lib/sopGroupSync').then((sync) => sync.requestSopGroupMirrorSync())
             })
             .catch(() => {
               /* 归档失败静默：下次启动或任务同步时自动重试 */

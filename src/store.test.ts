@@ -1908,6 +1908,276 @@ describe('mask draft lifecycle in store actions', () => {
     dbMockState.emitLocalPath = false
   })
 
+  /** 系列图（一组多张）的成员任务提交器：组序号 groupIndex，组内位置 seriesIndex。 */
+  function submitSeriesMember(options: {
+    tabId: string
+    groupIndex: number
+    seriesIndex: number
+    batchId?: string
+    seriesCount?: number
+    imagesPerPrompt?: number
+    n?: number
+  }) {
+    const { tabId, groupIndex, seriesIndex, batchId = 'sop-batch-series', seriesCount = 2 } = options
+    const imagesPerPrompt = options.imagesPerPrompt ?? options.n ?? 1
+    return submitTaskWithData(
+      {
+        prompt: `第 ${groupIndex} 组第 ${seriesIndex} 张`,
+        inputImages: [],
+        inputImageFolder: null,
+        params: { ...DEFAULT_PARAMS, n: options.n ?? 1 },
+        maskDraft: null,
+        targetTabId: tabId,
+        sopBatch: {
+          batchId,
+          sopId: 'sop-1',
+          sopName: '系列 SOP',
+          promptIndex: seriesIndex,
+          promptCount: 4,
+          imagesPerPrompt,
+          series: {
+            seriesId: `${batchId}-${groupIndex}`,
+            groupIndex,
+            groupCount: 2,
+            seriesIndex,
+            seriesCount,
+          },
+        },
+      },
+      { silentSuccess: true },
+    )
+  }
+
+  it('shares one group number across a series group and numbers the images inside it', async () => {
+    dbMockState.emitLocalPath = true
+    const savedPaths: string[] = []
+    const existingFiles = new Set<string>()
+    const electronAPI = {
+      isElectron: true,
+      getLocalSavePath: vi.fn(async () => 'D:\\LocalSaves'),
+      getDefaultPath: vi.fn(async () => 'D:\\LocalSaves'),
+      setLocalSavePath: vi.fn(async () => {}),
+      ensureDir: vi.fn(async () => true),
+      pathJoin: vi.fn(async (...parts: string[]) => parts.join('\\')),
+      linkFile: vi.fn(async (_sourcePath: string, targetPath: string) => {
+        savedPaths.push(targetPath)
+        existingFiles.add(targetPath.split('\\').pop()!)
+        return true
+      }),
+      saveImage: vi.fn(async () => true),
+      saveJson: vi.fn(async () => true),
+      saveText: vi.fn(async () => true),
+      checkExists: vi.fn(async (filePath: string) => existingFiles.has(filePath.split('\\').pop()!)),
+      readDir: vi.fn(async () => [...existingFiles]),
+    }
+    Object.defineProperty(globalThis, 'window', {
+      value: { electronAPI },
+      configurable: true,
+    })
+    vi.mocked(callImageApi).mockImplementation(async (opts) => ({
+      images: [`data:image/png;base64,series-${savedPaths.length}`],
+      actualParams: { n: opts.params.n },
+      actualParamsList: [{ n: opts.params.n }],
+      revisedPrompts: [],
+    }))
+    const activeTab = workspaceTab({ id: 'tab-series', name: '快手' })
+    useStore.setState({
+      appMode: 'gallery',
+      params: { ...DEFAULT_PARAMS, n: 1 },
+      workspaceTabs: [activeTab],
+      activeWorkspaceTabId: activeTab.id,
+      settings: {
+        ...useStore.getState().settings,
+        imageFilenameDatePrefix: false,
+        imageFilenameUsePrompt: false,
+      },
+    })
+
+    // 两个系列组、每组 2 张：同组成员共享组序号，组与组之间互不冲突
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 1, seriesIndex: 1 })
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 1, seriesIndex: 2 })
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 2, seriesIndex: 1 })
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 2, seriesIndex: 2 })
+
+    expect([...useStore.getState().tasks].reverse().map((item) => item.filenameBatch)).toEqual([1, 1, 2, 2])
+
+    await vi.waitFor(() => {
+      expect(savedPaths.length).toBe(4)
+    })
+    // 命名 = X-组序号-组内顺序序号：组内连续，不同组不重名
+    expect([...savedPaths].sort()).toEqual([
+      'D:\\LocalSaves\\images\\快手\\快手-1-1.png',
+      'D:\\LocalSaves\\images\\快手\\快手-1-2.png',
+      'D:\\LocalSaves\\images\\快手\\快手-2-1.png',
+      'D:\\LocalSaves\\images\\快手\\快手-2-2.png',
+    ])
+    dbMockState.emitLocalPath = false
+  })
+
+  it('numbers series group images continuously when every member returns several images', async () => {
+    dbMockState.emitLocalPath = true
+    const savedPaths: string[] = []
+    const existingFiles = new Set<string>()
+    const electronAPI = {
+      isElectron: true,
+      getLocalSavePath: vi.fn(async () => 'D:\\LocalSaves'),
+      getDefaultPath: vi.fn(async () => 'D:\\LocalSaves'),
+      setLocalSavePath: vi.fn(async () => {}),
+      ensureDir: vi.fn(async () => true),
+      pathJoin: vi.fn(async (...parts: string[]) => parts.join('\\')),
+      linkFile: vi.fn(async (_sourcePath: string, targetPath: string) => {
+        savedPaths.push(targetPath)
+        existingFiles.add(targetPath.split('\\').pop()!)
+        return true
+      }),
+      saveImage: vi.fn(async () => true),
+      saveJson: vi.fn(async () => true),
+      saveText: vi.fn(async () => true),
+      checkExists: vi.fn(async (filePath: string) => existingFiles.has(filePath.split('\\').pop()!)),
+      readDir: vi.fn(async () => [...existingFiles]),
+    }
+    Object.defineProperty(globalThis, 'window', {
+      value: { electronAPI },
+      configurable: true,
+    })
+    // 每张图内容必须不同：内容相同的图会被去重，拿不到 n 张
+    let seriesImageSeq = 0
+    vi.mocked(callImageApi).mockImplementation(async (opts) => ({
+      images: Array.from({ length: opts.params.n }, () => `data:image/png;base64,${'A'.repeat(++seriesImageSeq * 4)}`),
+      actualParams: { n: opts.params.n },
+      actualParamsList: [{ n: opts.params.n }],
+      revisedPrompts: [],
+    }))
+    const activeTab = workspaceTab({ id: 'tab-series-multi', name: '快手' })
+    useStore.setState({
+      appMode: 'gallery',
+      params: { ...DEFAULT_PARAMS, n: 2 },
+      workspaceTabs: [activeTab],
+      activeWorkspaceTabId: activeTab.id,
+      settings: {
+        ...useStore.getState().settings,
+        // 提示词入名时，组内顺序仍按组内位置连续编号（不随各自的提示词前缀重新从 1 起）
+        imageFilenameDatePrefix: false,
+        imageFilenameUsePrompt: true,
+      },
+    })
+
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 1, seriesIndex: 1, n: 2 })
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 1, seriesIndex: 2, n: 2 })
+
+    await vi.waitFor(() => {
+      expect(savedPaths.length).toBe(4)
+    })
+    expect([...savedPaths].sort()).toEqual([
+      'D:\\LocalSaves\\images\\快手\\快手-1-第 1 组第 1 张-1.png',
+      'D:\\LocalSaves\\images\\快手\\快手-1-第 1 组第 1 张-2.png',
+      'D:\\LocalSaves\\images\\快手\\快手-1-第 1 组第 2 张-3.png',
+      'D:\\LocalSaves\\images\\快手\\快手-1-第 1 组第 2 张-4.png',
+    ])
+    dbMockState.emitLocalPath = false
+  })
+
+  it('keeps a series group inside one batch folder', async () => {
+    dbMockState.emitLocalPath = true
+    const savedPaths: string[] = []
+    const existingFiles = new Set<string>()
+    const electronAPI = {
+      isElectron: true,
+      getLocalSavePath: vi.fn(async () => 'D:\\LocalSaves'),
+      getDefaultPath: vi.fn(async () => 'D:\\LocalSaves'),
+      setLocalSavePath: vi.fn(async () => {}),
+      ensureDir: vi.fn(async () => true),
+      pathJoin: vi.fn(async (...parts: string[]) => parts.join('\\')),
+      linkFile: vi.fn(async (_sourcePath: string, targetPath: string) => {
+        savedPaths.push(targetPath)
+        existingFiles.add(targetPath.split('\\').pop()!)
+        return true
+      }),
+      saveImage: vi.fn(async () => true),
+      saveJson: vi.fn(async () => true),
+      saveText: vi.fn(async () => true),
+      checkExists: vi.fn(async (filePath: string) => existingFiles.has(filePath.split('\\').pop()!)),
+      readDir: vi.fn(async () => [...existingFiles]),
+    }
+    Object.defineProperty(globalThis, 'window', {
+      value: { electronAPI },
+      configurable: true,
+    })
+    vi.mocked(callImageApi).mockImplementation(async (opts) => ({
+      images: [`data:image/png;base64,folder-${savedPaths.length}`],
+      actualParams: { n: opts.params.n },
+      actualParamsList: [{ n: opts.params.n }],
+      revisedPrompts: [],
+    }))
+    const activeTab = workspaceTab({ id: 'tab-series-folder', name: '快手' })
+    useStore.setState({
+      appMode: 'gallery',
+      params: { ...DEFAULT_PARAMS, n: 1 },
+      workspaceTabs: [activeTab],
+      activeWorkspaceTabId: activeTab.id,
+      settings: {
+        ...useStore.getState().settings,
+        imageSaveLayout: 'batch-folder',
+        imageFilenameDatePrefix: false,
+        imageFilenameUsePrompt: false,
+      },
+    })
+
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 1, seriesIndex: 1 })
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 1, seriesIndex: 2 })
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 2, seriesIndex: 1 })
+    await submitSeriesMember({ tabId: activeTab.id, groupIndex: 2, seriesIndex: 2 })
+
+    const [groupLead, groupSecond, otherLead, otherSecond] = [...useStore.getState().tasks].reverse()
+    // 同组共用批次目录，不同组各自一个目录（不再把一组图片拆到多个批次目录）
+    expect(groupSecond.localSaveBatchFolder).toBe(groupLead.localSaveBatchFolder)
+    expect(otherSecond.localSaveBatchFolder).toBe(otherLead.localSaveBatchFolder)
+    expect(otherLead.localSaveBatchFolder).not.toBe(groupLead.localSaveBatchFolder)
+
+    await vi.waitFor(() => {
+      expect(savedPaths.length).toBe(4)
+    })
+    const groupFolder = groupLead.localSaveBatchFolder!
+    expect(savedPaths.filter((path) => path.includes(`\\${groupFolder}\\`)).sort()).toEqual([
+      `D:\\LocalSaves\\images\\快手\\${groupFolder}\\快手-1-1.png`,
+      `D:\\LocalSaves\\images\\快手\\${groupFolder}\\快手-1-2.png`,
+    ])
+    expect(savedPaths.filter((path) => path.includes(`\\${otherLead.localSaveBatchFolder}\\`))).toHaveLength(2)
+    dbMockState.emitLocalPath = false
+  })
+
+  it('keeps the group number on a single member retry and allocates a new one when the batch is regenerated', async () => {
+    const lead = task({
+      id: 'series-lead',
+      createdAt: Date.now(),
+      filenameBatch: 3,
+      sopBatch: {
+        batchId: 'sop-batch-retry',
+        sopId: 'sop-1',
+        sopName: '系列 SOP',
+        promptIndex: 1,
+        promptCount: 2,
+        imagesPerPrompt: 1,
+        series: { seriesId: 'sop-batch-retry-1', groupIndex: 1, groupCount: 1, seriesIndex: 1, seriesCount: 2 },
+      },
+    })
+    const activeTab = workspaceTab({ id: 'tab-series-retry', name: '快手', tasks: [lead] })
+    useStore.setState({
+      appMode: 'gallery',
+      tasks: [lead],
+      workspaceTabs: [activeTab],
+      activeWorkspaceTabId: activeTab.id,
+    })
+
+    await retryTask(lead)
+    // 单张重试仍是同一组：沿用组序号，组内顺号由保存时续号承接
+    expect(useStore.getState().tasks[0].filenameBatch).toBe(3)
+
+    await retryTask(lead, { sopBatch: { ...lead.sopBatch!, batchId: 'sop-batch-regenerated' } })
+    // 「重新生成」换新 batchId → 新组序号，不与上一轮产出的文件名冲突
+    expect(useStore.getState().tasks[0].filenameBatch).toBe(4)
+  })
+
   it('saves task output links into the workspace tree folder (group/tab)', async () => {
     dbMockState.emitLocalPath = true
     const savedPaths: string[] = []

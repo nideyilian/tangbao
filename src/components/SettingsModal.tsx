@@ -976,6 +976,7 @@ export default function SettingsModal() {
   const [integrityRunning, setIntegrityRunning] = useState(false)
   const [isExportingMetadata, setIsExportingMetadata] = useState(false)
   const [isExportingTree, setIsExportingTree] = useState(false)
+  const [isRestoringBuiltinTree, setIsRestoringBuiltinTree] = useState(false)
   const [closeToTray, setCloseToTray] = useState(false)
   const [showLegacyDataImport, setShowLegacyDataImport] = useState(false)
 
@@ -1122,6 +1123,37 @@ export default function SettingsModal() {
       setIsExportingTree(false)
     }
   }
+
+  /**
+   * 补齐内置「产品线 - 产品 - 方向」结构。
+   * 内置结构只在首次启动写入一次（用户删除后不会自动重建），这里提供显式补回入口：
+   * 只新增当前缺失的文件夹，绝不改写或删除用户已调整过的内容。
+   */
+  const handleRestoreBuiltinProjectTree = async () => {
+    setIsRestoringBuiltinTree(true)
+    try {
+      const [{ restoreBuiltinProjectTree }, { useAssetLibraryStore }, { requestSopGroupMirrorSync }] =
+        await Promise.all([
+          import('../lib/builtinProjectTreeSync'),
+          import('../features/assetLibrary/store'),
+          import('../lib/sopGroupSync'),
+        ])
+      const result = await restoreBuiltinProjectTree()
+      if (result.created.length === 0) {
+        showToast('内置项目结构已完整，无需补齐', 'info')
+        return
+      }
+      useAssetLibraryStore.getState().upsertCollections(result.created)
+      requestSopGroupMirrorSync()
+      showToast(`已补回 ${result.created.length} 个内置文件夹`, 'success')
+    } catch (error) {
+      console.error('补齐内置项目结构失败:', error)
+      showToast('补齐内置项目结构失败', 'error')
+    } finally {
+      setIsRestoringBuiltinTree(false)
+    }
+  }
+
   const [isImportingJson, setIsImportingJson] = useState(false)
   const [assetApiStatus, setAssetApiStatus] = useState<Awaited<
     ReturnType<NonNullable<NonNullable<Window['electronAPI']>['getAssetApiStatus']>>
@@ -4085,7 +4117,7 @@ export default function SettingsModal() {
                       </svg>
                       <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">素材库维护</h4>
                     </div>
-                    <div className="flex flex-col gap-3 sm:flex-row">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                       <button
                         type="button"
                         onClick={() => void handleExportMetadata()}
@@ -4110,10 +4142,18 @@ export default function SettingsModal() {
                       >
                         {isExportingTree ? '导出中…' : '按项目树导出原图副本'}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRestoreBuiltinProjectTree()}
+                        disabled={isRestoringBuiltinTree}
+                        className="flex-1 rounded-lg bg-ds-surface/80 px-4 py-2.5 text-sm font-medium text-ds-text transition hover:bg-ds-subtle hover:text-ds-text disabled:opacity-50 disabled:hover:bg-ds-subtle/80 disabled:hover:text-ds-text dark:bg-ds-surface dark:text-ds-muted dark:hover:bg-ds-surface dark:hover:text-white dark:disabled:hover:bg-ds-surface dark:disabled:hover:text-ds-text"
+                      >
+                        {isRestoringBuiltinTree ? '补齐中…' : '补齐内置项目结构'}
+                      </button>
                     </div>
                     <p className="text-xs text-ds-muted dark:text-ds-muted">
                       元数据清单每行一个素材（评分/收藏/标签/项目/备注/生成来源），可用文本编辑器打开核对；完整性校验为只读检查，不修改任何数据；按项目树导出会把素材原图按项目结构复制到指定目录（copy
-                      语义，不改变素材库）。
+                      语义，不改变素材库）；内置的项目结构（产品线-产品-方向）只在首次启动写入一次，此后的删除与调整不会被自动覆盖，「补齐内置项目结构」只补回当前缺失的文件夹。
                     </p>
                     {integrityReport && (
                       <div className="rounded-lg border border-ds-border bg-ds-surface/70 p-3 text-xs text-ds-muted dark:border-ds-border dark:bg-ds-surface space-y-1.5">

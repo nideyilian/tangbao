@@ -100,6 +100,14 @@ export interface StrategyPreset {
 export interface SopGroup {
   id: string
   name: string
+  /** 父分组 id；null / 缺省表示根级分组。分组树支持逐级展开与收起。 */
+  parentId?: string | null
+  /**
+   * 关联的项目文件夹 id。
+   * 项目文件夹树是唯一主源，SOP 分组树是它的投影：带该字段的分组由镜像链路维护，
+   * 缺省表示用户自建或历史遗留的独立分组（保留不动，不与项目树绑定）。
+   */
+  collectionId?: string
   createdAt: number
   updatedAt: number
 }

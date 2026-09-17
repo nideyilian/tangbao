@@ -226,6 +226,40 @@
   background: hsl(var(--ds-color-surface-subtle));
 }
 
+/* SOP 分组树的层级行：缩进由内联 paddingLeft 控制，这里只管箭头与行的横向布局 */
+.sop-center-group-tree-node {
+  align-items: center;
+  display: flex;
+  gap: 0.125rem;
+}
+
+.sop-center-group-tree-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sop-center-group-tree-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--ds-radius-sm);
+  color: hsl(var(--ds-color-text-subtle));
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.5rem;
+  justify-content: center;
+  width: 1.5rem;
+}
+
+button.sop-center-group-tree-toggle {
+  cursor: pointer;
+}
+
+button.sop-center-group-tree-toggle:hover {
+  background: hsl(var(--ds-color-surface-subtle));
+  color: hsl(var(--ds-color-text));
+}
+
 .sop-center-sop-list {
   align-content: start;
   display: grid;

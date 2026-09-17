@@ -15,6 +15,38 @@ export function seedSopGroups(): SopGroup[] {
 }
 
 /**
+ * 归一化 SOP 分组：补齐层级字段，并保证分组树结构安全。
+ *
+ * - `parentId` 指向不存在的分组、指向自身或形成环时回落为根级 —— 树形渲染依赖这一层兜底，
+ *   否则一条坏数据就会让左栏无限递归。
+ * - `collectionId` 为空字符串时清掉；其余字段一概原样保留（旧数据只需补 `parentId`）。
+ */
+export function normalizeSopGroups(groups: SopGroup[]): SopGroup[] {
+  const byId = new Map(groups.map((group) => [group.id, group]))
+  return groups.map((group) => {
+    const rawParentId = typeof group.parentId === 'string' && group.parentId ? group.parentId : null
+    const parentId =
+      rawParentId && byId.has(rawParentId) && !formsParentCycle(group.id, rawParentId, byId) ? rawParentId : null
+    const collectionId = typeof group.collectionId === 'string' && group.collectionId ? group.collectionId : undefined
+    if ((group.parentId ?? null) === parentId && group.collectionId === collectionId) return group
+    return { ...group, parentId, collectionId }
+  })
+}
+
+/** 沿父链上溯，判断把 `parentId` 挂到 `groupId` 下是否会让分组树成环。 */
+function formsParentCycle(groupId: string, parentId: string, byId: Map<string, SopGroup>): boolean {
+  const visited = new Set<string>([groupId])
+  let current: string | null = parentId
+  while (current) {
+    if (visited.has(current)) return true
+    visited.add(current)
+    const parent = byId.get(current)
+    current = parent && typeof parent.parentId === 'string' && parent.parentId ? parent.parentId : null
+  }
+  return false
+}
+
+/**
  * 首次启动的 SOP 库种子：直接内置一个通用合规 SOP。
  * 历史版本曾从旧「SOP 预设」（StrategyPreset.type === 'sop'）迁移生成，该预设体系已移除；
  * 已持久化的旧数据不受影响（迁移仅在库为空时执行）。

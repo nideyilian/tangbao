@@ -17,8 +17,9 @@ The ordered filename parts are:
 
 1. The task's local generation date (`YYYYMMDD`) when enabled.
 2. The owning workspace tab name.
-3. The task prompt when enabled.
-4. A one-based image sequence.
+3. The task batch number (组序号; shared by every member of a series group — see below).
+4. The task prompt when enabled.
+5. A one-based image sequence (组内顺序序号 for series groups).
 
 Examples:
 
@@ -40,6 +41,16 @@ Electron automatic saving reads the target directory once for a task save operat
 Browser downloads cannot inspect the user's download folder. They therefore retain each image's original one-based position in `TaskRecord.outputImages`. Browser collision handling remains responsible for files already present on disk.
 
 ZIP archive names stay unchanged. Only image entries inside ZIP files use the new names; duplicate entry names receive the existing numeric collision suffix.
+
+## Series Groups (系列图)
+
+A series SOP group is submitted as several member tasks (one per prompt), so the group must share one batch number:
+
+- The group identifier (组序号) is the task batch number. The first member of a group allocates the next batch number; every later member of the same group (`sopBatch.batchId` + `series.groupIndex`) reuses it, together with the batch-folder path when `imageSaveLayout` is `batch-folder`.
+- The in-group order (组内顺序序号) is `(seriesIndex - 1) × imagesPerPrompt + imageIndexInTask + 1`, so it is independent of submission/completion order, starts at 1, and stays continuous.
+- Resulting names read `X-组序号-组内顺序序号`, e.g. `20260703-快手-5-1`, `20260703-快手-5-2` for one two-image group and `20260703-快手-6-1` for the next group.
+- Regenerating a batch (`rerunSopBatchTasks`, `retryTask` with a new `batchId`) allocates a fresh group number, so new files never collide with the previous run. A single member retry keeps the group number and continues the group's sequence.
+- Non-series tasks are unchanged (`findNextGeneratedImageSequence` directory continuation).
 
 ## Integration Points
 

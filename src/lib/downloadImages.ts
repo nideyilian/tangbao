@@ -1,7 +1,11 @@
 import { ensureImageCached } from '../store'
 import { zipSync } from 'fflate'
 import type { TaskRecord, WorkspaceTab } from '../types'
-import { buildGeneratedImageFileNameBase, type GeneratedImageFilenameSettings } from './generatedImageFilename'
+import {
+  buildGeneratedImageFileNameBase,
+  getSeriesGroupImageSequence,
+  type GeneratedImageFilenameSettings,
+} from './generatedImageFilename'
 import { getImage } from './db'
 import { sanitizeFileNameCore } from './sanitizeFileName'
 import {
@@ -282,6 +286,10 @@ export function getGeneratedImageDownloadEntries(
     const containingTab = workspaceTabs.find((tab) => tab.tasks.some((item) => item.id === task.id))
     const label =
       containingTab?.name ?? task.scheduledOutputSubFolder ?? getPathBaseName(task.scheduledOutputPath) ?? 'image'
+    // 系列图导出与「保存到本地」同名：组序号 = 批次号（同组共享），组内顺序序号按组内位置连续编号
+    const sequence =
+      getSeriesGroupImageSequence(task.sopBatch?.series, task.sopBatch?.imagesPerPrompt ?? task.params?.n, index) ??
+      index + 1
     return {
       imageId,
       fileNameBase: buildGeneratedImageFileNameBase(
@@ -292,7 +300,7 @@ export function getGeneratedImageDownloadEntries(
           batch: task.filenameBatch ?? 1,
         },
         settings,
-        index + 1,
+        sequence,
       ),
     }
   }
