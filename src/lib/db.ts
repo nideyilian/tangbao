@@ -1,0 +1,2024 @@
+import type {
+  AgentConversation,
+  AssetBlob,
+  AssetCollection,
+  AssetTag,
+  AssetTombstone,
+  AssetUsageEvent,
+  AssetVersion,
+  GeneratedAsset,
+  SopBatchSnapshot,
+  SopGenerationRecord,
+  TaskRecord,
+  StoredCompositeAsset,
+  StoredImage,
+  StoredImageThumbnail,
+  ThumbnailVariant,
+  WordGenerationBatch,
+  WordLibraryEntry,
+  WordLibraryGroup,
+} from '../types'
+import {
+  deleteRawCacheImages,
+  isElectron,
+  readThumbnailFromDisk,
+  saveRawCacheImageToLocal,
+  writeThumbnailToDisk,
+} from './localSave'
+import type { MigrationJournal } from './migrations/registry'
+import { computeContentHash, computeContentHashFromBytes } from './imageFingerprint'
+import { blobToDataUrl, dataUrlToBlob } from './blobDataUrl'
+import { canvasToWebpDataUrl, createImageThumbnailDataUrl } from './canvasImage'
+
+const DB_NAME = 'tangbao'
+const DB_VERSION = 15
+const STORE_TASKS = 'tasks'
+const STORE_IMAGES = 'images'
+const STORE_THUMBNAILS = 'thumbnails'
+const STORE_AGENT_CONVERSATIONS = 'agentConversations'
+const STORE_WORD_LIBRARY = 'wordLibrary'
+const STORE_COMPOSITE_ASSETS = 'compositeAssets'
+const STORE_META = 'meta'
+const STORE_SOP_BATCH_SNAPSHOTS = 'sopBatchSnapshots'
+const STORE_SOP_GENERATION_RECORDS = 'sopGenerationRecords'
+const STORE_GENERATED_ASSETS = 'generatedAssets'
+const STORE_ASSET_COLLECTIONS = 'assetCollections'
+const STORE_ASSET_TAGS = 'assetTags'
+const STORE_ASSET_TOMBSTONES = 'assetTombstones'
+const STORE_ASSET_USAGE_EVENTS = 'assetUsageEvents'
+const STORE_ASSET_BLOBS = 'assetBlobs'
+const STORE_ASSET_VERSIONS = 'assetVersions'
+const THUMBNAIL_MAX_SIZE = 1024
+const THUMBNAIL_QUALITY = 0.82
+/**
+ * 网格小图（grid 通道）参数：最长边 512px。
+ *
+ * 尺寸依据（本机真实库 `D:\AI生图2\thumbs`，2267 张 v5 full 缩略图）：
+ * - 磁贴最大边长由用户可选列数决定（3–6 列），3 列 + 宽屏下单个磁贴 CSS 边长可达 ~500–700px，
+ *   2x DPR 需要 ~1000+ 设备像素，288px 会明显发虚；512px 与历史 grid 文件口径一致
+ *   （v1/v2 实测尺寸分布 512×288 / 320×180 / 384×512，长边均为 512）。
+ * - 实测收益（生产 `buildGridThumbnail` 跑真实缩略图，40 张均匀取样）：
+ *   full 均值 79.9KB → grid 均值 26.7KB / p50 25.7KB，**缩量 x2.99**（逐张中位 x2.90，区间 x2.30–3.61）；
+ *   解码位图内存 1024×576×4≈2.36MB → 512×288×4≈0.59MB，**约 1/4**。
+ */
+const GRID_THUMBNAIL_MAX_SIZE = 512
+const GRID_THUMBNAIL_QUALITY = 0.8
+const THUMBNAIL_VERSION = 5
+const APP_DATA_MIGRATION_ID = 'electron-app-data-migrated-v1'
+const APP_DATA_LEGACY_CLEANUP_ID = 'electron-indexeddb-cleaned-v1'
+const APP_DATA_MIGRATION_BATCH_SIZE = 200
+
+export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
+
+// 连接缓存：复用同一 IDB 连接，避免每次操作都重新 open。
+// 缓存键是 indexedDB 全局引用——测试用 stubGlobal 替换全局时自动失效，
+// 生产环境则保持单连接；版本升级时旧连接收到 onversionchange 自动关闭并重置。
+let cachedDb: { idb: IDBFactory; db: Promise<IDBDatabase> } | null = null
+let electronAppDataMigrationPromise: Promise<void> | null = null
+
+type ElectronAppDataApi = NonNullable<Window['electronAPI']> &
+  Required<
+    Pick<
+      NonNullable<Window['electronAPI']>,
+      | 'appDataGet'
+      | 'appDataGetAll'
+      | 'appDataGetMany'
+      | 'appDataPut'
+      | 'appDataPutMany'
+      | 'appDataReplace'
+      | 'appDataDelete'
+      | 'appDataDeleteMany'
+      | 'appDataClear'
+      | 'appDataImportStores'
+    >
+  >
+
+function getElectronAppDataApi(): ElectronAppDataApi | null {
+  const api = typeof window !== 'undefined' ? window.electronAPI : undefined
+  if (
+    !api?.isElectron ||
+    !api.appDataGet ||
+    !api.appDataImportStores ||
+    !api.appDataPut ||
+    !api.appDataGetAll ||
+    !api.appDataGetMany ||
+    !api.appDataPutMany ||
+    !api.appDataReplace ||
+    !api.appDataDelete ||
+    !api.appDataDeleteMany ||
+    !api.appDataClear
+  ) {
+    return null
+  }
+  return api as ElectronAppDataApi
+}
+
+function openDB(): Promise<IDBDatabase> {
+  // 先安全取全局引用：indexedDB 不可用（如部分测试环境）时返回已拒绝的 Promise，
+  // 绝不能同步抛错——否则调用方的 .then/.catch 永远挂不上，产生未处理拒绝。
+  const idb = typeof indexedDB !== 'undefined' ? indexedDB : null
+  if (idb === null) return Promise.reject(new Error('IndexedDB 不可用（当前环境不支持）'))
+  if (cachedDb && cachedDb.idb === idb) return cachedDb.db
+  const db = new Promise<IDBDatabase>((resolve, reject) => {
+    const req = idb.open(DB_NAME, DB_VERSION)
+    req.onupgradeneeded = (e) => {
+      const database = (e.target as IDBOpenDBRequest).result
+      if (!database.objectStoreNames.contains(STORE_TASKS)) {
+        database.createObjectStore(STORE_TASKS, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_IMAGES)) {
+        database.createObjectStore(STORE_IMAGES, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_THUMBNAILS)) {
+        database.createObjectStore(STORE_THUMBNAILS, { keyPath: 'id' })
+      }
+      // v14 曾引入网格小缩略图 store，v15 起移除（网格改回 1024 大图），删除残留数据
+      if (database.objectStoreNames.contains('thumbnails-grid')) {
+        database.deleteObjectStore('thumbnails-grid')
+      }
+      if (!database.objectStoreNames.contains(STORE_AGENT_CONVERSATIONS)) {
+        database.createObjectStore(STORE_AGENT_CONVERSATIONS, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_WORD_LIBRARY)) {
+        database.createObjectStore(STORE_WORD_LIBRARY, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_COMPOSITE_ASSETS)) {
+        database.createObjectStore(STORE_COMPOSITE_ASSETS, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_META)) {
+        database.createObjectStore(STORE_META, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_SOP_BATCH_SNAPSHOTS)) {
+        database.createObjectStore(STORE_SOP_BATCH_SNAPSHOTS, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_SOP_GENERATION_RECORDS)) {
+        database.createObjectStore(STORE_SOP_GENERATION_RECORDS, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_GENERATED_ASSETS)) {
+        const store = database.createObjectStore(STORE_GENERATED_ASSETS, { keyPath: 'id' })
+        store.createIndex('createdAt', 'createdAt')
+        store.createIndex('updatedAt', 'updatedAt')
+        store.createIndex('status', 'status')
+        store.createIndex('imageId', 'imageId')
+      } else {
+        const store = req.transaction!.objectStore(STORE_GENERATED_ASSETS)
+        if (!store.indexNames.contains('imageId')) store.createIndex('imageId', 'imageId')
+      }
+      if (!database.objectStoreNames.contains(STORE_ASSET_COLLECTIONS)) {
+        database.createObjectStore(STORE_ASSET_COLLECTIONS, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_ASSET_TAGS)) {
+        database.createObjectStore(STORE_ASSET_TAGS, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(STORE_ASSET_TOMBSTONES)) {
+        const store = database.createObjectStore(STORE_ASSET_TOMBSTONES, { keyPath: 'id' })
+        store.createIndex('imageId', 'imageId')
+      } else {
+        // 旧库补齐 imageId 索引（v13 起，用于按 imageId 批量查墓碑，替代每次全表扫描）
+        const store = req.transaction!.objectStore(STORE_ASSET_TOMBSTONES)
+        if (!store.indexNames.contains('imageId')) store.createIndex('imageId', 'imageId')
+      }
+      if (!database.objectStoreNames.contains(STORE_ASSET_USAGE_EVENTS)) {
+        const store = database.createObjectStore(STORE_ASSET_USAGE_EVENTS, { keyPath: 'id' })
+        store.createIndex('assetId', 'assetId')
+        store.createIndex('occurredAt', 'occurredAt')
+      }
+      if (!database.objectStoreNames.contains(STORE_ASSET_BLOBS)) {
+        const store = database.createObjectStore(STORE_ASSET_BLOBS, { keyPath: 'id' })
+        store.createIndex('contentHash', 'contentHash', { unique: true })
+      }
+      if (!database.objectStoreNames.contains(STORE_ASSET_VERSIONS)) {
+        const store = database.createObjectStore(STORE_ASSET_VERSIONS, { keyPath: 'id' })
+        store.createIndex('assetId', 'assetId')
+        store.createIndex('blobId', 'blobId')
+      }
+    }
+    req.onblocked = () => {
+      // 旧版本连接未关闭时升级会被阻塞；记录以便排查。
+      console.warn('[db] IndexedDB 升级被其他连接阻塞，等待关闭')
+    }
+    req.onsuccess = () => {
+      const database = req.result
+      database.onversionchange = () => {
+        database.close()
+        if (cachedDb?.db === db) cachedDb = null
+      }
+      resolve(database)
+    }
+    req.onerror = () => {
+      if (cachedDb?.db === db) cachedDb = null
+      reject(req.error)
+    }
+  })
+  cachedDb = { idb, db }
+  return db
+}
+
+function dbTransaction<T>(
+  storeName: string,
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  return openDB().then(
+    (db) =>
+      new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(storeName, mode)
+        const store = tx.objectStore(storeName)
+        const req = fn(store)
+        if (mode === 'readonly') {
+          req.onsuccess = () => resolve(req.result)
+          req.onerror = () => reject(req.error)
+          return
+        }
+
+        let result: T
+        req.onsuccess = () => {
+          result = req.result
+        }
+        req.onerror = () => reject(req.error)
+        tx.oncomplete = () => resolve(result)
+        tx.onerror = () => reject(tx.error ?? req.error)
+        tx.onabort = () => reject(tx.error ?? req.error ?? new Error('IndexedDB transaction aborted'))
+      }),
+  )
+}
+
+function readLegacyCursorStore<T>(storeName: string): Promise<T[]> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const request = db.transaction(storeName, 'readonly').objectStore(storeName).openCursor()
+        const values: T[] = []
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor) {
+            resolve(values)
+            return
+          }
+          try {
+            values.push(cursor.value as T)
+          } catch (error) {
+            console.warn(`[db] 迁移跳过不可读记录：${storeName}`, error)
+          }
+          cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+      }),
+  )
+}
+
+/**
+ * 迁移专用：把 IndexedDB 里的复合资源转成可 JSON 落库的形态后再交给主进程。
+ * 直接把 Blob 传过去会被主进程的 JSON.stringify 变成 {}，字节永久丢失。
+ * 已损坏（blob 不是 Blob 且没有 data URL）的记录跳过，不再写入空壳。
+ */
+async function readLegacyCompositeAssetsForMigration(): Promise<PersistedCompositeAsset[]> {
+  const values = await dbTransaction<unknown[]>(STORE_COMPOSITE_ASSETS, 'readonly', (store) => store.getAll())
+  const records: PersistedCompositeAsset[] = []
+  for (const value of values) {
+    const asset = fromPersistedCompositeAsset(value)
+    if (asset) records.push(await toPersistedCompositeAsset(asset))
+  }
+  return records
+}
+
+async function migrateLegacyIndexedDbToSqlite(api: ElectronAppDataApi) {
+  const migrated = await api.appDataGet(STORE_META, APP_DATA_MIGRATION_ID)
+  if (migrated) return
+
+  const stores = {
+    [STORE_TASKS]: await dbTransaction<TaskRecord[]>(STORE_TASKS, 'readonly', (store) => store.getAll()),
+    [STORE_IMAGES]: await readLegacyCursorStore<StoredImage>(STORE_IMAGES),
+    [STORE_THUMBNAILS]: await readLegacyCursorStore<StoredImageThumbnail>(STORE_THUMBNAILS),
+    [STORE_AGENT_CONVERSATIONS]: await dbTransaction<AgentConversation[]>(
+      STORE_AGENT_CONVERSATIONS,
+      'readonly',
+      (store) => store.getAll(),
+    ),
+    [STORE_WORD_LIBRARY]: await dbTransaction<StoredWordLibraryState[]>(STORE_WORD_LIBRARY, 'readonly', (store) =>
+      store.getAll(),
+    ),
+    [STORE_COMPOSITE_ASSETS]: await readLegacyCompositeAssetsForMigration(),
+    [STORE_META]: await dbTransaction<MigrationJournal[]>(STORE_META, 'readonly', (store) => store.getAll()),
+    [STORE_SOP_BATCH_SNAPSHOTS]: await dbTransaction<SopBatchSnapshot[]>(
+      STORE_SOP_BATCH_SNAPSHOTS,
+      'readonly',
+      (store) => store.getAll(),
+    ),
+    [STORE_SOP_GENERATION_RECORDS]: await dbTransaction<SopGenerationRecord[]>(
+      STORE_SOP_GENERATION_RECORDS,
+      'readonly',
+      (store) => store.getAll(),
+    ),
+  } satisfies Record<string, unknown[]>
+
+  for (const [namespace, values] of Object.entries(stores)) {
+    for (let offset = 0; offset < values.length; offset += APP_DATA_MIGRATION_BATCH_SIZE) {
+      await api.appDataImportStores({
+        [namespace]: values.slice(offset, offset + APP_DATA_MIGRATION_BATCH_SIZE),
+      })
+    }
+  }
+
+  await api.appDataPut(STORE_META, APP_DATA_MIGRATION_ID, {
+    id: APP_DATA_MIGRATION_ID,
+    status: 'completed',
+    updatedAt: Date.now(),
+  })
+}
+
+function ensureElectronAppDataMigrated(): Promise<void> {
+  const api = getElectronAppDataApi()
+  if (!api) return Promise.resolve()
+  electronAppDataMigrationPromise ??= migrateLegacyIndexedDbToSqlite(api).catch((error) => {
+    electronAppDataMigrationPromise = null
+    throw error
+  })
+  return electronAppDataMigrationPromise
+}
+
+export async function cleanupElectronLegacyIndexedDb(): Promise<boolean> {
+  const api = getElectronAppDataApi()
+  if (!api) return false
+  if (await api.appDataGet(STORE_META, APP_DATA_LEGACY_CLEANUP_ID)) return true
+  const idb = typeof indexedDB !== 'undefined' ? indexedDB : null
+  if (!idb) return false
+  if (cachedDb) {
+    const db = await cachedDb.db.catch(() => null)
+    db?.close()
+    cachedDb = null
+  }
+  const removed = await new Promise<boolean>((resolve) => {
+    const request = idb.deleteDatabase(DB_NAME)
+    request.onsuccess = () => resolve(true)
+    request.onerror = () => resolve(false)
+    request.onblocked = () => resolve(false)
+  })
+  if (!removed) return false
+  await api.appDataPut(STORE_META, APP_DATA_LEGACY_CLEANUP_ID, {
+    id: APP_DATA_LEGACY_CLEANUP_ID,
+    status: 'completed',
+    updatedAt: Date.now(),
+  })
+  return true
+}
+
+function readElectronRecord<T>(namespace: string, id: string): Promise<T | undefined> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  return ensureElectronAppDataMigrated().then(() => api.appDataGet(namespace, id) as Promise<T | undefined>)
+}
+
+function readAllElectronRecords<T>(namespace: string): Promise<T[]> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  return ensureElectronAppDataMigrated().then(() => api.appDataGetAll(namespace) as Promise<T[]>)
+}
+
+function readManyElectronRecords<T>(namespace: string, ids: string[]): Promise<Map<string, T>> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  return ensureElectronAppDataMigrated().then(async () => {
+    const values = await api.appDataGetMany(namespace, ids)
+    const result = new Map<string, T>()
+    for (const value of values) {
+      if (!value || typeof value !== 'object') continue
+      const id = (value as { id?: unknown }).id
+      if (typeof id === 'string') result.set(id, value as T)
+    }
+    return result
+  })
+}
+
+function writeElectronRecord(namespace: string, id: string, value: unknown): Promise<string> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  return ensureElectronAppDataMigrated()
+    .then(() => api.appDataPut(namespace, id, value))
+    .then(() => id)
+}
+
+function writeManyElectronRecords(namespace: string, values: unknown[]): Promise<void> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  const records = values
+    .filter((value): value is { id: string } =>
+      Boolean(value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string'),
+    )
+    .map((value) => ({ id: value.id, value }))
+  return ensureElectronAppDataMigrated()
+    .then(() => api.appDataPutMany(namespace, records))
+    .then(() => undefined)
+}
+
+/**
+ * 跨命名空间批量写（Electron）：一次 IPC 提交多条不同 namespace 的记录。
+ *
+ * 生成一张图会先写 `images` 再写 `thumbnails`，两条记录分别 `put` 就是两次
+ * 渲染→主进程→UtilityProcess→SQLite 的完整往返；这里合并成一次。旧 preload 没有该通道时
+ * 返回 null，调用方回退到逐条写入。
+ */
+function writeBatchElectronRecords(entries: AppDataBatchEntry[]): Promise<void> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  const putBatch = api.appDataPutBatch
+  if (typeof putBatch !== 'function' || entries.length === 0) return null
+  return ensureElectronAppDataMigrated()
+    .then(() => putBatch(entries))
+    .then(() => undefined)
+}
+
+type AppDataBatchEntry = { namespace: string; id: string; value: unknown }
+
+function replaceElectronRecords(namespace: string, values: unknown[]): Promise<void> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  const records = values
+    .filter((value): value is { id: string } =>
+      Boolean(value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string'),
+    )
+    .map((value) => ({ id: value.id, value }))
+  return ensureElectronAppDataMigrated()
+    .then(() => api.appDataReplace(namespace, records))
+    .then(() => undefined)
+}
+
+function deleteElectronRecord(namespace: string, id: string): Promise<void> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  return ensureElectronAppDataMigrated()
+    .then(() => api.appDataDelete(namespace, id))
+    .then(() => undefined)
+}
+
+function deleteManyElectronRecords(namespace: string, ids: string[]): Promise<void> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  return ensureElectronAppDataMigrated()
+    .then(() => api.appDataDeleteMany(namespace, ids))
+    .then(() => undefined)
+}
+
+function clearElectronRecords(namespace: string): Promise<void> | null {
+  const api = getElectronAppDataApi()
+  if (!api) return null
+  return ensureElectronAppDataMigrated()
+    .then(() => api.appDataClear(namespace))
+    .then(() => undefined)
+}
+
+export function getMigrationJournal(id: string): Promise<MigrationJournal | undefined> {
+  const electron = readElectronRecord<MigrationJournal>(STORE_META, id)
+  if (electron) return electron
+  return dbTransaction(STORE_META, 'readonly', (store) => store.get(id))
+}
+
+export async function putMigrationJournal(record: MigrationJournal): Promise<void> {
+  const electron = writeElectronRecord(STORE_META, record.id, record)
+  if (electron) {
+    await electron
+    return
+  }
+  await dbTransaction(STORE_META, 'readwrite', (store) => store.put(record))
+}
+
+// ===== Tasks =====
+
+export function getAllTasks(): Promise<TaskRecord[]> {
+  const electron = readAllElectronRecords<TaskRecord>(STORE_TASKS)
+  if (electron) return electron
+  return dbTransaction(STORE_TASKS, 'readonly', (s) => s.getAll())
+}
+
+export async function loadTasksIncrementally(migrate: (task: TaskRecord) => TaskRecord): Promise<TaskRecord[]> {
+  const electron = readAllElectronRecords<TaskRecord>(STORE_TASKS)
+  if (electron) {
+    const stored = await electron
+    const tasks = stored.map(migrate)
+    const changed = tasks.filter((task, index) => task !== stored[index])
+    if (changed.length > 0) await writeManyElectronRecords(STORE_TASKS, changed)
+    return tasks
+  }
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_TASKS, 'readwrite')
+        const request = tx.objectStore(STORE_TASKS).openCursor()
+        const tasks: TaskRecord[] = []
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor) return
+          const original = cursor.value as TaskRecord
+          const migrated = migrate(original)
+          tasks.push(migrated)
+          if (migrated !== original) cursor.update(migrated)
+          cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+        tx.oncomplete = () => resolve(tasks)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB task migration aborted'))
+      }),
+  )
+}
+
+export function putTask(task: TaskRecord): Promise<IDBValidKey> {
+  const electron = writeElectronRecord(STORE_TASKS, task.id, task)
+  if (electron) return electron
+  return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.put(task))
+}
+
+/**
+ * 批量写入任务记录。
+ *
+ * 收藏夹批量增删 / 导入恢复等场景一次要落几十上百条任务，逐条 `putTask` 会各走一次
+ * 渲染→主进程→UtilityProcess→SQLite 的往返；此处合并为一次 `app-data:put-many`（单事务）。
+ */
+export async function putTasks(tasks: TaskRecord[]): Promise<void> {
+  if (tasks.length === 0) return
+  const batch = writeManyElectronRecords(STORE_TASKS, tasks)
+  if (batch) {
+    await batch
+    return
+  }
+  await putMany(STORE_TASKS, tasks)
+}
+
+export function deleteTask(id: string): Promise<undefined> {
+  const electron = deleteElectronRecord(STORE_TASKS, id)
+  if (electron) return electron.then(() => undefined)
+  return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.delete(id))
+}
+
+export function clearTasks(): Promise<undefined> {
+  const electron = clearElectronRecords(STORE_TASKS)
+  if (electron) return electron.then(() => undefined)
+  return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.clear())
+}
+
+// ===== SOP batch snapshots =====
+
+export function getSopBatchSnapshot(id: string): Promise<SopBatchSnapshot | undefined> {
+  const electron = readElectronRecord<SopBatchSnapshot>(STORE_SOP_BATCH_SNAPSHOTS, id)
+  if (electron) return electron
+  return dbTransaction(STORE_SOP_BATCH_SNAPSHOTS, 'readonly', (store) => store.get(id))
+}
+
+export function getAllSopBatchSnapshots(): Promise<SopBatchSnapshot[]> {
+  const electron = readAllElectronRecords<SopBatchSnapshot>(STORE_SOP_BATCH_SNAPSHOTS)
+  if (electron) return electron
+  return dbTransaction(STORE_SOP_BATCH_SNAPSHOTS, 'readonly', (store) => store.getAll())
+}
+
+export function putSopBatchSnapshot(snapshot: SopBatchSnapshot): Promise<IDBValidKey> {
+  const electron = writeElectronRecord(STORE_SOP_BATCH_SNAPSHOTS, snapshot.id, snapshot)
+  if (electron) return electron
+  return dbTransaction(STORE_SOP_BATCH_SNAPSHOTS, 'readwrite', (store) => store.put(snapshot))
+}
+
+export function deleteSopBatchSnapshot(id: string): Promise<undefined> {
+  const electron = deleteElectronRecord(STORE_SOP_BATCH_SNAPSHOTS, id)
+  if (electron) return electron.then(() => undefined)
+  return dbTransaction(STORE_SOP_BATCH_SNAPSHOTS, 'readwrite', (store) => store.delete(id))
+}
+
+export function clearSopBatchSnapshots(): Promise<undefined> {
+  const electron = clearElectronRecords(STORE_SOP_BATCH_SNAPSHOTS)
+  if (electron) return electron.then(() => undefined)
+  return dbTransaction(STORE_SOP_BATCH_SNAPSHOTS, 'readwrite', (store) => store.clear())
+}
+
+// ===== SOP generation records =====
+
+export function getAllSopGenerationRecords(): Promise<SopGenerationRecord[]> {
+  const electron = readAllElectronRecords<SopGenerationRecord>(STORE_SOP_GENERATION_RECORDS)
+  if (electron) return electron
+  return dbTransaction(STORE_SOP_GENERATION_RECORDS, 'readonly', (store) => store.getAll())
+}
+
+export function putSopGenerationRecord(record: SopGenerationRecord): Promise<IDBValidKey> {
+  const electron = writeElectronRecord(STORE_SOP_GENERATION_RECORDS, record.id, record)
+  if (electron) return electron
+  return dbTransaction(STORE_SOP_GENERATION_RECORDS, 'readwrite', (store) => store.put(record))
+}
+
+// ===== Agent conversations =====
+
+export function getAllAgentConversations(): Promise<AgentConversation[]> {
+  const electron = readAllElectronRecords<AgentConversation>(STORE_AGENT_CONVERSATIONS)
+  if (electron) return electron
+  return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readonly', (s) => s.getAll())
+}
+
+export function putAgentConversation(conversation: AgentConversation): Promise<IDBValidKey> {
+  const electron = writeElectronRecord(STORE_AGENT_CONVERSATIONS, conversation.id, conversation)
+  if (electron) return electron
+  return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readwrite', (s) => s.put(conversation))
+}
+
+export function deleteAgentConversation(id: string): Promise<undefined> {
+  const electron = deleteElectronRecord(STORE_AGENT_CONVERSATIONS, id)
+  if (electron) return electron.then(() => undefined)
+  return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readwrite', (s) => s.delete(id))
+}
+
+export function clearAgentConversations(): Promise<undefined> {
+  const electron = clearElectronRecords(STORE_AGENT_CONVERSATIONS)
+  if (electron) return electron.then(() => undefined)
+  return dbTransaction(STORE_AGENT_CONVERSATIONS, 'readwrite', (s) => s.clear())
+}
+
+export function replaceAgentConversations(conversations: AgentConversation[]): Promise<undefined> {
+  const electron = replaceElectronRecords(STORE_AGENT_CONVERSATIONS, conversations)
+  if (electron) return electron.then(() => undefined)
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_AGENT_CONVERSATIONS, 'readwrite')
+        const store = tx.objectStore(STORE_AGENT_CONVERSATIONS)
+        store.clear()
+        for (const conversation of conversations) store.put(conversation)
+        tx.oncomplete = () => resolve(undefined)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
+// ===== Word library =====
+
+export type StoredWordLibraryState = {
+  id: 'word-library'
+  groups: WordLibraryGroup[]
+  entries: WordLibraryEntry[]
+  batches?: WordGenerationBatch[]
+  updatedAt: number
+}
+
+export function getWordLibraryState(): Promise<StoredWordLibraryState | undefined> {
+  const electron = readElectronRecord<StoredWordLibraryState>(STORE_WORD_LIBRARY, 'word-library')
+  if (electron) return electron
+  return dbTransaction(STORE_WORD_LIBRARY, 'readonly', (s) => s.get('word-library'))
+}
+
+export function putWordLibraryState(state: Omit<StoredWordLibraryState, 'id' | 'updatedAt'>): Promise<IDBValidKey> {
+  const record = {
+    id: 'word-library' as const,
+    groups: state.groups,
+    entries: state.entries,
+    batches: state.batches ?? [],
+    updatedAt: Date.now(),
+  }
+  const electron = writeElectronRecord(STORE_WORD_LIBRARY, record.id, record)
+  if (electron) return electron
+  return dbTransaction(STORE_WORD_LIBRARY, 'readwrite', (s) => s.put(record))
+}
+
+// ===== Composite assets =====
+
+/**
+ * 复合资源（后期处理的预设图层 / Logo）的字节以 base64 data URL 落库。
+ *
+ * 为什么不能直接存 Blob：Electron 端的应用数据存储是 SQLite + 主进程 `JSON.stringify`
+ * （electron/app-data-store.ts），`Blob` 会被序列化成 `{}`，字节与 MIME 全部丢失，
+ * 读回后交给 `URL.createObjectURL` 就抛 "Overload resolution failed"。
+ * 存储格式固定为 `{ id, createdAt, blobDataUrl }`（与 thumbnails 命名空间同一套路）。
+ */
+type PersistedCompositeAsset = {
+  id: string
+  createdAt: number
+  blobDataUrl: string
+}
+
+async function toPersistedCompositeAsset(asset: StoredCompositeAsset): Promise<PersistedCompositeAsset> {
+  return { id: asset.id, createdAt: asset.createdAt, blobDataUrl: await blobToDataUrl(asset.blob) }
+}
+
+/**
+ * 还原复合资源；无法还原时返回 undefined，由调用方按「资源缺失」处理。
+ *
+ * 兼容三种历史形态：data URL（当前）、真实 Blob（浏览器 IndexedDB 直存）、
+ * 以及被 JSON 序列化破坏的 `blob: {}`——后者字节已不可恢复，但绝不能再传给 createObjectURL。
+ */
+function fromPersistedCompositeAsset(value: unknown): StoredCompositeAsset | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as { id?: unknown; createdAt?: unknown; blob?: unknown; blobDataUrl?: unknown }
+  if (typeof record.id !== 'string') return undefined
+  const createdAt = typeof record.createdAt === 'number' ? record.createdAt : 0
+  if (typeof record.blobDataUrl === 'string') {
+    try {
+      return { id: record.id, blob: dataUrlToBlob(record.blobDataUrl), createdAt }
+    } catch {
+      return undefined
+    }
+  }
+  if (record.blob instanceof Blob) return { id: record.id, blob: record.blob, createdAt }
+  return undefined
+}
+
+function toCompositeAssetMap(records: Map<string, unknown>): Map<string, StoredCompositeAsset> {
+  const result = new Map<string, StoredCompositeAsset>()
+  for (const [id, value] of records) {
+    const asset = fromPersistedCompositeAsset(value)
+    if (asset) result.set(id, asset)
+  }
+  return result
+}
+
+export function getCompositeAsset(id: string): Promise<StoredCompositeAsset | undefined> {
+  const electron = readElectronRecord<unknown>(STORE_COMPOSITE_ASSETS, id)
+  if (electron) return electron.then((value) => fromPersistedCompositeAsset(value))
+  return dbTransaction<unknown>(STORE_COMPOSITE_ASSETS, 'readonly', (s) => s.get(id)).then((value) =>
+    fromPersistedCompositeAsset(value),
+  )
+}
+
+export function putCompositeAsset(asset: StoredCompositeAsset): Promise<IDBValidKey> {
+  return toPersistedCompositeAsset(asset).then((record) => {
+    const electron = writeElectronRecord(STORE_COMPOSITE_ASSETS, record.id, record)
+    if (electron) return electron
+    return dbTransaction<IDBValidKey>(STORE_COMPOSITE_ASSETS, 'readwrite', (s) => s.put(record))
+  })
+}
+
+export function deleteCompositeAsset(id: string): Promise<undefined> {
+  const electron = deleteElectronRecord(STORE_COMPOSITE_ASSETS, id)
+  if (electron) return electron.then(() => undefined)
+  return dbTransaction(STORE_COMPOSITE_ASSETS, 'readwrite', (s) => s.delete(id))
+}
+
+export function batchGetCompositeAssets(ids: string[]): Promise<Map<string, StoredCompositeAsset>> {
+  if (ids.length === 0) return Promise.resolve(new Map())
+  const electron = readManyElectronRecords<unknown>(STORE_COMPOSITE_ASSETS, ids)
+  if (electron) return electron.then(toCompositeAssetMap)
+  const uniqueIds = Array.from(new Set(ids))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const store = db.transaction(STORE_COMPOSITE_ASSETS, 'readonly').objectStore(STORE_COMPOSITE_ASSETS)
+        const result = new Map<string, StoredCompositeAsset>()
+        let pending = uniqueIds.length
+        for (const id of uniqueIds) {
+          const req = store.get(id)
+          req.onsuccess = () => {
+            const asset = fromPersistedCompositeAsset(req.result)
+            if (asset) result.set(id, asset)
+            if (--pending === 0) resolve(result)
+          }
+          req.onerror = () => reject(req.error)
+        }
+      }),
+  )
+}
+
+export function putCompositeAssets(assets: StoredCompositeAsset[]): Promise<void> {
+  if (assets.length === 0) return Promise.resolve()
+  return Promise.all(assets.map(toPersistedCompositeAsset)).then((records) => {
+    const electron = writeManyElectronRecords(STORE_COMPOSITE_ASSETS, records)
+    if (electron) return electron
+    return openDB().then(
+      (db) =>
+        new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_COMPOSITE_ASSETS, 'readwrite')
+          const store = tx.objectStore(STORE_COMPOSITE_ASSETS)
+          for (const record of records) store.put(record)
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => reject(tx.error)
+          tx.onabort = () => reject(tx.error)
+        }),
+    )
+  })
+}
+
+// ===== Images =====
+
+/**
+ * 大值记录（dataUrl/缩略图）由 Chromium 以磁盘 blob 文件存放；blob 文件缺失时
+ * 单条读取会失败（"Data lost due to missing file. Affected record should be
+ * considered irrecoverable"）。该记录不可恢复，读取方按"记录缺失"处理即可，
+ * 不应让单条坏记录中断批量读取/迁移/导出。
+ */
+function isIrrecoverableBlobError(error: unknown): boolean {
+  return (
+    error instanceof Error && /Data lost due to missing file|Failed to read large IndexedDB value/i.test(error.message)
+  )
+}
+
+export function getImage(id: string): Promise<StoredImage | undefined> {
+  const electron = readElectronRecord<StoredImage>(STORE_IMAGES, id)
+  if (electron) return electron
+  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.get(id)).catch((error) => {
+    if (isIrrecoverableBlobError(error)) {
+      console.warn('[db] 图片记录不可读（视为缺失）:', id, error.message)
+      return undefined
+    }
+    throw error
+  })
+}
+
+export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
+  const electron = readElectronRecord<StoredImageThumbnail>(STORE_THUMBNAILS, id)
+  if (electron) return electron
+  return dbTransaction(STORE_THUMBNAILS, 'readonly', (s) => s.get(id)).catch((error) => {
+    if (isIrrecoverableBlobError(error)) {
+      console.warn('[db] 缩略图记录不可读（视为缺失）:', id, error.message)
+      return undefined
+    }
+    throw error
+  })
+}
+
+export async function getStoredFreshImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
+  const thumbnail = await getStoredImageThumbnail(id)
+  return thumbnail?.thumbnailVersion === THUMBNAIL_VERSION ? thumbnail : undefined
+}
+
+export function putImageThumbnail(thumbnail: StoredImageThumbnail): Promise<IDBValidKey> {
+  const electron = writeElectronRecord(STORE_THUMBNAILS, thumbnail.id, thumbnail)
+  if (electron) return electron
+  return dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(thumbnail))
+}
+
+/**
+ * 从磁盘缩略图缓存读取（Electron，库根 thumbs/）；浏览器或未命中返回 undefined。
+ * variant 决定通道（默认 full）；grid 未命中时调用方需自行回退 full。
+ */
+export async function getFreshThumbnailFromDisk(
+  id: string,
+  variant: ThumbnailVariant = 'full',
+): Promise<StoredImageThumbnail | undefined> {
+  if (!isElectron()) return undefined
+  const disk = await readThumbnailFromDisk(id, THUMBNAIL_VERSION, variant)
+  if (!disk?.dataUrl) return undefined
+  return {
+    id,
+    thumbnailDataUrl: disk.dataUrl,
+    width: disk.width,
+    height: disk.height,
+    thumbnailVersion: THUMBNAIL_VERSION,
+  }
+}
+
+/**
+ * 由 full 缩略图现出网格小图并落盘（grid 通道）。
+ *
+ * 源用 full 缩略图（最长边 ≤1024px 的 webp）而不是原图：目标最长边只有 512px，
+ * 二次缩放画质损失可忽略，却省掉一次 2K/4K 原图解码。
+ * 失败返回 undefined（调用方继续用 full 兜底），永不 reject。
+ * 写盘失败仍返回 dataUrl —— 内存缓存已经能用，下次读取会重试落盘。
+ */
+export async function buildGridThumbnail(id: string, fullThumbnailDataUrl: string): Promise<string | undefined> {
+  try {
+    const gridDataUrl = await createImageThumbnailDataUrl(
+      fullThumbnailDataUrl,
+      GRID_THUMBNAIL_MAX_SIZE,
+      GRID_THUMBNAIL_QUALITY,
+    )
+    if (!gridDataUrl) return undefined
+    if (isElectron()) await writeThumbnailToDisk(id, THUMBNAIL_VERSION, gridDataUrl, 'grid')
+    return gridDataUrl
+  } catch {
+    return undefined
+  }
+}
+
+/** 缩略图双写磁盘（懒迁移：生成/命中当前版本时按需回填库根 thumbs/，失败静默）。
+ *  守卫：只有当前版本才写盘——旧版本缩略图绝不能以"当前版本"标签落盘，
+ *  否则版本升级后的重建会被旧图顶替（历史上 512→1024 升级就因此失效过）。 */
+function persistThumbnailToDisk(thumbnail: StoredImageThumbnail): void {
+  if (!isElectron()) return
+  if (thumbnail.thumbnailVersion !== THUMBNAIL_VERSION) return
+  void writeThumbnailToDisk(thumbnail.id, THUMBNAIL_VERSION, thumbnail.thumbnailDataUrl).catch(() => {})
+}
+
+/**
+ * 从主进程 SQLite 目录按原图 imageId 恢复原图本地路径（IndexedDB 缺图时的兜底）。
+ * 素材 id（asset:xxx）与 imageId（内容哈希）是两套键：先按 imageId 反查素材，
+ * 再取素材详情里的原图 blob 路径（快速预览 / 查看器 / 缩略图回填共用）。
+ */
+export async function resolveImageFromCatalog(id: string): Promise<StoredImage | null> {
+  if (!isElectron()) return null
+  const api = window.electronAPI
+  if (!api?.assetCatalogGetByImageId || !api?.assetCatalogGet) return null
+  try {
+    const details = (await api.assetCatalogGetByImageId(id)) as
+      | {
+          asset?: { width?: number; height?: number; createdAt?: number }
+          blob?: { localPath?: string; mimeType?: string; byteSize?: number }
+        }
+      | null
+      | undefined
+    const localPath = details?.blob?.localPath
+    if (!localPath) return null
+    return {
+      id,
+      localPath,
+      mimeType: details?.blob?.mimeType,
+      byteSize: details?.blob?.byteSize,
+      width: details?.asset?.width,
+      height: details?.asset?.height,
+      createdAt: details?.asset?.createdAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function getImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
+  // 磁盘优先（Electron）：库根 thumbs/ 命中直接返回（复制库文件夹后 IndexedDB 无缩略图也能秒出图）
+  const diskThumb = await getFreshThumbnailFromDisk(id)
+  if (diskThumb) return diskThumb
+
+  const existingThumbnail = await getStoredImageThumbnail(id)
+  if (existingThumbnail?.thumbnailVersion === THUMBNAIL_VERSION) {
+    const image = await getImage(id)
+    if (image && (!image.width || !image.height) && existingThumbnail.width && existingThumbnail.height) {
+      await putImage({ ...image, width: existingThumbnail.width, height: existingThumbnail.height })
+    }
+    persistThumbnailToDisk(existingThumbnail)
+    return existingThumbnail
+  }
+
+  let image = await getImage(id)
+  if (!image) {
+    // 兜底：IndexedDB 缺图时从 SQLite 目录恢复 localPath 再生成缩略图。
+    const recovered = await resolveImageFromCatalog(id)
+    if (!recovered) return undefined
+    image = recovered
+    void putImage(recovered).catch(() => {})
+  }
+  const legacyImage = image as StoredImage & Partial<StoredImageThumbnail>
+  if (legacyImage.thumbnailDataUrl && legacyImage.thumbnailVersion === THUMBNAIL_VERSION) {
+    const thumbnail: StoredImageThumbnail = {
+      id,
+      thumbnailDataUrl: legacyImage.thumbnailDataUrl,
+      width: legacyImage.width,
+      height: legacyImage.height,
+      thumbnailVersion: THUMBNAIL_VERSION,
+    }
+    await putImageThumbnail(thumbnail)
+    persistThumbnailToDisk(thumbnail)
+    if ((!image.width || !image.height) && thumbnail.width && thumbnail.height) {
+      await putImage({ ...image, width: thumbnail.width, height: thumbnail.height })
+    }
+    return thumbnail
+  }
+
+  // Fallback to reading actual image data if localPath is used instead of dataUrl
+  let dataUrlToHash = image.dataUrl
+  if (!dataUrlToHash && image.localPath && isElectron()) {
+    try {
+      const fileResult = await window.electronAPI?.readFileBuffer(image.localPath)
+      if (fileResult) {
+        const mime = fileResult.name.endsWith('webp')
+          ? 'image/webp'
+          : fileResult.name.endsWith('jpg') || fileResult.name.endsWith('jpeg')
+            ? 'image/jpeg'
+            : 'image/png'
+        const blob = new Blob([fileResult.data], { type: mime })
+        dataUrlToHash = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.readAsDataURL(blob)
+        })
+      }
+    } catch (e) {
+      console.error('Failed to read local file for thumbnail generation:', e)
+    }
+  }
+
+  if (!dataUrlToHash) return undefined
+
+  const metadata = await safeCreateImageThumbnail(dataUrlToHash)
+  if (!metadata.thumbnailDataUrl) return undefined
+  const thumbnail: StoredImageThumbnail = {
+    id,
+    thumbnailDataUrl: metadata.thumbnailDataUrl,
+    width: metadata.width,
+    height: metadata.height,
+    thumbnailVersion: THUMBNAIL_VERSION,
+  }
+  await putImageThumbnail(thumbnail)
+  persistThumbnailToDisk(thumbnail)
+  if (metadata.width && metadata.height && (image.width !== metadata.width || image.height !== metadata.height)) {
+    await putImage({ ...image, width: metadata.width, height: metadata.height })
+  }
+  return thumbnail
+}
+
+export function getAllImages(): Promise<StoredImage[]> {
+  const electron = readAllElectronRecords<StoredImage>(STORE_IMAGES)
+  if (electron) return electron
+  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAll())
+}
+
+export function getAllImageIds(): Promise<string[]> {
+  const electron = readAllElectronRecords<StoredImage>(STORE_IMAGES)
+  if (electron) return electron.then((images) => images.map((image) => image.id))
+  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAllKeys()).then((keys) => keys.map(String))
+}
+
+export function getLegacyImageBatch(limit: number): Promise<StoredImage[]> {
+  if (limit <= 0) return Promise.resolve([])
+  const electron = readAllElectronRecords<StoredImage>(STORE_IMAGES)
+  if (electron)
+    return electron.then((images) => images.filter((image) => image.dataUrl && !image.localPath).slice(0, limit))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const request = db.transaction(STORE_IMAGES, 'readonly').objectStore(STORE_IMAGES).openCursor()
+        const images: StoredImage[] = []
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor) {
+            resolve(images)
+            return
+          }
+          let image: StoredImage | undefined
+          try {
+            // 大值 blob 文件缺失时读取 value 会抛错；该记录不可恢复，跳过并继续扫描
+            image = cursor.value as StoredImage
+            if (image.dataUrl && !image.localPath) images.push(image)
+          } catch (error) {
+            console.warn('[db] 迁移扫描跳过不可读图片记录:', error)
+          }
+          if (images.length >= limit) resolve(images)
+          else cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+      }),
+  )
+}
+
+export function putImage(image: StoredImage): Promise<IDBValidKey> {
+  const electron = writeElectronRecord(STORE_IMAGES, image.id, image)
+  if (electron) return electron
+  return dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put(image))
+}
+
+/**
+ * 写入图片记录与缩略图记录（可只写其中一条）。
+ *
+ * 生成一张图会产生「`images` 记录 + `thumbnails` 记录」两条不同命名空间的写入。
+ * 逐条 `putImage` / `putImageThumbnail` 各走一次 渲染→主进程→UtilityProcess→SQLite 的完整往返，
+ * 这里在 Electron 下合并为一次 `app-data:put-batch`（单事务原子提交）；旧 preload 或浏览器环境
+ * 自动回退到逐条写入，语义不变。
+ */
+export async function putImageRecords(
+  image: StoredImage | null,
+  thumbnail?: StoredImageThumbnail | null,
+): Promise<void> {
+  const entries: AppDataBatchEntry[] = []
+  if (image) entries.push({ namespace: STORE_IMAGES, id: image.id, value: image })
+  if (thumbnail) entries.push({ namespace: STORE_THUMBNAILS, id: thumbnail.id, value: thumbnail })
+  const batch = writeBatchElectronRecords(entries)
+  if (batch) {
+    await batch
+    return
+  }
+  if (image) await putImage(image)
+  if (thumbnail) await putImageThumbnail(thumbnail)
+}
+
+export async function deleteImage(id: string): Promise<undefined> {
+  const image = await getImage(id)
+  const api = getElectronAppDataApi()
+  if (api) {
+    await ensureElectronAppDataMigrated()
+    await api.appDataDeleteImageRecords?.([id])
+    if (image?.localPath) await deleteRawCacheImages([image.localPath])
+    return undefined
+  }
+  await openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS], 'readwrite')
+        tx.objectStore(STORE_IMAGES).delete(id)
+        tx.objectStore(STORE_THUMBNAILS).delete(id)
+        tx.oncomplete = () => resolve(undefined)
+        tx.onerror = () => reject(tx.error)
+      }),
+  )
+  if (image?.localPath) await deleteRawCacheImages([image.localPath])
+  return undefined
+}
+
+export async function clearImages(): Promise<undefined> {
+  const localPaths = await getAllLocalImagePaths()
+  const api = getElectronAppDataApi()
+  if (api) {
+    await ensureElectronAppDataMigrated()
+    await api.appDataClearImageRecords?.()
+    await deleteRawCacheImages(localPaths)
+    return undefined
+  }
+  await openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS], 'readwrite')
+        tx.objectStore(STORE_IMAGES).clear()
+        tx.objectStore(STORE_THUMBNAILS).clear()
+        tx.oncomplete = () => resolve(undefined)
+        tx.onerror = () => reject(tx.error)
+      }),
+  )
+  await deleteRawCacheImages(localPaths)
+  return undefined
+}
+
+export function getAllLocalImagePaths(): Promise<string[]> {
+  const electron = readAllElectronRecords<StoredImage>(STORE_IMAGES)
+  if (electron) {
+    return electron.then((images) =>
+      images.map((image) => image.localPath).filter((value): value is string => Boolean(value)),
+    )
+  }
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const request = db.transaction(STORE_IMAGES, 'readonly').objectStore(STORE_IMAGES).openCursor()
+        const paths: string[] = []
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor) return resolve(paths)
+          const localPath = (cursor.value as StoredImage).localPath
+          if (localPath) paths.push(localPath)
+          cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+      }),
+  )
+}
+
+// ===== Image hashing & dedup =====
+
+/**
+ * 存储图片，若已存在（按内容哈希去重）则跳过。
+ * 返回 image id。
+ *
+ * 去重 id 基于 data URL 解码后的原始字节 SHA-256（见 imageFingerprint.computeContentHash）：
+ * 同一张图重新编码 / 重新压缩 / 换 MIME 后字节一致时仍能去重；
+ * 旧的字符串哈希 id 记录无需迁移，继续按原 id 存在。
+ */
+export async function storeImage(
+  dataUrl: string,
+  source: NonNullable<StoredImage['source']> = 'upload',
+  options: StoreImageBytesOptions = {},
+): Promise<string> {
+  // 有字节时直接哈希，省掉一次「解码 dataUrl → 再哈希」
+  const id = options.bytes ? await computeContentHashFromBytes(options.bytes) : await computeContentHash(dataUrl)
+  const existing = await getImage(id)
+
+  let localPath: string | undefined
+  if (isElectron()) {
+    if (existing?.localPath) {
+      // 已存在且已有本地文件：跳过冗余写入（查重在写文件之前）
+      localPath = existing.localPath
+    } else {
+      localPath = (await saveRawCacheImageToLocal(id, dataUrl, options)) || undefined
+    }
+  }
+
+  if (!existing) {
+    const thumbnail = await safeCreateImageThumbnail(dataUrl, options)
+    // 图片记录与缩略图记录合并为一次跨进程写（两个命名空间，见 putImageRecords）
+    await putImageRecords(
+      {
+        id,
+        // 落盘成功就不再把图像本体写进库；只有存不下时才需要 dataUrl（没带就现编一份）
+        dataUrl: localPath ? undefined : dataUrl || (await bytesToFallbackDataUrl(options)),
+        localPath,
+        createdAt: Date.now(),
+        source,
+        width: thumbnail.width,
+        height: thumbnail.height,
+      },
+      thumbnail.thumbnailDataUrl
+        ? {
+            id,
+            thumbnailDataUrl: thumbnail.thumbnailDataUrl,
+            width: thumbnail.width,
+            height: thumbnail.height,
+            thumbnailVersion: THUMBNAIL_VERSION,
+          }
+        : null,
+    )
+  } else if (
+    (await getStoredImageThumbnail(id))?.thumbnailVersion !== THUMBNAIL_VERSION ||
+    (!existing.localPath && localPath)
+  ) {
+    const thumbnail = await safeCreateImageThumbnail(dataUrl, options)
+    const updates: Partial<StoredImage> = {}
+    if (
+      thumbnail.width &&
+      thumbnail.height &&
+      (existing.width !== thumbnail.width || existing.height !== thumbnail.height)
+    ) {
+      updates.width = thumbnail.width
+      updates.height = thumbnail.height
+    }
+    if (!existing.localPath && localPath) {
+      updates.localPath = localPath
+      updates.dataUrl = undefined // Clear dataUrl from DB if we successfully saved to localPath
+    }
+    await putImageRecords(
+      Object.keys(updates).length > 0 ? { ...existing, ...updates } : null,
+      thumbnail.thumbnailDataUrl
+        ? {
+            id,
+            thumbnailDataUrl: thumbnail.thumbnailDataUrl,
+            width: thumbnail.width,
+            height: thumbnail.height,
+            thumbnailVersion: THUMBNAIL_VERSION,
+          }
+        : null,
+    )
+  }
+  return id
+}
+
+export async function batchDeleteImages(
+  ids: string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
+  if (ids.length === 0) return Promise.resolve()
+  const uniqueIds = Array.from(new Set(ids))
+  const images = await batchGetImages(uniqueIds)
+  // 分批删除（IndexedDB 记录 + 磁盘缓存文件），避免超大事务/单次 IPC 阻塞主线程；
+  // 同时向 UI 汇报真实进度，让「大量删除」不再是无反馈的长时间等待。
+  const CHUNK_SIZE = 200
+  for (let start = 0; start < uniqueIds.length; start += CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(start, start + CHUNK_SIZE)
+    const api = getElectronAppDataApi()
+    if (api) {
+      await ensureElectronAppDataMigrated()
+      await api.appDataDeleteImageRecords?.(chunk)
+    } else {
+      await openDB().then(
+        (db) =>
+          new Promise<void>((resolve, reject) => {
+            const tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS], 'readwrite')
+            const imageStore = tx.objectStore(STORE_IMAGES)
+            const thumbStore = tx.objectStore(STORE_THUMBNAILS)
+            for (const id of chunk) {
+              imageStore.delete(id)
+              thumbStore.delete(id)
+            }
+            tx.oncomplete = () => resolve()
+            tx.onerror = () => reject(tx.error)
+            tx.onabort = () => reject(tx.error)
+          }),
+      )
+    }
+    const chunkPaths = chunk.map((id) => images.get(id)?.localPath).filter((path): path is string => Boolean(path))
+    if (chunkPaths.length > 0) await deleteRawCacheImages(chunkPaths)
+    onProgress?.(Math.min(start + chunk.length, uniqueIds.length), uniqueIds.length)
+  }
+}
+
+export function batchGetImages(ids: string[]): Promise<Map<string, StoredImage>> {
+  if (ids.length === 0) return Promise.resolve(new Map())
+  const electron = readManyElectronRecords<StoredImage>(STORE_IMAGES, ids)
+  if (electron) return electron
+  const uniqueIds = Array.from(new Set(ids))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_IMAGES, 'readonly')
+        const store = tx.objectStore(STORE_IMAGES)
+        const map = new Map<string, StoredImage>()
+        let pending = uniqueIds.length
+
+        const finishOne = () => {
+          pending--
+          if (pending === 0) resolve(map)
+        }
+
+        for (const id of uniqueIds) {
+          const req = store.get(id)
+          req.onsuccess = () => {
+            const image = req.result as StoredImage | undefined
+            if (image) map.set(id, image)
+            finishOne()
+          }
+          // 单条记录不可读（如 blob 文件缺失）时跳过该条，不让整批读取失败
+          req.onerror = () => {
+            if (isIrrecoverableBlobError(req.error)) {
+              console.warn('[db] 图片记录不可读（跳过）:', id, req.error?.message)
+              finishOne()
+              return
+            }
+            reject(req.error)
+          }
+        }
+      }),
+  )
+}
+
+export function batchGetImageThumbnails(ids: string[]): Promise<Map<string, StoredImageThumbnail>> {
+  if (ids.length === 0) return Promise.resolve(new Map())
+  const electron = readManyElectronRecords<StoredImageThumbnail>(STORE_THUMBNAILS, ids)
+  if (electron) return electron
+  const uniqueIds = Array.from(new Set(ids))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_THUMBNAILS, 'readonly')
+        const store = tx.objectStore(STORE_THUMBNAILS)
+        const map = new Map<string, StoredImageThumbnail>()
+        let pending = uniqueIds.length
+
+        const finishOne = () => {
+          pending--
+          if (pending === 0) resolve(map)
+        }
+
+        for (const id of uniqueIds) {
+          const req = store.get(id)
+          req.onsuccess = () => {
+            const thumbnail = req.result as StoredImageThumbnail | undefined
+            if (thumbnail) map.set(id, thumbnail)
+            finishOne()
+          }
+          // 单条记录不可读（如 blob 文件缺失）时跳过该条，不让整批读取失败
+          req.onerror = () => {
+            if (isIrrecoverableBlobError(req.error)) {
+              console.warn('[db] 缩略图记录不可读（跳过）:', id, req.error?.message)
+              finishOne()
+              return
+            }
+            reject(req.error)
+          }
+        }
+      }),
+  )
+}
+
+export function batchPutTasks(tasks: TaskRecord[]): Promise<void> {
+  if (tasks.length === 0) return Promise.resolve()
+  const electron = writeManyElectronRecords(STORE_TASKS, tasks)
+  if (electron) return electron
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_TASKS, 'readwrite')
+        const store = tx.objectStore(STORE_TASKS)
+        for (const task of tasks) store.put(task)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
+export async function getStorageRecordCounts() {
+  const api = getElectronAppDataApi()
+  if (api) {
+    await ensureElectronAppDataMigrated()
+    const counts = api.appDataCounts
+      ? await api.appDataCounts([
+          STORE_TASKS,
+          STORE_IMAGES,
+          STORE_THUMBNAILS,
+          STORE_AGENT_CONVERSATIONS,
+          STORE_COMPOSITE_ASSETS,
+        ])
+      : {}
+    const [catalogStatus, collections, tags, tombstones] = await Promise.all([
+      api.assetCatalogStatus?.(),
+      api.assetCatalogGetCollections?.(),
+      api.assetCatalogGetTags?.(),
+      api.assetCatalogGetAllTombstones?.(),
+    ])
+    return {
+      tasks: counts[STORE_TASKS] ?? 0,
+      images: counts[STORE_IMAGES] ?? 0,
+      thumbnails: counts[STORE_THUMBNAILS] ?? 0,
+      conversations: counts[STORE_AGENT_CONVERSATIONS] ?? 0,
+      compositeAssets: counts[STORE_COMPOSITE_ASSETS] ?? 0,
+      generatedAssets: catalogStatus?.assetCount ?? 0,
+      assetCollections: collections?.length ?? 0,
+      assetTags: tags?.length ?? 0,
+      assetTombstones: tombstones?.length ?? 0,
+    }
+  }
+  const [
+    tasks,
+    images,
+    thumbnails,
+    conversations,
+    compositeAssets,
+    generatedAssets,
+    assetCollections,
+    assetTags,
+    assetTombstones,
+  ] = await Promise.all([
+    dbTransaction<number>(STORE_TASKS, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_IMAGES, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_THUMBNAILS, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_AGENT_CONVERSATIONS, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_COMPOSITE_ASSETS, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_GENERATED_ASSETS, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_ASSET_COLLECTIONS, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_ASSET_TAGS, 'readonly', (store) => store.count()),
+    dbTransaction<number>(STORE_ASSET_TOMBSTONES, 'readonly', (store) => store.count()),
+  ])
+  return {
+    tasks,
+    images,
+    thumbnails,
+    conversations,
+    compositeAssets,
+    generatedAssets,
+    assetCollections,
+    assetTags,
+    assetTombstones,
+  }
+}
+
+export function commitImportedRecords(records: {
+  images: StoredImage[]
+  thumbnails: StoredImageThumbnail[]
+  tasks: TaskRecord[]
+  replaceTasks?: boolean
+}): Promise<void> {
+  const api = getElectronAppDataApi()
+  if (api) {
+    return ensureElectronAppDataMigrated()
+      .then(() => api.appDataCommitImportedRecords?.(records))
+      .then(() => undefined)
+  }
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS, STORE_TASKS], 'readwrite')
+        const imageStore = tx.objectStore(STORE_IMAGES)
+        const thumbnailStore = tx.objectStore(STORE_THUMBNAILS)
+        const taskStore = tx.objectStore(STORE_TASKS)
+        if (records.replaceTasks) taskStore.clear()
+        for (const image of records.images) imageStore.put(image)
+        for (const thumbnail of records.thumbnails) thumbnailStore.put(thumbnail)
+        for (const task of records.tasks) taskStore.put(task)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB import transaction aborted'))
+      }),
+  )
+}
+
+export function updateImageLocalPaths(mappings: Array<{ from: string; to: string }>): Promise<void> {
+  if (mappings.length === 0) return Promise.resolve()
+  const api = getElectronAppDataApi()
+  if (api) {
+    return ensureElectronAppDataMigrated()
+      .then(() => api.appDataUpdateImageLocalPaths?.(mappings))
+      .then(() => undefined)
+  }
+  const bySource = new Map(mappings.map((mapping) => [mapping.from, mapping.to]))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_IMAGES, 'readwrite')
+        const store = tx.objectStore(STORE_IMAGES)
+        const request = store.openCursor()
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor) return
+          const image = cursor.value as StoredImage
+          const localPath = image.localPath ? bySource.get(image.localPath) : undefined
+          if (localPath) cursor.update({ ...image, localPath })
+          cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB path migration aborted'))
+      }),
+  )
+}
+
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('图片加载失败'))
+    image.src = dataUrl
+  })
+}
+
+/** 有原始字节时可跳过 dataUrl 的「编码再解码」往返（文件夹导入等场景本来就只有字节）。 */
+export interface StoreImageBytesOptions {
+  bytes?: Uint8Array
+  mime?: string
+}
+
+/** 用 Blob URL 加载图片：避免为了 `<img src>` 再拼一份 base64。 */
+async function loadImageFromBytes(bytes: Uint8Array, mime = 'image/png'): Promise<HTMLImageElement> {
+  const objectUrl = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime }))
+  try {
+    return await loadImage(objectUrl)
+  } finally {
+    // loadImage 已 resolve（图片加载完成），此时释放是安全的
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+/** 无法落盘（非 Electron）时把字节转成 dataUrl 存库；Electron 路径走不到这里。 */
+async function bytesToFallbackDataUrl(options: StoreImageBytesOptions): Promise<string> {
+  if (!options.bytes) return ''
+  return blobToDataUrl(new Blob([options.bytes as unknown as BlobPart], { type: options.mime || 'image/png' }))
+}
+
+/**
+ * 生成入库缩略图。
+ *
+ * 导出仅为让测试能直接断言「编码走的是异步通道」—— 这是 `storeImage` 每张新图都必经的
+ * 唯一编码点，一旦被改回同步 `toDataURL`，生成完成那一刻的主线程会重新被冻住。
+ */
+export async function createImageThumbnail(
+  dataUrl: string,
+  options: StoreImageBytesOptions = {},
+): Promise<Omit<StoredImageThumbnail, 'id'>> {
+  const image = options.bytes ? await loadImageFromBytes(options.bytes, options.mime) : await loadImage(dataUrl)
+  const width = image.naturalWidth
+  const height = image.naturalHeight
+  if (width <= 0 || height <= 0) throw new Error('图片尺寸无效')
+
+  const scale = Math.min(1, THUMBNAIL_MAX_SIZE / Math.max(width, height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(width * scale))
+  canvas.height = Math.max(1, Math.round(height * scale))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('当前浏览器不支持 Canvas')
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+  return {
+    // 必须走异步编码：同步 `toDataURL` 会在主线程把 webp 编码跑完（1024px/q0.82 约 71ms/张），
+    // 而这里是每张图入库的唯一路径（storeImage 19 个调用点），生成完成那一刻的点击与滚动会跟着卡。
+    // `canvasToWebpDataUrl` 走 `toBlob`，环境不支持时自带回退，调用方不用兜底。
+    thumbnailDataUrl: await canvasToWebpDataUrl(canvas, THUMBNAIL_QUALITY),
+    width,
+    height,
+    thumbnailVersion: THUMBNAIL_VERSION,
+  }
+}
+
+async function safeCreateImageThumbnail(
+  dataUrl: string,
+  options: StoreImageBytesOptions = {},
+): Promise<Partial<Omit<StoredImageThumbnail, 'id'>>> {
+  try {
+    return await createImageThumbnail(dataUrl, options)
+  } catch {
+    return {}
+  }
+}
+
+// ===== Generated asset library =====
+
+/** 批量写入同 store；空数组直接完成，单事务保证原子性。 */
+function putMany<T>(storeName: string, values: T[]): Promise<void> {
+  if (values.length === 0) return Promise.resolve()
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readwrite')
+        const store = tx.objectStore(storeName)
+        for (const value of values) store.put(value)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
+function deleteById(storeName: string, id: string): Promise<undefined> {
+  return dbTransaction(storeName, 'readwrite', (s) => s.delete(id))
+}
+
+function clearStore(storeName: string): Promise<undefined> {
+  return dbTransaction(storeName, 'readwrite', (s) => s.clear())
+}
+
+// ----- generatedAssets -----
+
+export function getGeneratedAsset(id: string): Promise<GeneratedAsset | undefined> {
+  return dbTransaction(STORE_GENERATED_ASSETS, 'readonly', (s) => s.get(id))
+}
+
+export function getAllGeneratedAssets(): Promise<GeneratedAsset[]> {
+  return dbTransaction(STORE_GENERATED_ASSETS, 'readonly', (s) => s.getAll())
+}
+
+export function countGeneratedAssets(): Promise<number> {
+  return dbTransaction(STORE_GENERATED_ASSETS, 'readonly', (s) => s.count())
+}
+
+/** 按 updatedAt 索引倒序取最近 N 条素材（用于镜像内容级校验，避免全表扫描）。 */
+export function getRecentGeneratedAssets(limit: number): Promise<GeneratedAsset[]> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_GENERATED_ASSETS, 'readonly')
+        const index = tx.objectStore(STORE_GENERATED_ASSETS).index('updatedAt')
+        const req = index.openCursor(null, 'prev')
+        const assets: GeneratedAsset[] = []
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor || assets.length >= limit) {
+            resolve(assets)
+            return
+          }
+          assets.push(cursor.value as GeneratedAsset)
+          cursor.continue()
+        }
+        req.onerror = () => reject(req.error)
+      }),
+  )
+}
+
+export function putGeneratedAsset(asset: GeneratedAsset): Promise<IDBValidKey> {
+  return dbTransaction(STORE_GENERATED_ASSETS, 'readwrite', (s) => s.put(asset))
+}
+
+export function putGeneratedAssets(assets: GeneratedAsset[]): Promise<void> {
+  return putMany(STORE_GENERATED_ASSETS, assets)
+}
+
+export function batchGetGeneratedAssets(ids: string[]): Promise<Map<string, GeneratedAsset>> {
+  if (ids.length === 0) return Promise.resolve(new Map())
+  const uniqueIds = Array.from(new Set(ids))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const store = db.transaction(STORE_GENERATED_ASSETS, 'readonly').objectStore(STORE_GENERATED_ASSETS)
+        const map = new Map<string, GeneratedAsset>()
+        let pending = uniqueIds.length
+        for (const id of uniqueIds) {
+          const req = store.get(id)
+          req.onsuccess = () => {
+            const asset = req.result as GeneratedAsset | undefined
+            if (asset) map.set(id, asset)
+            if (--pending === 0) resolve(map)
+          }
+          req.onerror = () => reject(req.error)
+        }
+      }),
+  )
+}
+
+export function batchGetGeneratedAssetsByImageIds(imageIds: string[]): Promise<Map<string, GeneratedAsset>> {
+  if (imageIds.length === 0) return Promise.resolve(new Map())
+  const uniqueIds = Array.from(new Set(imageIds))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const index = db
+          .transaction(STORE_GENERATED_ASSETS, 'readonly')
+          .objectStore(STORE_GENERATED_ASSETS)
+          .index('imageId')
+        const map = new Map<string, GeneratedAsset>()
+        let pending = uniqueIds.length
+        for (const imageId of uniqueIds) {
+          const request = index.get(imageId)
+          request.onsuccess = () => {
+            const asset = request.result as GeneratedAsset | undefined
+            if (asset) map.set(imageId, asset)
+            if (--pending === 0) resolve(map)
+          }
+          request.onerror = () => reject(request.error)
+        }
+      }),
+  )
+}
+
+export function deleteGeneratedAsset(id: string): Promise<undefined> {
+  return deleteById(STORE_GENERATED_ASSETS, id)
+}
+
+export function clearGeneratedAssets(): Promise<undefined> {
+  if (getElectronAppDataApi()) return Promise.resolve(undefined)
+  return clearStore(STORE_GENERATED_ASSETS)
+}
+
+// ----- assetUsageEvents -----
+
+export function putAssetUsageEvent(event: AssetUsageEvent): Promise<IDBValidKey> {
+  const api = getElectronAppDataApi()
+  if (api?.assetCatalogRecordUsage) {
+    return api.assetCatalogRecordUsage([event]).then(() => event.id)
+  }
+  return dbTransaction(STORE_ASSET_USAGE_EVENTS, 'readwrite', (store) => store.put(event))
+}
+
+export function putAssetUsageEvents(events: AssetUsageEvent[]): Promise<void> {
+  const api = getElectronAppDataApi()
+  if (api?.assetCatalogRecordUsage) {
+    return api.assetCatalogRecordUsage(events).then(() => undefined)
+  }
+  return putMany(STORE_ASSET_USAGE_EVENTS, events)
+}
+
+export function getAllAssetUsageEvents(): Promise<AssetUsageEvent[]> {
+  const api = getElectronAppDataApi()
+  if (api?.assetCatalogExportUsage) return api.assetCatalogExportUsage()
+  return dbTransaction(STORE_ASSET_USAGE_EVENTS, 'readonly', (store) => store.getAll())
+}
+
+export function getAssetUsageEvents(assetId: string): Promise<AssetUsageEvent[]> {
+  const api = getElectronAppDataApi()
+  if (api?.assetCatalogGetUsageByAsset) return api.assetCatalogGetUsageByAsset(assetId)
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_ASSET_USAGE_EVENTS, 'readonly')
+        const request = tx.objectStore(STORE_ASSET_USAGE_EVENTS).index('assetId').getAll(assetId)
+        request.onsuccess = () =>
+          resolve((request.result as AssetUsageEvent[]).sort((a, b) => b.occurredAt - a.occurredAt))
+        request.onerror = () => reject(request.error)
+      }),
+  )
+}
+
+export function clearAssetUsageEvents(): Promise<undefined> {
+  const api = getElectronAppDataApi()
+  if (api?.assetCatalogClearUsage) return api.assetCatalogClearUsage().then(() => undefined)
+  return clearStore(STORE_ASSET_USAGE_EVENTS)
+}
+
+// ----- asset identity records -----
+
+export function putAssetBlobs(blobs: AssetBlob[]): Promise<void> {
+  if (getElectronAppDataApi()) return Promise.resolve()
+  return putMany(STORE_ASSET_BLOBS, blobs)
+}
+
+export function getAllAssetBlobs(): Promise<AssetBlob[]> {
+  if (getElectronAppDataApi()) return Promise.resolve([])
+  return dbTransaction(STORE_ASSET_BLOBS, 'readonly', (store) => store.getAll())
+}
+
+export function clearAssetBlobs(): Promise<undefined> {
+  if (getElectronAppDataApi()) return Promise.resolve(undefined)
+  return clearStore(STORE_ASSET_BLOBS)
+}
+
+export function putAssetVersions(versions: AssetVersion[]): Promise<void> {
+  if (getElectronAppDataApi()) return Promise.resolve()
+  return putMany(STORE_ASSET_VERSIONS, versions)
+}
+
+export function getAllAssetVersions(): Promise<AssetVersion[]> {
+  if (getElectronAppDataApi()) return Promise.resolve([])
+  return dbTransaction(STORE_ASSET_VERSIONS, 'readonly', (store) => store.getAll())
+}
+
+export function clearAssetVersions(): Promise<undefined> {
+  if (getElectronAppDataApi()) return Promise.resolve(undefined)
+  return clearStore(STORE_ASSET_VERSIONS)
+}
+
+export function deleteAssetVersionsForAsset(assetId: string): Promise<void> {
+  if (getElectronAppDataApi()) return Promise.resolve()
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_ASSET_VERSIONS, 'readwrite')
+        const request = tx.objectStore(STORE_ASSET_VERSIONS).index('assetId').openCursor(IDBKeyRange.only(assetId))
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor) return
+          cursor.delete()
+          cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      }),
+  )
+}
+
+export function deleteAssetBlob(id: string): Promise<undefined> {
+  if (getElectronAppDataApi()) return Promise.resolve(undefined)
+  return deleteById(STORE_ASSET_BLOBS, id)
+}
+
+export interface PurgeRecords {
+  tasksToPatch: TaskRecord[]
+  assetIds: string[]
+  tombstones: AssetTombstone[]
+}
+
+/**
+ * 永久删除素材的事务写入：任务输出补丁 + 删除素材记录 + 写墓碑在单个 IndexedDB 事务内完成。
+ * 事务提交成功后才允许删除图片字节，保证“素材消失但任务仍指向旧图”的不一致状态不会出现。
+ */
+export function purgeGeneratedAssetsInTransaction(records: PurgeRecords): Promise<void> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_TASKS, STORE_GENERATED_ASSETS, STORE_ASSET_TOMBSTONES], 'readwrite')
+        const tasksStore = tx.objectStore(STORE_TASKS)
+        const assetsStore = tx.objectStore(STORE_GENERATED_ASSETS)
+        const tombstonesStore = tx.objectStore(STORE_ASSET_TOMBSTONES)
+        for (const task of records.tasksToPatch) tasksStore.put(task)
+        for (const assetId of records.assetIds) assetsStore.delete(assetId)
+        for (const tombstone of records.tombstones) tombstonesStore.put(tombstone)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
+// ----- assetCollections -----
+
+export function getAssetCollection(id: string): Promise<AssetCollection | undefined> {
+  return dbTransaction(STORE_ASSET_COLLECTIONS, 'readonly', (s) => s.get(id))
+}
+
+export function getAllAssetCollections(): Promise<AssetCollection[]> {
+  return dbTransaction(STORE_ASSET_COLLECTIONS, 'readonly', (s) => s.getAll())
+}
+
+export function putAssetCollection(collection: AssetCollection): Promise<IDBValidKey> {
+  return dbTransaction(STORE_ASSET_COLLECTIONS, 'readwrite', (s) => s.put(collection))
+}
+
+export function putAssetCollections(collections: AssetCollection[]): Promise<void> {
+  return putMany(STORE_ASSET_COLLECTIONS, collections)
+}
+
+export function deleteAssetCollection(id: string): Promise<undefined> {
+  return deleteById(STORE_ASSET_COLLECTIONS, id)
+}
+
+export function clearAssetCollections(): Promise<undefined> {
+  if (getElectronAppDataApi()) return Promise.resolve(undefined)
+  return clearStore(STORE_ASSET_COLLECTIONS)
+}
+
+// ----- assetTags -----
+
+export function getAssetTag(id: string): Promise<AssetTag | undefined> {
+  return dbTransaction(STORE_ASSET_TAGS, 'readonly', (s) => s.get(id))
+}
+
+export function getAllAssetTags(): Promise<AssetTag[]> {
+  return dbTransaction(STORE_ASSET_TAGS, 'readonly', (s) => s.getAll())
+}
+
+export function putAssetTag(tag: AssetTag): Promise<IDBValidKey> {
+  return dbTransaction(STORE_ASSET_TAGS, 'readwrite', (s) => s.put(tag))
+}
+
+export function putAssetTags(tags: AssetTag[]): Promise<void> {
+  return putMany(STORE_ASSET_TAGS, tags)
+}
+
+export function deleteAssetTag(id: string): Promise<undefined> {
+  return deleteById(STORE_ASSET_TAGS, id)
+}
+
+export function clearAssetTags(): Promise<undefined> {
+  if (getElectronAppDataApi()) return Promise.resolve(undefined)
+  return clearStore(STORE_ASSET_TAGS)
+}
+
+// ----- assetTombstones -----
+
+export function getAssetTombstone(id: string): Promise<AssetTombstone | undefined> {
+  return dbTransaction(STORE_ASSET_TOMBSTONES, 'readonly', (s) => s.get(id))
+}
+
+export function getAllAssetTombstones(): Promise<AssetTombstone[]> {
+  return dbTransaction(STORE_ASSET_TOMBSTONES, 'readonly', (s) => s.getAll())
+}
+
+/** 按 imageId 批量查墓碑（走 imageId 索引，替代每次同步的全表扫描；v13 起索引可用）。 */
+export function batchGetAssetTombstones(imageIds: string[]): Promise<Map<string, AssetTombstone>> {
+  if (imageIds.length === 0) return Promise.resolve(new Map())
+  const uniqueIds = Array.from(new Set(imageIds))
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_ASSET_TOMBSTONES, 'readonly')
+        const store = tx.objectStore(STORE_ASSET_TOMBSTONES)
+        const map = new Map<string, AssetTombstone>()
+        let pending = uniqueIds.length
+
+        const finishOne = () => {
+          pending--
+          if (pending === 0) resolve(map)
+        }
+
+        for (const imageId of uniqueIds) {
+          const index = store.index('imageId')
+          const req = index.getAll(imageId)
+          req.onsuccess = () => {
+            const tombstones = req.result as AssetTombstone[]
+            for (const tombstone of tombstones) map.set(tombstone.imageId, tombstone)
+            finishOne()
+          }
+          req.onerror = () => reject(req.error)
+        }
+      }),
+  )
+}
+
+export function putAssetTombstone(tombstone: AssetTombstone): Promise<IDBValidKey> {
+  return dbTransaction(STORE_ASSET_TOMBSTONES, 'readwrite', (s) => s.put(tombstone))
+}
+
+export function putAssetTombstones(tombstones: AssetTombstone[]): Promise<void> {
+  return putMany(STORE_ASSET_TOMBSTONES, tombstones)
+}
+
+export function deleteAssetTombstone(id: string): Promise<undefined> {
+  return deleteById(STORE_ASSET_TOMBSTONES, id)
+}
+
+export function clearAssetTombstones(): Promise<undefined> {
+  if (getElectronAppDataApi()) return Promise.resolve(undefined)
+  return clearStore(STORE_ASSET_TOMBSTONES)
+}
+
+// ===== 旧版数据导入（设置页「数据管理」→ 导出/导入数据文件）=====
+
+export interface LegacyStoreImportRecords {
+  tasks?: TaskRecord[]
+  /** 词条库（单记录 id='word-library'） */
+  wordLibrary?: StoredWordLibraryState[]
+  agentConversations?: AgentConversation[]
+  /** 图片记录（Electron 下为轻量元数据：localPath 指向磁盘原图，dataUrl 可选） */
+  images?: StoredImage[]
+}
+
+/**
+ * 把「导出数据文件」的载荷写入 IndexedDB（单事务，已存在的主键默认跳过、不覆盖现有数据）。
+ * replaceExisting=true 时对应 store 先清空再写入（「覆盖导入」语义，谨慎使用）。
+ * 图片大字段（dataUrl/thumbnailDataUrl）缺失时不影响使用：缩略图会自动从磁盘 thumbs/ 恢复，
+ * 原图经 localPath 直接读取。
+ */
+export function importLegacyStoreRecords(
+  records: LegacyStoreImportRecords,
+  replaceExisting = false,
+): Promise<{ tasks: number; wordLibrary: number; agentConversations: number; images: number }> {
+  return openDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(
+          [STORE_TASKS, STORE_WORD_LIBRARY, STORE_AGENT_CONVERSATIONS, STORE_IMAGES],
+          'readwrite',
+        )
+        const taskStore = tx.objectStore(STORE_TASKS)
+        const wordStore = tx.objectStore(STORE_WORD_LIBRARY)
+        const conversationStore = tx.objectStore(STORE_AGENT_CONVERSATIONS)
+        const imageStore = tx.objectStore(STORE_IMAGES)
+
+        if (replaceExisting) {
+          if (records.tasks?.length) taskStore.clear()
+          if (records.wordLibrary?.length) wordStore.clear()
+          if (records.agentConversations?.length) conversationStore.clear()
+          if (records.images?.length) imageStore.clear()
+        }
+
+        let taskCount = 0
+        let wordCount = 0
+        let conversationCount = 0
+        let imageCount = 0
+
+        // 事务内「先查后写」：已存在主键跳过（不覆盖）；事务会在全部请求完成后触发 oncomplete
+        const putIfMissing = <T>(store: IDBObjectStore, recordsToPut: T[], count: () => void) => {
+          for (const record of recordsToPut) {
+            const getReq = store.get((record as { id: string }).id)
+            getReq.onsuccess = () => {
+              if (!getReq.result) {
+                store.put(record)
+                count()
+              }
+            }
+            getReq.onerror = () => {
+              // 单条读取失败不阻断其余记录
+            }
+          }
+        }
+
+        if (records.tasks?.length) putIfMissing(taskStore, records.tasks, () => taskCount++)
+        if (records.wordLibrary?.length) putIfMissing(wordStore, records.wordLibrary, () => wordCount++)
+        if (records.agentConversations?.length)
+          putIfMissing(conversationStore, records.agentConversations, () => conversationCount++)
+        if (records.images?.length) putIfMissing(imageStore, records.images, () => imageCount++)
+
+        tx.oncomplete = () =>
+          resolve({
+            tasks: taskCount,
+            wordLibrary: wordCount,
+            agentConversations: conversationCount,
+            images: imageCount,
+          })
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB import transaction aborted'))
+      }),
+  )
+}

@@ -1,0 +1,36 @@
+node_modules/
+dist/
+dist-electron/
+local-saves/
+dev-proxy.config.json
+.wrangler/
+release/
+release_new/
+release-v2/
+# 带版本号的打包输出目录（release/ 匹配不到 release-0.8.14/ 这种名字）
+release-*/
+dist-verify/
+*.exe
+*.blockmap
+*.nupkg
+latest.yml
+*.asar
+.superpowers/
+.worktrees/
+
+# build / runtime logs
+*.log
+.impeccable/
+
+# tool / ide dirs
+.dsh-vision-router/
+.trae/
+.impeccable/
+.workbuddy-ai/
+.workbuddy/
+
+# app runtime backups / temp dirs
+tmp-*.json
+tmp-edge-profile2/
+tmp-extract-*/
+tmp-app-run.log
