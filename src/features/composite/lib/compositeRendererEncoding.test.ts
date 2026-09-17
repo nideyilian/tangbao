@@ -10,7 +10,8 @@ import { describe, expect, it } from 'vitest'
  * 谁把导出改回同步编码，这里立刻变红。编码量本来就一样（toBlob 与 toDataURL 等价），
  * 差别只在主线程有没有被占满 —— 所以「总耗时」看不出问题，只有这条断言能守住。
  */
-const RENDERER_FILES = ['compositeRenderer.ts', 'compositeRendererV2.ts']
+// 只覆盖 V2：v1 的 compositeRenderer.ts 已随未接线的 v1 编排链一并删除（2026-09-17）。
+const RENDERER_FILES = ['compositeRendererV2.ts']
 
 describe('合成导出必须走异步编码通道', () => {
   it.each(RENDERER_FILES)('%s 不出现同步 canvas.toDataURL', (fileName) => {
