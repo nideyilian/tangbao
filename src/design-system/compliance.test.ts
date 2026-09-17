@@ -115,9 +115,6 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'features/composite/storeV2.ts|hex': 4,
   'features/requirementPrototype/manifests.ts|hex': 4,
   'lib/imagePostprocess.ts|hex': 1,
-  'lib/watermarkEngine.ts|hex': 7,
-  'lib/watermarkWorkbench.ts|hex': 4,
-  'storePostprocess.ts|hex': 2,
 }
 
 describe('UI 合规治理（存量旧工具类只减不增）', () => {

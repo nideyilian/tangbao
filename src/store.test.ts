@@ -2992,6 +2992,16 @@ describe('agent round deletion', () => {
 
 describe('data import', () => {
   beforeEach(async () => {
+    // 显式补一份 window/localStorage：本组的复合快照用例要访问 `useCompositeV2Store.persist`，
+    // 而 zustand 的 persist 在 storage 不可用时会提前返回、连 `.persist` 都不挂。
+    // 早先这里靠 `data export` 用例 stubGlobal 留下的全局副作用，执行顺序一变就会随机失败。
+    const localStorage = {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    }
+    vi.stubGlobal('localStorage', localStorage)
+    vi.stubGlobal('window', { localStorage })
     useStore.setState({
       tasks: [],
       agentConversations: [],

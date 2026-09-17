@@ -70,6 +70,8 @@ import { blobToDataUrl } from '../lib/blobDataUrl'
 import { assetCommands } from '../lib/assetCommands'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
+import PostprocessSettingsModal from './PostprocessSettingsModal'
+import { usePostprocessMediaStore } from '../storePostprocessMedia'
 import ViewportTooltip from './ViewportTooltip'
 import ModelSwitcher from './ModelSwitcher'
 import { CloseIcon, FolderOpenIcon, TagsIcon } from './icons'
@@ -77,6 +79,7 @@ import {
   CheckIcon,
   FileImageIcon,
   ImageIcon,
+  ImagesIcon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
@@ -759,6 +762,9 @@ export default function InputBar() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
+  // 后处理编排的启用状态：只订阅计数（原始值），避免面板改媒体表时连带重渲染输入栏
+  const postprocessProjectCount = usePostprocessMediaStore((s) => s.selectedCollectionIds.length)
+  const postprocessMediaCount = usePostprocessMediaStore((s) => s.selectedMediaIds.length)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
@@ -1448,6 +1454,7 @@ export default function InputBar() {
   const [imageHintId, setImageHintId] = useState<string | null>(null)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
+  const [showPostprocessSettings, setShowPostprocessSettings] = useState(false)
   const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
   const [outputMenuOpen, setOutputMenuOpen] = useState(false)
   const [showCustomAdRuleDialog, setShowCustomAdRuleDialog] = useState(false)
@@ -3647,6 +3654,18 @@ export default function InputBar() {
           onSelect={handleAdNegativeRuleChange}
           menuClass="w-52"
         />
+        <button
+          type="button"
+          onClick={() => setShowPostprocessSettings(true)}
+          title="后处理：按「项目 × 媒体 × 尺寸」批量产出各渠道变体"
+          className={pillClass}
+        >
+          <ImagesIcon className="h-3.5 w-3.5 shrink-0 text-ds-muted" />
+          <span className="text-ds-muted">后处理</span>
+          <span className={valueClass}>
+            {postprocessProjectCount > 0 ? `${postprocessProjectCount} 项目 · ${postprocessMediaCount} 媒体` : '未启用'}
+          </span>
+        </button>
         {!gallerySopModeActive && (
           <label className={`${pillClass} flex items-center gap-1`}>
             <span className="text-ds-muted">数量</span>
@@ -4005,6 +4024,10 @@ export default function InputBar() {
             onMaxSizeBlur: commitPostprocessMaxSize,
           }}
         />
+      )}
+
+      {showPostprocessSettings && (
+        <PostprocessSettingsModal sourceSize={params.size} onClose={() => setShowPostprocessSettings(false)} />
       )}
 
       <div data-input-bar className="fixed bottom-4 z-30 transition duration-300 sm:bottom-6">

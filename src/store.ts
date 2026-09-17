@@ -5,6 +5,15 @@ import { applyApiSecrets, extractApiSecrets, stripApiSecrets, type ApiSecretBund
 import { calculateImageSize, inferSizeTier, normalizeImageSize } from './lib/size'
 import { parseVariablePrompt, renderVariablePromptBatch } from './lib/variablePrompt'
 import { useRuntimeStore } from './stores/runtimeStore'
+import {
+  getPostprocessMediaConfigSnapshot,
+  restorePostprocessMediaConfig,
+  usePostprocessMediaStore,
+} from './storePostprocessMedia'
+// 只引类型：执行体在 `scheduleTaskPostprocess` 里动态 import。
+// 静态 import 会把 features/postprocess → features/composite 整条链拉进 store.ts 的模块图，
+// 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
+import type { TaskPostprocessSource } from './features/postprocess/taskPostprocess'
 import type {
   AgentConversation,
   AgentMessage,
@@ -209,7 +218,7 @@ import {
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { setApiTransportMode } from './lib/desktopApiFetch'
-import { validateMaskMatchesImage } from './lib/canvasImage'
+import { getSourceHeight, getSourceWidth, loadImageOriented, validateMaskMatchesImage } from './lib/canvasImage'
 import { mergePostprocessedActualParams, postprocessGeneratedImage } from './lib/imagePostprocess'
 import { fingerprintImage } from './lib/imageFingerprint'
 import {
@@ -736,6 +745,86 @@ async function saveTaskToLocalFSNow(taskId: string) {
   }
   // 完成/恢复路径兜底：补存尚未写入工作区目录的输出命名副本（幂等，已存过的跳过）
   await saveTaskImagesToLocalFSNow(taskId, task.outputImages ?? [], 0)
+  // 后处理产出（额外产出一份各渠道变体）：未启用配置时直接返回，失败只提示不回滚生成结果
+  void scheduleTaskPostprocess(taskId)
+}
+
+/** 已产出过后处理的源图键（`${taskId}:${imageId}`）：流式追加与恢复重跑都只处理一次 */
+const postprocessedSourceKeys = new Set<string>()
+
+/**
+ * 任务完成后按后处理配置产出各渠道变体。
+ *
+ * 幂等三闸：内存键（同会话防并发重入）、任务的 `postprocessOutputs`（跨重启）、
+ * 以及源图不可用时的显式跳过。全部失败路径都只提示，不影响生成结果。
+ */
+async function scheduleTaskPostprocess(taskId: string): Promise<void> {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task) return
+  const imageIds = (task.outputImages ?? []).filter(Boolean)
+  if (imageIds.length === 0) return
+
+  const config = usePostprocessMediaStore.getState()
+  // 未启用（没勾项目或没勾媒体）时不产出：没勾项目就没有产出目标
+  if (config.selectedCollectionIds.length === 0 || config.selectedMediaIds.length === 0) return
+
+  const produced = new Set((task.postprocessOutputs ?? []).map((item) => item.rawImageId))
+  const targets = imageIds.filter(
+    (imageId) => !produced.has(imageId) && !postprocessedSourceKeys.has(`${taskId}:${imageId}`),
+  )
+  if (targets.length === 0) return
+  // 先占位再执行：本函数是 fire-and-forget，防同一批图被两次触发重复产出
+  targets.forEach((imageId) => postprocessedSourceKeys.add(`${taskId}:${imageId}`))
+
+  const readSource = async (imageId: string, index: number): Promise<TaskPostprocessSource | null> => {
+    const rec = await getImage(imageId)
+    const dataUrl = rec?.dataUrl || (await ensureImageCached(imageId))
+    if (!dataUrl) return null
+    let width = rec?.width ?? 0
+    let height = rec?.height ?? 0
+    if (!width || !height) {
+      // 后处理要靠源图尺寸判方向、筛尺寸；记录里缺尺寸时从像素解一次
+      try {
+        const image = await loadImageOriented(dataUrl)
+        width = getSourceWidth(image)
+        height = getSourceHeight(image)
+      } catch (error) {
+        console.error('后处理源图尺寸解析失败', index, error)
+        return null
+      }
+    }
+    return { imageId, dataUrl, width, height }
+  }
+
+  try {
+    const { runTaskPostprocess } = await import('./features/postprocess/taskPostprocess')
+    const result = await runTaskPostprocess({
+      taskId,
+      imageIds: targets,
+      collections: useAssetLibraryStore.getState().collections,
+      alreadyProducedImageIds: [...produced],
+      createdAt: task.createdAt,
+      readSource,
+    })
+
+    if (result.outputs.length > 0) {
+      const latest = useStore.getState().tasks.find((item) => item.id === taskId)
+      updateTaskInStore(taskId, {
+        postprocessOutputs: [...(latest?.postprocessOutputs ?? []), ...result.outputs],
+        rawImageId: latest?.rawImageId ?? result.outputs[0].rawImageId,
+      })
+      useStore.getState().showToast(`后处理完成：产出 ${result.outputs.length} 个文件`, 'success')
+    }
+    if (result.skippedMediaIds.length > 0) {
+      useStore.getState().showToast(`后处理跳过 ${result.skippedMediaIds.length} 个媒体：渠道已被删除`, 'error')
+    }
+    for (const warning of result.warnings.slice(0, 3)) {
+      useStore.getState().showToast(warning, 'error')
+    }
+  } catch (error) {
+    console.error('后处理产出失败', error)
+    useStore.getState().showToast('后处理产出失败', 'error')
+  }
 }
 
 async function saveAgentConversationToLocalFS(conversationId: string) {
@@ -11976,11 +12065,6 @@ async function buildCompositeBackup() {
   return { compositeState, compositeAssetFiles, assets }
 }
 
-async function getPostprocessBackupState() {
-  const { getPostprocessPersistedState } = await import('./storePostprocess')
-  return getPostprocessPersistedState()
-}
-
 function getCompositeAssetExtension(type: string) {
   if (type === 'image/jpeg') return 'jpg'
   if (type === 'image/webp') return 'webp'
@@ -12289,9 +12373,9 @@ export async function exportData(
       manifest.wordLibraryGroups = wordLibraryGroups
       manifest.wordLibraryEntries = wordLibraryEntries
       manifest.wordGenerationBatches = wordGenerationBatches
-      manifest.postprocessState = await getPostprocessBackupState()
       manifest.compositeState = compositeBackup!.compositeState
       manifest.compositeAssetFiles = compositeBackup!.compositeAssetFiles
+      manifest.postprocessMediaState = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
       manifest.workspaceState = createWorkspaceBackupState(
         state.workspaceTabs,
         state.workspaceTabGroups,
@@ -12415,9 +12499,9 @@ export async function exportDataToPath(
             wordLibraryGroups: state.wordLibraryGroups,
             wordLibraryEntries: state.wordLibraryEntries,
             wordGenerationBatches: state.wordGenerationBatches,
-            postprocessState: await getPostprocessBackupState(),
             compositeState: compositeBackup!.compositeState,
             compositeAssetFiles: compositeBackup!.compositeAssetFiles,
+            postprocessMediaState: getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
             workspaceState: createWorkspaceBackupState(
               state.workspaceTabs,
               state.workspaceTabGroups,
@@ -12873,10 +12957,8 @@ async function importBackupTail(
 
   if (options.importConfig) {
     await restoreCompositeBackup(data, Object.fromEntries(state.compositeFiles))
-    if (data.postprocessState) {
-      const { replacePostprocessPersistedState } = await import('./storePostprocess')
-      replacePostprocessPersistedState(data.postprocessState)
-    }
+    // 旧备份无 postprocessMediaState：按默认配置恢复，不覆盖成空
+    restorePostprocessMediaConfig(data.postprocessMediaState)
     const mainState = useStore.getState()
 
     if (data.settings) {

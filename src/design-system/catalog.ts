@@ -636,6 +636,12 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['IconButton', 'Spinner'],
   },
   {
+    module: 'src/components/PostprocessSettingsModal.tsx',
+    responsibility: '后处理编排面板：项目 × 媒体 × 尺寸的批量产出配置、命名模板与产出预览',
+    decision: 'compose',
+    targets: ['Dialog', 'Checkbox', 'SelectField', 'Button'],
+  },
+  {
     module: 'src/components/MarkdownRenderer.tsx',
     responsibility: 'Markdown 和流式内容渲染',
     decision: 'retain',

@@ -2,6 +2,7 @@
 
 import type { CompositeV2PersistedSnapshot } from './features/composite/lib/compositeV2Types'
 import type { AssistantActionPreferences } from './features/assistantActions/types'
+import type { PostprocessMediaConfig } from './lib/postprocessMedia'
 
 export type ApiMode = 'images' | 'responses'
 export type AgentApiConfigMode = 'native' | 'hybrid'
@@ -566,6 +567,16 @@ export interface TaskRecord {
   defaultCollectionId?: string
   localSaveBatchFolder?: string
   localSavedOutputImagePaths?: Record<string, string>
+  /**
+   * 后处理已产出的变体文件。
+   * 除展示外还承担**幂等判定**：同一张源图（`rawImageId`）已产出的不再重复产出。
+   */
+  postprocessOutputs?: TaskPostprocessOutput[]
+  /**
+   * 未处理原图 id（后处理启用时写入），供「继续修改」从原图出发，避免水印叠水印。
+   * 多图任务时为首张输出图；逐张溯源见 `postprocessOutputs[].rawImageId`。
+   */
+  rawImageId?: string
   /** 来源模式：画廊 / Agent */
   sourceMode?: AppMode
   /** Agent 对话 ID */
@@ -580,6 +591,24 @@ export interface TaskRecord {
   agentBatchCallId?: string
   /** Agent 图像工具实际动作 */
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
+}
+
+/** 后处理产出的单个变体文件记录。 */
+export interface TaskPostprocessOutput {
+  /** 源图（未处理原图）的 image store id */
+  rawImageId: string
+  /** 产出文件的绝对路径 */
+  path: string
+  mediaId: string
+  mediaName: string
+  sizeId: string
+  width: number
+  height: number
+  /** 纯净版（未叠水印） */
+  clean: boolean
+  /** 归属项目（`AssetCollection` id）；未启用项目维度时缺省 */
+  collectionId?: string
+  createdAt: number
 }
 
 export interface FavoriteCollection {
@@ -1267,7 +1296,11 @@ export interface ExportData {
     }
   >
   compositeState?: CompositeV2PersistedSnapshot
-  postprocessState?: import('./storePostprocess').PostprocessPersistedState
+  /**
+   * 后处理编排配置（媒体表 + 上次选择 + 命名模板）。
+   * 旧备份无此字段时按 `createDefaultPostprocessMediaConfig()` 恢复，不报错。
+   */
+  postprocessMediaState?: PostprocessMediaConfig
   workspaceState?: WorkspaceBackupState
   compositeAssetFiles?: Record<
     string,
