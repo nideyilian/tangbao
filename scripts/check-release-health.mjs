@@ -31,6 +31,16 @@ const tag = process.argv[2] || `v${packageJson.version}`
 const expectedVersion = tag.replace(/^v/, '')
 const downloadBase = `https://github.com/${OWNER}/${REPO}/releases/download/${tag}`
 
+/**
+ * 本机（部分企业网络 / 带自签根证书的环境）Node 默认会因证书链不全拒绝连接：
+ *   unable to verify the first certificate
+ * 这与本仓库推 git 需要 `-c http.sslVerify=false` 是同一个原因。
+ * 默认**保持严格校验**；本机自检时设 `RELEASE_CHECK_INSECURE=1` 放行，
+ * 只影响本脚本自己的 HTTPS 请求，不改变应用或构建产物的任何行为。
+ */
+const INSECURE = process.env.RELEASE_CHECK_INSECURE === '1'
+const httpsAgent = INSECURE ? new https.Agent({ rejectUnauthorized: false }) : undefined
+
 const passed = []
 const warnings = []
 const problems = []
@@ -46,6 +56,7 @@ function request(url, method = 'GET', headers = {}) {
         path: target.pathname + target.search,
         method,
         headers: { 'user-agent': 'tangbao-release-check', ...headers },
+        ...(httpsAgent ? { agent: httpsAgent } : {}),
       },
       (res) => {
         const location = res.headers.location
