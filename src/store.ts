@@ -11427,7 +11427,9 @@ async function restoreCompositeBackup(data: ExportData, unzipped: Record<string,
 
 /** 导出数据为 ZIP */
 export async function exportData(
-  options: ExportOptions = { exportConfig: true, exportTasks: true, exportAssets: true, exportImages: false },
+  // 默认值与设置页一致：只导必要数据（配置 + 项目树/素材库索引），
+  // 任务与图片体量大，需显式开启（杰哥 2026-09-19 裁决）。
+  options: ExportOptions = { exportConfig: true, exportTasks: false, exportAssets: true, exportImages: false },
 ) {
   try {
     if (isElectronEnv()) {
@@ -11928,7 +11930,11 @@ export async function importDataFromPath(
       preflightData.version >= 5 &&
       Boolean(preflightData.workspaceState) &&
       options.importConfig === true &&
-      options.importTasks === true
+      options.importTasks === true &&
+      // ⚠️ 必须要求「包里确实带了任务」才允许整体替换：
+      // 否则导入一个「只导配置」的包（任务默认不纳入导出）会把本地任务整体替换为空 —— 数据被静默清空。
+      // 用户要清空任务有专门的「清除数据」，不该由一次配置导入顺手完成。
+      (preflightData.tasks?.length ?? 0) > 0
 
     const readEntry = async (archivePath: string): Promise<Uint8Array> => {
       const result = await api.readZipEntry!(filePath, archivePath)
@@ -12004,7 +12010,11 @@ export async function importData(
       preflightData.version >= 5 &&
       Boolean(preflightData.workspaceState) &&
       options.importConfig === true &&
-      options.importTasks === true
+      options.importTasks === true &&
+      // ⚠️ 必须要求「包里确实带了任务」才允许整体替换：
+      // 否则导入一个「只导配置」的包（任务默认不纳入导出）会把本地任务整体替换为空 —— 数据被静默清空。
+      // 用户要清空任务有专门的「清除数据」，不该由一次配置导入顺手完成。
+      (preflightData.tasks?.length ?? 0) > 0
 
     const state = createImportExtractionState(existingImageIds)
 

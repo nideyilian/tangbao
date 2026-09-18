@@ -949,10 +949,15 @@ export default function SettingsModal() {
   const [llmPromptTooltipVisible, setLlmPromptTooltipVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('api')
   const [exportConfig, setExportConfig] = useState(true)
-  const [exportTasks, setExportTasks] = useState(true)
+  // 任务与图片体量大：默认不纳入导出包，需要时在下方单独勾选（杰哥 2026-09-19 裁决）
+  const [exportTasks, setExportTasks] = useState(false)
   const [exportImages, setExportImages] = useState(false)
   const [exportAssets, setExportAssets] = useState(true)
-  const [includeBackupSecrets, setIncludeBackupSecrets] = useState(false)
+  // ↑ 保持默认勾选：**项目树结构**（素材库的 `collections` 那棵树）就在这个槽位里，
+  //   它是「必要数据」的一部分；且只是索引元数据，不含原图字节。
+  // 密钥默认导出（杰哥 2026-09-19 裁决）。⚠️ 导出包内的密钥是**明文**且 ZIP 不加密，
+  // 因此勾选项旁必须保留明文警告文案。
+  const [includeBackupSecrets, setIncludeBackupSecrets] = useState(true)
   const [importConfig, setImportConfig] = useState(true)
   const [importTasks, setImportTasks] = useState(true)
   const [importImages, setImportImages] = useState(true)
