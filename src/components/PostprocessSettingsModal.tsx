@@ -515,7 +515,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
                       恢复默认
                     </Button>
                   </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
+                  <div className="mt-1.5 flex flex-wrap justify-center gap-1">
                     {POSTPROCESS_NAME_TOKENS.map((token) => (
                       <Button
                         key={token}

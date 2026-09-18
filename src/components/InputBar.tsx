@@ -52,6 +52,7 @@ import {
   stripImageMentionMarkers,
 } from '../lib/promptImageMentions'
 import { calculateImageSize, formatImageRatio, inferSizeTier, normalizeImageSize } from '../lib/size'
+import { withAspectRatioPrompt } from '../lib/aspectRatioPrompt'
 import { parseVariablePrompt } from '../lib/variablePrompt'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
@@ -200,13 +201,6 @@ const QUICK_ASPECT_RATIOS = ['16:9', '9:16', '1:1'] as const
 function getAspectRatioFromSize(size: string): string {
   const match = normalizeImageSize(size).match(/^(\d+)x(\d+)$/i)
   return match ? formatImageRatio(Number(match[1]), Number(match[2])).replace(/^≈/, '') : ''
-}
-
-function withAspectRatioPrompt(prompt: string, ratio: string): string {
-  const withoutTrailingRatio = prompt
-    .replace(/(?:[，,；;。\s]*画面比例为\s*:\s*(?:\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?)?\s*)$/u, '')
-    .trimEnd()
-  return `${withoutTrailingRatio}${withoutTrailingRatio ? '，' : ''}画面比例为:${ratio}`
 }
 
 function getNodeVisibleTextLength(node: Node): number {
@@ -875,12 +869,17 @@ export default function InputBar() {
     if (galleryPromptFolderRef.current === null) {
       galleryPromptFolderRef.current = nextFolderKey
       const saved = readGalleryInputDraft(nextFolderKey)
-      if (saved !== null && saved !== prompt) setPrompt(saved)
+      if (saved !== null && saved !== prompt) {
+        // 程序性改写提示词：清掉「用户输入」标志，否则输入框不会跟着切到该文件夹的草稿。
+        isUserInputRef.current = false
+        setPrompt(saved)
+      }
       return
     }
     if (galleryPromptFolderRef.current === nextFolderKey) return
     writeGalleryInputDraft(galleryPromptFolderRef.current, prompt)
     galleryPromptFolderRef.current = nextFolderKey
+    isUserInputRef.current = false
     setPrompt(readGalleryInputDraft(nextFolderKey) ?? '')
   }, [appMode, gallerySopFolderKey, prompt, setPrompt])
   const gallerySopId = gallerySopIdsByTab[gallerySopScopeKey] ?? ''
@@ -2070,6 +2069,10 @@ export default function InputBar() {
   const applyAspectRatio = useCallback(
     (ratio: string, size: string) => {
       setParams({ size })
+      // 这是一次**程序性**改写：必须先清掉「用户输入」标志，否则「同步 prompt 至 contentEditable」
+      // 那个 effect 会跳过本次渲染 —— 输入框里看不见追加的比例，紧接着一次从 DOM 回读
+      // 还会把整段改写抹掉（表现为「选了尺寸但没生效」）。与插入模板等写法的约定一致。
+      isUserInputRef.current = false
       setPrompt(withAspectRatioPrompt(prompt, ratio))
     },
     [prompt, setParams, setPrompt],
@@ -2841,10 +2844,12 @@ export default function InputBar() {
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
-    // 输入时不重复渲染以防光标跳动
+    // 输入时不重复渲染以防光标跳动 —— 但只在 DOM 已经承载了这份 prompt 时才跳过。
+    // 两者不一致说明这是一次**程序性**改写（选尺寸追加比例、插入模板…），必须照常渲染，
+    // 否则输入框里看不见改动，紧接着一次从 DOM 回读还会把它整个抹掉。
     if (isUserInputRef.current) {
       isUserInputRef.current = false
-      return
+      if (getContentEditablePlainText(el) === prompt) return
     }
     const currentColorMap = VAR_COLOR_MAP // capture latest value
     const parts = getPromptMentionParts(prompt, inputImages)
@@ -4006,6 +4011,9 @@ export default function InputBar() {
               updates.postprocess_resize_enabled = false
             }
             setParams(updates)
+            // 同上：程序性改写提示词，必须先清掉「用户输入」标志，否则同步 effect 会跳过渲染，
+            // 这次追加的比例紧接着还会被一次 DOM 回读抹掉。
+            isUserInputRef.current = false
             setPrompt(withAspectRatioPrompt(prompt, size === 'auto' ? '' : getAspectRatioFromSize(size)))
           }}
           onClose={() => setShowSizePicker(false)}

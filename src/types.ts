@@ -505,6 +505,14 @@ export interface TaskRecord {
   /** 自定义异步任务是否等待自动恢复 */
   customRecoverable?: boolean
   /**
+   * OpenAI 请求看门狗判定超时、任务被提前终结时写入的时间戳（仅这一次执行有效）。
+   *
+   * 超时终结是「给用户一个交代」而非「请求真的失败了」——请求可能还在飞。带着这个标记时，
+   * 迟到返回的真实结果仍允许结算进任务（否则已产出的图片会变成进不了卡片、也进不了素材库的孤儿）。
+   * 每次 `executeTask` 开始与正常收尾都会清掉它。
+   */
+  watchdogTimedOutAt?: number
+  /**
    * 批量生成槽位，数量固定等于 params.n。
    * 旧任务可能没有该字段，UI 与编排器均应兼容（按 outputImages 直接展示）。
    */

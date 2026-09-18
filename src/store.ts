@@ -295,6 +295,11 @@ import {
   getNextGeneratedImageBatch,
   resolveSeriesGroupGeneratedImageNaming,
 } from './lib/generatedImageBatch'
+import {
+  canSettleTaskOutputs,
+  pickMoreCompleteOutputIds,
+  planRestoredOutputAssignments,
+} from './lib/generatedOutputImages'
 import { useRequirementPrototype } from './features/requirementPrototype/store'
 import { getSopAiRevisionAttachmentReferences, removeSopAiRevisionAttachments } from './features/strategy/sopAiRevision'
 
@@ -5025,6 +5030,27 @@ export async function putTasks(tasks: TaskRecord[]): Promise<void> {
   for (const task of tasks) enqueueAssetSync(task.id)
 }
 
+/**
+ * 任务落盘带一次重试。
+ *
+ * `putTask` 是 fire-and-forget 的跨进程写（渲染 → 主进程 → UtilityProcess → SQLite），
+ * 素材 worker 换代时在途请求会被直接 reject（见 `electron/catalog-client.ts` 的
+ * `asset catalog worker restarted`）。丢一次写就意味着内存与磁盘永久不一致 ——
+ * 素材是逐条 upsert 的所以仍然完整，而任务卡片按任务记录渲染，数量就少了。
+ */
+async function persistTaskWithRetry(task: TaskRecord): Promise<void> {
+  try {
+    await putTask(task)
+  } catch (error) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    try {
+      await putTask(task)
+    } catch (retryError) {
+      console.error(`任务落盘失败（task=${task.id}）`, retryError, error)
+    }
+  }
+}
+
 export function getCodexCliPromptKey(settings: AppSettings): string {
   const profile = getActiveApiProfile(settings)
   return `${profile.id}\n${profile.baseUrl}`
@@ -5104,6 +5130,8 @@ function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.
       batchItemStatuses,
       batchItemErrors: batchItemErrors.length > 0 ? batchItemErrors : undefined,
       falRecoverable: false,
+      // 超时只是「先给用户一个交代」，请求可能还在飞；留下标记让迟到返回的真实结果仍能结算。
+      watchdogTimedOutAt: now,
       finishedAt: now,
       elapsed: Math.max(0, now - task.createdAt),
     })
@@ -5114,6 +5142,8 @@ function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.
       status: 'error',
       error,
       falRecoverable: false,
+      // 同上：超时判定不代表请求真的失败，迟到结果仍应被收下。
+      watchdogTimedOutAt: now,
       finishedAt: now,
       elapsed: Math.max(0, now - task.createdAt),
     })
@@ -5427,24 +5457,27 @@ async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<Return
     actualParamsList.push(stored.actualParams)
   }
 
+  // 恢复查询可能只带回一部分图片（例如生成过程中已经就地产出过几张）：不得把已有产出覆盖掉。
+  const restoredOutputIds = pickMoreCompleteOutputIds(outputIds, latest.outputImages ?? [])
   updateTaskInStore(
     task.id,
     {
-      outputImages: outputIds,
+      outputImages: restoredOutputIds,
       actualParams: firstActualParams(actualParamsList),
       actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
       revisedPromptByImage: undefined,
       status: 'done',
       error: null,
       falRecoverable: false,
+      watchdogTimedOutAt: undefined,
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     },
     (current) => current.falRecoverable === true,
   )
-  useStore.getState().showToast(`fal.ai 任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  useStore.getState().showToast(`fal.ai 任务已恢复，共 ${restoredOutputIds.length} 张图片`, 'success')
   if (!isAgentTask(task))
-    showTaskCompletionNotification('图像生成完成', `fal.ai 任务已恢复，共 ${outputIds.length} 张图片。`)
+    showTaskCompletionNotification('图像生成完成', `fal.ai 任务已恢复，共 ${restoredOutputIds.length} 张图片。`)
   else void continueRecoveredAgentRound(task.id)
   void saveTaskToLocalFS(task.id)
 }
@@ -9775,6 +9808,8 @@ async function executeTask(taskId: string) {
   const { settings } = useStore.getState()
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return
+  // 新一次执行开始：上一次执行留下的「超时终结」标记作废，否则收尾会把迟到的旧结果误判成属于本次执行。
+  if (task.watchdogTimedOutAt !== undefined) updateTaskInStore(taskId, { watchdogTimedOutAt: undefined })
   // 任务级取消：注册 AbortController，停止时中止在途请求/轮询
   const abortController = new AbortController()
   taskAbortControllers.set(taskId, abortController)
@@ -10188,6 +10223,26 @@ async function executeTask(taskId: string) {
         })
       }
 
+      // 恢复重算时槽位快照可能落后于已落盘的 outputImages（图已产出，槽位却还停在 pending / submitted）。
+      // 只按槽位状态回收会在收尾把 outputImages 覆盖成更短的列表，表现为「刷新后任务卡片显示的已生成
+      // 数量变少，而素材库仍是全量」（素材是逐条 upsert 的，不受影响）。
+      // 这里把它们补回空闲槽位并直接标 done：既保住图片，也避免对同一张图重复发起生成。
+      if (canResume) {
+        const restoredOutputs = planRestoredOutputAssignments(state.slots, task.outputImages ?? [])
+        for (const { slotIndex, imageId } of restoredOutputs) {
+          const dataUrl = await ensureImageCached(imageId)
+          if (!dataUrl) continue
+          committed.set(slotIndex, { imgId: imageId, dataUrl, actualParams: task.actualParamsByImage?.[imageId] })
+          state = {
+            ...state,
+            slots: state.slots.map((slot) =>
+              slot.index === slotIndex ? { ...slot, status: 'done' as const, outputImageId: imageId } : slot,
+            ),
+          }
+        }
+        if (restoredOutputs.length > 0) persist()
+      }
+
       const processResult = async (requestId: string, result: CallApiResult): Promise<GenerationState> =>
         withResultCommitLock(async () => {
           const request = state.remoteRequests.find((r) => r.id === requestId)
@@ -10267,7 +10322,9 @@ async function executeTask(taskId: string) {
             rejectedExact.length ? { slotIndexes: rejectedExact, kind: 'exact-duplicate' } : undefined,
           )
           const current = useStore.getState().tasks.find((t) => t.id === taskId)
-          if (current && current.status === 'running') {
+          // 看门狗超时后仍需把已 commit 的图片落进任务：否则这批图只存在于 images 表，
+          // 收尾前一旦崩溃就是卡片和素材库都收不到的孤儿数据。
+          if (canSettleTaskOutputs(current)) {
             const outputImages = state.slots
               .filter((slot) => slot.status === 'done' && slot.outputImageId)
               .sort((a, b) => a.index - b.index)
@@ -10601,17 +10658,19 @@ async function executeTask(taskId: string) {
     }
 
     const latestBeforeSuccess = useStore.getState().tasks.find((t) => t.id === taskId)
-    if (!latestBeforeSuccess || latestBeforeSuccess.status !== 'running') {
+    // 同样放行「看门狗超时后迟到返回」的结果：这些图已经拿到手了，丢掉只会造出孤儿数据。
+    if (!latestBeforeSuccess || !canSettleTaskOutputs(latestBeforeSuccess)) {
       useRuntimeStore.getState().setTaskStreamPreview(taskId)
       return
     }
 
     // 存储输出图片（n>1 分批模式已在每轮追加，这里只需补充单张模式）
     // 多图编排路径直接返回 race-free 的槽位级 outputImages；单张路径沿用 store 中已累积的 outputImages。
-    const outputIds: string[] =
-      result.outputImages && result.outputImages.length > 0
-        ? result.outputImages
-        : latestBeforeSuccess.outputImages || []
+    // 收尾这一笔不得让「已生成的图片数量」回退成更短的一份（恢复重算 / 迟到的中间态结果都可能返回较短列表，
+    // 一旦覆盖就会出现「刷新后任务卡片数量变少、素材库却仍是全量」），因此取两者中更完整的那一份。
+    const resultOutputIds = result.outputImages && result.outputImages.length > 0 ? result.outputImages : []
+    const persistedOutputIds = latestBeforeSuccess.outputImages ?? []
+    const outputIds = pickMoreCompleteOutputIds(resultOutputIds, persistedOutputIds)
     let storedSingleActualParamsList: Array<Partial<TaskParams> | undefined> | undefined
     if (n === 1) {
       storedSingleActualParamsList = []
@@ -10667,7 +10726,10 @@ async function executeTask(taskId: string) {
 
     // 更新任务
     const latestBeforeUpdate = useStore.getState().tasks.find((t) => t.id === taskId)
-    if (!latestBeforeUpdate || latestBeforeUpdate.status !== 'running') {
+    // 用户主动停止 / 任务已删除时不得把任务"复活"为完成；但看门狗超时是例外 —— 它只是
+    // 「先给用户一个交代」，请求可能还在飞，带着本次执行的超时标记时仍必须结算，
+    // 否则这批刚 commit 的图片既不进卡片也不进素材库，直接变成孤儿数据。
+    if (!latestBeforeUpdate || !canSettleTaskOutputs(latestBeforeUpdate)) {
       useRuntimeStore.getState().setTaskStreamPreview(taskId)
       return
     }
@@ -10690,6 +10752,8 @@ async function executeTask(taskId: string) {
       batchItemErrors: result.batchItemErrors,
       status: finalTaskStatus,
       ...(result.status === 'error' ? { error: result.error ?? '生成失败' } : { error: null }),
+      // 真实结果已结算，超时标记作废（残留会让下一次执行误判）。
+      watchdogTimedOutAt: undefined,
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
       falRecoverable: false,
@@ -10921,7 +10985,7 @@ async function flushTransientTaskPersists() {
         await Promise.all(
           pending.map((taskId) => {
             const task = tasksById.get(taskId)
-            return task ? putTask(task).then(() => undefined) : Promise.resolve()
+            return task ? persistTaskWithRetry(task) : Promise.resolve()
           }),
         )
       }
@@ -11003,7 +11067,7 @@ export function updateTaskInStore(
     scheduleTransientTaskPersist(taskId)
     return Promise.resolve()
   }
-  return putTask(task).then(() => undefined)
+  return persistTaskWithRetry(task)
 }
 
 function updateTaskProgress(taskId: string, progressStage: TaskProgressStage, progressMessage?: string) {
@@ -12086,24 +12150,27 @@ async function completeRecoveredCustomTask(
     actualParamsList.push(stored.actualParams)
   }
 
+  // 同 fal 恢复：查询结果可能只覆盖一部分产出，不能把已生成的图片覆盖掉。
+  const restoredOutputIds = pickMoreCompleteOutputIds(outputIds, latest.outputImages ?? [])
   updateTaskInStore(
     task.id,
     {
-      outputImages: outputIds,
+      outputImages: restoredOutputIds,
       actualParams: firstActualParams(actualParamsList),
       actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
       revisedPromptByImage: undefined,
       status: 'done',
       error: null,
       customRecoverable: false,
+      watchdogTimedOutAt: undefined,
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     },
     (current) => current.customRecoverable === true,
   )
-  useStore.getState().showToast(`自定义异步任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  useStore.getState().showToast(`自定义异步任务已恢复，共 ${restoredOutputIds.length} 张图片`, 'success')
   if (!isAgentTask(task))
-    showTaskCompletionNotification('图像生成完成', `自定义异步任务已恢复，共 ${outputIds.length} 张图片。`)
+    showTaskCompletionNotification('图像生成完成', `自定义异步任务已恢复，共 ${restoredOutputIds.length} 张图片。`)
   else void continueRecoveredAgentRound(task.id)
   void saveTaskToLocalFS(task.id)
 }
