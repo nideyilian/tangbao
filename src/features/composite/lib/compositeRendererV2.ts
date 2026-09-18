@@ -321,7 +321,8 @@ export async function renderCompositeV2ToCanvas(
 export async function renderCompositeV2ToJpegDataUrl(input: CompositeV2RenderInput) {
   const canvas = document.createElement('canvas')
   await renderCompositeV2ToCanvas(input, canvas)
-  // 走 toBlob 而非同步 toDataURL：批量导出会对同一 preset 反复编码（见 compositeExportRuntime 的体积探测），
-  // 每次同步编码都是一次主线程冻结。返回值仍是 dataUrl，调用方零改动。
+  // 走 toBlob 而非同步 toDataURL：后处理要把产物压到目标体积，会对同一 preset 反复试编码
+  // （见 `features/postprocess/renderVariant` 的高低质量二分探测），每次同步编码都是一次主线程冻结。
+  // 返回值仍是 dataUrl，调用方零改动。
   return blobToDataUrl(await canvasToBlob(canvas, 'image/jpeg', input.quality ?? 0.9))
 }

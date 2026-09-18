@@ -1,25 +1,27 @@
+/**
+ * 水印预设 store（A 套「后期处理工作区」的全部遗产）。
+ *
+ * 这个 store 原来装着两件事：水印预设编辑 + 整套批量导出编排（导出队列、任务流、
+ * 分发、输出规则、历史记录、自定义命名变量）。编排已统一到 `features/postprocess`
+ * 那一套，本 store 只保留前者。
+ *
+ * 持久化：localStorage（`tangbao-composite-v2-workspace-storage`）。
+ * version 3 → 4 的迁移是**丢弃式**的——旧数据里的编排字段（预设的输出目录、命名模板、
+ * 自定义变量、渠道尺寸覆盖）在建模上已归后处理，留着只会让人以为它还算数。
+ */
 import { create } from 'zustand'
 import { createStore } from 'zustand/vanilla'
 import { persist } from 'zustand/middleware'
 import { createPreviewHistory } from './lib/compositeBackgrounds'
-import { addCompositeHistoryRecord } from './lib/compositeExportHistoryV2'
 import { createDefaultCompositeV2State } from './lib/compositeV2Defaults'
 import { fitCompositeTextLayer } from './lib/compositeTextLayout'
 import { hasLegacyCompositeAssets, migrateLegacyCompositeAssets } from './lib/compositeAssetMigration'
-import type { CompositeV2ExportQueueItem } from './lib/compositeExportPlan'
 import type {
   CompositeV2BackgroundImage,
-  CompositeV2ExportStatus,
-  CompositeV2ExportTask,
-  CompositeV2ImageAssetRef,
-  CompositeV2FailureItem,
-  CompositeV2HistoryRecord,
   CompositeV2FitMode,
+  CompositeV2ImageAssetRef,
   CompositeV2Layer,
-  CompositeV2OutputSizeRule,
-  CompositeV2OutputRuleGroup,
   CompositeV2PersistedSnapshot,
-  CompositeV2SuccessItem,
   CompositeV2State,
 } from './lib/compositeV2Types'
 
@@ -31,38 +33,6 @@ type CompositeV2BatchState = {
   previewHistoryIndex: number
   selectedPresetGroupId: string
   selectedPreviewPresetId: string
-  enabledPresetIdsForRun: string[]
-  smartMatchOrientation: boolean
-  customValue: string
-  preserveSourceDir: boolean
-  exportStatus: CompositeV2ExportStatus
-  exportCompleted: number
-  exportTotal: number
-  exportSuccesses: CompositeV2SuccessItem[]
-  exportFailures: CompositeV2FailureItem[]
-  /** 导出任务流（每张输出一个任务，含 pending/running/done/failed 状态；不参与持久化） */
-  exportTasks: CompositeV2ExportTask[]
-  /**
-   * 后台导出队列（不参与持久化）：点击「开始导出」即入队（任务已发送，UI 立即恢复），
-   * 队列泵按入队顺序在后台逐个执行；正在执行的任务结束后从队列移除。
-   */
-  exportQueue: CompositeV2ExportQueueItem[]
-  /** 当前导出任务的状态文案（结果面板/提示用；不参与持久化） */
-  exportStatusText: string
-  distributionStatus: 'idle' | 'running' | 'completed' | 'failed' | 'canceled'
-  distributionCompleted: number
-  distributionTotal: number
-  distributionSuccesses: import('./lib/compositeV2Types').CompositeV2DistributionSuccessItem[]
-  distributionFailures: import('./lib/compositeV2Types').CompositeV2DistributionFailureItem[]
-  /**
-   * 导出取消请求标记（不参与持久化）。放在 store 而不是组件 ref 里，
-   * 保证弹窗关闭重开后，仍在后台运行的导出任务依旧能被暂停/取消。
-   */
-  exportCancelRequested: boolean
-  /**
-   * 分发（distribution）取消请求标记，同样放在 store 中，弹窗关闭重开后仍可控。
-   */
-  distributionCancelRequested: boolean
   clipboardLayer: CompositeV2Layer | null
 }
 
@@ -70,7 +40,6 @@ type CompositeV2UndoSnapshot = {
   logoLibraryPath: string
   logoOrder: string[]
   projectLogos: CompositeV2State['projectLogos']
-  customVariables: CompositeV2State['customVariables']
   backgroundFolders: string[]
   recursiveBackgrounds: boolean
   backgrounds: CompositeV2BackgroundImage[]
@@ -78,16 +47,9 @@ type CompositeV2UndoSnapshot = {
   previewHistoryIndex: number
   selectedPresetGroupId: string
   selectedPreviewPresetId: string
-  enabledPresetIdsForRun: string[]
-  smartMatchOrientation: boolean
-  customValue: string
-  preserveSourceDir: boolean
   presets: CompositeV2State['presets']
   presetGroups: CompositeV2State['presetGroups']
-  outputRuleGroups: CompositeV2State['outputRuleGroups']
   globalFitMode: CompositeV2FitMode
-  historyRetention: number
-  distributionConfig: CompositeV2State['distributionConfig']
 }
 
 type CompositeV2UndoState = {
@@ -106,10 +68,6 @@ type CompositeV2StoreActions = {
   addProjectLogos: (logos: CompositeV2State['projectLogos']) => void
   removeProjectLogo: (id: string) => void
   renameProjectLogo: (id: string, name: string) => void
-  setCustomVariables: (variables: CompositeV2State['customVariables']) => void
-  addCustomVariable: (name: string, value: string, presetId: string) => void
-  setPresetCustomVariableValue: (presetId: string, name: string, value: string) => void
-  removeCustomVariable: (name: string) => void
   setBackgroundFolders: (paths: string[]) => void
   setRecursiveBackgrounds: (recursive: boolean) => void
   setBackgrounds: (backgrounds: CompositeV2BackgroundImage[]) => void
@@ -120,39 +78,9 @@ type CompositeV2StoreActions = {
   addLogoLayer: (presetId: string) => void
   setSelectedPresetGroup: (groupId: string) => void
   setSelectedPreviewPresetId: (presetId: string) => void
-  setEnabledPresetIdsForRun: (presetIds: string[]) => void
-  setSmartMatchOrientation: (smartMatchOrientation: boolean) => void
-  setCustomValue: (value: string) => void
-  setPreserveSourceDir: (preserveSourceDir: boolean) => void
   pushPreviewBackground: (path: string) => void
   previousPreviewBackground: () => void
   nextPreviewBackground: () => void
-  setExportProgress: (completed: number, total: number) => void
-  setExportStatus: (status: CompositeV2ExportStatus) => void
-  setExportCancelRequested: (cancelRequested: boolean) => void
-  setDistributionCancelRequested: (cancelRequested: boolean) => void
-  setExportTasks: (tasks: CompositeV2ExportTask[]) => void
-  updateExportTask: (key: string, patch: Partial<CompositeV2ExportTask>) => void
-  resetExportTasks: () => void
-  resetExportResults: () => void
-  enqueueExport: (item: CompositeV2ExportQueueItem) => void
-  updateExportQueueItem: (id: string, patch: Partial<CompositeV2ExportQueueItem>) => void
-  removeExportQueueItem: (id: string) => void
-  clearExportQueue: () => void
-  resetExportQueue: () => void
-  setExportStatusText: (text: string) => void
-  addExportSuccess: (item: CompositeV2SuccessItem) => void
-  addExportFailure: (item: CompositeV2FailureItem) => void
-  setDistributionProgress: (completed: number, total: number) => void
-  setDistributionStatus: (status: 'idle' | 'running' | 'completed' | 'failed' | 'canceled') => void
-  resetDistributionResults: () => void
-  addDistributionSuccess: (item: import('./lib/compositeV2Types').CompositeV2DistributionSuccessItem) => void
-  addDistributionFailure: (item: import('./lib/compositeV2Types').CompositeV2DistributionFailureItem) => void
-  addHistoryRecord: (record: CompositeV2HistoryRecord) => void
-  updateHistoryRecord: (id: string, patch: Partial<CompositeV2HistoryRecord>) => void
-  removeHistoryRecord: (id: string) => void
-  clearHistory: () => void
-  setHistoryRetention: (retention: number) => void
   createPresetGroup: (name: string) => void
   createPreset: (name: string) => void
   deletePreset: (presetId: string) => void
@@ -168,15 +96,6 @@ type CompositeV2StoreActions = {
   pasteLayer: (presetId: string) => void
   duplicateLayer: (presetId: string, layerId: string) => void
   setGlobalFitMode: (mode: CompositeV2FitMode) => void
-  updateOutputRule: (ruleId: string, patch: Partial<CompositeV2OutputSizeRule>) => void
-  setOutputRuleGroupEnabled: (groupId: string, enabled: boolean) => void
-  addOutputRuleGroup: (name: string, id?: string) => void
-  updateOutputRuleGroup: (groupId: string, patch: Partial<CompositeV2OutputRuleGroup>) => void
-  deleteOutputRuleGroup: (groupId: string) => void
-  addOutputRule: (groupId: string, rule: Omit<CompositeV2OutputSizeRule, 'id'>) => void
-  deleteOutputRule: (groupId: string, ruleId: string) => void
-  setDistributionConfig: (patch: Partial<CompositeV2State['distributionConfig']>) => void
-  setArchiveExportsToLibrary: (archive: boolean) => void
 }
 
 export type CompositeV2StoreState = CompositeV2BatchState &
@@ -185,20 +104,6 @@ export type CompositeV2StoreState = CompositeV2BatchState &
   CompositeV2StoreActions
 
 export type CompositeV2PersistedState = CompositeV2PersistedSnapshot
-
-type LegacyCompositeV2Preset = Partial<CompositeV2State['presets'][number]> & {
-  id: string
-  name: string
-  namingTemplate?: string
-  subfolderTemplate?: string
-  customVariables?: CompositeV2State['customVariables']
-}
-
-type LegacyCompositeV2PersistedState = Partial<CompositeV2PersistedState> & {
-  presets?: LegacyCompositeV2Preset[]
-}
-
-const DEFAULT_PRESET_FILENAME_TEMPLATE = '{preset}-{source}-{index}'
 
 export type CreateCompositeV2StoreOptions = {
   pickRandomIndex?: (length: number) => number
@@ -210,6 +115,11 @@ const DEFAULT_LAYER_SHADOW = { enabled: false, color: '#000000', x: 0, y: 4, blu
 const DEFAULT_LAYER_STROKE = { enabled: false, color: '#111827', width: 0 }
 const HISTORY_LIMIT = 100
 const HISTORY_MERGE_WINDOW_MS = 1200
+/**
+ * 持久化版本。3 → 4：编排字段（预设的输出目录/命名模板/自定义变量/渠道尺寸覆盖）
+ * 随 A 套编排退役而移除，必须靠迁移把它们丢掉——否则旧数据反序列化会把脏字段写回。
+ */
+const COMPOSITE_V2_PERSIST_VERSION = 4
 
 export function createCompositeV2StoreState(): CompositeV2BatchState & CompositeV2UndoState & CompositeV2State {
   const defaults = createDefaultCompositeV2State()
@@ -219,7 +129,6 @@ export function createCompositeV2StoreState(): CompositeV2BatchState & Composite
     logoLibraryPath: defaults.logoLibraryPath,
     logoOrder: [],
     projectLogos: [],
-    customVariables: defaults.customVariables,
     backgroundFolders: [],
     recursiveBackgrounds: false,
     backgrounds: [],
@@ -227,43 +136,9 @@ export function createCompositeV2StoreState(): CompositeV2BatchState & Composite
     previewHistoryIndex: -1,
     selectedPresetGroupId,
     selectedPreviewPresetId: getFirstPresetIdForGroup(defaults.presetGroups, selectedPresetGroupId),
-    enabledPresetIdsForRun: getPresetIdsForGroup(defaults.presetGroups, selectedPresetGroupId),
-    smartMatchOrientation: false,
-    customValue: '',
-    preserveSourceDir: false,
-    // 导出成图默认只写入输出文件夹，不归档进素材库（cache-images）
-    archiveExportsToLibrary: false,
-    exportStatus: 'idle',
-    exportCompleted: 0,
-    exportTotal: 0,
-    exportSuccesses: [],
-    exportFailures: [],
-    exportTasks: [],
-    exportQueue: [],
-    exportStatusText: '请完成背景、预设和尺寸规则配置。',
-    distributionStatus: 'idle',
-    distributionCompleted: 0,
-    distributionTotal: 0,
-    distributionSuccesses: [],
-    distributionFailures: [],
-    exportCancelRequested: false,
-    distributionCancelRequested: false,
     presets: defaults.presets,
     presetGroups: defaults.presetGroups,
-    outputRuleGroups: defaults.outputRuleGroups,
     globalFitMode: defaults.globalFitMode,
-    historyRetention: defaults.historyRetention,
-    history: defaults.history,
-    distributionConfig: {
-      enabled: false,
-      mode: 'move',
-      renameMode: 'date',
-      modifyMd5: true,
-      startDate: new Date().toISOString().slice(0, 10).replace(/-/g, ''), // YYYYMMDD
-      days: 3,
-      randomize: true,
-      skipWeekends: false,
-    },
     clipboardLayer: null,
     undoStack: [],
     redoStack: [],
@@ -278,24 +153,13 @@ export function getCompositeV2PersistedState(state: CompositeV2StoreState): Comp
     logoLibraryPath: state.logoLibraryPath,
     logoOrder: state.logoOrder ?? [],
     projectLogos: state.projectLogos ?? [],
-    customVariables: state.customVariables ?? [],
     presets: state.presets,
     presetGroups: state.presetGroups,
-    outputRuleGroups: state.outputRuleGroups,
     globalFitMode: state.globalFitMode,
-    historyRetention: state.historyRetention,
-    history: state.history,
-    distributionConfig: {
-      ...state.distributionConfig,
-      startDate: undefined as unknown as string, // Do not persist startDate so it uses the fresh default (today) on load
-    },
     backgroundFolders: state.backgroundFolders,
     recursiveBackgrounds: state.recursiveBackgrounds,
     selectedPresetGroupId: state.selectedPresetGroupId,
     selectedPreviewPresetId: state.selectedPreviewPresetId,
-    enabledPresetIdsForRun: state.enabledPresetIdsForRun,
-    smartMatchOrientation: state.smartMatchOrientation,
-    archiveExportsToLibrary: state.archiveExportsToLibrary,
   }
 }
 
@@ -305,16 +169,8 @@ export function mergeCompositeV2PersistedState(
 ): CompositeV2StoreState {
   if (!persistedState || typeof persistedState !== 'object') return currentState
 
-  const persisted = migrateCompositeV2PersistedState(persistedState, 2) as Partial<CompositeV2PersistedState>
-  const merged = {
-    ...currentState,
-    ...persisted,
-    distributionConfig: {
-      ...currentState.distributionConfig,
-      ...(persisted.distributionConfig ?? {}),
-      startDate: currentState.distributionConfig.startDate,
-    },
-  } as CompositeV2StoreState
+  const persisted = migrateCompositeV2PersistedState(persistedState, COMPOSITE_V2_PERSIST_VERSION)
+  const merged = { ...currentState, ...persisted } as CompositeV2StoreState
   const selectedGroup = getSelectedGroup(
     merged.presetGroups,
     persisted.selectedPresetGroupId ?? currentState.selectedPresetGroupId,
@@ -325,57 +181,76 @@ export function mergeCompositeV2PersistedState(
   const selectedPreviewPresetId = groupPresetIds.includes(requestedPreviewPresetId)
     ? requestedPreviewPresetId
     : (groupPresetIds[0] ?? '')
-  const requestedEnabledPresetIds = Array.isArray(persisted.enabledPresetIdsForRun)
-    ? persisted.enabledPresetIdsForRun
-    : currentState.enabledPresetIdsForRun
-  const validEnabledPresetIds = requestedEnabledPresetIds.filter((id) => groupPresetIds.includes(id))
 
   return {
     ...merged,
     selectedPresetGroupId,
     selectedPreviewPresetId,
-    enabledPresetIdsForRun: validEnabledPresetIds.length > 0 ? validEnabledPresetIds : groupPresetIds,
   }
 }
 
+/**
+ * 持久化迁移。**只做丢弃，不做换算**：
+ * A 套预设的输出目录/命名模板/自定义变量/渠道尺寸覆盖在新模型里没有对应物
+ * （后处理那边由「项目树参数 + 媒体表」决定），所以直接不搬。
+ * 素材本身（预设 id/名称/画布/图层）原样保留，用户的图层工作不会丢。
+ */
 export function migrateCompositeV2PersistedState(persistedState: unknown, _version: number): CompositeV2PersistedState {
   if (!persistedState || typeof persistedState !== 'object') {
     return getCompositeV2PersistedState(createCompositeV2StoreState() as CompositeV2StoreState)
   }
 
-  const legacyState = persistedState as LegacyCompositeV2PersistedState
-  const presets = (legacyState.presets ?? []) as LegacyCompositeV2Preset[]
-  const customVariables = legacyState.customVariables?.length
-    ? legacyState.customVariables
-    : collectLegacyCustomVariables(
-        presets as Array<
-          CompositeV2State['presets'][number] & {
-            customVariables?: CompositeV2State['customVariables']
-          }
-        >,
-      )
+  const legacy = persistedState as {
+    logoLibraryPath?: unknown
+    logoOrder?: unknown
+    projectLogos?: unknown
+    presets?: unknown
+    presetGroups?: unknown
+    globalFitMode?: unknown
+    backgroundFolders?: unknown
+    recursiveBackgrounds?: unknown
+    selectedPresetGroupId?: unknown
+    selectedPreviewPresetId?: unknown
+  }
+  const presets = (Array.isArray(legacy.presets) ? legacy.presets : [])
+    .filter((preset): preset is Record<string, unknown> => Boolean(preset) && typeof preset === 'object')
+    .map((preset): CompositeV2State['presets'][number] => ({
+      id: typeof preset.id === 'string' ? preset.id : '',
+      name: typeof preset.name === 'string' ? preset.name : '',
+      baseCanvas: normalizeCanvas(preset.baseCanvas),
+      sampleBackgroundPath: typeof preset.sampleBackgroundPath === 'string' ? preset.sampleBackgroundPath : '',
+      layers: Array.isArray(preset.layers) ? (preset.layers as CompositeV2State['presets'][number]['layers']) : [],
+      updatedAt: typeof preset.updatedAt === 'number' ? preset.updatedAt : Date.now(),
+    }))
+    .filter((preset) => preset.id !== '')
 
   return {
-    ...legacyState,
-    customVariables,
-    archiveExportsToLibrary: legacyState.archiveExportsToLibrary ?? false,
-    presets: presets.map((preset) => {
-      const { customVariables: presetCustomVariables, subfolderTemplate: _legacySubfolder, ...rest } = preset
-      const customVariableValues = preset.customVariableValues
-        ? { ...preset.customVariableValues }
-        : Object.fromEntries(
-            (presetCustomVariables?.length ? presetCustomVariables : customVariables).map((variable) => [
-              variable.name,
-              variable.value,
-            ]),
-          )
-      return {
-        ...rest,
-        filenameTemplate: preset.filenameTemplate || preset.namingTemplate || DEFAULT_PRESET_FILENAME_TEMPLATE,
-        customVariableValues,
-      } as CompositeV2State['presets'][number]
-    }),
-  } as CompositeV2PersistedState
+    logoLibraryPath: typeof legacy.logoLibraryPath === 'string' ? legacy.logoLibraryPath : '',
+    logoOrder: Array.isArray(legacy.logoOrder) ? (legacy.logoOrder as string[]) : [],
+    projectLogos: Array.isArray(legacy.projectLogos) ? (legacy.projectLogos as CompositeV2State['projectLogos']) : [],
+    presets,
+    presetGroups: Array.isArray(legacy.presetGroups) ? (legacy.presetGroups as CompositeV2State['presetGroups']) : [],
+    globalFitMode: normalizeFitMode(legacy.globalFitMode),
+    backgroundFolders: Array.isArray(legacy.backgroundFolders) ? (legacy.backgroundFolders as string[]) : [],
+    recursiveBackgrounds: Boolean(legacy.recursiveBackgrounds),
+    selectedPresetGroupId: typeof legacy.selectedPresetGroupId === 'string' ? legacy.selectedPresetGroupId : undefined,
+    selectedPreviewPresetId:
+      typeof legacy.selectedPreviewPresetId === 'string' ? legacy.selectedPreviewPresetId : undefined,
+  }
+}
+
+function normalizeCanvas(value: unknown): { width: number; height: number } {
+  const record = (value ?? {}) as { width?: unknown; height?: unknown }
+  const width = Number(record.width)
+  const height = Number(record.height)
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 1280,
+    height: Number.isFinite(height) && height > 0 ? height : 720,
+  }
+}
+
+function normalizeFitMode(value: unknown): CompositeV2FitMode {
+  return value === 'contain-blur' || value === 'stretch' || value === 'crop-fill' ? value : 'crop-fill'
 }
 
 export function replaceCompositeV2PersistedState(snapshot: CompositeV2PersistedState): void {
@@ -442,12 +317,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
         ...createCompositeV2StoreState(),
         undo: () =>
           set((state) => {
-            if (
-              state.exportStatus === 'running' ||
-              state.exportStatus === 'paused' ||
-              state.exportStatus === 'canceling'
-            )
-              return {}
             const snapshot = state.undoStack[state.undoStack.length - 1]
             if (!snapshot) return {}
             const currentSnapshot = captureUndoSnapshot(state)
@@ -464,12 +333,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           }),
         redo: () =>
           set((state) => {
-            if (
-              state.exportStatus === 'running' ||
-              state.exportStatus === 'paused' ||
-              state.exportStatus === 'canceling'
-            )
-              return {}
             const snapshot = state.redoStack[state.redoStack.length - 1]
             if (!snapshot) return {}
             const currentSnapshot = captureUndoSnapshot(state)
@@ -497,42 +360,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           setWithHistory(
             (state) => ({ projectLogos: (state.projectLogos ?? []).map((l) => (l.id === id ? { ...l, name } : l)) }),
             'logos:assets',
-          ),
-        setCustomVariables: (customVariables) => setWithHistory(() => ({ customVariables }), 'naming:custom-variables'),
-        addCustomVariable: (name, value, presetId) =>
-          setWithHistory((state) => {
-            if (state.customVariables.some((variable) => variable.name === name)) return {}
-            return {
-              customVariables: [...state.customVariables, { id: uniqueId('custom'), name, value }],
-              presets: updatePresets(state.presets, presetId, (preset, now) => ({
-                ...preset,
-                customVariableValues: { ...preset.customVariableValues, [name]: value },
-                updatedAt: now,
-              })),
-            }
-          }, 'naming:custom-variables'),
-        setPresetCustomVariableValue: (presetId, name, value) =>
-          setWithHistory(
-            (state) => ({
-              presets: updatePresets(state.presets, presetId, (preset, now) => ({
-                ...preset,
-                customVariableValues: { ...preset.customVariableValues, [name]: value },
-                updatedAt: now,
-              })),
-            }),
-            `preset:${presetId}:naming-values`,
-          ),
-        removeCustomVariable: (name) =>
-          setWithHistory(
-            (state) => ({
-              customVariables: state.customVariables.filter((variable) => variable.name !== name),
-              presets: state.presets.map((preset) => {
-                const customVariableValues = { ...preset.customVariableValues }
-                delete customVariableValues[name]
-                return { ...preset, customVariableValues }
-              }),
-            }),
-            'naming:custom-variables',
           ),
         setBackgroundFolders: (backgroundFolders) =>
           setWithHistory(() => ({ backgroundFolders }), 'backgrounds:source'),
@@ -618,21 +445,10 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
             `preset:${presetId}:layers`,
           ),
         setSelectedPresetGroup: (groupId) =>
-          setWithoutHistory((state) => {
-            const selectedGroup = getSelectedGroup(state.presetGroups, groupId)
-            return {
-              selectedPresetGroupId: selectedGroup?.id ?? '',
-              enabledPresetIdsForRun: getPresetIdsForGroup(state.presetGroups, groupId),
-            }
-          }),
+          setWithoutHistory((state) => ({
+            selectedPresetGroupId: getSelectedGroup(state.presetGroups, groupId)?.id ?? '',
+          })),
         setSelectedPreviewPresetId: (selectedPreviewPresetId) => setWithoutHistory(() => ({ selectedPreviewPresetId })),
-        setEnabledPresetIdsForRun: (enabledPresetIdsForRun) =>
-          setWithHistory(() => ({ enabledPresetIdsForRun }), 'batch:enabled-presets'),
-        setSmartMatchOrientation: (smartMatchOrientation) =>
-          setWithHistory(() => ({ smartMatchOrientation }), 'batch:smart-match'),
-        setCustomValue: (customValue) => setWithHistory(() => ({ customValue }), 'batch:custom-value'),
-        setPreserveSourceDir: (preserveSourceDir) =>
-          setWithHistory(() => ({ preserveSourceDir }), 'batch:preserve-source'),
         pushPreviewBackground: (path) =>
           setWithoutHistory((state) => {
             if (!path.trim()) return {}
@@ -642,68 +458,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           setWithoutHistory((state) => createPreviewHistoryState(state, (preview) => preview.previous())),
         nextPreviewBackground: () =>
           setWithoutHistory((state) => createPreviewHistoryState(state, (preview) => preview.next())),
-        setExportProgress: (exportCompleted, exportTotal) =>
-          setWithoutHistory(() => ({ exportCompleted, exportTotal })),
-        setExportStatus: (exportStatus) => setWithoutHistory(() => ({ exportStatus })),
-        setExportCancelRequested: (exportCancelRequested) => setWithoutHistory(() => ({ exportCancelRequested })),
-        setDistributionCancelRequested: (distributionCancelRequested) =>
-          setWithoutHistory(() => ({ distributionCancelRequested })),
-        setExportTasks: (exportTasks) => setWithoutHistory(() => ({ exportTasks })),
-        updateExportTask: (key, patch) =>
-          setWithoutHistory((state) => ({
-            exportTasks: state.exportTasks.map((task) => (task.key === key ? { ...task, ...patch } : task)),
-          })),
-        resetExportTasks: () => setWithoutHistory(() => ({ exportTasks: [] })),
-        enqueueExport: (item) => setWithoutHistory((state) => ({ exportQueue: [...state.exportQueue, item] })),
-        updateExportQueueItem: (id, patch) =>
-          setWithoutHistory((state) => ({
-            exportQueue: state.exportQueue.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
-          })),
-        removeExportQueueItem: (id) =>
-          setWithoutHistory((state) => ({ exportQueue: state.exportQueue.filter((entry) => entry.id !== id) })),
-        clearExportQueue: () =>
-          setWithoutHistory((state) => ({
-            exportQueue: state.exportQueue.filter((entry) => entry.status !== 'queued'),
-          })),
-        resetExportQueue: () => setWithoutHistory(() => ({ exportQueue: [] })),
-        setExportStatusText: (exportStatusText) => setWithoutHistory(() => ({ exportStatusText })),
-        resetExportResults: () =>
-          setWithoutHistory(() => ({ exportSuccesses: [], exportFailures: [], exportCompleted: 0, exportTotal: 0 })),
-        addExportSuccess: (item) =>
-          setWithoutHistory((state) => ({ exportSuccesses: [...state.exportSuccesses, item] })),
-        addExportFailure: (item) => setWithoutHistory((state) => ({ exportFailures: [...state.exportFailures, item] })),
-        setDistributionProgress: (distributionCompleted, distributionTotal) =>
-          setWithoutHistory(() => ({ distributionCompleted, distributionTotal })),
-        setDistributionStatus: (distributionStatus) => setWithoutHistory(() => ({ distributionStatus })),
-        resetDistributionResults: () =>
-          setWithoutHistory(() => ({
-            distributionSuccesses: [],
-            distributionFailures: [],
-            distributionCompleted: 0,
-            distributionTotal: 0,
-          })),
-        addDistributionSuccess: (item) =>
-          setWithoutHistory((state) => ({ distributionSuccesses: [...state.distributionSuccesses, item] })),
-        addDistributionFailure: (item) =>
-          setWithoutHistory((state) => ({ distributionFailures: [...state.distributionFailures, item] })),
-        addHistoryRecord: (record) =>
-          setWithoutHistory((state) => ({
-            history: addCompositeHistoryRecord(state.history, record, state.historyRetention),
-          })),
-        updateHistoryRecord: (id, patch) =>
-          setWithoutHistory((state) => ({
-            history: state.history.map((record) => (record.id === id ? { ...record, ...patch } : record)),
-          })),
-        removeHistoryRecord: (id) =>
-          setWithoutHistory((state) => ({
-            history: state.history.filter((record) => record.id !== id),
-          })),
-        clearHistory: () => setWithoutHistory(() => ({ history: [] })),
-        setHistoryRetention: (retention) =>
-          setWithHistory((state) => {
-            const historyRetention = Math.max(1, Math.floor(Number.isFinite(retention) ? retention : 1))
-            return { historyRetention, history: state.history.slice(0, historyRetention) }
-          }, 'history:retention'),
         createPresetGroup: (name) =>
           setWithHistory((state) => {
             const now = Date.now()
@@ -711,7 +465,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
             return {
               presetGroups: [...state.presetGroups, group],
               selectedPresetGroupId: group.id,
-              enabledPresetIdsForRun: [],
             }
           }, 'preset-groups:structure'),
         createPreset: (name) =>
@@ -720,15 +473,9 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
             const preset: CompositeV2State['presets'][number] = {
               id: uniqueId('preset'),
               name: name.trim() || '新预设',
-              outputRootPath: '',
-              distributionPath: '',
-              filenameTemplate: '{preset}-{source}-{index}',
-              customVariableValues: {},
               baseCanvas: { width: 1080, height: 1920 },
               sampleBackgroundPath: '',
               layers: [],
-              useOutputOverrides: false,
-              outputRuleGroupsOverride: [],
               updatedAt: now,
             }
             return {
@@ -747,7 +494,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
                 presetIds: group.presetIds.filter((id) => id !== presetId),
                 updatedAt: group.presetIds.includes(presetId) ? Date.now() : group.updatedAt,
               })),
-              enabledPresetIdsForRun: state.enabledPresetIdsForRun.filter((id) => id !== presetId),
               selectedPreviewPresetId:
                 state.selectedPreviewPresetId === presetId ? (presets[0]?.id ?? '') : state.selectedPreviewPresetId,
             }
@@ -789,11 +535,9 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           setWithHistory((state) => {
             if (state.presetGroups.length <= 1) return {}
             const presetGroups = state.presetGroups.filter((group) => group.id !== groupId)
-            const selected = presetGroups[0]
             return {
               presetGroups,
-              selectedPresetGroupId: selected?.id ?? '',
-              enabledPresetIdsForRun: [...(selected?.presetIds ?? [])],
+              selectedPresetGroupId: presetGroups[0]?.id ?? '',
             }
           }, 'preset-groups:structure'),
         reorderPresetInGroup: (groupId, presetId, targetIndex) =>
@@ -834,10 +578,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
               presetGroups: state.presetGroups.map((g) =>
                 g.id === groupId ? { ...g, presetIds: [...g.presetIds, presetId], updatedAt: Date.now() } : g,
               ),
-              enabledPresetIdsForRun:
-                state.selectedPresetGroupId === groupId
-                  ? [...state.enabledPresetIdsForRun, presetId]
-                  : state.enabledPresetIdsForRun,
             }
           }, `preset-group:${groupId}:membership`),
         removePresetFromGroup: (presetId, groupId) =>
@@ -848,10 +588,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
                   ? { ...group, presetIds: group.presetIds.filter((id) => id !== presetId), updatedAt: Date.now() }
                   : group,
               ),
-              enabledPresetIdsForRun:
-                state.selectedPresetGroupId === groupId
-                  ? state.enabledPresetIdsForRun.filter((id) => id !== presetId)
-                  : state.enabledPresetIdsForRun,
             }),
             `preset-group:${groupId}:membership`,
           ),
@@ -898,97 +634,11 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
             `preset:${presetId}:layers`,
           ),
         setGlobalFitMode: (globalFitMode) => setWithHistory(() => ({ globalFitMode }), 'output:fit-mode'),
-        updateOutputRule: (ruleId, patch) =>
-          setWithHistory(
-            (state) => ({
-              outputRuleGroups: state.outputRuleGroups.map((group) =>
-                group.rules.some((rule) => rule.id === ruleId)
-                  ? { ...group, rules: group.rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)) }
-                  : group,
-              ),
-            }),
-            getOutputRuleMergeKey(ruleId, patch),
-          ),
-        setOutputRuleGroupEnabled: (groupId, enabled) =>
-          setWithHistory(
-            (state) => ({
-              outputRuleGroups: state.outputRuleGroups.map((group) =>
-                group.id === groupId ? { ...group, rules: group.rules.map((rule) => ({ ...rule, enabled })) } : group,
-              ),
-            }),
-            `output-group:${groupId}:enabled`,
-          ),
-        addOutputRuleGroup: (name, id) =>
-          setWithHistory(
-            (state) => ({
-              outputRuleGroups: [
-                ...state.outputRuleGroups,
-                { id: id || `group-${Date.now()}`, name, distributionPaths: [], rules: [] },
-              ],
-            }),
-            'output-groups:structure',
-          ),
-        updateOutputRuleGroup: (groupId, patch) =>
-          setWithHistory(
-            (state) => ({
-              outputRuleGroups: state.outputRuleGroups.map((group) =>
-                group.id === groupId ? { ...group, ...patch } : group,
-              ),
-            }),
-            getOutputRuleGroupMergeKey(groupId, patch),
-          ),
-        deleteOutputRuleGroup: (groupId) =>
-          setWithHistory(
-            (state) => ({
-              outputRuleGroups: state.outputRuleGroups.filter((group) => group.id !== groupId),
-            }),
-            'output-groups:structure',
-          ),
-        addOutputRule: (groupId, rule) =>
-          setWithHistory(
-            (state) => ({
-              outputRuleGroups: state.outputRuleGroups.map((group) =>
-                group.id === groupId
-                  ? {
-                      ...group,
-                      rules: [
-                        ...group.rules,
-                        {
-                          ...rule,
-                          id:
-                            (rule as { id?: string }).id ||
-                            `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                        },
-                      ],
-                    }
-                  : group,
-              ),
-            }),
-            `output-group:${groupId}:rules`,
-          ),
-        deleteOutputRule: (groupId, ruleId) =>
-          setWithHistory(
-            (state) => ({
-              outputRuleGroups: state.outputRuleGroups.map((group) =>
-                group.id === groupId ? { ...group, rules: group.rules.filter((rule) => rule.id !== ruleId) } : group,
-              ),
-            }),
-            `output-group:${groupId}:rules`,
-          ),
-        setDistributionConfig: (patch) =>
-          setWithHistory(
-            (state) => ({
-              distributionConfig: { ...state.distributionConfig, ...patch },
-            }),
-            getDistributionConfigMergeKey(patch),
-          ),
-        setArchiveExportsToLibrary: (archive) =>
-          setWithHistory((state) => ({ archiveExportsToLibrary: archive }), `batch:archive-exports:${archive}`),
       }
     },
     {
       name: STORAGE_NAME,
-      version: 3,
+      version: COMPOSITE_V2_PERSIST_VERSION,
       partialize: getCompositeV2PersistedState,
       merge: mergeCompositeV2PersistedState,
       migrate: migrateCompositeV2PersistedState,
@@ -998,10 +648,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
 
 function getSelectedGroup(presetGroups: CompositeV2State['presetGroups'], groupId: string) {
   return presetGroups.find((group) => group.id === groupId) ?? presetGroups[0] ?? null
-}
-
-function getPresetIdsForGroup(presetGroups: CompositeV2State['presetGroups'], groupId: string) {
-  return [...(getSelectedGroup(presetGroups, groupId)?.presetIds ?? [])]
 }
 
 function getFirstPresetIdForGroup(presetGroups: CompositeV2State['presetGroups'], groupId: string) {
@@ -1071,7 +717,6 @@ function captureUndoSnapshot(state: CompositeV2StoreState): CompositeV2UndoSnaps
     logoLibraryPath: state.logoLibraryPath,
     logoOrder: [...(state.logoOrder ?? [])],
     projectLogos: [...(state.projectLogos ?? [])],
-    customVariables: [...(state.customVariables ?? [])],
     backgroundFolders: [...state.backgroundFolders],
     recursiveBackgrounds: state.recursiveBackgrounds,
     backgrounds: [...state.backgrounds],
@@ -1079,16 +724,9 @@ function captureUndoSnapshot(state: CompositeV2StoreState): CompositeV2UndoSnaps
     previewHistoryIndex: state.previewHistoryIndex,
     selectedPresetGroupId: state.selectedPresetGroupId,
     selectedPreviewPresetId: state.selectedPreviewPresetId,
-    enabledPresetIdsForRun: [...state.enabledPresetIdsForRun],
-    smartMatchOrientation: state.smartMatchOrientation,
-    customValue: state.customValue,
-    preserveSourceDir: state.preserveSourceDir,
     presets: [...state.presets],
     presetGroups: [...state.presetGroups],
-    outputRuleGroups: [...state.outputRuleGroups],
     globalFitMode: state.globalFitMode,
-    historyRetention: state.historyRetention,
-    distributionConfig: { ...state.distributionConfig },
   }
 }
 
@@ -1103,35 +741,6 @@ function areUndoSnapshotsEqual(a: CompositeV2UndoSnapshot, b: CompositeV2UndoSna
 function getPresetPatchMergeKey(presetId: string, patch: Partial<CompositeV2State['presets'][number]>) {
   const keys = Object.keys(patch).sort()
   return `preset:${presetId}:${keys.join(',') || 'update'}`
-}
-
-function getOutputRuleMergeKey(ruleId: string, patch: Partial<CompositeV2OutputSizeRule>) {
-  const keys = Object.keys(patch).sort()
-  return `output-rule:${ruleId}:${keys.join(',') || 'update'}`
-}
-
-function getOutputRuleGroupMergeKey(groupId: string, patch: Partial<CompositeV2OutputRuleGroup>) {
-  const keys = Object.keys(patch).sort()
-  return `output-group:${groupId}:${keys.join(',') || 'update'}`
-}
-
-function getDistributionConfigMergeKey(patch: Partial<CompositeV2State['distributionConfig']>) {
-  const keys = Object.keys(patch).sort()
-  return `distribution:${keys.join(',') || 'update'}`
-}
-
-function collectLegacyCustomVariables(
-  presets: Array<CompositeV2State['presets'][number] & { customVariables?: CompositeV2State['customVariables'] }>,
-) {
-  const byName = new Map<string, CompositeV2State['customVariables'][number]>()
-  for (const preset of presets) {
-    for (const variable of preset.customVariables ?? []) {
-      if (!byName.has(variable.name)) {
-        byName.set(variable.name, structuredClone(variable))
-      }
-    }
-  }
-  return [...byName.values()]
 }
 
 function updatePresets(

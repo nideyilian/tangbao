@@ -44,7 +44,7 @@ export interface AssetCommandDependencies {
   publishAssets: (assets: GeneratedAsset[]) => void
   ensureImageDataUrl: (imageId: string) => Promise<string | null>
   addReference: (image: InputImage, target: 'gallery' | 'agent') => Promise<boolean>
-  /** 打开后期处理工作区（弹窗），可一次送入多张素材；返回是否成功打开 */
+  /** 打开水印预设工作区（弹窗），可一次送入多张素材当预览底图；返回是否成功打开 */
   openComposite: (input: { assets: GeneratedAsset[]; images: StoredImage[] }) => Promise<boolean>
   getTask: (taskId: string) => Promise<TaskRecord | undefined>
   reuseTask: (task: TaskRecord) => Promise<boolean>
@@ -145,7 +145,7 @@ function createDefaultDependencies(): AssetCommandDependencies {
         import('../store'),
       ])
       useCompositeV2Store.getState().setBackgrounds(withSource)
-      // 弹窗形式打开后期工作区，不切走素材库（素材库保持在底层可见）
+      // 弹窗形式打开水印预设工作区，不切走素材库（素材库保持在底层可见）
       useStore.getState().setPostprocessDialogOpen(true)
       return true
     },
@@ -317,7 +317,7 @@ class AssetCommandService {
     return this.openInWorkspace([assetId], 'composite')
   }
 
-  /** 批量把多张选中素材送入后期处理工作区（弹窗形式，一次 setBackgrounds 全部载入）。 */
+  /** 批量把多张选中素材设为水印预览底图（弹窗形式，一次 setBackgrounds 全部载入）。 */
   async openInPostprocessBatch(assetIds: string[]): Promise<boolean> {
     return this.openInWorkspace(assetIds, 'postprocess')
   }
@@ -507,6 +507,13 @@ class AssetCommandService {
     return created
   }
 
+  /**
+   * 把素材送进水印预设工作区当**预览底图**。
+   *
+   * 语义变迁：A 套时代这里是「批量导出的一批背景」，导出编排退役后不再有「这批素材会被导出」
+   * 的含义——工作区（`CompositeWorkspace`）现在只编辑水印预设。送进来的图只是让用户看到
+   * 水印叠在真实素材上的效果。真正的批量产出走后处理的「跑后处理」。
+   */
   private async openInWorkspace(assetIds: string[], target: 'postprocess' | 'composite') {
     const uniqueIds = Array.from(new Set(assetIds)).filter(Boolean)
     if (uniqueIds.length === 0) return false
@@ -523,13 +530,13 @@ class AssetCommandService {
       .map((asset) => images.get(asset.imageId))
       .filter((image): image is StoredImage => Boolean(image))
     if (imageList.length === 0 || !(await this.deps.openComposite({ assets, images: imageList }))) {
-      this.deps.showToast('当前素材没有可供后期工作区读取的本地原图', 'error')
+      this.deps.showToast('当前素材没有可供预览读取的本地原图', 'error')
       return false
     }
     for (const asset of assets) {
       await this.recordUsage(asset, target === 'postprocess' ? 'open-postprocess' : 'open-composite', target)
     }
-    this.deps.showToast(`已发送 ${assets.length} 张到后期处理`, 'success')
+    this.deps.showToast(`已设为水印预览底图（${assets.length} 张）`, 'success')
     return true
   }
 

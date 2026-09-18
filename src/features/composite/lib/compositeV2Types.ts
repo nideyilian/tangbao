@@ -1,4 +1,13 @@
-export type CompositeV2ImageFormat = 'jpg'
+/**
+ * 水印预设的数据模型。
+ *
+ * 这里曾经有整套「批量导出编排」的类型（导出任务/队列/成功失败项/分发配置/
+ * 历史记录/渠道尺寸规则/自定义命名变量）。编排职责已统一到 `features/postprocess`
+ * 那一套，本文件因此只保留水印预设本身：画布基准、图层、预设分组、预览背景。
+ *
+ * 预设不再带输出路径与命名模板——输出目录、命名、渠道尺寸全部由后处理的
+ * 「项目树参数 + 媒体表」决定。同一个参数不再有两个来源，是这次收敛的核心。
+ */
 
 export type CompositeV2FitMode = 'crop-fill' | 'contain-blur' | 'stretch'
 
@@ -96,43 +105,12 @@ export type CompositeV2TextLayer = CompositeV2LayerBase & {
 
 export type CompositeV2Layer = CompositeV2ImageLayer | CompositeV2LogoLayer | CompositeV2TextLayer
 
-export type CompositeV2OutputSizeRule = {
-  id: string
-  name: string
-  enabled: boolean
-  width: number
-  height: number
-  maxSizeKb: number
-  format: CompositeV2ImageFormat
-  filenameTemplate: string
-}
-
-export type CompositeV2OutputRuleGroup = {
-  id: string
-  name: string
-  rules: CompositeV2OutputSizeRule[]
-  distributionPaths: string[]
-}
-
-export type CompositeV2CustomVariable = {
-  id: string
-  name: string
-  value: string
-}
-
 export type CompositeV2Preset = {
   id: string
   name: string
-  outputRootPath: string
-  distributionPath: string
-  filenameTemplate: string
-  customVariableValues: Record<string, string>
-  namingTemplate?: string
   baseCanvas: { width: number; height: number }
   sampleBackgroundPath: string
   layers: CompositeV2Layer[]
-  useOutputOverrides: boolean
-  outputRuleGroupsOverride: CompositeV2OutputRuleGroup[]
   updatedAt: number
 }
 
@@ -156,96 +134,6 @@ export type CompositeV2BackgroundImage = {
   dataUrl?: string
 }
 
-export type CompositeV2ExportStatus = 'idle' | 'running' | 'paused' | 'canceling' | 'completed' | 'canceled' | 'failed'
-
-export type CompositeV2SuccessItem = {
-  path: string
-  /** 源素材（背景图）路径：任务记录溯源（素材 → 输出 → 分配）用；旧历史数据可能缺失 */
-  backgroundPath?: string
-  presetId: string
-  presetName: string
-  channel: string
-  size: string
-  index: number
-  warning?: string
-}
-
-export type CompositeV2FailureItem = {
-  backgroundPath: string
-  presetId: string
-  presetName: string
-  channel: string
-  size: string
-  reason: string
-  /** 该失败项在规则内的背景序号（用于任务流精确匹配；旧历史数据可能缺失） */
-  index?: number
-}
-
-/** 导出任务流中的单个任务（不参与持久化） */
-export type CompositeV2ExportTaskStatus = 'pending' | 'running' | 'done' | 'failed'
-
-export type CompositeV2ExportTask = {
-  key: string
-  backgroundPath: string
-  presetId: string
-  presetName: string
-  channel: string
-  size: string
-  index: number
-  /** 导出日期（YYYYMMDD）与自定义参数，用于失败重试时重建导出项 */
-  date: string
-  custom: string
-  status: CompositeV2ExportTaskStatus
-  reason?: string
-  outputPath?: string
-}
-
-export type CompositeV2DistributionSuccessItem = {
-  originalPath: string
-  targetPath: string
-}
-
-export type CompositeV2DistributionFailureItem = {
-  originalPath: string
-  targetPath: string
-  error: string
-}
-
-export type CompositeV2HistoryRecord = {
-  id: string
-  status: 'completed' | 'canceled' | 'completed-with-failures'
-  startedAt: number
-  endedAt: number
-  backgroundFolders: string[]
-  recursive: boolean
-  backgroundCount: number
-  presetGroupName: string
-  enabledPresetCount: number
-  plannedCount: number
-  successCount: number
-  failureCount: number
-  successes: CompositeV2SuccessItem[]
-  failures: CompositeV2FailureItem[]
-  cleanup?: { deleted: string[]; failed: string[] }
-  distributionStatus?: 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
-  distributionSuccessCount?: number
-  distributionFailureCount?: number
-  distributionErrors?: string[]
-  distributionSuccesses?: CompositeV2DistributionSuccessItem[]
-  distributionFailures?: CompositeV2DistributionFailureItem[]
-}
-
-export type CompositeV2DistributionConfig = {
-  enabled: boolean
-  startDate: string // YYYYMMDD
-  days: number
-  mode: 'copy' | 'move'
-  randomize: boolean
-  skipWeekends: boolean
-  renameMode: 'date' | 'sequence'
-  modifyMd5: boolean
-}
-
 type CompositeV2ProjectLogoBase = {
   id: string
   name: string
@@ -260,23 +148,11 @@ export type CompositeV2State = {
   logoLibraryPath: string
   logoOrder: string[]
   projectLogos: CompositeV2ProjectLogo[]
-  customVariables: CompositeV2CustomVariable[]
   presets: CompositeV2Preset[]
   presetGroups: CompositeV2PresetGroup[]
-  outputRuleGroups: CompositeV2OutputRuleGroup[]
   globalFitMode: CompositeV2FitMode
-  historyRetention: number
-  history: CompositeV2HistoryRecord[]
-  distributionConfig: CompositeV2DistributionConfig
   backgroundFolders?: string[]
   recursiveBackgrounds?: boolean
-  enabledPresetIdsForRun?: string[]
-  smartMatchOrientation?: boolean
-  /**
-   * 导出后是否把成图归档到素材库（IndexedDB + cache-images + 素材目录）。
-   * 默认 false：成图只写入预设的输出文件夹，不进入素材库。
-   */
-  archiveExportsToLibrary?: boolean
 }
 
 export type CompositeV2PersistedSnapshot = CompositeV2State & {

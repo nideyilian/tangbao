@@ -17,7 +17,6 @@ import { SegmentedControl } from '../design-system'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
-import { PostprocessStatusBadge } from '../features/composite/PostprocessStatusBadge'
 import { HelpCircleIcon, MoonIcon, PaletteIcon, SettingsIcon, SunIcon } from './icons'
 
 type GenerationStatsMetricKey = 'total' | 'elapsedMs' | 'success' | 'failure'
@@ -25,20 +24,10 @@ type GenerationStatsMetricKey = 'total' | 'elapsedMs' | 'success' | 'failure'
 // 工作区切换：策略（strategy）与下单（ordering）模块已屏蔽，不再提供入口
 const appModeOptions: Array<{ value: AppMode; label: string }> = [
   { value: 'gallery', label: '素材库' },
-  { value: 'postprocess', label: '后期处理' },
+  { value: 'postprocess', label: '水印预设' },
   { value: 'agent', label: 'Agent' },
 ]
 const modeOptions = appModeOptions
-
-// 后期处理入口标签：后台导出运行时附带进度徽标（组件内部自行订阅导出状态）
-function postprocessOptionLabel(text: string) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span>{text}</span>
-      <PostprocessStatusBadge />
-    </span>
-  )
-}
 
 function formatGenerationStatsValue(key: GenerationStatsMetricKey, value: number) {
   if (key === 'elapsedMs') return formatGenerationStatsDuration(value)
@@ -167,7 +156,7 @@ export default function Header() {
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
 
-  // 后期处理已弹窗化：顶部入口直接打开弹窗，不切走当前工作区（素材库保持可见）
+  // 水印预设已弹窗化：顶部入口直接打开弹窗，不切走当前工作区（素材库保持可见）
   const handleModeChange = (mode: AppMode) => {
     if (mode === 'postprocess') {
       setPostprocessDialogOpen(true)
@@ -304,9 +293,7 @@ export default function Header() {
             <SegmentedControl
               aria-label="切换工作区"
               value={appMode}
-              options={modeOptions.map((item) =>
-                item.value === 'postprocess' ? { ...item, label: postprocessOptionLabel(item.label) } : item,
-              )}
+              options={modeOptions}
               onValueChange={handleModeChange}
             />
           </div>
@@ -380,9 +367,7 @@ export default function Header() {
           <SegmentedControl
             aria-label="切换工作区"
             value={appMode}
-            options={modeOptions.map((item) =>
-              item.value === 'postprocess' ? { ...item, label: postprocessOptionLabel('后期') } : item,
-            )}
+            options={modeOptions}
             onValueChange={handleModeChange}
             size="sm"
             className="app-mode-switcher--mobile mx-2"

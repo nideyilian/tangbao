@@ -2,11 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, create, type ReactTestInstance } from 'react-test-renderer'
-import {
-  createDefaultCompositeV2OutputRuleGroups,
-  createDefaultCompositeV2Preset,
-  createDefaultCompositeV2PresetGroup,
-} from '../lib/compositeV2Defaults'
+import { createDefaultCompositeV2Preset, createDefaultCompositeV2PresetGroup } from '../lib/compositeV2Defaults'
 import { useStore } from '../../../store'
 import { createCompositeV2StoreState, useCompositeV2Store } from '../storeV2'
 import * as compositeAssets from '../lib/compositeAssets'
@@ -250,97 +246,6 @@ describe('PresetManagementTab', () => {
     })
   })
 
-  it('toggles every override size in a channel from its select-all checkbox', () => {
-    const outputRuleGroupsOverride = createDefaultCompositeV2OutputRuleGroups()
-    const targetGroup = outputRuleGroupsOverride[1]!
-    const preset = {
-      ...createDefaultCompositeV2Preset(1),
-      useOutputOverrides: true,
-      outputRuleGroupsOverride,
-    }
-    const group = { ...createDefaultCompositeV2PresetGroup(1), presetIds: [preset.id] }
-    useCompositeV2Store.setState({
-      presets: [preset],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
-      selectedPreviewPresetId: preset.id,
-    })
-
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const selectAll = findInputByAriaLabel(renderer!.root, `全选覆盖 ${targetGroup.name} 尺寸`)
-    expect(selectAll).toBeDefined()
-
-    act(() => {
-      selectAll?.props.onChange({ target: { checked: true } })
-    })
-
-    expect(
-      useCompositeV2Store.getState().presets[0]!.outputRuleGroupsOverride[1]!.rules.every((rule) => rule.enabled),
-    ).toBe(true)
-  })
-
-  it('edits per-preset output root, filename template, and custom variables outside channel overrides', () => {
-    const preset = createDefaultCompositeV2Preset(1)
-    const group = { ...createDefaultCompositeV2PresetGroup(1), presetIds: [preset.id] }
-    useCompositeV2Store.setState({
-      presets: [preset],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
-      selectedPreviewPresetId: preset.id,
-    })
-
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const outputRootEditor = renderer!.root.find((node) => node.props['aria-label'] === '输出根目录')
-    const filenameEditor = renderer!.root.find((node) => node.props['aria-label'] === `预设文件名模板 ${preset.name}`)
-    expect(outputRootEditor.props.contentEditable).toBe(true)
-    expect(filenameEditor.props.contentEditable).toBe(true)
-    expect(renderer!.root.findAll((node) => node.props['aria-label'] === `预设目录模板 ${preset.name}`)).toHaveLength(0)
-    expect(renderer!.root.findAllByProps({ 'aria-label': '插入变量 {date}' })).toHaveLength(1)
-    expect(renderer!.root.findAllByProps({ 'aria-label': '插入变量 {channel}' })).toHaveLength(1)
-
-    const outputRootHost = document.createElement('div')
-    outputRootHost.textContent = 'D:\\Exports'
-    const filenameHost = document.createElement('div')
-    filenameHost.innerHTML =
-      '<span data-variable-name="preset">默认产品预设</span>-<span data-variable-name="index">1</span>'
-    act(() => {
-      outputRootEditor.props.onInput({ currentTarget: outputRootHost })
-      filenameEditor.props.onInput({ currentTarget: filenameHost })
-    })
-    expect(useCompositeV2Store.getState().presets[0]).toMatchObject({
-      outputRootPath: 'D:\\Exports',
-      filenameTemplate: '{preset}-{index}',
-    })
-
-    act(() => {
-      findInputByAriaLabel(renderer!.root, '自定义变量名')?.props.onChange({ target: { value: 'project' } })
-    })
-    act(() => {
-      findInputByAriaLabel(renderer!.root, '自定义变量值')?.props.onChange({ target: { value: '快手极速版' } })
-    })
-    act(() => {
-      renderer!.root.findByProps({ 'aria-label': '添加自定义变量' }).props.onClick()
-    })
-
-    expect(useCompositeV2Store.getState().customVariables).toEqual([
-      expect.objectContaining({ name: 'project', value: '快手极速版' }),
-    ])
-    expect(useCompositeV2Store.getState().presets[0]!.customVariableValues).toEqual({
-      project: '快手极速版',
-    })
-    expect(renderer!.root.findAllByProps({ 'aria-label': '插入变量 {project}' })).toHaveLength(1)
-  })
-
   it('selects the preset base canvas from the three supported sizes', () => {
     const preset = createDefaultCompositeV2Preset(1)
     const group = { ...createDefaultCompositeV2PresetGroup(1), presetIds: [preset.id] }
@@ -378,21 +283,6 @@ describe('PresetManagementTab', () => {
       height: 1920,
     })
   })
-
-  it('keeps the output root above the global distribution path', () => {
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    expect(
-      renderer!.root
-        .findAll((node) => node.props['aria-label'] === '输出根目录' || node.props['aria-label'] === '全局分配地址')
-        .map((node) => node.props['aria-label']),
-    ).toEqual(['输出根目录', '全局分配地址'])
-  })
-
   it('auto-selects the newly created layer after adding text', () => {
     const preset = createDefaultCompositeV2Preset(1)
     const group = { ...createDefaultCompositeV2PresetGroup(1), presetIds: [preset.id] }
@@ -470,7 +360,6 @@ describe('PresetManagementTab', () => {
       presetGroups: [groupA, groupB],
       selectedPresetGroupId: groupA.id,
       selectedPreviewPresetId: presetA.id,
-      enabledPresetIdsForRun: [presetA.id],
     })
 
     let renderer: ReturnType<typeof create>
@@ -510,7 +399,6 @@ describe('PresetManagementTab', () => {
       presetGroups: [groupA, groupB],
       selectedPresetGroupId: groupA.id,
       selectedPreviewPresetId: presetB.id,
-      enabledPresetIdsForRun: [],
     })
 
     let renderer: ReturnType<typeof create>
@@ -538,7 +426,6 @@ describe('PresetManagementTab', () => {
       presetGroups: [group],
       selectedPresetGroupId: group.id,
       selectedPreviewPresetId: presetA.id,
-      enabledPresetIdsForRun: [presetA.id],
     })
 
     let renderer: ReturnType<typeof create>
@@ -579,7 +466,6 @@ describe('PresetManagementTab', () => {
       presetGroups: [groupA, groupB],
       selectedPresetGroupId: groupA.id,
       selectedPreviewPresetId: presetB.id,
-      enabledPresetIdsForRun: [presetA.id, presetB.id],
     })
     let renderer: ReturnType<typeof create>
     act(() => {
@@ -606,7 +492,6 @@ describe('PresetManagementTab', () => {
     expect(useCompositeV2Store.getState().presets.map((preset) => preset.id)).toEqual([presetA.id])
     expect(useCompositeV2Store.getState().presetGroups[0]?.presetIds).toEqual([presetA.id])
     expect(useCompositeV2Store.getState().presetGroups[1]?.presetIds).toEqual([])
-    expect(useCompositeV2Store.getState().enabledPresetIdsForRun).toEqual([presetA.id])
     expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe(presetA.id)
   })
 
@@ -620,7 +505,6 @@ describe('PresetManagementTab', () => {
       presetGroups: [group],
       selectedPresetGroupId: group.id,
       selectedPreviewPresetId: presetA.id,
-      enabledPresetIdsForRun: [presetA.id],
     })
 
     let renderer: ReturnType<typeof create>
@@ -673,7 +557,6 @@ describe('PresetManagementTab', () => {
       presetGroups: [group],
       selectedPresetGroupId: group.id,
       selectedPreviewPresetId: presetB.id,
-      enabledPresetIdsForRun: [presetA.id, presetB.id],
     })
 
     let renderer: ReturnType<typeof create>
@@ -706,7 +589,6 @@ describe('PresetManagementTab', () => {
       presetGroups: [group],
       selectedPresetGroupId: group.id,
       selectedPreviewPresetId: presetB.id,
-      enabledPresetIdsForRun: [presetA.id, presetB.id],
     })
 
     let renderer: ReturnType<typeof create>

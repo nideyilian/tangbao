@@ -16,6 +16,7 @@ import { useCompositeV2Store } from '../features/composite/storeV2'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from '../lib/postprocessNaming'
 import type { AssetCollection } from '../types'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from '../storePostprocessMedia'
+import { useStore } from '../store'
 import PostprocessSettingsModal from './PostprocessSettingsModal'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -66,15 +67,9 @@ beforeEach(() => {
       {
         id: 'preset-a',
         name: '糖包水印',
-        outputRootPath: '',
-        distributionPath: '',
-        filenameTemplate: '',
-        customVariableValues: {},
         baseCanvas: { width: 100, height: 100 },
         sampleBackgroundPath: '',
         layers: [],
-        useOutputOverrides: false,
-        outputRuleGroupsOverride: [],
         updatedAt: 1,
       },
     ],
@@ -178,6 +173,27 @@ describe('PostprocessSettingsModal', () => {
     const body = render()
     expect(body).toContain('水印预设')
     expect(body).toContain('一个都不勾 = 不叠水印')
+  })
+
+  it('「管理水印预设」入口直接打开水印预设工作区', () => {
+    // 水印编辑（图层/画布）在独立工作区里做，面板只负责挑预设；
+    // 没有这个入口，用户勾不到预设时不知道该去哪儿建。
+    useStore.setState({ postprocessDialogOpen: false })
+    render()
+
+    act(() => {
+      findButton('管理水印预设').click()
+    })
+
+    expect(useStore.getState().postprocessDialogOpen).toBe(true)
+  })
+
+  it('没有水印预设时，空态文案指向新入口而不是已退役的「预设管理」标签页', () => {
+    useCompositeV2Store.setState({ presets: [] })
+    const body = render()
+
+    expect(body).toContain('还没有水印预设')
+    expect(body).not.toContain('后期处理 → 预设管理')
   })
 
   it('引用了不存在的水印预设时提示会整批跳过', () => {

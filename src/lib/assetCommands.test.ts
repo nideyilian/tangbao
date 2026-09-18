@@ -155,7 +155,7 @@ describe('AssetCommandService', () => {
       }),
     )
     expect(deps.recordUsage).toHaveBeenCalledTimes(2)
-    expect(deps.showToast).toHaveBeenCalledWith('已发送 2 张到后期处理', 'success')
+    expect(deps.showToast).toHaveBeenCalledWith('已设为水印预览底图（2 张）', 'success')
   })
 
   it('archives a previously external task input as a reference asset without changing its blob id', async () => {

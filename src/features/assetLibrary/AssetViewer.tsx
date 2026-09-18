@@ -327,7 +327,7 @@ function AssetViewerInner() {
             <button
               type="button"
               className={actionButtonClass}
-              aria-label="发送到后期处理"
+              aria-label="用作水印预览底图"
               onClick={() => {
                 void assetCommands.openInPostprocess(asset.id)
                 closeViewer()

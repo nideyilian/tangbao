@@ -109,6 +109,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   const patchDistribution = usePostprocessMediaStore((state) => state.patchDistribution)
 
   const showToast = useStore((state) => state.showToast)
+  const setPostprocessDialogOpen = useStore((state) => state.setPostprocessDialogOpen)
   const collections = useAssetLibraryStore((state) => state.collections)
   const presets = useCompositeV2Store((state) => state.presets)
 
@@ -370,7 +371,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
         <section>
           <SectionHeader
             title="输出与命名"
-            description="这里的输出位置与命名模板只作用于后处理产物，优先于水印预设里的同名设置。"
+            description="只作用于后处理产物。水印预设只提供图层，不参与输出位置与命名。"
           />
           <div className="mt-2 space-y-3">
             <div className="flex items-end gap-2">
@@ -441,14 +442,23 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
             />
 
             <div className="space-y-1.5">
-              <span className="text-sm font-medium text-ds-text dark:text-ds-text">水印预设</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-ds-text dark:text-ds-text">水印预设</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="postprocess-manage-watermarks"
+                  title="打开水印预设工作区：编辑图层、画布与 LOGO"
+                  onClick={() => setPostprocessDialogOpen(true)}
+                >
+                  管理水印预设
+                </Button>
+              </div>
               <p className="text-xs text-ds-muted dark:text-ds-muted">
                 可多选：每个渠道尺寸各出一套，产物自动按预设名分子目录；一个都不勾 = 不叠水印。
               </p>
               {presets.length === 0 ? (
-                <p className="text-xs text-ds-muted dark:text-ds-muted">
-                  还没有水印预设，可在「后期处理 → 预设管理」里新建。
-                </p>
+                <p className="text-xs text-ds-muted dark:text-ds-muted">还没有水印预设，点上方「管理水印预设」新建。</p>
               ) : (
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
                   {presets.map((preset) => (

@@ -2508,7 +2508,7 @@ interface AppState {
   // 模式
   appMode: AppMode
   setAppMode: (mode: AppMode) => void
-  /** 后期处理工作区是否以弹窗形式打开（不切走素材库）；不参与持久化 */
+  /** 水印预设工作区是否以弹窗形式打开（不切走素材库）；不参与持久化 */
   postprocessDialogOpen: boolean
   setPostprocessDialogOpen: (open: boolean) => void
   // 设置

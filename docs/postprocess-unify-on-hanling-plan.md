@@ -3,8 +3,9 @@
 > 2026-09-18 杰哥提出：「我原来的后处理方案不如参考项目的后处理方便，希望直接采用参考项目的方式，
 > 仅保留我的后处理中的水印预设，并跟新方案结合。」
 >
-> 本文件给出可行性判断、风险清单与实施步骤。**阶段 1 已完成**（手动入口 + 多水印 + 分发移植，
-> 见第八节的进度表），阶段 2-4 待开工。
+> 本文件给出可行性判断、风险清单与实施步骤。**阶段 1-3 已完成并全量验证**（手动入口 + 多水印 +
+> 分发移植、水印编辑器独立化、A 套编排退役，见第八节的进度表）；阶段 4（数据迁移）待开工，
+> 且实测范围比原计划小。
 
 ---
 
@@ -208,12 +209,37 @@
   顺带一并落地的还有上面三项决策 —— 它们与阶段 1 共用同一批数据模型改动
   （`watermarkPresetIds` 数组化会动 `PostprocessOutputUnit`，分发配置会动 `PostprocessMediaConfig`），
   拆成两次改反而要动两遍持久化迁移。
-- **阶段 2（水印编辑器独立化）**：⏳ 未开始。
-- **阶段 3（A 套编排退役）**：⏳ 未开始。前置已就绪：`renderWithMaxKb` 已搬出
-  `compositeExportRuntime`（→ `features/postprocess/renderVariant.ts`），后处理不再依赖待退役的编排模块。
-- **阶段 4（数据迁移）**：⏳ 未开始。
+- **阶段 2（水印编辑器独立化）**：✅ 完成。
+  - `CompositeWorkspace` 收敛为**预设编辑单页**：删掉「批量导出 / 预设管理」两个 tab 与导航，
+    只渲染 `PresetManagementTab`（保留 Ctrl+Z 撤销栈）。
+  - `CompositeV2Preset` 剥掉 **7 个编排字段**（`outputRootPath` / `distributionPath` /
+    `filenameTemplate` / `namingTemplate` / `customVariableValues` / `useOutputOverrides` /
+    `outputRuleGroupsOverride`），只剩 `id` / `name` / `baseCanvas` / `sampleBackgroundPath` /
+    `layers` / `updatedAt`。连带删掉 `CompositeV2OutputSizeRule` / `CompositeV2OutputRuleGroup` /
+    `CompositeV2CustomVariable` 与整套导出/分发/历史类型。
+  - 预设详情删掉「输出与分配设置」（命名模板 + 变量编辑器 + 输出目录）与「覆盖全局渠道与尺寸规则」
+    两大块，只留「基准尺寸」。
+  - **新入口**：后处理设置面板「水印预设」标题右侧的「管理水印预设」→ 打开工作区；
+    顶栏标签「后期处理」→「水印预设」；弹窗标题/描述同步。
+- **阶段 3（A 套编排退役）**：✅ 完成。**净删 27 个文件**（组件 8 + 纯逻辑 7 + 测试 11 + 冗余类型测试 1），
+  测试从 2506 降到 2424（删掉的都是编排用例，新增 2 个入口按钮用例）。
+  阶段 2 + 3 合计 **54 文件、+338 / −8978 行**（净删 8.6k）；`npm run verify` 全绿：**233 文件 / 2424 测试**。
+  - 组件：`BatchExportTab` / `ExportResultsPanel` / `DistributionSettingsPanel` / `GlobalOutputRulesPanel` /
+    `ExportHistoryDetailModal` / `PresetNamingFields` / `ExportStatusWatcher` / `PostprocessStatusBadge`。
+  - 纯逻辑：`compositeExportQueue` / `compositeExportPlan` / `compositeExportRuntime` / `compositePathTemplates` /
+    `compositeOutputRulesV2` / `compositeDistribution` / `compositeExportHistoryV2`。
+  - `storeV2` 只留预设编辑切片（logo / presets / presetGroups / backgrounds / 预览历史 / 撤销栈），
+    persist **version 3 → 4**，`migrate` 改为**丢弃式**（不换算，直接丢编排字段），
+    `merge` 去掉 distributionConfig 合并与 enabledPresetIds 校验。`App.tsx` / `Header.tsx` /
+    `catalog.ts` / `compliance.test.ts` 引用同步。
+- **入口语义修正**（退役的连带，容易漏）：素材右键的「发送到后期处理」与查看大图里的同名按钮，
+  在 A 套时代表示「这批素材作为批量导出的背景」；编排退场后工作区不再消费「一批素材」，
+  遂改为 **「用作水印预览底图」**（`openInPostprocess*` 协议名不变，只改语义与文案）。
+  `setBackgrounds` 这条链**保留**——没有真实素材当底图，用户看不到水印叠上去的效果。
+- **阶段 4（数据迁移）**：⏳ 未开始，且范围比原计划小：
+  A 套 `outputRuleGroups` 的内置目录与 B 套 `DEFAULT_POSTPROCESS_MEDIA` **完全一致**
+  （4 媒体 / 15 尺寸 / 相同体积上限），不需要映射；只有「用户改过的 A 套规则」才值得迁移。
+  `CompositeV2Preset.outputRootPath → B 套 outputDir` 的映射同理：默认值都是空，改过的才有意义。
 
-**下次开工的顺序建议**：先删消费方（`BatchExportTab` 及其子树）→ 再剥 `CompositeV2Preset` 的编排字段。
+**已完成部分的关键顺序**（下次接着做时照用）：先删消费方 → 再剥字段 → 最后清 store + 删纯逻辑。
 反过来的话，剥字段会一次性炸出 70+ 个编译错误，分不清哪些来自「要删的文件」、哪些来自「要改的文件」。
-`src/store.ts` 的 `buildCompositeBackup`（约 12093 行）依赖 `getCompositeV2PersistedState`，清理 storeV2
-切片时要同步。

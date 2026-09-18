@@ -7,7 +7,7 @@ import {
   movePresetInGroup,
 } from './compositePresetLibrary'
 
-import type { CompositeV2Preset } from './compositeV2Types'
+import type { CompositeV2Preset, CompositeV2TextLayer } from './compositeV2Types'
 
 describe('composite preset library', () => {
   it('adds a global preset reference to a group once', () => {
@@ -51,38 +51,42 @@ describe('composite preset library', () => {
   })
 
   it('duplicates nested preset data without sharing source references', () => {
+    const layer: CompositeV2TextLayer = {
+      id: 'layer-1',
+      type: 'text',
+      name: 'source layer',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      rotation: 0,
+      position: { mode: 'free', x: 0, y: 0, width: 100, height: 50 },
+      shadow: { enabled: false, color: '#000000', x: 0, y: 0, blur: 0, opacity: 0 },
+      text: 'source text',
+      fontFamily: 'sans-serif',
+      fontSize: 24,
+      fontWeight: 400,
+      color: '#000000',
+      align: 'center',
+      lineHeight: 1,
+      letterSpacing: 0,
+      padding: 0,
+    }
     const preset: CompositeV2Preset = {
       ...createDefaultCompositeV2Preset(1),
       id: 'preset-original',
-      outputRuleGroupsOverride: [
-        {
-          id: 'group-1',
-          name: 'group',
-          distributionPaths: [],
-          rules: [
-            {
-              id: 'rule-1',
-              name: 'source rule',
-              enabled: true,
-              width: 100,
-              height: 100,
-              maxSizeKb: 99,
-              format: 'jpg' as const,
-              filenameTemplate: '{source}',
-            },
-          ],
-        },
-      ],
+      layers: [layer],
     }
     const group = createDefaultCompositeV2PresetGroup(1)
 
     const result = duplicatePresetIntoGroup([preset], group, preset.id, 'preset-copy', 2)
+    const copied = result.presets[1]!.layers[0] as CompositeV2TextLayer
+    copied.name = 'copy layer'
+    copied.position.width = 999
 
-    result.presets[1].outputRuleGroupsOverride[0].rules[0].name = 'copy rule'
-
-    expect(preset.outputRuleGroupsOverride[0].rules[0].name).toBe('source rule')
-    expect(result.presets[1].outputRuleGroupsOverride).not.toBe(preset.outputRuleGroupsOverride)
-    expect(result.presets[1].outputRuleGroupsOverride[0].rules).not.toBe(preset.outputRuleGroupsOverride[0].rules)
+    expect((preset.layers[0] as CompositeV2TextLayer).name).toBe('source layer')
+    expect(preset.layers[0]!.position.width).toBe(100)
+    expect(result.presets[1]!.layers).not.toBe(preset.layers)
+    expect(result.presets[1]!.layers[0]).not.toBe(preset.layers[0])
   })
 
   it('reorders group preset ids', () => {

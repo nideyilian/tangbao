@@ -14,113 +14,85 @@ afterEach(() => {
 })
 
 describe('composite v2 store state factory', () => {
-  it('creates presets with explicit naming fields', () => {
+  it('creates a default preset with canvas and layers only', () => {
     const preset = createDefaultCompositeV2Preset(1)
 
-    expect(preset).toMatchObject({
-      filenameTemplate: '{preset}-{source}-{index}',
-      customVariableValues: {},
+    expect(preset).toEqual({
+      id: 'preset-default',
+      name: '默认产品预设',
+      baseCanvas: { width: 1280, height: 720 },
+      sampleBackgroundPath: '',
+      layers: [],
+      updatedAt: 1,
     })
   })
 
-  it('migrates legacy per-preset variables without merging their values', () => {
-    const presetA = createDefaultCompositeV2Preset(1)
-    const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Preset B' }
+  it('drops retired orchestration fields when migrating an old snapshot', () => {
+    const legacyPreset = {
+      ...createDefaultCompositeV2Preset(1),
+      // 旧版本的预设自带整套编排字段：输出目录、命名模板、变量取值、渠道尺寸覆盖。
+      // 编排职责已归后处理，这些字段必须被丢掉——留着就会被当成「还算数」的配置。
+      outputRootPath: 'D:/out',
+      distributionPath: 'D:/dist',
+      filenameTemplate: '{preset}-{index}',
+      namingTemplate: '{project}',
+      customVariableValues: { project: '项目A' },
+      useOutputOverrides: true,
+      outputRuleGroupsOverride: [{ id: 'gdt', name: '广点通', rules: [], distributionPaths: [] }],
+    }
+
+    const migrated = migrateCompositeV2PersistedState({ presets: [legacyPreset], customVariables: [] }, 3)
+
+    expect(migrated.presets).toEqual([
+      {
+        id: 'preset-default',
+        name: '默认产品预设',
+        baseCanvas: { width: 1280, height: 720 },
+        sampleBackgroundPath: '',
+        layers: [],
+        updatedAt: 1,
+      },
+    ])
+  })
+
+  it('normalizes a broken canvas and fit mode instead of trusting persisted values', () => {
     const migrated = migrateCompositeV2PersistedState(
       {
         presets: [
-          {
-            ...presetA,
-            namingTemplate: '{project}',
-            filenameTemplate: undefined,
-            customVariableValues: undefined,
-            customVariables: [{ id: 'project-a', name: 'project', value: '项目A' }],
-          },
-          {
-            ...presetB,
-            namingTemplate: '{project}',
-            filenameTemplate: undefined,
-            customVariableValues: undefined,
-            customVariables: [{ id: 'project-b', name: 'project', value: '项目B' }],
-          },
+          { ...createDefaultCompositeV2Preset(1), id: 'preset-a', baseCanvas: { width: 0, height: Number.NaN } },
+          { ...createDefaultCompositeV2Preset(2), id: 'preset-b', baseCanvas: { width: 800, height: 800 } },
         ],
-        customVariables: [],
-      },
-      1,
-    )
-
-    expect(migrated.presets.map((preset) => preset.customVariableValues)).toEqual([
-      { project: '项目A' },
-      { project: '项目B' },
-    ])
-    expect(migrated.presets[0]).toMatchObject({
-      filenameTemplate: '{project}',
-    })
-  })
-
-  it('copies v2 global variable values into presets without explicit values', () => {
-    const preset = createDefaultCompositeV2Preset(1)
-    const migrated = migrateCompositeV2PersistedState(
-      {
-        presets: [{ ...preset, customVariableValues: undefined }],
-        customVariables: [{ id: 'project', name: 'project', value: '全局项目' }],
-      },
-      2,
-    )
-
-    expect(migrated.presets[0]?.customVariableValues).toEqual({ project: '全局项目' })
-  })
-
-  it('preserves an explicit empty preset value map during normalization', () => {
-    const preset = createDefaultCompositeV2Preset(1)
-    const migrated = migrateCompositeV2PersistedState(
-      {
-        presets: [preset],
-        customVariables: [{ id: 'project', name: 'project', value: '全局项目' }],
+        globalFitMode: 'nonsense',
       },
       3,
     )
 
-    expect(migrated.presets[0]?.customVariableValues).toEqual({})
+    expect(migrated.presets.map((preset) => preset.baseCanvas)).toEqual([
+      { width: 1280, height: 720 },
+      { width: 800, height: 800 },
+    ])
+    expect(migrated.globalFitMode).toBe('crop-fill')
   })
 
-  it('normalizes legacy naming fields while merging restored state', () => {
-    const current = createCompositeV2Store().getState()
-    const legacyPreset = {
-      ...createDefaultCompositeV2Preset(1),
-      namingTemplate: '{project}',
-      filenameTemplate: undefined,
-      customVariableValues: undefined,
-    }
-    const restored = mergeCompositeV2PersistedState(
-      {
-        ...getCompositeV2PersistedState(current),
-        presets: [legacyPreset],
-        customVariables: [{ id: 'project', name: 'project', value: '恢复项目' }],
-      },
-      current,
+  it('discards presets without an id', () => {
+    const migrated = migrateCompositeV2PersistedState(
+      { presets: [{ name: '没有 id 的脏数据' }, createDefaultCompositeV2Preset(1)] },
+      3,
     )
 
-    expect(restored.presets[0]).toMatchObject({
-      filenameTemplate: '{project}',
-      customVariableValues: { project: '恢复项目' },
-    })
+    expect(migrated.presets.map((preset) => preset.id)).toEqual(['preset-default'])
   })
 
   it('creates batch state separate from persisted preset state', () => {
     const state = createCompositeV2StoreState()
 
-    expect((state as unknown as Record<string, unknown>).logoLibraryPath).toBe('')
-    expect(state.customVariables).toEqual([])
+    expect(state.logoLibraryPath).toBe('')
     expect(state.backgroundFolders).toEqual([])
     expect(state.recursiveBackgrounds).toBe(false)
     expect(state.backgrounds).toEqual([])
     expect(state.previewHistory).toEqual([])
     expect(state.previewHistoryIndex).toBe(-1)
-    expect(state.customValue).toBe('')
     expect(state.presets.length).toBeGreaterThan(0)
-    expect(state.historyRetention).toBe(10)
-    expect(state.exportStatus).toBe('idle')
   })
 
   it('returns only persisted domain state for storage', () => {
@@ -131,15 +103,10 @@ describe('composite v2 store state factory', () => {
       backgrounds: [{ path: 'D:/bg/a.jpg', name: 'a.jpg', relativeDir: '', width: 100, height: 100 }],
       previewHistory: ['D:/bg/a.jpg'],
       previewHistoryIndex: 0,
-      customValue: 'run-1',
-      preserveSourceDir: true,
-      exportStatus: 'running',
-      exportCompleted: 2,
-      exportTotal: 10,
       logoOrder: [],
       projectLogos: [],
     })
-    store.setState({ logoLibraryPath: 'D:/logos' } as never)
+    store.setState({ logoLibraryPath: 'D:/logos' })
 
     const persisted = getCompositeV2PersistedState(store.getState())
 
@@ -147,50 +114,16 @@ describe('composite v2 store state factory', () => {
       logoLibraryPath: 'D:/logos',
       logoOrder: [],
       projectLogos: [],
-      customVariables: [],
       presets: store.getState().presets,
       presetGroups: store.getState().presetGroups,
-      outputRuleGroups: store.getState().outputRuleGroups,
-      distributionConfig: {
-        ...store.getState().distributionConfig,
-        startDate: undefined,
-      },
       globalFitMode: store.getState().globalFitMode,
-      historyRetention: store.getState().historyRetention,
-      history: store.getState().history,
       backgroundFolders: ['D:/bg'],
       recursiveBackgrounds: true,
       selectedPresetGroupId: store.getState().selectedPresetGroupId,
       selectedPreviewPresetId: store.getState().selectedPreviewPresetId,
-      enabledPresetIdsForRun: store.getState().enabledPresetIdsForRun,
-      smartMatchOrientation: false,
-      archiveExportsToLibrary: false,
     })
     expect(persisted).not.toHaveProperty('previewHistory')
-    expect(persisted).not.toHaveProperty('exportStatus')
-  })
-
-  it('hydrates distribution settings with the fresh runtime start date', () => {
-    const source = createCompositeV2Store()
-    source.setState({
-      distributionConfig: {
-        ...source.getState().distributionConfig,
-        enabled: true,
-        days: 7,
-        startDate: '20200101',
-      },
-    })
-    const persisted = JSON.parse(JSON.stringify(getCompositeV2PersistedState(source.getState())))
-    const current = createCompositeV2Store().getState()
-    current.distributionConfig.startDate = '20260702'
-
-    const hydrated = mergeCompositeV2PersistedState(persisted, current)
-
-    expect(hydrated.distributionConfig).toMatchObject({
-      enabled: true,
-      days: 7,
-      startDate: '20260702',
-    })
+    expect(persisted).not.toHaveProperty('backgrounds')
   })
 
   it('hydrates a coherent non-default preset group selection', () => {
@@ -204,7 +137,6 @@ describe('composite v2 store state factory', () => {
       presetGroups: [groupA, groupB],
       selectedPresetGroupId: groupB.id,
       selectedPreviewPresetId: presetB.id,
-      enabledPresetIdsForRun: [presetB.id],
     })
     const persisted = JSON.parse(JSON.stringify(getCompositeV2PersistedState(source.getState())))
 
@@ -213,7 +145,6 @@ describe('composite v2 store state factory', () => {
     expect(hydrated).toMatchObject({
       selectedPresetGroupId: 'group-b',
       selectedPreviewPresetId: 'preset-b',
-      enabledPresetIdsForRun: ['preset-b'],
     })
   })
 
@@ -228,7 +159,6 @@ describe('composite v2 store state factory', () => {
       ...getCompositeV2PersistedState(currentStore.getState()),
       selectedPresetGroupId: 'missing-group',
       selectedPreviewPresetId: 'missing-preset',
-      enabledPresetIdsForRun: ['missing-preset'],
     }
 
     const hydrated = mergeCompositeV2PersistedState(JSON.parse(JSON.stringify(persisted)), currentStore.getState())
@@ -236,11 +166,10 @@ describe('composite v2 store state factory', () => {
     expect(hydrated).toMatchObject({
       selectedPresetGroupId: 'group-a',
       selectedPreviewPresetId: 'preset-a',
-      enabledPresetIdsForRun: ['preset-a'],
     })
   })
 
-  it('resets enabled presets but preserves preview preset when switching groups', () => {
+  it('preserves the preview preset when switching groups', () => {
     const store = createCompositeV2Store()
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Preset A' }
     const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Preset B' }
@@ -253,13 +182,11 @@ describe('composite v2 store state factory', () => {
       presetGroups: [groupA, groupB],
       selectedPresetGroupId: groupA.id,
       selectedPreviewPresetId: presetB.id,
-      enabledPresetIdsForRun: [presetB.id],
     })
 
     store.getState().setSelectedPresetGroup(groupB.id)
 
     expect(store.getState().selectedPresetGroupId).toBe(groupB.id)
-    expect(store.getState().enabledPresetIdsForRun).toEqual(groupB.presetIds)
     expect(store.getState().selectedPreviewPresetId).toBe('preset-b')
   })
 
@@ -284,116 +211,12 @@ describe('composite v2 store state factory', () => {
     store.getState().setBackgroundFolders(['D:/bg'])
     store.getState().setRecursiveBackgrounds(true)
     store.getState().setSelectedPreviewPresetId('preset-default')
-    store.getState().setEnabledPresetIdsForRun(['preset-default'])
-    store.getState().setCustomValue('custom-1')
-    store.getState().setPreserveSourceDir(true)
-    store.getState().setExportProgress(3, 7)
-    store.getState().setExportStatus('paused')
 
     expect(store.getState()).toMatchObject({
       backgroundFolders: ['D:/bg'],
       recursiveBackgrounds: true,
       selectedPreviewPresetId: 'preset-default',
-      enabledPresetIdsForRun: ['preset-default'],
-      customValue: 'custom-1',
-      preserveSourceDir: true,
-      exportCompleted: 3,
-      exportTotal: 7,
-      exportStatus: 'paused',
     })
-  })
-
-  it('stores global custom variables independently from presets', () => {
-    const store = createCompositeV2Store()
-
-    store.getState().setCustomVariables([{ id: 'custom-project', name: 'project', value: '项目A' }])
-
-    expect(store.getState().customVariables).toEqual([{ id: 'custom-project', name: 'project', value: '项目A' }])
-    expect(store.getState().presets.every((preset) => !('customVariables' in preset))).toBe(true)
-  })
-
-  it('updates a custom variable value for only one preset', () => {
-    const store = createCompositeV2Store()
-    const first = store.getState().presets[0]!
-    store.getState().createPreset('第二预设')
-    const second = store.getState().presets[1]!
-
-    store.getState().setPresetCustomVariableValue(first.id, 'project', '项目A')
-    store.getState().setPresetCustomVariableValue(second.id, 'project', '项目B')
-
-    expect(store.getState().presets[0]!.customVariableValues.project).toBe('项目A')
-    expect(store.getState().presets[1]!.customVariableValues.project).toBe('项目B')
-  })
-
-  it('adds a variable definition and initializes only the selected preset value', () => {
-    const store = createCompositeV2Store()
-    const first = store.getState().presets[0]!
-    store.getState().createPreset('第二预设')
-
-    store.getState().addCustomVariable('project', '项目A', first.id)
-
-    expect(store.getState().customVariables).toEqual([expect.objectContaining({ name: 'project', value: '项目A' })])
-    expect(store.getState().presets[0]!.customVariableValues).toEqual({ project: '项目A' })
-    expect(store.getState().presets[1]!.customVariableValues).toEqual({})
-  })
-
-  it('removes deleted variable values from every preset', () => {
-    const store = createCompositeV2Store()
-    const first = store.getState().presets[0]!
-    store.getState().createPreset('第二预设')
-    const second = store.getState().presets[1]!
-    store.getState().setCustomVariables([{ id: 'project', name: 'project', value: '默认项目' }])
-    store.getState().setPresetCustomVariableValue(first.id, 'project', '项目A')
-    store.getState().setPresetCustomVariableValue(second.id, 'project', '项目B')
-
-    store.getState().removeCustomVariable('project')
-
-    expect(store.getState().customVariables).toEqual([])
-    expect(store.getState().presets.every((preset) => !('project' in preset.customVariableValues))).toBe(true)
-  })
-
-  it('collects export results and retains history', () => {
-    const store = createCompositeV2Store()
-    store.getState().resetExportResults()
-    store.getState().addExportSuccess({
-      path: 'D:/out/a.jpg',
-      presetId: 'preset-default',
-      presetName: 'Default',
-      channel: 'Baidu',
-      size: '1280x720',
-      index: 1,
-      warning: 'oversize',
-    })
-    store.getState().addExportFailure({
-      backgroundPath: 'D:/bg/b.jpg',
-      presetId: 'preset-default',
-      presetName: 'Default',
-      channel: 'Baidu',
-      size: '1280x720',
-      reason: 'read failed',
-    })
-    store.getState().addHistoryRecord({
-      id: 'run-1',
-      status: 'completed-with-failures',
-      startedAt: 1,
-      endedAt: 2,
-      backgroundFolders: ['D:/bg'],
-      recursive: false,
-      backgroundCount: 2,
-      presetGroupName: 'Default',
-      enabledPresetCount: 1,
-      plannedCount: 2,
-      successCount: 1,
-      failureCount: 1,
-      successes: [],
-      failures: [],
-    })
-
-    expect(store.getState().exportSuccesses).toHaveLength(1)
-    expect(store.getState().exportFailures).toHaveLength(1)
-    expect(store.getState().history[0]?.id).toBe('run-1')
-    store.getState().setHistoryRetention(0)
-    expect(store.getState().historyRetention).toBe(1)
   })
 
   it('truncates forward preview history when a new random background is pushed after going back', () => {
@@ -584,23 +407,9 @@ describe('composite v2 store state factory', () => {
     expect(store.getState().presetGroups.map((group) => group.id)).toEqual([third!.id, first!.id, second!.id])
   })
 
-  it('updates global fit mode and an output size rule', () => {
+  it('updates the global fit mode', () => {
     const store = createCompositeV2Store()
-    const ruleId = store.getState().outputRuleGroups[0]!.rules[0]!.id
     store.getState().setGlobalFitMode('contain-blur')
-    store.getState().updateOutputRule(ruleId, { enabled: true, maxSizeKb: 123 })
     expect(store.getState().globalFitMode).toBe('contain-blur')
-    expect(store.getState().outputRuleGroups[0]!.rules[0]).toMatchObject({ enabled: true, maxSizeKb: 123 })
-  })
-
-  it('enables every size rule in one channel without changing other channels', () => {
-    const store = createCompositeV2Store()
-    const targetGroup = store.getState().outputRuleGroups[1]!
-    const untouchedGroup = store.getState().outputRuleGroups[0]!
-
-    store.getState().setOutputRuleGroupEnabled(targetGroup.id, true)
-
-    expect(store.getState().outputRuleGroups[1]!.rules.every((rule) => rule.enabled)).toBe(true)
-    expect(store.getState().outputRuleGroups[0]).toEqual(untouchedGroup)
   })
 })

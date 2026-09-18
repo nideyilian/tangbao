@@ -108,7 +108,6 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'features/assetLibrary/AssetListView.tsx|hex': 7,
   'features/assetLibrary/AssetViewer.tsx|hex': 7,
   'features/composite/components/PresetLayerPanel.tsx|hex': 1,
-  'features/composite/components/PresetNamingFields.tsx|hex': 0,
   'features/composite/lib/compositeDefaults.ts|hex': 18,
   'features/composite/lib/compositeRenderer.ts|hex': 1,
   'features/composite/lib/compositeRendererV2.ts|hex': 2,

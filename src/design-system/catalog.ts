@@ -985,42 +985,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Dialog', 'SegmentedControl', 'Button'],
   },
   {
-    module: 'src/features/composite/ExportStatusWatcher.tsx',
-    responsibility: '后台导出完成提醒（弹窗关闭时全局 toast 汇总导出/分配结果）',
-    decision: 'retain',
-    targets: ['ToastMessage', 'StatusIndicator'],
-  },
-  {
-    module: 'src/features/composite/PostprocessStatusBadge.tsx',
-    responsibility: '顶栏后期处理入口导出进度徽标',
-    decision: 'retain',
-    targets: ['Badge', 'StatusIndicator', 'Progress'],
-  },
-  {
-    module: 'src/features/composite/components/BatchExportTab.tsx',
-    responsibility: '批量导出配置标签页',
-    decision: 'compose',
-    targets: ['Fieldset', 'TextField', 'SelectField', 'Progress', 'Alert'],
-  },
-  {
-    module: 'src/features/composite/components/DistributionSettingsPanel.tsx',
-    responsibility: '分发设置面板',
-    decision: 'compose',
-    targets: ['Panel', 'Fieldset', 'Switch', 'TextField'],
-  },
-  {
-    module: 'src/features/composite/components/ExportResultsPanel.tsx',
-    responsibility: '导出进度、成功和失败结果',
-    decision: 'compose',
-    targets: ['Panel', 'Progress', 'StatusIndicator', 'Alert', 'Table'],
-  },
-  {
-    module: 'src/features/composite/components/ExportHistoryDetailModal.tsx',
-    responsibility: '导出任务历史详情弹窗（溯源导出位置/分配位置/失败原因）',
-    decision: 'compose',
-    targets: ['Dialog', 'Button', 'Table'],
-  },
-  {
     module: 'src/features/composite/components/FloatingLayerToolbar.tsx',
     responsibility: '画布浮动图层工具条',
     decision: 'migrate',
@@ -1031,12 +995,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     responsibility: '浮动 Logo 素材库',
     decision: 'compose',
     targets: ['Panel', 'Grid', 'Thumbnail', 'IconButton', 'Tooltip'],
-  },
-  {
-    module: 'src/features/composite/components/GlobalOutputRulesPanel.tsx',
-    responsibility: '全局输出规则面板',
-    decision: 'compose',
-    targets: ['Panel', 'Fieldset', 'SelectField', 'TextField'],
   },
   {
     module: 'src/features/composite/components/PresetCanvasEditor.tsx',
@@ -1057,16 +1015,10 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Tabs', 'Panel', 'ListRow', 'Menu', 'EmptyState'],
   },
   {
-    module: 'src/features/composite/components/PresetNamingFields.tsx',
-    responsibility: '命名模板字段和变量编辑器',
-    decision: 'retain',
-    targets: ['Fieldset', 'TextField', 'Badge', 'Popover', 'Alert'],
-  },
-  {
     module: 'src/features/composite/CompositeWorkspace.tsx',
-    responsibility: '复合后期工作区装配',
+    responsibility: '水印预设工作区装配（图层式水印编辑，编排已归后处理）',
     decision: 'retain',
-    targets: ['SplitPane', 'Tabs', 'Panel', 'Toolbar'],
+    targets: ['SplitPane', 'Panel', 'Toolbar'],
   },
   {
     module: 'src/features/ordering/adapters/RequirementOrderingWorkspace.tsx',

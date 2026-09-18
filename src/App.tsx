@@ -27,7 +27,6 @@ import WorkspaceTabBar from './components/WorkspaceTabBar'
 import AppPageRail from './components/AppPageRail'
 import RequirementQueueRunner from './features/requirementPrototype/QueueRunner'
 import { Dialog } from './design-system'
-import { ExportStatusWatcher } from './features/composite/ExportStatusWatcher'
 const AgentWorkspace = React.lazy(() => import('./components/AgentWorkspace'))
 const CompositeWorkspace = React.lazy(() => import('./features/composite/CompositeWorkspace'))
 // 策略（strategy）与下单（ordering）模块已屏蔽：不再懒加载对应工作区，历史 appMode 值兜底渲染素材库
@@ -474,20 +473,18 @@ export default function App() {
           <WorkspaceTabManagerModal />
           <UpdateReleaseNotesModal />
         </React.Suspense>
-        {/* 后期处理工作区：近全屏弹窗形式，不切走素材库；素材库保持在底层可见 */}
+        {/* 水印预设工作区：近全屏弹窗形式，不切走素材库；素材库保持在底层可见 */}
         <React.Suspense fallback={null}>
           <Dialog
             open={postprocessDialogOpen}
             onOpenChange={setPostprocessDialogOpen}
-            title="后期处理"
-            description="批量合成原图与预设，处理完成后关闭回到素材库。"
+            title="水印预设"
+            description="编辑水印预设的图层与画布；批量产出走后处理（素材库工具栏的「跑后处理」）。"
             className="ds-dialog--postprocess"
             closeOnBackdrop={false}
           >
             <CompositeWorkspace embedded />
           </Dialog>
-          {/* 后台导出完成提醒：常驻挂载，弹窗关闭时也能收到完成 toast */}
-          <ExportStatusWatcher />
         </React.Suspense>
       </div>
     </ErrorBoundary>

@@ -318,7 +318,7 @@ function AssetCardMenuInner({
             }}
             icon={<WrenchIcon size={14} />}
           >
-            发送到后期处理{batchLabel}
+            用作水印预览底图{batchLabel}
           </MenuItem>
           {/* 复用提示词与参数、打开文件位置都只能定位到单张，多选时一并隐藏 */}
           {showSingleActions && (

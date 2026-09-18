@@ -23,7 +23,6 @@ import { useStore } from '../../../store'
 import { FloatingLogoLibrary } from './FloatingLogoLibrary'
 import { PresetCanvasEditor } from './PresetCanvasEditor'
 import { PresetLayerPanel } from './PresetLayerPanel'
-import { PresetNamingFields } from './PresetNamingFields'
 import { useAppDialog } from '../../../hooks/useAppDialog'
 
 const GROUP_DRAG_TYPE = 'application/x-tangbao-preset-group'
@@ -33,10 +32,6 @@ const PRESET_BASE_SIZES = [
   { value: '1080x1920', label: '1080×1920', width: 1080, height: 1920 },
   { value: '800x800', label: '800×800', width: 800, height: 800 },
 ] as const
-
-function formatNamingDate(date = new Date()) {
-  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-}
 
 export function PresetManagementTab() {
   const store = useCompositeV2Store()
@@ -128,24 +123,6 @@ export function PresetManagementTab() {
     [query, store.presetGroups, store.presets],
   )
   const activePreset = store.presets.find((preset) => preset.id === store.selectedPreviewPresetId) ?? null
-  const namingPreviewValues = useMemo(() => {
-    const groups = activePreset?.useOutputOverrides ? activePreset.outputRuleGroupsOverride : store.outputRuleGroups
-    const activeGroup = groups.find((group) => group.rules.some((rule) => rule.enabled)) ?? groups[0]
-    const activeRule = activeGroup?.rules.find((rule) => rule.enabled) ?? activeGroup?.rules[0]
-    return {
-      date: formatNamingDate(),
-      channel: activeGroup?.name ?? '渠道',
-      size:
-        activeRule?.name ??
-        (activePreset ? `${activePreset.baseCanvas.width}x${activePreset.baseCanvas.height}` : '尺寸'),
-      preset: activePreset?.name ?? '预设',
-      index: '1',
-      source: '源文件',
-      sourceDir: '源目录',
-      custom: store.customValue || '自定义值',
-    }
-  }, [activePreset, store.customValue, store.outputRuleGroups])
-
   useEffect(() => {
     if (!activePreset && visiblePresets[0]) setSelectedPreviewPresetId(visiblePresets[0].id)
   }, [activePreset, setSelectedPreviewPresetId, visiblePresets])
@@ -743,198 +720,6 @@ export function PresetManagementTab() {
                     ))}
                   </select>
                 </label>
-              </div>
-
-              {/* 输出与分配设置 */}
-              <div className="space-y-4 py-4">
-                <div className="rounded-md border border-ds-border bg-ds-surface/50 p-3 dark:border-ds-border dark:bg-ds-scrim/50">
-                  <PresetNamingFields
-                    preset={activePreset}
-                    customVariables={store.customVariables}
-                    previewValues={namingPreviewValues}
-                    onUpdatePreset={(patch) => store.updatePreset(activePreset.id, patch)}
-                    onAddCustomVariable={(name, value) => store.addCustomVariable(name, value, activePreset.id)}
-                    onUpdateCustomVariableValue={(name, value) =>
-                      store.setPresetCustomVariableValue(activePreset.id, name, value)
-                    }
-                    onRemoveCustomVariable={store.removeCustomVariable}
-                    onSelectOutputDirectory={async () => {
-                      try {
-                        const path = await window.electronAPI?.selectDirectory?.()
-                        if (path) store.updatePreset(activePreset.id, { outputRootPath: path })
-                      } catch {
-                        useStore.getState().showToast('选择输出目录失败，请重试', 'error')
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* 覆盖全局渠道/尺寸规则 */}
-              <div className="space-y-4 pt-4">
-                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-                  <input
-                    className="cursor-pointer"
-                    type="checkbox"
-                    checked={activePreset.useOutputOverrides}
-                    onChange={(event) =>
-                      store.updatePreset(activePreset.id, {
-                        useOutputOverrides: event.target.checked,
-                        outputRuleGroupsOverride: activePreset.outputRuleGroupsOverride.length
-                          ? activePreset.outputRuleGroupsOverride
-                          : structuredClone(store.outputRuleGroups),
-                      })
-                    }
-                  />
-                  覆盖全局渠道与尺寸配置
-                </label>
-                {activePreset.useOutputOverrides && (
-                  <div className="space-y-3">
-                    {store.outputRuleGroups.map((globalGroup) => {
-                      const overrideGroup = activePreset.outputRuleGroupsOverride.find((g) => g.id === globalGroup.id)
-                      const mergedRules = globalGroup.rules.map((globalRule) => {
-                        const overrideRule = overrideGroup?.rules.find((r) => r.id === globalRule.id)
-                        return { ...globalRule, enabled: overrideRule ? overrideRule.enabled : globalRule.enabled }
-                      })
-                      const distributionPaths = overrideGroup?.distributionPaths ?? globalGroup.distributionPaths ?? []
-                      const allEnabled = mergedRules.length > 0 && mergedRules.every((r) => r.enabled)
-
-                      return (
-                        <div
-                          key={globalGroup.id}
-                          className="rounded-md border border-ds-border bg-ds-surface/50 p-2 dark:border-ds-border dark:bg-ds-scrim/30"
-                        >
-                          <div className="mb-2 flex items-center justify-between">
-                            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-ds-text dark:text-ds-text-subtle">
-                              <input
-                                className="cursor-pointer"
-                                type="checkbox"
-                                aria-label={`全选覆盖 ${globalGroup.name} 尺寸`}
-                                checked={allEnabled}
-                                onChange={(e) => {
-                                  const newOverrides = structuredClone(activePreset.outputRuleGroupsOverride)
-                                  let targetGroup = newOverrides.find((g) => g.id === globalGroup.id)
-                                  if (!targetGroup) {
-                                    targetGroup = {
-                                      id: globalGroup.id,
-                                      name: globalGroup.name,
-                                      rules: [],
-                                      distributionPaths: [],
-                                    }
-                                    newOverrides.push(targetGroup)
-                                  }
-                                  globalGroup.rules.forEach((gr) => {
-                                    let targetRule = targetGroup!.rules.find((r) => r.id === gr.id)
-                                    if (!targetRule) {
-                                      targetRule = { ...gr, enabled: e.target.checked }
-                                      targetGroup!.rules.push(targetRule)
-                                    } else {
-                                      targetRule.enabled = e.target.checked
-                                    }
-                                  })
-                                  store.updatePreset(activePreset.id, { outputRuleGroupsOverride: newOverrides })
-                                }}
-                              />
-                              {globalGroup.name}
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const newOverrides = structuredClone(activePreset.outputRuleGroupsOverride)
-                                let targetGroup = newOverrides.find((g) => g.id === globalGroup.id)
-                                if (!targetGroup) {
-                                  targetGroup = {
-                                    id: globalGroup.id,
-                                    name: globalGroup.name,
-                                    rules: [],
-                                    distributionPaths: [],
-                                  }
-                                  newOverrides.push(targetGroup)
-                                }
-                                targetGroup.distributionPaths = [...(targetGroup.distributionPaths || []), '']
-                                store.updatePreset(activePreset.id, { outputRuleGroupsOverride: newOverrides })
-                                useStore.getState().showToast('已添加分配地址', 'success')
-                              }}
-                              className="cursor-pointer text-xs text-ds-primary hover:text-ds-primary dark:text-ds-primary dark:hover:text-ds-primary"
-                            >
-                              + 分配地址
-                            </button>
-                          </div>
-
-                          {distributionPaths.length > 0 && (
-                            <div className="mb-2 space-y-1">
-                              {distributionPaths.map((path, idx) => (
-                                <div key={idx} className="flex items-center gap-1">
-                                  <input
-                                    value={path}
-                                    onChange={(e) => {
-                                      const newOverrides = structuredClone(activePreset.outputRuleGroupsOverride)
-                                      const targetGroup = newOverrides.find((g) => g.id === globalGroup.id)!
-                                      targetGroup.distributionPaths[idx] = e.target.value
-                                      store.updatePreset(activePreset.id, { outputRuleGroupsOverride: newOverrides })
-                                    }}
-                                    placeholder="输入渠道分配地址..."
-                                    className="min-w-0 flex-1 cursor-text rounded border border-ds-border bg-ds-surface px-2 py-1 text-xs dark:border-ds-border dark:bg-ds-scrim"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const newOverrides = structuredClone(activePreset.outputRuleGroupsOverride)
-                                      const targetGroup = newOverrides.find((g) => g.id === globalGroup.id)!
-                                      targetGroup.distributionPaths.splice(idx, 1)
-                                      store.updatePreset(activePreset.id, { outputRuleGroupsOverride: newOverrides })
-                                      useStore.getState().showToast('已删除分配地址', 'success')
-                                    }}
-                                    className="cursor-pointer p-1 text-ds-danger hover:bg-ds-danger-subtle dark:hover:bg-ds-danger/10 rounded"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {mergedRules.map((rule) => (
-                              <label
-                                key={rule.id}
-                                className={`flex cursor-pointer items-center justify-center rounded border px-2 py-1.5 text-xs transition-colors ${rule.enabled ? 'border-ds-primary/35 bg-ds-primary-subtle text-ds-primary dark:border-ds-primary/40 dark:bg-ds-primary/10 dark:text-ds-primary' : 'border-ds-border bg-ds-surface text-ds-muted hover:bg-ds-subtle dark:border-ds-border dark:bg-ds-scrim dark:text-ds-muted dark:hover:bg-ds-subtle'}`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={rule.enabled}
-                                  onChange={(e) => {
-                                    const newOverrides = structuredClone(activePreset.outputRuleGroupsOverride)
-                                    let targetGroup = newOverrides.find((g) => g.id === globalGroup.id)
-                                    if (!targetGroup) {
-                                      targetGroup = {
-                                        id: globalGroup.id,
-                                        name: globalGroup.name,
-                                        rules: [],
-                                        distributionPaths: [],
-                                      }
-                                      newOverrides.push(targetGroup)
-                                    }
-                                    let targetRule = targetGroup.rules.find((r) => r.id === rule.id)
-                                    if (!targetRule) {
-                                      targetRule = { ...rule, enabled: e.target.checked }
-                                      targetGroup.rules.push(targetRule)
-                                    } else {
-                                      targetRule.enabled = e.target.checked
-                                    }
-                                    store.updatePreset(activePreset.id, { outputRuleGroupsOverride: newOverrides })
-                                  }}
-                                  className="hidden cursor-pointer"
-                                />
-                                {rule.width} × {rule.height}
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
               </div>
             </div>
           ) : (

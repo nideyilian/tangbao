@@ -409,11 +409,11 @@ async function saveImageViaApi(
 }
 
 /**
- * 导出成图写盘（合成图导出运行时自带注入的 `electronAPI`，故这里显式接收）。
+ * 合成图（含水印）写盘。调用方是后处理（`features/postprocess/taskPostprocess`），
+ * `api` 由调用方显式传入，不依赖全局注入。
  *
- * 与 `saveImage` 同策略：优先在渲染进程解码后走字节通道（导出成图常有 10MB+，
+ * 与 `saveImage` 同策略：优先在渲染进程解码后走字节通道（合成图常有 10MB+，
  * 主进程同步解码 base64 会连带卡住窗口消息与其它 IPC），缺通道或失败时回退 dataUrl。
- * `archiveExportsToLibrary` 归档仍复用同一份 dataUrl，不额外解码。
  */
 export async function saveCompositeImage(
   api: NonNullable<Window['electronAPI']>,
