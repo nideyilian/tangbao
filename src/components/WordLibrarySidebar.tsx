@@ -269,9 +269,7 @@ export default function WordLibrarySidebar() {
           <div className="min-w-0 flex-1">
             <h3 className="tangbao-side-panel__title">素材详情</h3>
             <p className="tangbao-side-panel__meta">
-              {activeAsset?.width && activeAsset.height
-                ? `${activeAsset.width} × ${activeAsset.height}`
-                : '已选择素材'}
+              {activeAsset?.width && activeAsset.height ? `${activeAsset.width} × ${activeAsset.height}` : '已选择素材'}
             </p>
           </div>
           <IconButton

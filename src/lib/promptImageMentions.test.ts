@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { InputImage, WordLibraryEntry } from '../types'
+import type { InputImage } from '../types'
 import {
-  convertVariableMentionAtVisibleOffsetToText,
-  createVariableMention,
   escapePromptHtmlAttribute,
   escapePromptHtmlText,
   getAtImageQuery,
@@ -12,35 +10,14 @@ import {
   insertImageMention,
   insertTextMentionAtVisibleRange,
   isCursorInSelectedImageMention,
-  moveVariableMentionInPrompt,
   remapImageMentionsForOrder,
   replaceImageMentionsForApi,
-  resolveVariableMentionEntry,
-  VAR_END,
-  VAR_START,
 } from './promptImageMentions'
 
 const images: InputImage[] = [
   { id: 'image-a', dataUrl: 'data:image/png;base64,a' },
   { id: 'image-b', dataUrl: 'data:image/png;base64,b' },
 ]
-
-const variableMention = (name: string) => `${VAR_START}${name}${VAR_END}`
-const wordEntry = (
-  entry: Partial<WordLibraryEntry> & Pick<WordLibraryEntry, 'id' | 'groupId' | 'key' | 'entries'>,
-): WordLibraryEntry => ({
-  label: entry.key,
-  draw_count: 1,
-  sortOrder: 0,
-  isPinned: false,
-  isFavorite: false,
-  tags: [],
-  deletedAt: null,
-  createdAt: 0,
-  updatedAt: 0,
-  usageCount: 0,
-  ...entry,
-})
 
 describe('prompt image mentions', () => {
   it('detects @ query after the cursor', () => {
@@ -175,80 +152,6 @@ describe('prompt image mentions', () => {
 
     it('does not replace mentions outside the current image range', () => {
       expect(replaceImageMentionsForApi(`把 ${getSelectedImageMentionLabel(2)} 变蓝`, 2)).toBe('把 @图3 变蓝')
-    })
-
-    it('keeps deleted variable mentions as plain text when resolving for api', () => {
-      expect(
-        replaceImageMentionsForApi(`生成${variableMention('背景')}`, undefined, undefined, { wordLibraryEntries: [] }),
-      ).toBe('生成背景')
-    })
-
-    it('resolves a name-only variable mention to the only substantive duplicate entry', () => {
-      const entries = [
-        wordEntry({ id: 'default-entry', groupId: 'default', key: 'hero', entries: ['hero'] }),
-        wordEntry({ id: 'skill-entry', groupId: 'skill-group', key: 'hero', entries: ['young founder'] }),
-      ]
-
-      expect(
-        replaceImageMentionsForApi(`make ${createVariableMention('hero')}`, undefined, undefined, {
-          wordLibraryEntries: entries,
-        }),
-      ).toBe('make young founder')
-    })
-
-    it('uses an embedded variable entry id even when duplicate names exist', () => {
-      const entries = [
-        wordEntry({ id: 'default-entry', groupId: 'default', key: 'hero', entries: ['hero'] }),
-        wordEntry({ id: 'skill-entry', groupId: 'skill-group', key: 'hero', entries: ['young founder'] }),
-      ]
-
-      expect(resolveVariableMentionEntry('hero', 'skill-entry', entries)?.id).toBe('skill-entry')
-    })
-
-    it('resolves a manually typed template variable from the word library', () => {
-      const entries = [wordEntry({ id: 'style-entry', groupId: 'default', key: '风格', entries: ['水彩插画'] })]
-
-      expect(
-        replaceImageMentionsForApi('生成{{ 风格 }}海报', undefined, undefined, { wordLibraryEntries: entries }),
-      ).toBe('生成水彩插画海报')
-    })
-
-    it('keeps an unknown manually typed template variable visible', () => {
-      expect(replaceImageMentionsForApi('生成{{不存在}}海报', undefined, undefined, { wordLibraryEntries: [] })).toBe(
-        '生成{{不存在}}海报',
-      )
-    })
-
-    it('does not select blank word library entries', () => {
-      const entries = [
-        wordEntry({ id: 'style-entry', groupId: 'default', key: 'style', entries: ['', '  ', 'watercolor'] }),
-      ]
-
-      expect(
-        replaceImageMentionsForApi(`make ${createVariableMention('style', 'style-entry')}`, undefined, undefined, {
-          wordLibraryEntries: entries,
-        }),
-      ).toBe('make watercolor')
-    })
-  })
-
-  describe('prompt variable mention editing', () => {
-    it('converts the variable mention at the visible offset into plain text', () => {
-      expect(convertVariableMentionAtVisibleOffsetToText(`make ${variableMention('style')} portrait`, 6)).toBe(
-        'make style portrait',
-      )
-    })
-
-    it('moves a variable mention before another visible position', () => {
-      expect(
-        moveVariableMentionInPrompt(`make ${variableMention('style')} with ${variableMention('lighting')}`, 18, 5),
-      ).toBe(`make ${variableMention('lighting')}${variableMention('style')} with `)
-    })
-
-    it('moves a variable mention after text when dropped at the end', () => {
-      expect(
-        moveVariableMentionInPrompt(`${variableMention('style')} portrait with ${variableMention('lighting')}`, 1, 28),
-      ).toBe(` portrait with ${variableMention('lighting')}${variableMention('style')}`)
     })
   })
 })

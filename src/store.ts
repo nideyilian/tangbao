@@ -9832,9 +9832,6 @@ async function executeTask(taskId: string) {
       n,
       Boolean(task.inputImageFolderPath),
     )
-    const variableResolver = {
-      wordLibraryEntries: useStore.getState().wordLibraryEntries.filter((e) => e.deletedAt == null),
-    }
     // 变量提示词：提交时按 n 个槽位展开成具体提示词，每个槽位对应一个独立组合；
     // 展开基于任务 id 的确定性种子，重试/恢复时结果一致。
     const variablePrompt = parseVariablePrompt(task.prompt)
@@ -10147,7 +10144,6 @@ async function executeTask(taskId: string) {
                   resolveTaskPrompt(planned.slotIndexes[0]),
                   requestInputDataUrls.length,
                   undefined,
-                  variableResolver,
                 ),
                 task.adNegativeRuleSnapshot?.content ??
                   getAdNegativeRule(requestSettings, task.params.adNegativeRuleId).content,
@@ -10392,7 +10388,7 @@ async function executeTask(taskId: string) {
           callImageApi({
             settings: requestSettings,
             prompt: appendAdNegativeRule(
-              replaceImageMentionsForApi(resolveTaskPrompt(0), inputDataUrls.length, undefined, variableResolver),
+              replaceImageMentionsForApi(resolveTaskPrompt(0), inputDataUrls.length),
               task.adNegativeRuleSnapshot?.content ??
                 getAdNegativeRule(requestSettings, task.params.adNegativeRuleId).content,
             ),

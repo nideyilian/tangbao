@@ -1,79 +1,13 @@
-import type { InputImage, WordLibraryEntry } from '../types'
-
-export interface VariableResolver {
-  wordLibraryEntries: WordLibraryEntry[]
-}
+import type { InputImage } from '../types'
 
 const MENTION_START = '\u2063'
 const MENTION_END = '\u2064'
-export const VAR_START = '\u2060'
-export const VAR_END = '\u2061'
-const VAR_ENTRY_ID_SEPARATOR = '\u2062'
-export const VAR_MENTION_RE = /\u2060([^\u2061]+)\u2061/g
-const TEMPLATE_VARIABLE_RE = /\{\{\s*([^{}]+?)\s*\}\}/g
 const SELECTED_IMAGE_MENTION_RE = /\u2063@图(\d+)\u2064/g
 const SELECTED_MENTION_RE = /\u2063(@图(\d+)|@(?:第)?\d+轮图\d+)\u2064/g
 
 export interface AtImageQuery {
   start: number
   query: string
-}
-
-export function createVariableMention(varName: string, entryId?: string): string {
-  const name = varName.trim()
-  const id = entryId?.trim()
-  return `${VAR_START}${name}${id ? `${VAR_ENTRY_ID_SEPARATOR}${id}` : ''}${VAR_END}`
-}
-
-export function parseVariableMention(rawValue: string) {
-  const [rawName, rawEntryId] = rawValue.split(VAR_ENTRY_ID_SEPARATOR, 2)
-  return { varName: rawName.trim(), entryId: rawEntryId?.trim() || undefined }
-}
-
-function hasSubstantiveVariableEntries(entry: WordLibraryEntry): boolean {
-  const values = entry.entries.map((value) => value.trim()).filter(Boolean)
-  return values.length > 0 && !(values.length === 1 && values[0] === entry.key)
-}
-
-export function resolveVariableMentionEntry(
-  varName: string,
-  entryId: string | undefined,
-  wordLibraryEntries: WordLibraryEntry[],
-  options: { preferredGroupId?: string } = {},
-): WordLibraryEntry | undefined {
-  const name = varName.trim()
-  if (!name) return undefined
-
-  const activeEntries = wordLibraryEntries.filter((entry) => entry.deletedAt == null)
-  if (entryId) return activeEntries.find((entry) => entry.id === entryId)
-
-  const sameName = activeEntries.filter((entry) => entry.key === name)
-  if (sameName.length <= 1) return sameName[0]
-
-  if (options.preferredGroupId) {
-    const sameGroup = sameName.filter((entry) => entry.groupId === options.preferredGroupId)
-    if (sameGroup.length === 1) return sameGroup[0]
-  }
-
-  const substantive = sameName.filter(hasSubstantiveVariableEntries)
-  if (substantive.length === 1) return substantive[0]
-
-  const generated = substantive.filter((entry) => entry.sourceSkillName || entry.generationBatchId)
-  if (generated.length === 1) return generated[0]
-
-  const nonDefault = substantive.filter((entry) => entry.groupId !== 'default')
-  return nonDefault.length === 1 ? nonDefault[0] : undefined
-}
-
-function resolveVariableValue(
-  varName: string,
-  entryId: string | undefined,
-  wordLibraryEntries: WordLibraryEntry[],
-): string | undefined {
-  const entry = resolveVariableMentionEntry(varName, entryId, wordLibraryEntries)
-  const values = entry?.entries.map((value) => value.trim()).filter(Boolean) ?? []
-  if (values.length === 0) return undefined
-  return values[Math.floor(Math.random() * values.length)]
 }
 
 export function getImageMentionLabel(index: number) {
@@ -104,53 +38,10 @@ export function getPromptIndexFromVisibleIndex(prompt: string, visibleIndex: num
   let visible = 0
   for (let i = 0; i < prompt.length; i++) {
     if (visible >= visibleIndex) return i
-    if (prompt[i] === MENTION_START || prompt[i] === MENTION_END || prompt[i] === VAR_START || prompt[i] === VAR_END)
-      continue
+    if (prompt[i] === MENTION_START || prompt[i] === MENTION_END) continue
     visible++
   }
   return prompt.length
-}
-
-function findVariableMentionAtVisibleOffset(prompt: string, visibleOffset: number) {
-  for (const match of prompt.matchAll(VAR_MENTION_RE)) {
-    if (match.index == null) continue
-    const { varName } = parseVariableMention(match[1])
-    const visibleStart = stripImageMentionMarkers(prompt.slice(0, match.index)).length
-    const visibleEnd = visibleStart + varName.length
-    if (visibleOffset >= visibleStart && visibleOffset <= visibleEnd) {
-      return {
-        start: match.index,
-        end: match.index + match[0].length,
-        visibleStart,
-        visibleEnd,
-        marker: match[0],
-        varName,
-      }
-    }
-  }
-  return null
-}
-
-export function convertVariableMentionAtVisibleOffsetToText(prompt: string, visibleOffset: number) {
-  const mention = findVariableMentionAtVisibleOffset(prompt, visibleOffset)
-  if (!mention) return prompt
-  return `${prompt.slice(0, mention.start)}${mention.varName}${prompt.slice(mention.end)}`
-}
-
-export function moveVariableMentionInPrompt(prompt: string, sourceVisibleOffset: number, targetVisibleOffset: number) {
-  const mention = findVariableMentionAtVisibleOffset(prompt, sourceVisibleOffset)
-  if (!mention) return prompt
-  if (targetVisibleOffset >= mention.visibleStart && targetVisibleOffset <= mention.visibleEnd) return prompt
-
-  const promptWithoutMention = `${prompt.slice(0, mention.start)}${prompt.slice(mention.end)}`
-  const nextTargetVisibleOffset =
-    targetVisibleOffset > mention.visibleEnd ? targetVisibleOffset - mention.varName.length : targetVisibleOffset
-  const visibleLength = stripImageMentionMarkers(promptWithoutMention).length
-  const insertAt =
-    nextTargetVisibleOffset >= visibleLength
-      ? promptWithoutMention.length
-      : getPromptIndexFromVisibleIndex(promptWithoutMention, nextTargetVisibleOffset)
-  return `${promptWithoutMention.slice(0, insertAt)}${mention.marker}${promptWithoutMention.slice(insertAt)}`
 }
 
 export function isCursorInSelectedImageMention(prompt: string, visibleCursor: number): boolean {
@@ -232,7 +123,6 @@ export type PromptMentionPart =
   | { type: 'text'; text: string }
   | { type: 'mention'; text: string; imageIndex: number; mentionText?: string }
   | { type: 'mention'; text: string; mentionText: string; imageIndex?: never }
-  | { type: 'variable'; text: string; varName: string; entryId?: string }
 
 export function getPromptMentionParts(prompt: string, inputImages: InputImage[]): PromptMentionPart[] {
   const parts: PromptMentionPart[] = []
@@ -244,12 +134,6 @@ export function getPromptMentionParts(prompt: string, inputImages: InputImage[])
   for (const match of prompt.matchAll(SELECTED_MENTION_RE)) {
     if (match.index == null) continue
     matches.push({ index: match.index, length: match[0].length, type: 'mention', match })
-  }
-  for (const match of prompt.matchAll(VAR_MENTION_RE)) {
-    if (match.index == null) continue
-    const { varName } = parseVariableMention(match[1])
-    if (!varName.trim()) continue
-    matches.push({ index: match.index, length: match[0].length, type: 'variable', match })
   }
 
   matches.sort((a, b) => a.index - b.index)
@@ -268,10 +152,6 @@ export function getPromptMentionParts(prompt: string, inputImages: InputImage[])
           ? { type: 'mention', text, mentionText: getSelectedTextMentionLabel(text) }
           : { type: 'mention', text, imageIndex: index },
       )
-    } else {
-      // variable
-      const { varName, entryId } = parseVariableMention(m.match[1])
-      parts.push({ type: 'variable', text: varName, varName, entryId })
     }
 
     lastIndex = m.index + m.length
@@ -288,26 +168,13 @@ export function replaceImageMentionsForApi(
   prompt: string,
   imageCount?: number,
   formatImage?: (index: number) => string,
-  variableResolver?: VariableResolver,
 ): string {
-  let result = prompt.replace(SELECTED_IMAGE_MENTION_RE, (text, n) => {
+  const result = prompt.replace(SELECTED_IMAGE_MENTION_RE, (text, n) => {
     const index = Number(n) - 1
     if (imageCount != null && (index < 0 || index >= imageCount)) return stripImageMentionMarkers(text)
     return formatImage ? formatImage(index) : `[image ${n}]`
   })
-  // 替换变量词条标记为实际词条内容（随机选择一条）
-  if (variableResolver) {
-    result = result.replace(VAR_MENTION_RE, (_text, rawValue) => {
-      const { varName: trimmedVarName, entryId } = parseVariableMention(rawValue)
-      if (!trimmedVarName) return ''
-      return resolveVariableValue(trimmedVarName, entryId, variableResolver.wordLibraryEntries) ?? trimmedVarName
-    })
-    // Support variables typed directly in the gallery prompt as {{词条名}}.
-    // Unknown variables intentionally remain visible instead of being silently removed.
-    result = result.replace(TEMPLATE_VARIABLE_RE, (marker, rawName) => {
-      const name = String(rawName).trim()
-      return resolveVariableValue(name, undefined, variableResolver.wordLibraryEntries) ?? marker
-    })
-  }
-  return result
+  // 历史任务/草稿里可能残留变量标记（\u2060…\u2061）。变量语法下线后不再有人识别它们，
+  // 若不剥离会原样发给模型（WORD JOINER 会导致文本粘连）。stripImageMentionMarkers 的字符集已覆盖。
+  return stripImageMentionMarkers(result)
 }

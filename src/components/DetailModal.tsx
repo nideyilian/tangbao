@@ -34,7 +34,6 @@ import { replaceImageMentionsForApi, getPromptMentionParts } from '../lib/prompt
 import { getHoverPreviewPosition, getHoverPreviewSize } from '../lib/hoverPreviewPosition'
 import { isElectron as isElectronEnv, openInExplorer } from '../lib/localSave'
 import { findTaskSavedImagePath } from '../lib/imageRevealPath'
-import { buildVariableColorMap } from '../lib/promptVariableColors'
 import { CloseIcon, CopyIcon, DownloadIcon, EditIcon, FolderOpenIcon, TrashIcon } from './icons'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
@@ -104,10 +103,6 @@ export default function DetailModal() {
   const taskInputImageIds = task?.inputImageIds ?? EMPTY_IMAGE_IDS
   const taskMaskImageId = task?.maskImageId ?? null
   const taskActualParamsByImage = task?.actualParamsByImage
-
-  const wordLibraryEntries = useStore((s) => s.wordLibraryEntries)
-
-  const VAR_COLOR_MAP = useMemo(() => buildVariableColorMap(wordLibraryEntries), [wordLibraryEntries])
 
   const promptParts = useMemo(() => getPromptMentionParts(taskPrompt, []), [taskPrompt])
 
@@ -1031,26 +1026,7 @@ export default function DetailModal() {
               <p className="text-sm text-ds-text dark:text-ds-muted leading-relaxed whitespace-pre-wrap mb-4">
                 {task.prompt
                   ? promptParts.map((part, index) => {
-                      if (part.type === 'variable') {
-                        const color = VAR_COLOR_MAP[part.varName] ?? ''
-                        return (
-                          <span
-                            key={index}
-                            className="inline-flex items-center px-1 rounded text-xs font-medium"
-                            style={{
-                              backgroundColor: color ? `${color}18` : 'rgba(156,163,175,0.1)',
-                              color: color || '#9ca3af',
-                              borderColor: color ? color : 'rgba(156,163,175,0.2)',
-                              borderWidth: '1px',
-                              borderStyle: 'solid',
-                            }}
-                          >
-                            {part.text}
-                          </span>
-                        )
-                      } else {
-                        return <span key={index}>{part.text}</span>
-                      }
+                      return <span key={index}>{part.text}</span>
                     })
                   : '(无提示词)'}
               </p>

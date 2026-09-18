@@ -786,10 +786,6 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                 <PromptVariableEditor
                   value={editingPrompt}
                   onChange={setEditingPrompt}
-                  onVariablePromptChange={(nextPrompt) => {
-                    setEditingPrompt(nextPrompt)
-                    updateTaskPrompt(task.id, nextPrompt)
-                  }}
                   onKeyDown={handlePromptEditKeyDown}
                   onBlur={handlePromptEditSubmit}
                   onClick={(e) => e.stopPropagation()}

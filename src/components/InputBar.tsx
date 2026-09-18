@@ -33,8 +33,6 @@ import { getActiveApiProfile, getAgentApiProfile } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE } from '../lib/paramCompatibility'
 import { MAX_DIRECT_INPUT_IMAGES, MAX_FOLDER_IMAGES } from '../lib/inputImageLimits'
 import {
-  convertVariableMentionAtVisibleOffsetToText,
-  createVariableMention,
   escapePromptHtmlAttribute,
   escapePromptHtmlText,
   getAtImageQuery,
@@ -47,8 +45,6 @@ import {
   insertImageMentionAtVisibleRange,
   insertTextMentionAtVisibleRange,
   isCursorInSelectedImageMention,
-  moveVariableMentionInPrompt,
-  resolveVariableMentionEntry,
   stripImageMentionMarkers,
 } from '../lib/promptImageMentions'
 import { calculateImageSize, formatImageRatio, inferSizeTier, normalizeImageSize } from '../lib/size'
@@ -103,8 +99,6 @@ import {
 } from '../features/strategy/derivePolicy'
 import { DerivePolicyModal } from './DerivePolicyModal'
 import { useRequirementPrototype } from '../features/requirementPrototype/store'
-import { normalizePromptVariableMarkers, replaceVariableNameInPrompt } from '../lib/promptVariableEditor'
-import { buildVariableColorMap } from '../lib/promptVariableColors'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { Badge, Button, Switch, useDialogFocusTrap } from '../design-system'
@@ -196,10 +190,7 @@ function getAspectRatioFromSize(size: string): string {
 
 function getNodeVisibleTextLength(node: Node): number {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length ?? 0
-  if (
-    node instanceof HTMLElement &&
-    (node.classList.contains('mention-tag') || node.classList.contains('wildcard-var'))
-  ) {
+  if (node instanceof HTMLElement && node.classList.contains('mention-tag')) {
     return getMentionTagTextLength(node)
   }
   return Array.from(node.childNodes).reduce((sum, child) => sum + getNodeVisibleTextLength(child), 0)
@@ -219,10 +210,7 @@ function getVisibleOffsetBeforeNode(root: HTMLElement, target: Node): number {
       offset += node.textContent?.length ?? 0
       return
     }
-    if (
-      node instanceof HTMLElement &&
-      (node.classList.contains('mention-tag') || node.classList.contains('wildcard-var'))
-    ) {
+    if (node instanceof HTMLElement && node.classList.contains('mention-tag')) {
       offset += getMentionTagTextLength(node)
       return
     }
@@ -235,7 +223,7 @@ function getVisibleOffsetBeforeNode(root: HTMLElement, target: Node): number {
 
 function getMentionTagForBoundary(root: HTMLElement, container: Node) {
   const el = container.nodeType === Node.ELEMENT_NODE ? (container as Element) : container.parentElement
-  const tag = el?.closest('.mention-tag, .wildcard-var')
+  const tag = el?.closest('.mention-tag')
   return tag && root.contains(tag) ? tag : null
 }
 
@@ -343,25 +331,6 @@ function getContentEditableSelection(el: HTMLElement): { start: number; end: num
   }
 }
 
-function getContentEditableOffsetFromPoint(el: HTMLElement, x: number, y: number): number {
-  const doc = el.ownerDocument as Document & {
-    caretRangeFromPoint?: (x: number, y: number) => Range | null
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
-  }
-
-  const range = doc.caretRangeFromPoint?.(x, y)
-  if (range) {
-    return getContentEditableBoundaryOffset(el, range.startContainer, range.startOffset, 'start', true)
-  }
-
-  const position = doc.caretPositionFromPoint?.(x, y)
-  if (position) {
-    return getContentEditableBoundaryOffset(el, position.offsetNode, position.offset, 'start', true)
-  }
-
-  return stripImageMentionMarkers(getContentEditablePlainText(el)).length
-}
-
 function getContentEditablePlainText(el: HTMLElement): string {
   let text = ''
   const appendNodeText = (node: Node) => {
@@ -371,10 +340,6 @@ function getContentEditablePlainText(el: HTMLElement): string {
     }
     if (node instanceof HTMLElement && node.classList.contains('mention-tag')) {
       text += node.dataset.mentionText ?? node.textContent ?? ''
-      return
-    }
-    if (node instanceof HTMLElement && node.classList.contains('wildcard-var')) {
-      text += createVariableMention(node.dataset.varName ?? node.textContent ?? '', node.dataset.entryId)
       return
     }
     node.childNodes.forEach(appendNodeText)
@@ -395,7 +360,7 @@ function getMentionTagHtml(text: string) {
 }
 
 function syncMentionTagSelection(el: HTMLElement) {
-  const tags = el.querySelectorAll<HTMLElement>('.mention-tag, .wildcard-var')
+  const tags = el.querySelectorAll<HTMLElement>('.mention-tag')
   const sel = window.getSelection()
   if (!sel || sel.rangeCount === 0) {
     tags.forEach((tag) => tag.classList.remove('selected'))
@@ -426,7 +391,7 @@ function setContentEditableCursor(el: HTMLElement, offset: number) {
   let node: Text | null = null
   while (walker.nextNode()) {
     node = walker.currentNode as Text
-    const mentionTag = node.parentElement?.closest('.mention-tag, .wildcard-var')
+    const mentionTag = node.parentElement?.closest('.mention-tag')
     if (mentionTag) {
       if (remaining <= node.length) {
         const range = document.createRange()
@@ -485,10 +450,7 @@ function setContentEditableSelection(el: HTMLElement, start: number, end: number
         return null
       }
 
-      if (
-        current instanceof HTMLElement &&
-        (current.classList.contains('mention-tag') || current.classList.contains('wildcard-var'))
-      ) {
+      if (current instanceof HTMLElement && current.classList.contains('mention-tag')) {
         const length = getMentionTagTextLength(current)
         if (remaining <= 0) return { type: 'before', element: current }
         if (remaining < length)
@@ -770,13 +732,6 @@ export default function InputBar() {
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const searchQuery = useStore((s) => s.searchQuery)
 
-  const wordLibraryEntries = useStore((s) => s.wordLibraryEntries)
-  const wordLibraryGroups = useStore((s) => s.wordLibraryGroups)
-  const createWordLibraryGroup = useStore((s) => s.createWordLibraryGroup)
-  const createWordLibraryEntry = useStore((s) => s.createWordLibraryEntry)
-  const updateWordLibraryEntry = useStore((s) => s.updateWordLibraryEntry)
-  const setWordLibraryEditEntryId = useStore((s) => s.setWordLibraryEditEntryId)
-  const setWordLibraryPromptSelectedVarName = useStore((s) => s.setWordLibraryPromptSelectedVarName)
   const sopItems = useRequirementPrototype((s) => s.sopLibrary)
   const [showAgentBatchPlanner, setShowAgentBatchPlanner] = useState(false)
   const [showGallerySopBatch, setShowGallerySopBatch] = useState(false)
@@ -837,11 +792,6 @@ export default function InputBar() {
     if (selectedTaskIds.length === 0) setTaskMoveMenuOpen(false)
   }, [selectedTaskIds.length])
 
-  const VAR_COLOR_MAP = useMemo(() => buildVariableColorMap(wordLibraryEntries), [wordLibraryEntries])
-  const activeWordLibraryKeys = useMemo(
-    () => wordLibraryEntries.filter((e) => e.deletedAt == null).map((entry) => entry.key),
-    [wordLibraryEntries],
-  )
   const gallerySopScopeId = activeWorkspaceTabId ?? '__default__'
   // 素材库当前项目文件夹：同一标签页内不同文件夹的 SOP 批次运行互相独立（草稿/生成/状态互不打断）
   const gallerySopFolderKey = useAssetLibraryStore((state) =>
@@ -1439,7 +1389,6 @@ export default function InputBar() {
   const [isSingleLine, setIsSingleLine] = useState(true)
   const [submitHover, setSubmitHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
-  const [varConvertHover, setVarConvertHover] = useState(false)
   const [imageHintId, setImageHintId] = useState<string | null>(null)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
@@ -1469,7 +1418,6 @@ export default function InputBar() {
   const suppressImageClickRef = useRef(false)
   const replaceImageTargetRef = useRef<{ index: number; id: string } | null>(null)
   const isUserInputRef = useRef(false)
-  const draggedVariableOffsetRef = useRef<number | null>(null)
   const imageHintLockedRef = useRef(false)
   const imageHintReleaseRef = useRef<(() => void) | null>(null)
   const [cursorPos, setCursorPos] = useState(0)
@@ -1884,146 +1832,6 @@ export default function InputBar() {
     syncMentionTagSelection(el)
     setPrompt(getContentEditablePlainText(el))
   }, [setPrompt])
-  useEffect(() => {
-    const normalized = normalizePromptVariableMarkers(prompt, activeWordLibraryKeys)
-    if (normalized === prompt) return
-    isUserInputRef.current = false
-    setPrompt(normalized)
-  }, [activeWordLibraryKeys, prompt, setPrompt])
-  const handleConvertToVariable = useCallback(() => {
-    const el = textareaRef.current
-    if (!el) return
-    const sel = window.getSelection()
-    if (!sel || sel.rangeCount === 0) {
-      showToast('请先选中要转换为变量的文字', 'info')
-      return
-    }
-    const range = sel.getRangeAt(0)
-    if (range.collapsed) {
-      showToast('请先选中要转换为变量的文字', 'info')
-      return
-    }
-    if (!el.contains(range.commonAncestorContainer)) {
-      showToast('请先选中要转换为变量的文字', 'info')
-      return
-    }
-
-    // 检查选中区域是否在 mention-tag 或 wildcard-var 内
-    const startTag = range.startContainer.parentElement?.closest?.('.mention-tag, .wildcard-var')
-    const endTag = range.endContainer.parentElement?.closest?.('.mention-tag, .wildcard-var')
-    if (startTag || endTag) {
-      showToast('已标记的变量不能重复转换', 'info')
-      return
-    }
-
-    const selectedText = range.toString().trim()
-    if (!selectedText) {
-      showToast('请先选中要转换为变量的文字', 'info')
-      return
-    }
-
-    // 划词时直接创建或复用词条，并写入绑定 entryId 的变量标记。
-    // 不再依赖词条侧栏的异步订阅补建，避免未挂载或时序问题导致标记被清理。
-    let entryId = wordLibraryEntries.find((entry) => entry.deletedAt == null && entry.key === selectedText)?.id
-    if (!entryId) {
-      const groupId =
-        wordLibraryGroups.find((group) => group.id === 'default' && group.archivedAt == null)?.id ??
-        wordLibraryGroups.find((group) => group.archivedAt == null)?.id ??
-        createWordLibraryGroup('默认分组').id
-      const entry = createWordLibraryEntry(groupId, selectedText)
-      updateWordLibraryEntry(entry.id, { label: selectedText, entries: [selectedText] })
-      entryId = entry.id
-      showToast('已创建词条', 'success')
-    }
-
-    const varText = createVariableMention(selectedText, entryId)
-    range.deleteContents()
-    range.insertNode(document.createTextNode(varText))
-    sel.removeAllRanges()
-
-    // 同步到 store
-    const plainText = getContentEditablePlainText(el)
-    useStore.getState().setPrompt(plainText)
-    setWordLibraryEditEntryId(entryId)
-  }, [
-    createWordLibraryEntry,
-    createWordLibraryGroup,
-    setWordLibraryEditEntryId,
-    showToast,
-    updateWordLibraryEntry,
-    wordLibraryEntries,
-    wordLibraryGroups,
-  ])
-  const handlePromptVariableContextMenu = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const el = textareaRef.current
-      if (!el) return
-
-      const target = (e.target as HTMLElement | null)?.closest<HTMLElement>('.wildcard-var')
-      if (!target || !el.contains(target)) return
-
-      e.preventDefault()
-      const offset = getVisibleOffsetBeforeNode(el, target)
-      const nextPrompt = convertVariableMentionAtVisibleOffsetToText(prompt, offset)
-      if (nextPrompt === prompt) return
-
-      const varName = target.dataset.varName ?? target.textContent ?? ''
-      isUserInputRef.current = false
-      setPrompt(nextPrompt)
-      window.setTimeout(() => {
-        if (!textareaRef.current) return
-        textareaRef.current.focus()
-        setContentEditableCursor(textareaRef.current, offset + varName.length)
-      }, 0)
-    },
-    [prompt, setPrompt],
-  )
-  const handlePromptVariableDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    const el = textareaRef.current
-    if (!el) return
-
-    const target = (e.target as HTMLElement | null)?.closest<HTMLElement>('.wildcard-var')
-    if (!target || !el.contains(target)) return
-
-    draggedVariableOffsetRef.current = getVisibleOffsetBeforeNode(el, target)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', target.dataset.varName ?? target.textContent ?? '')
-  }, [])
-  const handlePromptVariableDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (draggedVariableOffsetRef.current == null) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-  }, [])
-  const handlePromptVariableDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      const sourceOffset = draggedVariableOffsetRef.current
-      draggedVariableOffsetRef.current = null
-      if (sourceOffset == null) return
-
-      const el = textareaRef.current
-      if (!el) return
-
-      e.preventDefault()
-      const targetOffset = getContentEditableOffsetFromPoint(el, e.clientX, e.clientY)
-      const nextPrompt = moveVariableMentionInPrompt(prompt, sourceOffset, targetOffset)
-      if (nextPrompt === prompt) return
-
-      isUserInputRef.current = false
-      setPrompt(nextPrompt)
-      window.setTimeout(() => {
-        if (!textareaRef.current) return
-        textareaRef.current.focus()
-        setContentEditableCursor(
-          textareaRef.current,
-          Math.min(targetOffset, stripImageMentionMarkers(nextPrompt).length),
-        )
-      }, 0)
-    },
-    [prompt, setPrompt],
-  )
-  const handlePromptVariableDragEnd = useCallback(() => {
-    draggedVariableOffsetRef.current = null
-  }, [])
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount =
@@ -2834,7 +2642,6 @@ export default function InputBar() {
       isUserInputRef.current = false
       if (getContentEditablePlainText(el) === prompt) return
     }
-    const currentColorMap = VAR_COLOR_MAP // capture latest value
     const parts = getPromptMentionParts(prompt, inputImages)
     const html = prompt
       ? parts
@@ -2843,14 +2650,6 @@ export default function InputBar() {
               const mentionText = part.mentionText ?? getSelectedImageMentionLabel(part.imageIndex ?? 0)
               return `<span contenteditable="false" class="mention-tag" data-mention-text="${escapePromptHtmlAttribute(mentionText)}">${escapePromptHtmlText(part.text)}</span>`
             }
-            if (part.type === 'variable') {
-              const color = currentColorMap[part.varName] ?? ''
-              if (!color) return escapePromptHtmlText(part.text)
-              const style = color
-                ? `style="background:${color}18;color:${color};border-color:${color};--var-bg:${color}18;--var-text:${color};--var-border:${color};--var-bg-hover:${color}28;--var-bg-selected:${color};--var-text-selected:#fff;--var-border-selected:${color}"`
-                : ''
-              return `<span contenteditable="false" draggable="true" class="wildcard-var" data-var-name="${escapePromptHtmlAttribute(part.varName)}"${part.entryId ? ` data-entry-id="${escapePromptHtmlAttribute(part.entryId)}"` : ''} ${style}>${escapePromptHtmlText(part.text)}</span>`
-            }
             return escapePromptHtmlText(part.text)
           })
           .join('')
@@ -2858,7 +2657,7 @@ export default function InputBar() {
     if (el.innerHTML !== html) {
       el.innerHTML = html
     }
-  }, [prompt, inputImages, VAR_COLOR_MAP])
+  }, [prompt, inputImages])
 
   // 补 <br> 哨兵避免 pre-wrap 吃掉行尾 \n，同时不影响纯文本读取。
   useEffect(() => {
@@ -4882,65 +4681,11 @@ export default function InputBar() {
               onKeyDown={handleKeyDown}
               onPaste={handlePromptPaste}
               onCopy={handlePromptCopy}
-              onContextMenu={handlePromptVariableContextMenu}
-              onDragStart={handlePromptVariableDragStart}
-              onDragOver={handlePromptVariableDragOver}
-              onDrop={handlePromptVariableDrop}
-              onDragEnd={handlePromptVariableDragEnd}
-              onDoubleClick={(e) => {
-                const target = e.target as HTMLElement
-                if (target.classList.contains('wildcard-var')) {
-                  const varName = target.dataset.varName ?? target.textContent ?? ''
-                  const entryId = target.dataset.entryId
-                  const store = useStore.getState()
-                  const entry = resolveVariableMentionEntry(varName, entryId, store.wordLibraryEntries)
-                  setWordLibraryPromptSelectedVarName(entry ? null : varName)
-                  setWordLibraryEditEntryId(entry?.id ?? entryId ?? null)
-                  store.setVarEntryEditor({
-                    entryId: entry?.id,
-                    varName,
-                    groupId: entry?.groupId ?? 'default',
-                    entries: entry?.entries ?? [],
-                    onSave: (newName, newGroupId, cleanedEntries) => {
-                      // 更新 prompt 中的变量名（如果改名）
-                      const currentStore = useStore.getState()
-                      const currentPrompt = currentStore.prompt
-                      if (newName !== varName) {
-                        currentStore.setPrompt(replaceVariableNameInPrompt(currentPrompt, varName, newName))
-                      }
-                      // 更新或创建词条库条目
-                      const existingId = entry?.id
-                      if (existingId) {
-                        currentStore.updateWordLibraryEntry(existingId, {
-                          key: newName,
-                          groupId: newGroupId,
-                          entries: cleanedEntries,
-                          label: newName,
-                        })
-                      } else if (cleanedEntries.length > 0) {
-                        const newEntry = currentStore.createWordLibraryEntry(newGroupId, newName)
-                        currentStore.updateWordLibraryEntry(newEntry.id, {
-                          entries: cleanedEntries,
-                          label: newName,
-                        })
-                      }
-                      currentStore.showToast('词条已保存', 'success')
-                    },
-                  })
-                }
-              }}
               onClick={(e) => {
                 const el = textareaRef.current
                 if (!el) return
                 const target = e.target as HTMLElement
-                if (target.classList.contains('mention-tag') || target.classList.contains('wildcard-var')) {
-                  if (target.classList.contains('wildcard-var')) {
-                    const varName = target.dataset.varName ?? target.textContent ?? ''
-                    const entryId = target.dataset.entryId
-                    const entry = resolveVariableMentionEntry(varName, entryId, useStore.getState().wordLibraryEntries)
-                    setWordLibraryPromptSelectedVarName(entry ? null : varName)
-                    setWordLibraryEditEntryId(entry?.id ?? entryId ?? null)
-                  }
+                if (target.classList.contains('mention-tag')) {
                   const sel = window.getSelection()
                   if (sel) {
                     const range = document.createRange()
@@ -5018,29 +4763,6 @@ export default function InputBar() {
                     title="从素材库选择参考图"
                   >
                     <ImageIcon size={20} />
-                  </button>
-                </div>
-                {/* 转换为变量按钮 */}
-                <div
-                  className="relative"
-                  onMouseEnter={() => setVarConvertHover(true)}
-                  onMouseLeave={() => setVarConvertHover(false)}
-                >
-                  <ButtonTooltip visible={varConvertHover} text="转换为变量" />
-                  <button
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={handleConvertToVariable}
-                    className="inline-flex h-ds-control-md w-ds-control-md items-center justify-center rounded-ds-lg transition-[background-color,transform,box-shadow] duration-150 shadow-sm bg-ds-subtle dark:bg-ds-surface hover:bg-ds-subtle dark:hover:bg-ds-surface text-ds-muted dark:text-ds-muted hover:shadow active:scale-[0.97]"
-                    aria-label="转换为变量"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"
-                      />
-                    </svg>
                   </button>
                 </div>
                 <div
@@ -5235,29 +4957,6 @@ export default function InputBar() {
                       </div>
                     </>
                   )}
-                </div>
-                {/* 转换为变量按钮 */}
-                <div
-                  className="relative flex-shrink-0"
-                  onMouseEnter={() => setVarConvertHover(true)}
-                  onMouseLeave={() => setVarConvertHover(false)}
-                >
-                  <ButtonTooltip visible={varConvertHover} text="转换为变量" />
-                  <button
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={handleConvertToVariable}
-                    className="inline-flex h-ds-control-md w-ds-control-md items-center justify-center rounded-ds-lg transition shadow-sm bg-ds-subtle dark:bg-ds-surface hover:bg-ds-subtle dark:hover:bg-ds-surface text-ds-muted dark:text-ds-muted"
-                    aria-label="转换为变量"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"
-                      />
-                    </svg>
-                  </button>
                 </div>
                 <div
                   className="relative flex-1"

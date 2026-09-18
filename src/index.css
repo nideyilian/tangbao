@@ -1337,10 +1337,6 @@ input[type='number'] {
     box-shadow var(--ds-duration-fast) ease;
 }
 
-.wildcard-var:active {
-  cursor: grabbing;
-}
-
 .mention-tag::selection,
 .mention-tag *::selection {
   background: transparent !important;
@@ -1368,49 +1364,6 @@ input[type='number'] {
 .ios-rounded-scroll-fix {
   isolation: isolate;
   -webkit-mask-image: -webkit-radial-gradient(white, black);
-}
-
-/* ===== Wildcard Variable Tags ===== */
-
-.wildcard-var {
-  display: inline-flex;
-  align-items: center;
-  box-sizing: border-box;
-  height: 1.625em;
-  padding: 0 7px;
-  margin: 0 2px;
-  border-radius: 6px;
-  background: var(--var-bg, hsl(var(--ds-color-warning-subtle)));
-  color: var(--var-text, hsl(var(--ds-color-warning)));
-  border: 1.5px solid var(--var-border, hsl(var(--ds-color-warning-subtle)));
-  font-size: inherit;
-  font-weight: 600;
-  line-height: 1;
-  vertical-align: baseline;
-  user-select: all;
-  cursor: default;
-  transition:
-    background-color var(--ds-duration-fast) ease,
-    border-color var(--ds-duration-fast) ease,
-    color var(--ds-duration-fast) ease,
-    box-shadow var(--ds-duration-fast) ease;
-}
-
-.wildcard-var::selection,
-.wildcard-var *::selection {
-  background: transparent !important;
-  color: inherit !important;
-}
-
-.wildcard-var:hover {
-  background: var(--var-bg-hover, hsl(var(--ds-color-warning-subtle) / 0.85));
-}
-
-.wildcard-var.selected {
-  background: var(--var-bg-selected, hsl(var(--ds-color-warning)));
-  color: var(--var-text-selected, hsl(var(--ds-color-text-inverse)));
-  border-color: var(--var-border-selected, hsl(var(--ds-color-warning) / 0.8));
-  box-shadow: inset 0 0 0 1px hsl(var(--ds-color-warning) / 0.25);
 }
 
 @media (min-width: 1024px) {

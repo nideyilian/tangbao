@@ -218,7 +218,10 @@
 > 盘点规模：约 7000 行（A 档 ~5470 / B 档 ~200 / C 档 ~300 / D 档待定）。
 
 ### TB-034 删除零引用文件（A2 档，992 行）
-- **状态**：TODO · 阻塞：**等杰哥确认**
+- **状态**：✅ **DONE（2026-09-18，commit `a7c5a06`）**
+- **实际净删**：16 文件 / **+68 −1360**（含 4 个只测这些模块的测试文件）
+- **执行记录**：同步清 `catalog.ts` 的 4 条登记 + `compliance.test.ts` 的 1 行白名单；
+  `tsc` 通过、`eslint` 零告警、`npm test` 234 文件 / 2513 用例全绿
 - **内容**：`TaskGrid.tsx`(516) / `SupportPromptModal.tsx`(120) / `legacyTagsToCollections.ts`(116) /
   `SearchBar.tsx`(95) / `wordEntryGroups.ts`(51) / `assetDerivation.ts`(41) /
   `WordLibrarySidebarToggle.tsx`(27) / `collectionPath.ts`(26)
@@ -235,7 +238,13 @@
 - **验收标准**：`npm run verify` 全绿；每组合并都补或改对应单测
 
 ### TB-036 删除「策略编辑 + 下单」孤岛（A1 档，4479 行）
-- **状态**：TODO · 阻塞：**等杰哥确认**（本次最大的一块）
+- **状态**：✅ **DONE（2026-09-18，commit `f925b99`）**
+- **实际净删**：16 文件 / **−4835 行**（14 个源文件/测试 + catalog 与 page-coverage 登记清理）
+- **⚠️ 执行中发现的连带项**（只清入口映射不够）：`catalog.ts` 里除 10 条 `legacyComponentCoverage`
+  条目外，还有 **3 条 `pageCoverage` 条目**（strategy / ordering / requirement-prototype）——
+  **是 `page-coverage-regression.test.tsx` 的「无多余登记」断言把它们抓出来的**。
+  这正是该测试存在的意义：删工作区必须同时清「组件登记 + 页面登记 + 入口映射」三处。
+- **验证**：`tsc` 通过、`eslint` 零告警、`npm test` 232 文件 / 2507 用例全绿
 - **根因**：`App.tsx:31` / `Header.tsx:24` 已说明 strategy 工作区屏蔽，但编辑子树仍在代码里；
   孤岛根 `requirementPrototype/AppShell.tsx` **实测 0 处引用**
 - **顺序**：**从叶子删到根**（叶 → 中间层 → `AppShell.tsx`）—— 反过来会一次炸出几十个编译错误
@@ -257,7 +266,41 @@
 - **验收标准**：`npm run verify` 全绿 + 老备份导入仍能恢复标签数据
 
 ### TB-038 彻底下线词条库（D 档 · 已拍板）
-- **状态**：TODO · 阻塞：**只剩「手打 `{{xxx}}` 怎么处理」的 a/b/c 三选一**，其余可直接开工
+- **状态**：✅ **DONE（2026-09-18）** ① UI 层 `6fda217` · ② 链路层（同批提交，见下）
+- **① 已完成内容**（UI 层下线）：删除 `WordLibraryQuickPanel`(328) / `WordLibraryDerivativePanel`(409) /
+  `WordLibraryManagerModal`(965) / `VarEntryEditor`(147) 及 3 个测试；
+  `WordLibrarySidebar.tsx` 改造为**纯素材详情面板**（592 → 约 260 行，摘掉「词条」Tab 与全部词条逻辑）；
+  `App.tsx` 删除 2 个 import + 2 个挂载；`catalog.ts` 删 4 条登记；
+  `WordLibrarySidebar.test.tsx` 改写成「不再有 tab」+「无详情返回 null」两条断言。
+  净删 **+50 −2476**，`npm test` 229 文件 / 2498 用例全绿。
+  ⚠️ 两个 localStorage key（`wordLibrarySidebar_pos_v2` / `_dock_v1`）**保留原字面量**，
+  改掉会让用户已保存的面板位置与停靠状态丢失。
+- **② 已完成内容（InputBar 链路 + `{{xxx}}` 按选项 a 彻底移除）**
+  - `InputBar.tsx`（5565 行）摘除 22 处：7 个 store 订阅、`VAR_COLOR_MAP` + `activeWordLibraryKeys`、
+    `normalizePromptVariableMarkers` effect、`handleConvertToVariable`（划词转变量）、双击 `wildcard-var`
+    打开编辑器、右键「变量还原为文本」+ 4 个拖拽 handler、两处「转换为变量」按钮、
+    prompt 渲染的 variable 支、6 处 `wildcard-var` 选择器、`getContentEditableOffsetFromPoint`（失消费者）
+  - ⚠️ **保留 `mention-tag`（图片 @ 引用）全链路** —— 它与变量无关，误删会导致点图片引用无反应
+  - 删除两个变量专用 lib：`promptVariableEditor.ts`（`normalizePromptVariableMarkers` /
+    `replaceVariableNameInPrompt`）、`promptVariableColors.ts`（6 色变量色标）+ 各自测试
+  - `PromptVariableEditor.tsx`（219 → 约 105 行）改造为「可编辑提示词 + 图片 mention 高亮」，
+    删掉 `onVariablePromptChange` prop 并同步 `TaskCard.tsx` 调用点
+  - `DetailModal.tsx`：删 import、`VAR_COLOR_MAP` 订阅与 variable 渲染支
+  - `index.css`：删 `.wildcard-var` 全部样式（含 `--var-*` 自定义属性消费）
+  - `lib/promptImageMentions.ts`：删 12 个变量符号（`VAR_*` / `createVariableMention` /
+    `parseVariableMention` / `resolveVariableMentionEntry` / `resolveVariableValue` /
+    `convertVariableMentionAtVisibleOffsetToText` / `moveVariableMentionInPrompt` /
+    `VariableResolver` / `TEMPLATE_VARIABLE_RE` 等）+ `replaceImageMentionsForApi` 去掉
+    `variableResolver` 参数；`store.ts` 3 处调用同步
+  - ⚠️ **最关键的一处副作用修复**：`normalizePromptVariableMarkers` 处理的是**不可见标记**
+    （`\u2060…\u2061`）而非字面 `{{}}`；删掉后历史任务/草稿里的残留标记会**原样发给模型**
+    （`\u2060` 是 WORD JOINER，会导致文本粘连）。已在 `replaceImageMentionsForApi` 出口补
+    `stripImageMentionMarkers(result)` 兜底（该函数字符集 `[\u2060\u2061\u2062\u2063\u2064]` 已覆盖）
+  - ⚠️ **绝对没动**：SOP 的 `{{}}` 是**独立语法**（`variablePrompt.ts` / `variablePromptMeta` /
+    `elementPool` 从正文「可变项：」解析候选值），与词条库零耦合，本次只摘 `promptImageMentions`
+    这一条旁路
+  - 测试：删 `promptVariableEditor.test.ts` / `promptVariableColors.test.ts`；
+    `promptImageMentions.test.ts` 删 9 个变量用例与辅助函数（255 → 161 行）
 - **决策依据**：杰哥 2026-09-18 明确「词条库已被 SOP 完全替代，我不需要再用了」。
   ⚠️ 初稿把「彻底下线」评为"不建议"是**错的** —— 那是把「代码是活的」当成了「业务还需要」，
   这类判断只能由产品负责人做。教训与修正过程见 `docs/redundancy-audit.md` §5
