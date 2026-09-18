@@ -155,3 +155,70 @@ ELECTRON_ENABLE_LOGGING=1 PATH="/c/Program Files/nodejs:$PATH" npm run dev
 → 本机 `agentShareApiParameters=false` + `agentApiConfigMode='hybrid'`：**文本走独立「金贝贝」，图片走当前生效配置**。
 把 `activeProfileId` 换成 mock **动不了 SOP 提示词生成**。mock 服务**只做图像** —— `/v1/chat/completions` 兜底返回
 目录 JSON、解析不出内容，链路会卡住。
+
+## 八、推 GitHub 与查 CI（2026-09-18 实测定稿）
+
+### 推送命令
+
+```bash
+cd /d/AAA/TANGBAO
+git -c http.sslVerify=false -c credential.helper= \
+    -c 'credential.helper=!"C:/Program Files/Git/mingw64/bin/git-credential-manager.exe"' \
+    push -u origin main
+```
+
+两个参数都是必需的，少一个就失败：
+
+- `-c credential.helper=` **必须写在 GCM 那条前面**。PortableGit 的系统级 gitconfig 自带
+  `helper-selector`（本机不存在这个二进制），不清空它会把 GCM 顶掉，报
+  `remote: Invalid username or token` —— 看起来像 token 过期，其实是根本没走到 GCM。
+- **不要套 `env -u http_proxy ...`**。实测整条命令**静默不执行**：exit 0、零输出、连
+  `GIT_TRACE` 都不打印，极易误判成推送成功。要绕代理就在 gitconfig 里配。
+
+凭据在 **Windows 凭据管理器**（用户 `nideyilian`，40 位 classic PAT）；`gh` 未登录，
+`git 2.55` 的 `http.schannelCheckRevoke=false` 无效。
+
+### 自检：**不要用 `git status -sb`**
+
+本机 `.git/refs/remotes/` 有**环境级写保护**：`git fetch` / `git update-ref` / `mkdir` 全都
+**报成功但引用不落盘**（shell 重定向直接 `No such file or directory`）。
+后果是 `git status -sb` **恒显 `## main...origin/main [gone]`** —— 这与推送成功与否无关。
+
+唯一可信的自检是拿网络上的真实 SHA 比：
+
+```bash
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git -c http.sslVerify=false ls-remote origin main | awk '{print $1}')
+[ "$LOCAL" = "$REMOTE" ] && echo OK || echo MISMATCH
+```
+
+另外 `push` 自身打印的 `b4cc9bd..31f1ad6  main -> main` 来自服务端回执，也可以当证据；
+但 `exit 0` 单独不可信（见上面 `env -u http_proxy` 那条）。
+
+### 查 CI
+
+```bash
+TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | \
+  git -c credential.helper= \
+      -c 'credential.helper=!"C:/Program Files/Git/mingw64/bin/git-credential-manager.exe"' \
+      credential fill | grep '^password=' | cut -d= -f2-)
+
+curl -s --ssl-no-revoke \
+  -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/nideyilian/tangbao/actions/runs?per_page=5"
+```
+
+- `--ssl-no-revoke` **必须加**，否则返回**空 body**（不是报错），很容易误判成「GitHub API 挂了」。
+- 别用 `-o /dev/null`：TLS 握手失败会被一起吞掉。
+- 未认证 60 次/时，带 token 5000 次/时。token 就是上面的 `git credential fill`（`password=` 那段）。
+- **一次 push 只给 head commit 生成一个 run**，中间那几条提交不会有独立 run，别以为漏跑了。
+- job logs 会 302 到带签名的 URL；`curl -L` 带 `Authorization` 会被拒 → 先 `curl -I` 取
+  `location`，再无认证头下载。
+
+### CI / Release 触发条件
+
+| workflow      | 触发           | 注意                                                                 |
+| ------------- | -------------- | -------------------------------------------------------------------- |
+| `ci.yml`      | 任意分支 push  | `tsc -b` + electron typecheck + lint + format:check + vitest（Node 24） |
+| `release.yml` | `v*` tag       | **勿改回 `--publish always`**（124MB exe 必超时）→ `--publish never` + `softprops/action-gh-release@v2`；校验步骤硬编码产物名 |
+
