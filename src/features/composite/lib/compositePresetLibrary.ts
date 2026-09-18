@@ -1,5 +1,15 @@
 import type { CompositeV2Preset, CompositeV2PresetGroup } from './compositeV2Types'
 
+/**
+ * 拖拽 MIME 类型。
+ *
+ * 放在这里而不是各自组件里定义：预设库（`PresetManagementTab`）是拖出方，
+ * 预设组与项目树（`PresetProjectTree`）都是拖入方，三处必须是同一份字面量，
+ * 否则拖过去不认，且现象是「拖了没反应」这种最难查的静默失败。
+ */
+export const PRESET_GROUP_DRAG_TYPE = 'application/x-tangbao-preset-group'
+export const PRESET_LIBRARY_DRAG_TYPE = 'application/x-tangbao-library-preset'
+
 export function addPresetToGroup(group: CompositeV2PresetGroup, presetId: string): CompositeV2PresetGroup {
   if (group.presetIds.includes(presetId)) return group
   return { ...group, presetIds: [...group.presetIds, presetId], updatedAt: Date.now() }

@@ -33,6 +33,35 @@ export function resolveProjectNodeIdChain(collections: AssetCollection[], collec
   return resolveCollectionPath(collections, collectionId).map((item) => item.id)
 }
 
+/** 继承链上的一环：谁、在第几层、写了什么。 */
+export interface ProjectOverrideChainEntry {
+  collectionId: string
+  /** 0 产品线 / 1 产品 / 2 方向 / 3+ 扩展层 */
+  depth: number
+  override: PostprocessNodeOverride
+}
+
+/**
+ * 取出节点继承链上**真正写了参数**的那些环（根在前、自身在最后）。
+ *
+ * 抽成共用实现是因为「某个字段最终生效的是谁」这条链，全字段合并（后处理设置）与
+ * 单字段查询（水印绑定）必须完全同源——两处各写一遍遍历，迟早会在
+ * 「空对象算不算表态」「环怎么兜底」这类细节上分叉。
+ */
+export function resolveProjectOverrideChain(
+  collections: AssetCollection[],
+  params: ProjectNodeParamsMap,
+  collectionId: string | null,
+): ProjectOverrideChainEntry[] {
+  const chain: ProjectOverrideChainEntry[] = []
+  if (!collectionId) return chain
+  resolveProjectNodeIdChain(collections, collectionId).forEach((id, depth) => {
+    const override = params[id]?.postprocess
+    if (override) chain.push({ collectionId: id, depth, override })
+  })
+  return chain
+}
+
 /** 归属节点的路径名（供 `{line}` / `{product}` / `{direction}` token）；无归属时全为空串。 */
 export function resolveProjectNodePathNames(
   collections: AssetCollection[],
@@ -94,22 +123,62 @@ export function resolveProjectPostprocessSlice(
   collectionId: string | null,
   fallback: PostprocessMediaConfig,
 ): ResolvedPostprocessSlice {
-  const chain = collectionId ? resolveCollectionPath(collections, collectionId) : []
+  const chain = resolveProjectOverrideChain(collections, params, collectionId)
   let config = fallback
   let enabled = true
   let sourcedFrom: string | null = null
   let sourcedDepth = -1
 
-  chain.forEach((node, depth) => {
-    const override = params[node.id]?.postprocess
-    if (!override) return
-    config = applyPostprocessOverride(config, override)
-    if (override.enabled !== undefined) enabled = override.enabled
-    sourcedFrom = node.id
-    sourcedDepth = depth
-  })
+  for (const entry of chain) {
+    config = applyPostprocessOverride(config, entry.override)
+    if (entry.override.enabled !== undefined) enabled = entry.override.enabled
+    sourcedFrom = entry.collectionId
+    sourcedDepth = entry.depth
+  }
 
   return { config, enabled, sourcedFrom, sourcedDepth }
+}
+
+/** 某个节点最终生效的水印绑定。 */
+export interface ResolvedWatermarkBinding {
+  /** 生效的水印预设 id，顺序即产出顺序；空数组 = 这个方向不加水印 */
+  presetIds: string[]
+  /** 提供了该值的节点 id；null = 全部来自全局默认 */
+  sourcedFrom: string | null
+  /** 本节点自己写了这个字段（对应「本级自定义」；false 时显示为继承） */
+  overridden: boolean
+}
+
+/**
+ * 只解析「这个节点用哪些水印」这一个字段。
+ *
+ * 单独开一个入口而不是让调用方去凑一份完整的 `PostprocessMediaConfig` 再调
+ * `resolveProjectPostprocessSlice`：水印工作区只关心水印，为了拿一个数组去订阅
+ * 媒体表、输出目录、分发配置等九个字段，既绕又容易在字段增删时漏改。
+ * 继承口径与全字段合并**共用同一条链**（`resolveProjectOverrideChain`），不会分叉。
+ */
+export function resolveNodeWatermarkBinding(
+  collections: AssetCollection[],
+  params: ProjectNodeParamsMap,
+  collectionId: string | null,
+  globalPresetIds: string[],
+): ResolvedWatermarkBinding {
+  const chain = resolveProjectOverrideChain(collections, params, collectionId)
+  let presetIds = globalPresetIds
+  let sourcedFrom: string | null = null
+
+  for (const entry of chain) {
+    const declared = entry.override.watermarkPresetIds
+    // undefined = 不表态（继续继承）；[] = 显式「这个方向不加水印」，必须照收
+    if (declared === undefined) continue
+    presetIds = declared
+    sourcedFrom = entry.collectionId
+  }
+
+  // collectionId 为 null（图片没有归属）时两边都是 null，不能算「本级自定义」
+  const overridden = collectionId !== null && sourcedFrom === collectionId
+
+  return { presetIds, sourcedFrom, overridden }
 }
 
 /**

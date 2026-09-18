@@ -1015,6 +1015,12 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Tabs', 'Panel', 'ListRow', 'Menu', 'EmptyState'],
   },
   {
+    module: 'src/features/composite/components/PresetProjectTree.tsx',
+    responsibility: '水印归属树：每个方向用哪些水印，可拖入绑定',
+    decision: 'retain',
+    targets: ['Panel', 'ListRow', 'IconButton', 'Button', 'EmptyState'],
+  },
+  {
     module: 'src/features/composite/CompositeWorkspace.tsx',
     responsibility: '水印预设工作区装配（图层式水印编辑，编排已归后处理）',
     decision: 'retain',

@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, create, type ReactTestInstance } from 'react-test-renderer'
 import { createDefaultCompositeV2Preset, createDefaultCompositeV2PresetGroup } from '../lib/compositeV2Defaults'
 import { useStore } from '../../../store'
+import { useAssetLibraryStore } from '../../assetLibrary/store'
+import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { createCompositeV2StoreState, useCompositeV2Store } from '../storeV2'
 import * as compositeAssets from '../lib/compositeAssets'
 import { PresetCanvasEditor } from './PresetCanvasEditor'
@@ -19,6 +21,10 @@ afterEach(() => {
     mountedRenderers.pop()?.unmount()
   }
   useCompositeV2Store.setState(createCompositeV2StoreState())
+  useProjectTreeParamsStore.setState({ params: {} })
+  useAssetLibraryStore.setState({ collections: [] })
+  // 分隔条比例是持久化的：不清掉的话，上一个用例拖出来的比例会变成下一个用例的初始值
+  window.localStorage.clear()
   useStore.getState().setConfirmDialog(null)
   vi.restoreAllMocks()
   delete (window as Window & { electronAPI?: typeof window.electronAPI }).electronAPI
@@ -604,5 +610,99 @@ describe('PresetManagementTab', () => {
 
     expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe(presetB.id)
     expect(getNodeText(renderer!.root)).toContain('Beta Preset')
+  })
+
+  it('左栏顶部常驻水印归属树，与预设组/预设库共用同一栏', () => {
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-rail')).toHaveLength(1)
+    expect(
+      renderer!.root.find((node) => node.props['data-layout'] === 'preset-rail').props.style.gridTemplateRows,
+    ).toContain('45%')
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(1)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(1)
+    // 原有的「预设组 / 预设库」两个区块与它们的分隔条都还在
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(1)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(1)
+  })
+
+  it('树的分隔条独立于预设库的分隔条，互不影响', () => {
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    const divider = renderer!.root.findByProps({ 'data-layout': 'tree-resizer' })
+    const pointerTarget = {
+      parentElement: { getBoundingClientRect: () => ({ top: 100, height: 400 }) },
+      setPointerCapture: () => {},
+      releasePointerCapture: () => {},
+    }
+    act(() => {
+      divider.props.onPointerDown({ pointerId: 1, clientY: 300, currentTarget: pointerTarget })
+      divider.props.onPointerMove({ pointerId: 1, clientY: 260, currentTarget: pointerTarget })
+      divider.props.onPointerUp({ pointerId: 1, currentTarget: pointerTarget })
+    })
+
+    expect(
+      renderer!.root.find((node) => node.props['data-layout'] === 'preset-rail').props.style.gridTemplateRows,
+    ).toContain('40%')
+    // 预设组/预设库那条没被带着动
+    expect(
+      renderer!.root.find((node) => node.props['data-layout'] === 'stacked-library-rail').props.style.gridTemplateRows,
+    ).toContain('50%')
+  })
+
+  it('从预设库拖一个水印到树节点上，绑定的就是这个预设', () => {
+    // 跨组件的拖拽靠两处共用同一个 MIME 常量，各写一份字面量的话这里会静默不生效
+    useAssetLibraryStore.setState({
+      collections: [
+        {
+          id: 'line-a',
+          name: '智能客服',
+          normalizedName: '智能客服',
+          parentId: null,
+          order: 0,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+    })
+
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    const preset = useCompositeV2Store.getState().presets[0]!
+    const libraryRow = renderer!.root
+      .findAll((node) => node.props.draggable === true && typeof node.props.onDragStart === 'function')
+      .find((node) => getNodeText(node).includes(preset.name))
+    expect(libraryRow).toBeTruthy()
+
+    // 复刻浏览器行为：setData 决定 types，getData 只能取回已 set 的类型
+    const bag = new Map<string, string>()
+    act(() => {
+      libraryRow!.props.onDragStart({
+        dataTransfer: { effectAllowed: '', setData: (type: string, value: string) => bag.set(type, value) },
+      })
+    })
+
+    const treeNode = renderer!.root.find((node) => node.props['data-preset-tree-node'] === 'line-a')
+    const dropTarget = treeNode.find((node) => typeof node.props.onDrop === 'function')
+    act(() => {
+      dropTarget.props.onDrop({
+        preventDefault: () => {},
+        dataTransfer: { types: [...bag.keys()], getData: (type: string) => bag.get(type) ?? '' },
+      })
+    })
+
+    expect(useProjectTreeParamsStore.getState().params['line-a']?.postprocess?.watermarkPresetIds).toEqual([preset.id])
   })
 })

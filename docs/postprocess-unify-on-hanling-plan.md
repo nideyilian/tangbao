@@ -241,5 +241,63 @@
   （4 媒体 / 15 尺寸 / 相同体积上限），不需要映射；只有「用户改过的 A 套规则」才值得迁移。
   `CompositeV2Preset.outputRootPath → B 套 outputDir` 的映射同理：默认值都是空，改过的才有意义。
 
+- **阶段 2 后续（水印归属树）**：✅ 完成（2026-09-18，杰哥提出「水印预设没有跟项目对应的树状结构」）。
+  水印工作区左栏顶部新增 **「水印归属」树**（`features/composite/components/PresetProjectTree.tsx`）：
+  产品线 → 产品 → 方向，每行显示该节点**生效**的水印与来源（`本级自定义` / `继承自「X」` / `跟随全局`
+  / `不加水印` / `未启用` / `已失效 N`），可把预设从下方预设库**拖到节点上**绑定，也能用行内 `+`
+  绑当前选中预设、chip 上的 `×` 解绑、「恢复继承」摘掉本级覆盖。
+  - **不新增第二份数据**：绑定的落点就是项目树参数层的 `ProjectNodeOverride.watermarkPresetIds`，
+    与节点「参数」弹窗同一份值、同一个 `setPostprocessOverride` 写入口。
+  - `params.ts` 抽出共享的 `resolveProjectOverrideChain`（根→叶的覆盖链），
+    `resolveProjectPostprocessSlice`（全字段合并）与新增的 `resolveNodeWatermarkBinding`（单字段查询）
+    共用同一条链，避免两处遍历在「空对象算不算表态」「环怎么兜底」上分叉。
+  - 继承态下第一次改动会**物化**成本级显式数组——直接写结果数组会把「少一个」表达成「一个都不要」。
+  - 左栏改为三段（树 / 预设组 / 预设库），两根独立分隔条；拖拽 MIME 常量统一到
+    `lib/compositePresetLibrary.ts`（原先两个组件各写一份字面量）。
+
 **已完成部分的关键顺序**（下次接着做时照用）：先删消费方 → 再剥字段 → 最后清 store + 删纯逻辑。
 反过来的话，剥字段会一次性炸出 70+ 个编译错误，分不清哪些来自「要删的文件」、哪些来自「要改的文件」。
+
+## 九、实现要点（从项目记忆搬来，改这些地方前先读）
+
+### 模块地图
+
+| 文件                                                         | 职责                                                                                               |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `src/lib/postprocessMedia.ts`                                | 媒体（渠道）表 + 尺寸笛卡尔积纯函数；`DEFAULT_POSTPROCESS_MEDIA` = 4 媒体 / 15 尺寸                |
+| `src/lib/postprocessNaming.ts`                               | `{token}` 命名模板（含 `{preset}`）；项目树方向名优先于尺寸推导的横/竖/方                          |
+| `src/lib/postprocessProjectTree.ts`                          | `buildPostprocessProjectTree` / `resolvePostprocessProjectTargets` / `isCollectionWithinSelection` |
+| `src/lib/postprocessDistribution.ts`                         | 按天分发排期（起始日期 + 天数共同决定）                                                            |
+| `src/storePostprocessMedia.ts`                               | 编排配置 store（namespace `postprocessMedia`）                                                     |
+| `src/components/PostprocessSettingsModal.tsx`                | 80% 双栏工作区外壳                                                                                 |
+| `src/features/postprocess/renderVariant.ts`                  | `renderWithMaxKb`（尺寸压缩 + 水印叠加）                                                           |
+| `src/features/postprocess/PostprocessDistributionFields.tsx` | 分发表单（面板与节点参数弹窗共用）                                                                 |
+| `src/features/projectTree/params.ts`                         | 继承链遍历与逐级合并                                                                               |
+| `src/features/composite/components/PresetProjectTree.tsx`    | 水印归属树                                                                                         |
+
+**类型落点**：`PostprocessMediaConfig` 放 `lib/` 而不是 store 文件 —— `src/types.ts` 的 `ExportData` 要引它，
+放 store 会让基础模块反向依赖 store。
+
+### 三个容易踩的执行细节
+
+1. **渲染入口**：`maxSizeKb === 0`（纯净版）**不能**进 `renderWithMaxKb`。变体**不写入** `outputImages`，
+   所以「原图迭代」天然成立（派生图不会变成下一次生成的源）。
+2. **分发执行体的 early return 只看 `enabled`**，不能改判 `isPostprocessDistributionActive` ——
+   后者还要求日期合法，会把「开了开关但没填日期」变成静默什么都不做。
+   主进程 channel 是 `composite:authorize-output-directory`（preload `authorizeCompositeOutputDirectory`）。
+3. **手动 vs 自动**：`src/store.ts` 的 `executePostprocessImageIds()` 是两者共用的执行闭包，只差
+   「处理哪些图」与「结果记到哪」。手动跑**不剔除已产出**（语义就是「再跑一次」，重名靠 `-2` 后缀）
+   且**不等归属**；自动触发的幂等闸 = 内存键 `${taskId}:${imageId}` + 任务上的 `postprocessOutputs`。
+
+### 弹窗骨架的一个隐式依赖
+
+`ds-dialog--postprocess`（80vw × 80dvh）不是 `Dialog` 的尺寸档 —— `Dialog` 只认 `sm|md|lg|xl`，
+80% 是靠 `className` 传进去的，**它压过 `--md` 的 `max-width: 32rem` 靠的是 CSS 源码顺序**：
+别把 `--postprocess` 的规则挪到 `--md` 前面。另外 `DialogWorkspace` 必须带 `flex-1`，
+否则内容区撑不满 80dvh、底部露白（可照抄 `src/features/strategy/SopLibraryTab.tsx`）。
+
+### 入口
+
+- 编排设置：素材库工具栏「项目树」按钮；后处理设置面板（输入栏胶囊）。
+- 手动产出：选中素材时的「跑后处理 (N)」（`runManualPostprocess`）。
+- 水印编辑：后处理设置面板「水印预设」标题右侧的「管理水印预设」。

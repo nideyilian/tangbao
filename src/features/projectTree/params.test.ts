@@ -10,6 +10,8 @@ import {
   pickDeepestCollectionId,
   resolveProjectNodeKind,
   resolveProjectNodePathNames,
+  resolveNodeWatermarkBinding,
+  resolveProjectOverrideChain,
   resolveProjectPostprocessSlice,
 } from './params'
 import type { ProjectNodeParamsMap } from './types'
@@ -322,5 +324,110 @@ describe('节点分发配置 —— 整份替换而非逐字段继承', () => {
       postprocess: { distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, days: 5 } },
     }
     expect(mergePostprocessNodeOverride(current.postprocess, { distribution: undefined })).toBeUndefined()
+  })
+})
+
+describe('resolveProjectOverrideChain —— 共用的继承链', () => {
+  it('只收写了参数的节点，根在前、自身在最后', () => {
+    const chain: ProjectNodeParamsMap = {
+      [LINE]: { postprocess: { creator: '整条线' } },
+      [DIRECTION]: { postprocess: { namePattern: '{seq}' } },
+      // PRODUCT 没配 → 不出现在链上
+    }
+    expect(resolveProjectOverrideChain(COLLECTIONS, chain, DIRECTION).map((entry) => entry.collectionId)).toEqual([
+      LINE,
+      DIRECTION,
+    ])
+    expect(resolveProjectOverrideChain(COLLECTIONS, chain, DIRECTION).map((entry) => entry.depth)).toEqual([0, 2])
+  })
+
+  it('无归属（null）与空参数都返回空链，不抛错', () => {
+    expect(resolveProjectOverrideChain(COLLECTIONS, {}, null)).toEqual([])
+    expect(resolveProjectOverrideChain(COLLECTIONS, {}, DIRECTION)).toEqual([])
+    expect(resolveProjectOverrideChain([], { [LINE]: { postprocess: { creator: 'x' } } }, DIRECTION)).toEqual([])
+  })
+
+  it('链上参数与全字段合并在同一个字段上给出同一个来源', () => {
+    const chain: ProjectNodeParamsMap = {
+      [PRODUCT]: { postprocess: { creator: '中间层' } },
+    }
+    const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
+    const last = resolveProjectOverrideChain(COLLECTIONS, chain, DIRECTION).at(-1)
+    expect(last?.collectionId).toBe(slice.sourcedFrom)
+  })
+})
+
+describe('resolveNodeWatermarkBinding —— 某方向到底用哪些水印', () => {
+  const GLOBAL = ['global-a']
+
+  it('没有任何覆盖时取全局默认，并标记为「跟随全局」', () => {
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, {}, DIRECTION, GLOBAL)).toEqual({
+      presetIds: GLOBAL,
+      sourcedFrom: null,
+      overridden: false,
+    })
+  })
+
+  it('在产品线上配一次，整条线下的方向都继承到（来源指向产品线，不算本级）', () => {
+    const chain: ProjectNodeParamsMap = { [LINE]: { postprocess: { watermarkPresetIds: ['line-w'] } } }
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, chain, DIRECTION, GLOBAL)).toEqual({
+      presetIds: ['line-w'],
+      sourcedFrom: LINE,
+      overridden: false,
+    })
+  })
+
+  it('方向自己配的压掉上层，来源是它自己', () => {
+    const chain: ProjectNodeParamsMap = {
+      [LINE]: { postprocess: { watermarkPresetIds: ['line-w'] } },
+      [DIRECTION]: { postprocess: { watermarkPresetIds: ['dir-w'] } },
+    }
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, chain, DIRECTION, GLOBAL)).toEqual({
+      presetIds: ['dir-w'],
+      sourcedFrom: DIRECTION,
+      overridden: true,
+    })
+  })
+
+  it('空数组是「显式不加水印」，能压掉上层的非空值；undefined 才是继承', () => {
+    const explicitEmpty: ProjectNodeParamsMap = {
+      [LINE]: { postprocess: { watermarkPresetIds: ['line-w'] } },
+      [DIRECTION]: { postprocess: { watermarkPresetIds: [] } },
+    }
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, explicitEmpty, DIRECTION, GLOBAL).presetIds).toEqual([])
+
+    const inherit: ProjectNodeParamsMap = {
+      [LINE]: { postprocess: { watermarkPresetIds: ['line-w'] } },
+      [DIRECTION]: { postprocess: { creator: '只改了别的字段' } },
+    }
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, inherit, DIRECTION, GLOBAL).presetIds).toEqual(['line-w'])
+  })
+
+  it('方向显式写空数组时仍算「本级自定义」（界面上要能显示成可恢复继承）', () => {
+    const chain: ProjectNodeParamsMap = { [DIRECTION]: { postprocess: { watermarkPresetIds: [] } } }
+    const binding = resolveNodeWatermarkBinding(COLLECTIONS, chain, DIRECTION, GLOBAL)
+    expect(binding.presetIds).toEqual([])
+    expect(binding.overridden).toBe(true)
+  })
+
+  it('无归属（collectionId 为 null）时不能误判成本级自定义', () => {
+    // 两边都是 null，若写成 sourcedFrom === collectionId 就会误判
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, {}, null, GLOBAL)).toEqual({
+      presetIds: GLOBAL,
+      sourcedFrom: null,
+      overridden: false,
+    })
+  })
+
+  it('节点不存在或已删除时退回全局默认，不抛错', () => {
+    const chain: ProjectNodeParamsMap = { [LINE]: { postprocess: { watermarkPresetIds: ['line-w'] } } }
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, chain, 'missing-id', GLOBAL).presetIds).toEqual(GLOBAL)
+  })
+
+  it('不修改传入的全局数组（纯函数）', () => {
+    const global = ['a', 'b']
+    const chain: ProjectNodeParamsMap = { [DIRECTION]: { postprocess: { watermarkPresetIds: ['c'] } } }
+    resolveNodeWatermarkBinding(COLLECTIONS, chain, DIRECTION, global)
+    expect(global).toEqual(['a', 'b'])
   })
 })
