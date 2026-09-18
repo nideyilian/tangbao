@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GeneratedAsset, StoredImage, TaskRecord } from '../types'
-import { createAssetCommandService, type AssetCommandDependencies } from './assetCommands'
+import { createAssetCommandService, getAssetFileName, type AssetCommandDependencies } from './assetCommands'
 
 function makeAsset(id = 'asset-a', overrides: Partial<GeneratedAsset> = {}): GeneratedAsset {
   return {
@@ -345,5 +345,41 @@ describe('searchAllAssetIds', () => {
 
     expect(result.ids).toEqual(['asset-a'])
     expect(result.truncated).toBe(false)
+  })
+})
+
+describe('getAssetFileName', () => {
+  const namingOrigin = {
+    key: 'task-a:0',
+    taskCreatedAt: new Date(2026, 8, 18, 9).getTime(),
+    outputSlot: 0,
+    filenameLabel: '网赚',
+    filenameBatch: 401,
+  } as GeneratedAsset['origins'][number]
+
+  it('用「日期-标签-批次-序号」而不是 64 位 content hash', () => {
+    // 曾经的实现只读 `origin.generatedFileNameBase`，而那个字段全仓没有生产者，
+    // 于是每次下载/导出落到的都是 `${imageId}.png` —— 用户看到一串 sha256 认不出是哪张图。
+    const asset = makeAsset('asset-a', {
+      imageId: '0a70cdc563d773c44b1d1bbfbcf3bb4301fc654382184eb2e971d997842568f1',
+      mimeType: 'image/png',
+      origins: [namingOrigin],
+      primaryOriginKey: 'task-a:0',
+    })
+    expect(getAssetFileName(asset)).toBe('20260918-网赚-401-1.png')
+  })
+
+  it('扩展名跟随 mimeType', () => {
+    const asset = makeAsset('asset-a', {
+      mimeType: 'image/jpeg',
+      origins: [namingOrigin],
+      primaryOriginKey: 'task-a:0',
+    })
+    expect(getAssetFileName(asset)).toBe('20260918-网赚-401-1.jpg')
+  })
+
+  it('来源缺失时才退回 imageId（老数据兜底，不是常规路径）', () => {
+    const asset = makeAsset('asset-a', { imageId: 'hash-only', mimeType: 'image/png' })
+    expect(getAssetFileName(asset)).toBe('hash-only.png')
   })
 })

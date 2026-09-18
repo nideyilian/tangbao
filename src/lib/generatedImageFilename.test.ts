@@ -4,6 +4,8 @@ import {
   findNextGeneratedImageSequence,
   formatGeneratedImageDate,
   getSeriesGroupImageSequence,
+  resolveGeneratedAssetBatch,
+  resolveGeneratedAssetNameBase,
   sanitizeGeneratedImageFilenamePart,
 } from './generatedImageFilename'
 
@@ -157,6 +159,74 @@ describe('generated image filenames', () => {
         getSeriesGroupImageSequence({ seriesIndex: 2 }, 1, 0)!,
       )
       expect(base).toBe('20260703-快手-5-2')
+    })
+  })
+
+  describe('素材规范名（下载 / 导出 / 排序共用）', () => {
+    /** 只带命名相关字段的最小来源；`GeneratedAsset` 里其余字段与命名无关。 */
+    const origin = (patch: Partial<Parameters<typeof resolveGeneratedAssetNameBase>[0]['origins'][number]> = {}) => ({
+      key: 'task-1:0',
+      taskCreatedAt: new Date(2026, 8, 18, 10).getTime(),
+      outputSlot: 0,
+      filenameLabel: '网赚',
+      filenameBatch: 401,
+      ...patch,
+    })
+
+    it('按「日期-标签-批次-序号」派生，序号从槽位号来', () => {
+      expect(resolveGeneratedAssetNameBase({ origins: [origin()], primaryOriginKey: 'task-1:0' })).toBe(
+        '20260918-网赚-401-1',
+      )
+      expect(
+        resolveGeneratedAssetNameBase({ origins: [origin({ outputSlot: 2 })], primaryOriginKey: 'task-1:2' }),
+      ).toBe('20260918-网赚-401-3')
+    })
+
+    it('显式的 generatedFileNameBase 优先于派生', () => {
+      expect(
+        resolveGeneratedAssetNameBase({
+          origins: [origin({ generatedFileNameBase: '落盘时那份名字' })],
+          primaryOriginKey: 'task-1:0',
+        }),
+      ).toBe('落盘时那份名字')
+    })
+
+    it('取不到标签 / 批次时仍给可读名，不会退化成哈希', () => {
+      // 老素材没有 filenameLabel / filenameBatch。名字难看但可读，
+      // 比 `${imageId}.png` 那串 64 位 sha256 强——后者用户根本认不出是哪张图。
+      expect(
+        resolveGeneratedAssetNameBase({
+          origins: [origin({ filenameLabel: undefined, filenameBatch: undefined })],
+          primaryOriginKey: 'task-1:0',
+        }),
+      ).toBe('20260918-未命名-1-1')
+    })
+
+    it('优先用 primaryOriginKey 指的那个来源，不是数组第一个', () => {
+      const first = origin({ key: 'task-1:0' })
+      const primary = { ...origin({ key: 'task-2:0' }), filenameLabel: '小红书', filenameBatch: 7 }
+      expect(resolveGeneratedAssetNameBase({ origins: [first, primary], primaryOriginKey: 'task-2:0' })).toBe(
+        '20260918-小红书-7-1',
+      )
+      // 没有 primaryOriginKey 时退回第一个（老数据）
+      expect(resolveGeneratedAssetNameBase({ origins: [first, primary], primaryOriginKey: null })).toBe(
+        '20260918-网赚-401-1',
+      )
+    })
+
+    it('没有任何来源时返回空串，由调用方兜底', () => {
+      expect(resolveGeneratedAssetNameBase({ origins: [], primaryOriginKey: null })).toBe('')
+    })
+
+    it('批次号取原始值（缺失归 0），供排序与建列使用', () => {
+      expect(resolveGeneratedAssetBatch({ origins: [origin()], primaryOriginKey: 'task-1:0' })).toBe(401)
+      expect(
+        resolveGeneratedAssetBatch({
+          origins: [origin({ filenameBatch: undefined })],
+          primaryOriginKey: 'task-1:0',
+        }),
+      ).toBe(0)
+      expect(resolveGeneratedAssetBatch({ origins: [], primaryOriginKey: null })).toBe(0)
     })
   })
 })

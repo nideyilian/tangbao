@@ -1,5 +1,6 @@
 import type { AssetCollection, AssetLibraryFilters, AssetLibraryScope, AssetSortKey, GeneratedAsset } from '../../types'
 import { assetScopeMatches } from '../../lib/assetLibraryModel'
+import { resolveGeneratedAssetBatch, resolveGeneratedAssetNameBase } from '../../lib/generatedImageFilename'
 
 export const ASSET_RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -136,6 +137,15 @@ function compareAssets(a: GeneratedAsset, b: GeneratedAsset, sortKey: AssetSortK
       break
     case 'area':
       diff = (a.width ?? 0) * (a.height ?? 0) - (b.width ?? 0) * (b.height ?? 0)
+      break
+    case 'name':
+      // 规范名以 `YYYYMMDD` 开头，所以字典序天然等价于「日期 → 标签 → 批次 → 序号」。
+      // 用 zh-CN 排序规则是给中文标签准备的（避免纯码点顺序把中文标签排得没有规律）。
+      diff = resolveGeneratedAssetNameBase(a).localeCompare(resolveGeneratedAssetNameBase(b), 'zh-CN')
+      break
+    case 'batch':
+      // 只看批次号那一段；没有批次号的旧素材归 0，稳定聚在一端。
+      diff = resolveGeneratedAssetBatch(a) - resolveGeneratedAssetBatch(b)
       break
   }
   if (diff !== 0) return sortOrder === 'asc' ? diff : -diff

@@ -465,4 +465,58 @@ describe('SQLite asset catalog', () => {
     // 标签计数只统计 active 素材
     expect(catalog.getCounts().byTag).toEqual({ t1: 2, t2: 2, t3: 1 })
   })
+
+  it('按命名 / 批次号排序：命名落列，分页游标能带字符串值', () => {
+    const catalog = new AssetCatalog(':memory:')
+    catalogs.push(catalog)
+    const named = (id: string, label: string, batch: number, day: number) => {
+      const asset = makeAsset(id, `prompt-${id}`, new Date(2026, 8, day, 9).getTime())
+      const origin = asset.origins[0]!
+      origin.filenameLabel = label
+      origin.filenameBatch = batch
+      return asset
+    }
+    catalog.upsertAssets([
+      { asset: named('a', '网赚', 401, 18) },
+      { asset: named('b', '网赚', 12, 17) },
+      { asset: named('c', '小红书', 7, 19) },
+    ])
+
+    // 名字分别是 20260918-网赚-401-1 / 20260917-网赚-12-2 / 20260919-小红书-7-1
+    const byName = catalog.query({ scope: 'all', query: '', filters: {}, sortKey: 'name', sortOrder: 'asc', limit: 20 })
+    expect(byName.assets.map((asset) => asset.id)).toEqual(['b', 'a', 'c'])
+
+    // 文本序会把 '12' 排在 '7' 前面，这里必须按数值
+    const byBatch = catalog.query({
+      scope: 'all',
+      query: '',
+      filters: {},
+      sortKey: 'batch',
+      sortOrder: 'asc',
+      limit: 20,
+    })
+    expect(byBatch.assets.map((asset) => asset.id)).toEqual(['c', 'b', 'a'])
+
+    // 写游标时曾用 `Number(sort_value)` —— 对文本名会得到 NaN，翻页到第二页就断。
+    const firstPage = catalog.query({
+      scope: 'all',
+      query: '',
+      filters: {},
+      sortKey: 'name',
+      sortOrder: 'asc',
+      limit: 1,
+    })
+    expect(firstPage.assets.map((asset) => asset.id)).toEqual(['b'])
+    expect(firstPage.nextCursor).toBeTruthy()
+    const secondPage = catalog.query({
+      scope: 'all',
+      query: '',
+      filters: {},
+      sortKey: 'name',
+      sortOrder: 'asc',
+      limit: 1,
+      cursor: firstPage.nextCursor,
+    })
+    expect(secondPage.assets.map((asset) => asset.id)).toEqual(['a'])
+  })
 })

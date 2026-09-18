@@ -1182,7 +1182,15 @@ export type AssetLibraryScope =
   | { kind: 'collection'; id: string }
   | { kind: 'tag'; id: string }
 
-export type AssetSortKey = 'createdAt' | 'updatedAt' | 'rating' | 'width' | 'area'
+/**
+ * 素材排序键。
+ *
+ * `name` / `batch` 排的是**生成命名**（`20260918-网赚-401-1` 这类）而不是物理文件名：
+ * 前者按规范名整体比，后者只看批次号那一段。两者的取值都来自 primary origin，
+ * 与下载/导出用的名字同源（见 `lib/generatedImageFilename.ts`），所以「看到的顺序」
+ * 与「导出的名字」不会对不上。
+ */
+export type AssetSortKey = 'createdAt' | 'updatedAt' | 'rating' | 'width' | 'area' | 'name' | 'batch'
 
 /** 素材查询筛选条件；语义与查询纯函数 queryAssets 保持一致。 */
 export interface AssetLibraryFilters {

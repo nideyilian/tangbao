@@ -60,6 +60,10 @@ export interface AssetLibraryToolbarProps {
 const SORT_OPTIONS: Array<{ key: AssetSortKey; label: string }> = [
   { key: 'updatedAt', label: '最近整理' },
   { key: 'createdAt', label: '生成时间' },
+  // 命名的两种排法：整体名（日期-标签-批次-序号）与只看批次号那一段。
+  // 放在生成时间旁边——它们描述的都是「这张图是怎么被命名的」，与评分/尺寸那类客观指标不是一类。
+  { key: 'name', label: '命名' },
+  { key: 'batch', label: '批次号' },
   { key: 'rating', label: '评分' },
   { key: 'width', label: '宽度' },
   { key: 'area', label: '面积' },

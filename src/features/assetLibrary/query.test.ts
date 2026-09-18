@@ -292,6 +292,65 @@ describe('queryAssets sort', () => {
   })
 })
 
+describe('queryAssets 命名 / 批次号 排序', () => {
+  const day = (d: number) => new Date(2026, 8, d, 9).getTime()
+  /** origin 只带命名相关字段；派生规则本身在 generatedImageFilename.test.ts 里单测。 */
+  const named = (id: string, label: string, batch: number, createdAt: number, slot = 0) =>
+    makeAsset(id, {
+      createdAt,
+      updatedAt: createdAt,
+      origins: [
+        {
+          key: `task-${id}:${slot}`,
+          taskCreatedAt: createdAt,
+          outputSlot: slot,
+          filenameLabel: label,
+          filenameBatch: batch,
+        } as GeneratedAsset['origins'][number],
+      ],
+      primaryOriginKey: `task-${id}:${slot}`,
+    })
+
+  // 名字分别是 20260918-网赚-401-1 / 20260917-网赚-12-2 / 20260919-小红书-7-1。
+  // 刻意让三个日期互不相同：这样「按命名排」的结果只取决于日期段，
+  // 不吃 localeCompare 对中文标签的排序规则（那属于实现细节，不该被钉死）。
+  const assets = [named('a', '网赚', 401, day(18)), named('b', '网赚', 12, day(17)), named('c', '小红书', 7, day(19))]
+
+  it('按命名排序：日期打头，所以字典序就是期望顺序', () => {
+    expect(
+      queryAssets({ assets, collections }, baseState({ sortKey: 'name', sortOrder: 'asc' })).assets.map((a) => a.id),
+    ).toEqual(['b', 'a', 'c'])
+    expect(
+      queryAssets({ assets, collections }, baseState({ sortKey: 'name', sortOrder: 'desc' })).assets.map((a) => a.id),
+    ).toEqual(['c', 'a', 'b'])
+  })
+
+  it('按批次号排序比的是数值而不是文本', () => {
+    // 文本序会把 '12' 排在 '7' 前面（'1' < '7'），这里必须是 7 < 12 < 401
+    expect(
+      queryAssets({ assets, collections }, baseState({ sortKey: 'batch', sortOrder: 'asc' })).assets.map((a) => a.id),
+    ).toEqual(['c', 'b', 'a'])
+  })
+
+  it('没有来源的旧素材按空名 / 0 批次聚在一起，且顺序稳定', () => {
+    const bare = [
+      makeAsset('x', { createdAt: 1000, updatedAt: 1000 }),
+      makeAsset('y', { createdAt: 2000, updatedAt: 2000 }),
+    ]
+    // 两者名字都是空串、批次都是 0 → 落到稳定兜底（createdAt 倒序），不会随机抖动
+    expect(
+      queryAssets({ assets: bare, collections }, baseState({ sortKey: 'name', sortOrder: 'asc' })).assets.map(
+        (a) => a.id,
+      ),
+    ).toEqual(['y', 'x'])
+    expect(
+      queryAssets({ assets: bare, collections }, baseState({ sortKey: 'batch', sortOrder: 'asc' })).assets.map(
+        (a) => a.id,
+      ),
+    ).toEqual(['y', 'x'])
+  })
+})
+
 describe('queryAssets counts', () => {
   it('computes sidebar counts without duplicating collection entries', () => {
     const now = Date.now()

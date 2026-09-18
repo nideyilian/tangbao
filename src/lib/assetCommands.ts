@@ -12,6 +12,7 @@ import type {
   TaskRecord,
 } from '../types'
 import { queryAssets, toByTagMap, type AssetQueryResult, type AssetQueryState } from '../features/assetLibrary/query'
+import { resolveGeneratedAssetNameBase } from './generatedImageFilename'
 import {
   getAsset,
   getAssetsByIds,
@@ -75,10 +76,15 @@ function targetFromSourceMode(sourceMode: AssetSourceMode): AssetUsageTarget {
   return sourceMode === 'unknown' ? 'unknown' : sourceMode
 }
 
-/** 素材用户可见文件名（生成名或 imageId + 扩展名）；供下载/导出/项目树副本共用。 */
+/**
+ * 素材用户可见文件名（生成名或 imageId + 扩展名）；供下载/导出/项目树副本共用。
+ *
+ * ⚠️ 这里曾经只读 `origin.generatedFileNameBase`，而那个字段**全仓没有生产者** →
+ * 每一次下载/导出实际落到的都是 `${imageId}.png`（64 位 sha256），用户看到的就是一串哈希。
+ * 现在改为现场派生「日期-标签-批次-序号」（见 `resolveGeneratedAssetNameBase`）。
+ */
 export function getAssetFileName(asset: GeneratedAsset) {
-  const origin = asset.origins.find((item) => item.key === asset.primaryOriginKey) ?? asset.origins[0]
-  const base = origin?.generatedFileNameBase?.trim() || asset.imageId
+  const base = resolveGeneratedAssetNameBase(asset).trim() || asset.imageId
   const extension = asset.mimeType === 'image/jpeg' ? 'jpg' : asset.mimeType === 'image/webp' ? 'webp' : 'png'
   return `${base}.${extension}`
 }

@@ -8,10 +8,12 @@ import type {
   AssetTombstone,
   AssetUsageEvent,
   AssetVersion,
+  AssetSortKey,
   GeneratedAsset,
 } from '../src/types'
 import { AppDataStore, type AppDataStoreMap } from './app-data-store'
 import { materializeAssetRecords } from '../src/lib/assetIdentity'
+import { resolveGeneratedAssetBatch, resolveGeneratedAssetNameBase } from '../src/lib/generatedImageFilename'
 import { createTextVector, rankAssetCandidates } from '../src/lib/assetSemanticSearch'
 
 export interface AssetCatalogUpsert {
@@ -27,7 +29,13 @@ export interface CatalogAssetDetails {
   version: AssetVersion
 }
 
-type QueryRow = { json: string; sort_value: number; id: string }
+type QueryRow = { json: string; sort_value: number | string; id: string }
+
+/**
+ * 分页游标里承载的排序值。数字用于时间/评分/尺寸/批次号，**字符串用于按命名排序**
+ * （`a.file_name` 是 TEXT，SQLite 的 `>`/`<` 对文本同样是字典序比较）。
+ */
+type CursorSortValue = number | string
 
 const EMPTY_COUNTS: AssetCatalogCursorPage['counts'] = {
   all: 0,
@@ -56,6 +64,40 @@ export function assetSearchText(asset: GeneratedAsset): string {
   return values.filter(Boolean).join(' ')
 }
 
+/** 命名排序列回填的完成标记（写在 `catalog_meta` 里，防重复回填）。 */
+const ASSET_SORT_BACKFILL_KEY = 'asset_sort_columns_backfill_v1'
+
+/**
+ * 素材的「命名排序」值：规范名（`20260918-网赚-401-1`）与批次号。
+ * 与 upsert 写入的是同一个函数，保证回填出来的老数据和新建数据排在一起时口径一致。
+ */
+function readAssetSortValues(json: string): { name: string; batch: number } {
+  try {
+    const asset = JSON.parse(json) as GeneratedAsset
+    return { name: resolveGeneratedAssetNameBase(asset), batch: resolveGeneratedAssetBatch(asset) }
+  } catch {
+    return { name: '', batch: 0 }
+  }
+}
+
+/**
+ * 素材排序键 → SQL 表达式。分页游标拿 `SELECT ${expr} AS sort_value` 的值原样回传，
+ * 所以这里的结果**必须是确定的、与 ORDER BY 完全一致的表达式**（含 COALESCE 的兜底）。
+ *
+ * `name` / `batch` 用的是 upsert 时算好落列的两列（`file_name` / `filename_batch`）：
+ * 规范名要从 `origins` 的 JSON 里按时间戳格式化日期再拼，SQL 侧做不到；
+ * 而按 `origins` 里 `$[0]` 取又会错在「主来源不是第 0 个」的多来源素材上。
+ */
+const SORT_EXPRESSIONS: Record<AssetSortKey, string> = {
+  createdAt: 'a.created_at',
+  updatedAt: 'a.updated_at',
+  rating: 'a.rating',
+  width: 'COALESCE(a.width, 0)',
+  area: 'a.area',
+  name: "COALESCE(a.file_name, '')",
+  batch: 'a.filename_batch',
+}
+
 function semanticBuckets(vector: readonly number[]): string[] {
   return vector
     .map((value, index) => ({ value, index }))
@@ -65,17 +107,17 @@ function semanticBuckets(vector: readonly number[]): string[] {
     .map((item) => `${item.index}:${item.value >= 0 ? 1 : -1}`)
 }
 
-function encodeCursor(value: { value: number; id: string }): string {
+function encodeCursor(value: { value: CursorSortValue; id: string }): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url')
 }
 
-function decodeCursor(value: string | null | undefined): { value: number; id: string } | null {
+function decodeCursor(value: string | null | undefined): { value: CursorSortValue; id: string } | null {
   if (!value) return null
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as { value?: unknown; id?: unknown }
-    if (typeof parsed.value === 'number' && Number.isFinite(parsed.value) && typeof parsed.id === 'string') {
-      return { value: parsed.value, id: parsed.id }
-    }
+    const usableValue =
+      (typeof parsed.value === 'number' && Number.isFinite(parsed.value)) || typeof parsed.value === 'string'
+    if (usableValue && typeof parsed.id === 'string') return { value: parsed.value as CursorSortValue, id: parsed.id }
   } catch {}
   return null
 }
@@ -205,6 +247,56 @@ export class AssetCatalog {
     `)
     this.ensureTagTreeColumns()
     this.ensureCollectionExtraColumns()
+    this.ensureAssetSortColumns()
+  }
+
+  /**
+   * 旧库升级：为 assets 表补「生成命名」排序所需的两个**冗余列**。
+   *
+   * 为什么不在 SQL 里现算：规范名要按 `taskCreatedAt` 格式化日期、按 `filenameBatch` 补位，
+   * 还要剥非法字符——`origins` 是一列 JSON，SQL 侧做不出这套推导，而分页游标又必须拿到
+   * 「与 ORDER BY 完全同一个表达式」的值才能正确翻页。所以按 upsert 时算好落列。
+   *
+   * 存量行 `file_name` 为 NULL、`filename_batch` 为 0（ALTER 的默认值），要用一次回填补齐，
+   * 否则老素材会全部挤在同一端、看起来像排序坏了。回填用 `catalog_meta` 标记防重复。
+   */
+  private ensureAssetSortColumns() {
+    const columns = new Set(
+      (this.db.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map((row) => row.name),
+    )
+    if (!columns.has('file_name')) this.db.exec('ALTER TABLE assets ADD COLUMN file_name TEXT')
+    if (!columns.has('filename_batch')) {
+      this.db.exec('ALTER TABLE assets ADD COLUMN filename_batch INTEGER NOT NULL DEFAULT 0')
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS assets_file_name ON assets(file_name, id)')
+    this.db.exec('CREATE INDEX IF NOT EXISTS assets_filename_batch ON assets(filename_batch, id)')
+    this.backfillAssetSortColumns()
+  }
+
+  /** 一次性回填：把存量素材的规范名与批次号补进新列。 */
+  private backfillAssetSortColumns() {
+    if (this.appData.get<string>('catalog_meta', ASSET_SORT_BACKFILL_KEY)) return
+    const rows = this.db.prepare('SELECT id, json FROM assets WHERE file_name IS NULL').all() as Array<{
+      id: string
+      json: string
+    }>
+    if (rows.length > 0) {
+      const update = this.db.prepare('UPDATE assets SET file_name = ?, filename_batch = ? WHERE id = ?')
+      this.db.exec('BEGIN IMMEDIATE')
+      try {
+        for (const row of rows) {
+          const { name, batch } = readAssetSortValues(row.json)
+          update.run(name, batch, row.id)
+        }
+        this.db.exec('COMMIT')
+      } catch (error) {
+        this.db.exec('ROLLBACK')
+        // 回填失败不该拦住启动：标记没写，下次启动还会重试；期间排序只是不完美。
+        console.error('[asset-catalog] 回填命名排序列失败', error)
+        return
+      }
+    }
+    this.appData.put('catalog_meta', { id: ASSET_SORT_BACKFILL_KEY, value: '1' })
   }
 
   /** 旧库升级：为 collections 表补齐颜色 / 置顶 / 软删除列。 */
@@ -239,13 +331,14 @@ export class AssetCatalog {
         file_path=COALESCE(excluded.file_path, blobs.file_path)`)
     const putAsset = this.db.prepare(`INSERT INTO assets(
         id, current_version_id, status, created_at, updated_at, trashed_at, favorite, rating,
-        width, height, area, collection_ids, tag_ids, origins, json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        width, height, area, collection_ids, tag_ids, origins, json, file_name, filename_batch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET current_version_id=excluded.current_version_id, status=excluded.status,
         created_at=excluded.created_at, updated_at=excluded.updated_at, trashed_at=excluded.trashed_at,
         favorite=excluded.favorite, rating=excluded.rating, width=excluded.width, height=excluded.height,
         area=excluded.area, collection_ids=excluded.collection_ids, tag_ids=excluded.tag_ids,
-        origins=excluded.origins, json=excluded.json`)
+        origins=excluded.origins, json=excluded.json, file_name=excluded.file_name,
+        filename_batch=excluded.filename_batch`)
     const putVersion = this.db.prepare(`INSERT INTO versions(
         id, asset_id, blob_id, version_number, kind, created_at, width, height, json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -294,6 +387,8 @@ export class AssetCatalog {
           JSON.stringify(asset.tagIds),
           JSON.stringify(asset.origins),
           JSON.stringify(asset),
+          resolveGeneratedAssetNameBase(asset),
+          resolveGeneratedAssetBatch(asset),
         )
         putVersion.run(
           version.id,
@@ -403,16 +498,9 @@ export class AssetCatalog {
     }
     this.addScopeWhere(input, where, params)
     this.addFilterWhere(input, where, params)
-    const sortExpression =
-      input.sortKey === 'createdAt'
-        ? 'a.created_at'
-        : input.sortKey === 'rating'
-          ? 'a.rating'
-          : input.sortKey === 'width'
-            ? 'COALESCE(a.width, 0)'
-            : input.sortKey === 'area'
-              ? 'a.area'
-              : 'a.updated_at'
+    // 用 Record 而不是三元链：新增排序键时漏配表达式会变成编译错误，而三元链只会静默
+    // 掉进「按最近整理」的兜底分支——那种错误在界面上表现为「点了没反应」，很难查。
+    const sortExpression = SORT_EXPRESSIONS[input.sortKey] ?? 'a.updated_at'
     // 排序方向来自渲染进程/API 客户端，必须做枚举校验后再拼接 SQL。
     const sortOrder = input.sortOrder === 'asc' ? 'asc' : 'desc'
     const cursor = decodeCursor(input.cursor)
@@ -440,7 +528,7 @@ export class AssetCatalog {
     return {
       assets: rows.map((row) => JSON.parse(row.json) as GeneratedAsset),
       totalCount: Number(totalRow?.count ?? 0),
-      nextCursor: rows.length === limit && last ? encodeCursor({ value: Number(last.sort_value), id: last.id }) : null,
+      nextCursor: rows.length === limit && last ? encodeCursor({ value: last.sort_value, id: last.id }) : null,
       counts: this.getCounts(),
     }
   }
