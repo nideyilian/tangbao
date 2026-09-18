@@ -756,12 +756,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Dialog', 'Disclosure', 'Button'],
   },
   {
-    module: 'src/components/VarEntryEditor.tsx',
-    responsibility: '变量词条编辑弹窗',
-    decision: 'compose',
-    targets: ['Dialog', 'TextField', 'ListRow', 'Button'],
-  },
-  {
     module: 'src/components/ViewportTooltip.tsx',
     responsibility: '防溢出的视口级工具提示（复用 ds-tooltip 深色气泡视觉，配合统一 useTooltip）',
     decision: 'retain',
@@ -772,24 +766,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     responsibility: '任务参数展示组件（DetailParamValue / ActualValueBadge），配合 ViewportTooltip 显示完整值',
     decision: 'retain',
     targets: ['Tooltip'],
-  },
-  {
-    module: 'src/components/WordLibraryManagerModal.tsx',
-    responsibility: '词库管理弹窗',
-    decision: 'retain',
-    targets: ['Dialog', 'Tabs', 'SearchField', 'ListRow', 'EmptyState'],
-  },
-  {
-    module: 'src/components/WordLibraryDerivativePanel.tsx',
-    responsibility: 'AI 衍生参数、结果与规则管理',
-    decision: 'retain',
-    targets: ['Button', 'SegmentedControl', 'Disclosure', 'Alert'],
-  },
-  {
-    module: 'src/components/WordLibraryQuickPanel.tsx',
-    responsibility: '词库快速筛选、列表与预览',
-    decision: 'retain',
-    targets: ['SearchField', 'SegmentedControl', 'ListRow', 'EmptyState'],
   },
   {
     module: 'src/components/WordLibrarySidebar.tsx',

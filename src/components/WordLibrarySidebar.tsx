@@ -1,3 +1,9 @@
+// 注意：文件名保留自历史（原为「词条库侧栏」，与素材详情共用「详情 / 词条」两个 Tab）。
+// 词条库已于 2026-09-18 下线（依据 docs/redundancy-audit.md），
+// 本组件现在只承载「素材详情」面板，仅在详情打开时出现。
+//
+// 下面两个 storage key 保留历史字面量（`wordLibrarySidebar_*`）：
+// 改掉会让用户已保存的面板位置与停靠状态丢失。
 import {
   useCallback,
   useEffect,
@@ -8,16 +14,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { useStore } from '../store'
-import { Button, CloseIcon, IconButton, ImageIcon, LibraryIcon, StarIcon } from '../design-system'
-import {
-  createVariableMention,
-  parseVariableMention,
-  resolveVariableMentionEntry,
-  VAR_MENTION_RE,
-} from '../lib/promptImageMentions'
+import { CloseIcon, IconButton, ImageIcon } from '../design-system'
 import { useMediaQuery } from '../hooks/useMediaQuery'
-import { filterWordLibraryEntries, WordLibraryQuickPanel, type WordLibraryQuickView } from './WordLibraryQuickPanel'
-import type { WordLibraryEntry } from '../types'
 import AssetDetailPanel from '../features/assetLibrary/AssetDetailPanel'
 import AssetPurgeModal from '../features/assetLibrary/AssetPurgeModal'
 import { useAssetLibraryStore, getVisibleAssets } from '../features/assetLibrary/store'
@@ -33,8 +31,6 @@ const SNAP_THRESHOLD = 10
 const SHARED_WIDTH_KEY = 'floating_panel_width_v1'
 const POS_STORAGE_KEY = 'wordLibrarySidebar_pos_v2'
 const DOCK_STORAGE_KEY = 'wordLibrarySidebar_dock_v1'
-
-type SidebarTab = 'details' | 'words'
 
 function loadSavedWidth(): number {
   try {
@@ -74,60 +70,9 @@ function loadSavedDock(): 'left' | 'right' | null {
   return null
 }
 
-function getPromptEditor(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('[data-input-bar] [contenteditable]')
-}
-
-function promptEditorHasSelection() {
-  const editor = getPromptEditor()
-  const selection = window.getSelection()
-  return Boolean(
-    editor &&
-    selection &&
-    selection.rangeCount > 0 &&
-    !selection.getRangeAt(0).collapsed &&
-    editor.contains(selection.anchorNode),
-  )
-}
-
-function readPromptEditor(editor: HTMLElement) {
-  let plain = ''
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      plain += node.textContent ?? ''
-      return
-    }
-    const element = node as HTMLElement
-    if (element.classList?.contains('mention-tag')) {
-      plain += element.dataset.mentionText ?? element.textContent ?? ''
-      return
-    }
-    if (element.classList?.contains('wildcard-var')) {
-      plain += createVariableMention(element.dataset.varName ?? element.textContent ?? '', element.dataset.entryId)
-      return
-    }
-    node.childNodes.forEach(walk)
-  }
-  editor.childNodes.forEach(walk)
-  return plain.replace(/\r\n?/g, '\n')
-}
-
 export default function WordLibrarySidebar() {
   const compactViewport = useMediaQuery('(max-width: 1023px)')
   const appMode = useStore((state) => state.appMode)
-  const groups = useStore((state) => state.wordLibraryGroups)
-  const entries = useStore((state) => state.wordLibraryEntries)
-  const managerOpen = useStore((state) => state.wordLibraryManagerOpen)
-  const setManagerOpen = useStore((state) => state.setWordLibraryManagerOpen)
-  const setManagerEntryId = useStore((state) => state.setWordLibraryEditEntryId)
-  const setPrompt = useStore((state) => state.setPrompt)
-  const toast = useStore((state) => state.showToast)
-  const toggleFavorite = useStore((state) => state.toggleWordLibraryEntryFavorite)
-  const updateEntry = useStore((state) => state.updateWordLibraryEntry)
-  const touchUsage = useStore((state) => state.touchWordLibraryEntryUsage)
-  const promptSelectedEntryId = useStore((state) => state.wordLibraryEditEntryId)
-  const promptSelectedVarName = useStore((state) => state.wordLibraryPromptSelectedVarName)
-  const setPromptSelectedVarName = useStore((state) => state.setWordLibraryPromptSelectedVarName)
   const activeAsset = useAssetLibraryStore((state) =>
     state.activeAssetId ? state.assetsById[state.activeAssetId] : undefined,
   )
@@ -143,37 +88,22 @@ export default function WordLibrarySidebar() {
   const assetOrder = useAssetLibraryStore((state) => state.assetOrder)
 
   const [compactOpen, setCompactOpen] = useState(false)
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('words')
-  const [query, setQuery] = useState('')
-  const [view, setView] = useState<WordLibraryQuickView>('recent')
-  const [groupId, setGroupId] = useState('__all__')
-  const [activeEntryId, setActiveEntryId] = useState<string | null>(null)
-  const [hasPromptSelection, setHasPromptSelection] = useState(false)
   const [position, setPosition] = useState(loadSavedPosition)
   const [size, setSize] = useState(() => ({ width: loadSavedWidth(), height: DEFAULT_H }))
   const [docked, setDocked] = useState<'left' | 'right' | null>(loadSavedDock)
+  const [purgeRequest, setPurgeRequest] = useState<{ ids: string[] } | null>(null)
 
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef(false)
   const resizeRef = useRef(false)
   const dragOffsetRef = useRef({ x: 0, y: 0 })
   const resizeStartRef = useRef({ x: 0, y: 0, width: DEFAULT_W, height: DEFAULT_H })
-  const lastPromptRef = useRef('')
-  const lastAddedEntryNameRef = useRef<string | null>(null)
-  const previousSidebarTabRef = useRef<Exclude<SidebarTab, 'details'>>('words')
 
-  const visibleEntries = useMemo(
-    () => filterWordLibraryEntries({ entries, query, view, groupId }),
-    [entries, groupId, query, view],
-  )
-  const activeEntries = useMemo(() => entries.filter((entry) => entry.deletedAt == null), [entries])
-  const activeGroups = useMemo(() => groups.filter((group) => !group.archivedAt), [groups])
-  const isGalleryMode = appMode === 'gallery'
-  const detailTabAvailable = isGalleryMode && !compactViewport && Boolean(activeAsset && detailOpen)
+  const detailAvailable = appMode === 'gallery' && Boolean(activeAsset && detailOpen)
 
-  // 素材详情连续浏览：按素材库当前查询结果前后切换（仅详情标签激活时计算）
+  // 素材详情连续浏览：按素材库当前查询结果前后切换
   const detailAssetList = useMemo(() => {
-    if (!detailTabAvailable || !activeAsset) return []
+    if (!detailAvailable || !activeAsset) return []
     const assets = getVisibleAssets({ assetsById: assetById, assetOrder })
     return queryAssets(
       { assets, collections: assetCollections },
@@ -189,107 +119,26 @@ export default function WordLibrarySidebar() {
     assetScope,
     assetSortKey,
     assetSortOrder,
-    detailTabAvailable,
+    detailAvailable,
   ])
+
   const goPrevAsset = useCallback(() => {
     if (!activeAsset || detailAssetList.length === 0) return
     const index = detailAssetList.findIndex((item) => item.id === activeAsset.id)
     const prev = index <= 0 ? detailAssetList[detailAssetList.length - 1] : detailAssetList[index - 1]
     if (prev) useAssetLibraryStore.getState().setActiveAsset(prev.id)
   }, [activeAsset, detailAssetList])
+
   const goNextAsset = useCallback(() => {
     if (!activeAsset || detailAssetList.length === 0) return
     const index = detailAssetList.findIndex((item) => item.id === activeAsset.id)
     const next = index < 0 || index >= detailAssetList.length - 1 ? detailAssetList[0] : detailAssetList[index + 1]
     if (next) useAssetLibraryStore.getState().setActiveAsset(next.id)
   }, [activeAsset, detailAssetList])
-  const [purgeRequest, setPurgeRequest] = useState<{ ids: string[] } | null>(null)
-
-  useEffect(() => {
-    // 词条为默认 Tab；详情打开时自动切换，关闭后回到词条
-    previousSidebarTabRef.current = 'words'
-    setSidebarTab('words')
-  }, [])
-
-  useEffect(() => {
-    if (!detailTabAvailable) return
-    if (activeAsset && detailOpen) {
-      setSidebarTab((current) => {
-        if (current !== 'details') previousSidebarTabRef.current = current
-        return 'details'
-      })
-      return
-    }
-    setSidebarTab((current) => (current === 'details' ? previousSidebarTabRef.current : current))
-  }, [activeAsset, compactViewport, detailOpen, detailTabAvailable])
-
-  useEffect(() => {
-    if (visibleEntries.some((entry) => entry.id === activeEntryId)) return
-    setActiveEntryId(visibleEntries[0]?.id ?? null)
-  }, [activeEntryId, visibleEntries])
-
-  useEffect(() => {
-    const updateSelectionState = () => setHasPromptSelection(promptEditorHasSelection())
-    document.addEventListener('selectionchange', updateSelectionState)
-    return () => document.removeEventListener('selectionchange', updateSelectionState)
-  }, [])
-
-  useEffect(() => {
-    const unsubscribe = useStore.subscribe((state, previous) => {
-      if (state.prompt === previous.prompt || state.prompt === lastPromptRef.current) return
-      lastPromptRef.current = state.prompt
-      for (const match of state.prompt.matchAll(VAR_MENTION_RE)) {
-        const mention = parseVariableMention(match[1])
-        if (mention.entryId || state.wordLibraryEntries.some((entry) => entry.key === mention.varName)) continue
-        const entry = state.createWordLibraryEntry('default', mention.varName)
-        state.updateWordLibraryEntry(entry.id, { entries: [mention.varName] })
-        lastAddedEntryNameRef.current = mention.varName
-      }
-    })
-    return unsubscribe
-  }, [])
-
-  useEffect(() => {
-    const unsubscribe = useStore.subscribe((state) => {
-      const entryName = lastAddedEntryNameRef.current
-      if (!entryName) return
-      const entry = state.wordLibraryEntries.find((item) => item.key === entryName && item.deletedAt == null)
-      if (!entry) return
-      lastAddedEntryNameRef.current = null
-      setView('all')
-      setGroupId('__all__')
-      setQuery('')
-      setActiveEntryId(entry.id)
-    })
-    return unsubscribe
-  }, [])
-
-  useEffect(() => {
-    if (managerOpen || !promptSelectedEntryId) return
-    const entry = activeEntries.find((item) => item.id === promptSelectedEntryId)
-    if (entry) {
-      setView('all')
-      setGroupId('__all__')
-      setQuery('')
-      setActiveEntryId(entry.id)
-    }
-    setManagerEntryId(null)
-  }, [activeEntries, managerOpen, promptSelectedEntryId, setManagerEntryId])
-
-  useEffect(() => {
-    if (!promptSelectedVarName) return
-    const entry = resolveVariableMentionEntry(promptSelectedVarName, undefined, activeEntries)
-    if (entry) {
-      setView('all')
-      setGroupId('__all__')
-      setQuery('')
-      setActiveEntryId(entry.id)
-    }
-    setPromptSelectedVarName(null)
-  }, [activeEntries, promptSelectedVarName, setPromptSelectedVarName])
 
   useEffect(() => {
     const root = document.documentElement
+    // 变量名沿用历史，CSS 侧（design-system）仍在读它们。
     root.style.setProperty(
       '--word-library-left-width',
       !compactViewport && docked === 'left' ? `${size.width}px` : '0px',
@@ -363,59 +212,14 @@ export default function WordLibrarySidebar() {
     event.preventDefault()
   }
 
-  const writeMarkerAtSelection = useCallback(
-    (marker: string, replaceSelection: boolean) => {
-      const editor = getPromptEditor()
-      if (!editor) return false
-      const selection = window.getSelection()
-      const selectionInsideEditor = Boolean(selection?.rangeCount && editor.contains(selection.anchorNode))
-      if (!selectionInsideEditor) {
-        editor.focus()
-        const range = document.createRange()
-        range.selectNodeContents(editor)
-        range.collapse(false)
-        selection?.removeAllRanges()
-        selection?.addRange(range)
-      }
-      const range = selection!.getRangeAt(0)
-      if (replaceSelection && !range.collapsed) range.deleteContents()
-      else if (!range.collapsed) range.collapse(false)
-      const node = document.createTextNode(marker)
-      range.insertNode(node)
-      range.setStartAfter(node)
-      range.collapse(true)
-      selection!.removeAllRanges()
-      selection!.addRange(range)
-      setPrompt(readPromptEditor(editor))
-      return true
-    },
-    [setPrompt],
-  )
-
-  const invokeEntry = useCallback(
-    (entry: WordLibraryEntry) => {
-      const marker = createVariableMention(entry.key, entry.id)
-      const replaceSelection = promptEditorHasSelection()
-      if (!writeMarkerAtSelection(marker, replaceSelection)) {
-        setPrompt(`${useStore.getState().prompt}${marker}`)
-      }
-      touchUsage(entry.id)
-      setHasPromptSelection(false)
-      toast(replaceSelection ? '已替换为词条' : '已插入词条', 'success')
-    },
-    [setPrompt, toast, touchUsage, writeMarkerAtSelection],
-  )
-
-  const openManager = (entryId?: string) => {
-    setManagerEntryId(entryId ?? null)
-    setManagerOpen(true)
-  }
+  // 没有可展示的素材详情时不占用屏幕（词条库下线后，这里是唯一入口条件）
+  if (!detailAvailable) return null
 
   if (compactViewport && !compactOpen) {
     return (
       <IconButton
-        aria-label="打开词条库"
-        icon={<StarIcon className="h-4 w-4" />}
+        aria-label="打开素材详情"
+        icon={<ImageIcon className="h-4 w-4" />}
         onClick={() => setCompactOpen(true)}
         className="fixed right-2 top-[calc(var(--app-header-offset)+var(--ds-space-2))] z-[var(--ds-z-overlay)] border border-ds-border bg-ds-raised shadow-[var(--ds-shadow-md)]"
       />
@@ -423,7 +227,6 @@ export default function WordLibrarySidebar() {
   }
 
   const isDocked = Boolean(docked)
-  const detailTabActive = detailTabAvailable && sidebarTab === 'details'
   const panelStyle: CSSProperties = compactViewport
     ? {
         right: 'var(--ds-space-2)',
@@ -461,31 +264,22 @@ export default function WordLibrarySidebar() {
       <header className="tangbao-side-panel__header shrink-0 select-none" onMouseDown={beginDrag}>
         <div className="flex items-center gap-3">
           <div className="tangbao-side-panel__icon">
-            {detailTabActive ? <ImageIcon className="h-4 w-4" /> : <LibraryIcon className="h-4 w-4" />}
+            <ImageIcon className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="tangbao-side-panel__title">{detailTabActive ? '素材详情' : '词条库'}</h3>
+            <h3 className="tangbao-side-panel__title">素材详情</h3>
             <p className="tangbao-side-panel__meta">
-              {detailTabActive
-                ? activeAsset?.width && activeAsset.height
-                  ? `${activeAsset.width} × ${activeAsset.height}`
-                  : '已选择素材'
-                : `${activeEntries.length} 个词条 · ${activeGroups.length} 个分组`}
+              {activeAsset?.width && activeAsset.height
+                ? `${activeAsset.width} × ${activeAsset.height}`
+                : '已选择素材'}
             </p>
           </div>
-          {!detailTabActive && (
-            <Button size="sm" variant="secondary" onClick={() => openManager()}>
-              管理
-            </Button>
-          )}
-          {detailTabActive && (
-            <IconButton
-              aria-label="关闭素材详情"
-              icon={<CloseIcon className="h-4 w-4" />}
-              size="sm"
-              onClick={() => setDetailOpen(false)}
-            />
-          )}
+          <IconButton
+            aria-label="关闭素材详情"
+            icon={<CloseIcon className="h-4 w-4" />}
+            size="sm"
+            onClick={() => setDetailOpen(false)}
+          />
           {compactViewport && (
             <IconButton
               aria-label="关闭右侧边栏"
@@ -497,65 +291,12 @@ export default function WordLibrarySidebar() {
         </div>
       </header>
 
-      {detailTabAvailable && (
-        <div
-          role="tablist"
-          aria-label="右侧边栏内容"
-          className="grid h-ds-control-lg shrink-0 grid-cols-2 border-b border-ds-border px-2"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebarTab === 'details'}
-            className="border-b-2 border-transparent text-xs font-medium text-ds-muted transition-colors aria-selected:border-ds-primary aria-selected:text-ds-text"
-            onClick={() => setSidebarTab('details')}
-          >
-            详情
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebarTab === 'words'}
-            className="border-b-2 border-transparent text-xs font-medium text-ds-muted transition-colors aria-selected:border-ds-primary aria-selected:text-ds-text"
-            onClick={() => {
-              previousSidebarTabRef.current = 'words'
-              setSidebarTab('words')
-            }}
-          >
-            词条
-          </button>
-        </div>
-      )}
-
-      {detailTabActive ? (
-        <AssetDetailPanel
-          embedded
-          onPrev={goPrevAsset}
-          onNext={goNextAsset}
-          onPurgeRequest={(ids) => setPurgeRequest({ ids })}
-        />
-      ) : (
-        <WordLibraryQuickPanel
-          entries={entries}
-          groups={groups}
-          query={query}
-          view={view}
-          groupId={groupId}
-          activeEntryId={activeEntryId}
-          hasPromptSelection={hasPromptSelection}
-          onQueryChange={setQuery}
-          onViewChange={setView}
-          onGroupChange={setGroupId}
-          onSelect={setActiveEntryId}
-          onInvoke={invokeEntry}
-          onSaveEntries={(entryId, nextEntries) => {
-            updateEntry(entryId, { entries: [...new Set(nextEntries)] })
-            toast('词条候选值已保存', 'success')
-          }}
-          onToggleFavorite={toggleFavorite}
-          onManage={openManager}
-        />
-      )}
+      <AssetDetailPanel
+        embedded
+        onPrev={goPrevAsset}
+        onNext={goNextAsset}
+        onPurgeRequest={(ids) => setPurgeRequest({ ids })}
+      />
 
       {!isDocked && !compactViewport && (
         <div

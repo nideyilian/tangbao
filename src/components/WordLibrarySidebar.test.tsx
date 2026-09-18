@@ -5,20 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mainStore = vi.hoisted(() => ({
   appMode: 'gallery',
-  wordLibraryGroups: [],
-  wordLibraryEntries: [],
-  wordLibraryManagerOpen: false,
-  setWordLibraryManagerOpen: vi.fn(),
-  setWordLibraryEditEntryId: vi.fn(),
-  prompt: '',
-  setPrompt: vi.fn(),
-  showToast: vi.fn(),
-  toggleWordLibraryEntryFavorite: vi.fn(),
-  updateWordLibraryEntry: vi.fn(),
-  touchWordLibraryEntryUsage: vi.fn(),
-  wordLibraryEditEntryId: null,
-  wordLibraryPromptSelectedVarName: null,
-  setWordLibraryPromptSelectedVarName: vi.fn(),
 }))
 
 const assetStore = vi.hoisted(() => ({
@@ -26,7 +12,6 @@ const assetStore = vi.hoisted(() => ({
   assetsById: { 'asset-1': { id: 'asset-1', width: 1672, height: 941 } },
   assetOrder: ['asset-1'],
   collections: [],
-  tags: [],
   scope: 'all',
   query: '',
   filters: {},
@@ -83,13 +68,14 @@ vi.mock('../hooks/useMediaQuery', () => ({ useMediaQuery: () => false }))
 
 import WordLibrarySidebar from './WordLibrarySidebar'
 
-describe('WordLibrarySidebar asset detail state', () => {
+describe('WordLibrarySidebar（词条库下线后：只承载素材详情）', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    assetStore.detailOpen = true
   })
 
-  it('uses one full-height right sidebar for details and words', () => {
+  it('以右侧全高面板承载素材详情，并可通过按钮关闭', () => {
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<WordLibrarySidebar />)
@@ -99,15 +85,19 @@ describe('WordLibrarySidebar asset detail state', () => {
     expect(panel.props.style.height).toBe('calc(100vh - var(--app-header-offset))')
     expect(renderer.root.findByProps({ 'data-testid': 'embedded-asset-detail' }).props['data-embedded']).toBe(true)
 
-    const tabs = renderer.root.findAll((node) => node.props.role === 'tab')
-    expect(tabs.map((tab) => tab.props.children)).toEqual(['详情', '词条'])
+    // 词条库已下线：原先的「详情 / 词条」双 Tab 不应再存在
+    expect(renderer.root.findAll((node) => node.props.role === 'tab')).toHaveLength(0)
 
-    act(() => tabs[1].props.onClick())
-    expect(renderer.root.findAll((node) => node.props['data-testid'] === 'embedded-asset-detail')).toHaveLength(0)
-
-    act(() => tabs[0].props.onClick())
-    expect(renderer.root.findByProps({ 'data-testid': 'embedded-asset-detail' })).toBeTruthy()
     act(() => renderer.root.findByProps({ 'aria-label': '关闭素材详情' }).props.onClick())
     expect(assetStore.setDetailOpen).toHaveBeenCalledWith(false)
+  })
+
+  it('没有可展示的素材详情时不渲染面板', () => {
+    assetStore.detailOpen = false
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<WordLibrarySidebar />)
+    })
+    expect(renderer.toJSON()).toBeNull()
   })
 })

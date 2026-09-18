@@ -19,10 +19,8 @@ import ConfirmDialog from './components/ConfirmDialog'
 import PromptInputDialog from './components/PromptInputDialog'
 import Toast from './components/Toast'
 import ImageContextMenu from './components/ImageContextMenu'
-import WordLibraryManagerModal from './components/WordLibraryManagerModal'
 import WordLibrarySidebar from './components/WordLibrarySidebar'
 import ErrorBoundary from './components/ErrorBoundary'
-import VarEntryEditor from './components/VarEntryEditor'
 import WorkspaceTabBar from './components/WorkspaceTabBar'
 import AppPageRail from './components/AppPageRail'
 import RequirementQueueRunner from './features/requirementPrototype/QueueRunner'
@@ -468,8 +466,6 @@ export default function App() {
           <MaskEditorModal />
           <ImageContextMenu />
           {(appMode === 'gallery' || appMode === 'agent') && <WordLibrarySidebar />}
-          {(appMode === 'gallery' || appMode === 'agent') && <WordLibraryManagerModal />}
-          <VarEntryEditor />
           <RandomPromptModal />
           <ScheduleModal />
           <ScheduleRunner />
