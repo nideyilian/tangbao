@@ -11,7 +11,6 @@ import type { StoredImage } from '../types'
 
 const dbMock = vi.hoisted(() => ({
   getAllTasks: vi.fn(),
-  getWordLibraryState: vi.fn(),
   getAllAgentConversations: vi.fn(),
   getAllImages: vi.fn(),
   importLegacyStoreRecords: vi.fn(),
@@ -72,13 +71,11 @@ describe('describeLegacyDataPayload', () => {
       exportedAt: 0,
       stores: {
         tasks: [{ id: 'a' } as never, { id: 'b' } as never],
-        wordLibrary: [{ id: 'word-library' } as never],
         agentConversations: [{ id: 'c' } as never],
         images: [{ id: 'd' } as never],
       },
     })
     expect(summary).toContain('任务 2 条')
-    expect(summary).toContain('词条库 1 份')
     expect(summary).toContain('Agent 对话 1 个')
     expect(summary).toContain('图片记录 1 条')
   })
@@ -100,7 +97,6 @@ describe('buildLegacyDataExport', () => {
       source: 'generated',
     }
     dbMock.getAllTasks.mockResolvedValue([{ id: 't1', prompt: 'x' }])
-    dbMock.getWordLibraryState.mockResolvedValue({ id: 'word-library', groups: [], entries: [], updatedAt: 1 })
     dbMock.getAllAgentConversations.mockResolvedValue([{ id: 'c1' }])
     dbMock.getAllImages.mockResolvedValue([imageWithDataUrl])
 
@@ -108,7 +104,6 @@ describe('buildLegacyDataExport', () => {
 
     expect(payload.kind).toBe(LEGACY_DATA_FILE_KIND)
     expect(payload.stores.tasks).toEqual([{ id: 't1', prompt: 'x' }])
-    expect(payload.stores.wordLibrary).toHaveLength(1)
     expect(payload.stores.agentConversations).toHaveLength(1)
     expect(payload.stores.images).toHaveLength(1)
     expect(payload.stores.images![0].dataUrl).toBeUndefined()
@@ -117,13 +112,11 @@ describe('buildLegacyDataExport', () => {
 
   it('omits empty stores', async () => {
     dbMock.getAllTasks.mockResolvedValue([])
-    dbMock.getWordLibraryState.mockResolvedValue(undefined)
     dbMock.getAllAgentConversations.mockResolvedValue([])
     dbMock.getAllImages.mockResolvedValue([])
 
     const payload = await buildLegacyDataExport()
     expect(payload.stores.tasks).toBeUndefined()
-    expect(payload.stores.wordLibrary).toBeUndefined()
     expect(payload.stores.agentConversations).toBeUndefined()
     expect(payload.stores.images).toBeUndefined()
   })

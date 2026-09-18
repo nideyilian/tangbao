@@ -14,9 +14,6 @@ import type {
   StoredImage,
   StoredImageThumbnail,
   ThumbnailVariant,
-  WordGenerationBatch,
-  WordLibraryEntry,
-  WordLibraryGroup,
 } from '../types'
 import {
   deleteRawCacheImages,
@@ -295,9 +292,6 @@ async function migrateLegacyIndexedDbToSqlite(api: ElectronAppDataApi) {
       STORE_AGENT_CONVERSATIONS,
       'readonly',
       (store) => store.getAll(),
-    ),
-    [STORE_WORD_LIBRARY]: await dbTransaction<StoredWordLibraryState[]>(STORE_WORD_LIBRARY, 'readonly', (store) =>
-      store.getAll(),
     ),
     [STORE_COMPOSITE_ASSETS]: await readLegacyCompositeAssetsForMigration(),
     [STORE_META]: await dbTransaction<MigrationJournal[]>(STORE_META, 'readonly', (store) => store.getAll()),
@@ -652,35 +646,6 @@ export function replaceAgentConversations(conversations: AgentConversation[]): P
         tx.onabort = () => reject(tx.error)
       }),
   )
-}
-
-// ===== Word library =====
-
-export type StoredWordLibraryState = {
-  id: 'word-library'
-  groups: WordLibraryGroup[]
-  entries: WordLibraryEntry[]
-  batches?: WordGenerationBatch[]
-  updatedAt: number
-}
-
-export function getWordLibraryState(): Promise<StoredWordLibraryState | undefined> {
-  const electron = readElectronRecord<StoredWordLibraryState>(STORE_WORD_LIBRARY, 'word-library')
-  if (electron) return electron
-  return dbTransaction(STORE_WORD_LIBRARY, 'readonly', (s) => s.get('word-library'))
-}
-
-export function putWordLibraryState(state: Omit<StoredWordLibraryState, 'id' | 'updatedAt'>): Promise<IDBValidKey> {
-  const record = {
-    id: 'word-library' as const,
-    groups: state.groups,
-    entries: state.entries,
-    batches: state.batches ?? [],
-    updatedAt: Date.now(),
-  }
-  const electron = writeElectronRecord(STORE_WORD_LIBRARY, record.id, record)
-  if (electron) return electron
-  return dbTransaction(STORE_WORD_LIBRARY, 'readwrite', (s) => s.put(record))
 }
 
 // ===== Composite assets =====
@@ -1956,8 +1921,6 @@ export function clearAssetTombstones(): Promise<undefined> {
 
 export interface LegacyStoreImportRecords {
   tasks?: TaskRecord[]
-  /** 词条库（单记录 id='word-library'） */
-  wordLibrary?: StoredWordLibraryState[]
   agentConversations?: AgentConversation[]
   /** 图片记录（Electron 下为轻量元数据：localPath 指向磁盘原图，dataUrl 可选） */
   images?: StoredImage[]
@@ -1972,28 +1935,22 @@ export interface LegacyStoreImportRecords {
 export function importLegacyStoreRecords(
   records: LegacyStoreImportRecords,
   replaceExisting = false,
-): Promise<{ tasks: number; wordLibrary: number; agentConversations: number; images: number }> {
+): Promise<{ tasks: number; agentConversations: number; images: number }> {
   return openDB().then(
     (db) =>
       new Promise((resolve, reject) => {
-        const tx = db.transaction(
-          [STORE_TASKS, STORE_WORD_LIBRARY, STORE_AGENT_CONVERSATIONS, STORE_IMAGES],
-          'readwrite',
-        )
+        const tx = db.transaction([STORE_TASKS, STORE_AGENT_CONVERSATIONS, STORE_IMAGES], 'readwrite')
         const taskStore = tx.objectStore(STORE_TASKS)
-        const wordStore = tx.objectStore(STORE_WORD_LIBRARY)
         const conversationStore = tx.objectStore(STORE_AGENT_CONVERSATIONS)
         const imageStore = tx.objectStore(STORE_IMAGES)
 
         if (replaceExisting) {
           if (records.tasks?.length) taskStore.clear()
-          if (records.wordLibrary?.length) wordStore.clear()
           if (records.agentConversations?.length) conversationStore.clear()
           if (records.images?.length) imageStore.clear()
         }
 
         let taskCount = 0
-        let wordCount = 0
         let conversationCount = 0
         let imageCount = 0
 
@@ -2014,7 +1971,6 @@ export function importLegacyStoreRecords(
         }
 
         if (records.tasks?.length) putIfMissing(taskStore, records.tasks, () => taskCount++)
-        if (records.wordLibrary?.length) putIfMissing(wordStore, records.wordLibrary, () => wordCount++)
         if (records.agentConversations?.length)
           putIfMissing(conversationStore, records.agentConversations, () => conversationCount++)
         if (records.images?.length) putIfMissing(imageStore, records.images, () => imageCount++)
@@ -2022,7 +1978,6 @@ export function importLegacyStoreRecords(
         tx.oncomplete = () =>
           resolve({
             tasks: taskCount,
-            wordLibrary: wordCount,
             agentConversations: conversationCount,
             images: imageCount,
           })

@@ -1,12 +1,5 @@
 import type { AgentConversation, StoredImage, TaskRecord } from '../types'
-import type { StoredWordLibraryState } from './db'
-import {
-  getAllAgentConversations,
-  getAllImages,
-  getAllTasks,
-  getWordLibraryState,
-  importLegacyStoreRecords,
-} from './db'
+import { getAllAgentConversations, getAllImages, getAllTasks, importLegacyStoreRecords } from './db'
 
 /**
  * 跨运行模式（dev ⇄ 安装版）与跨版本的 IndexedDB 数据迁移。
@@ -29,7 +22,6 @@ export interface LegacyDataFilePayload {
   exportedAt: number
   stores: {
     tasks?: TaskRecord[]
-    wordLibrary?: StoredWordLibraryState[]
     agentConversations?: AgentConversation[]
     /** 轻量图片元数据：剥离 dataUrl（Electron 下本来就只有 localPath） */
     images?: StoredImage[]
@@ -42,17 +34,15 @@ function lightweightImage(image: StoredImage): StoredImage {
   return rest
 }
 
-/** 导出当前 IndexedDB 的任务 / 词条库 / Agent 对话 / 图片元数据为 JSON 载荷。 */
+/** 导出当前 IndexedDB 的任务 / Agent 对话 / 图片元数据为 JSON 载荷。 */
 export async function buildLegacyDataExport(): Promise<LegacyDataFilePayload> {
-  const [tasks, wordLibrary, agentConversations, images] = await Promise.all([
+  const [tasks, agentConversations, images] = await Promise.all([
     getAllTasks(),
-    getWordLibraryState(),
     getAllAgentConversations(),
     getAllImages(),
   ])
   const stores: LegacyDataFilePayload['stores'] = {}
   if (tasks.length > 0) stores.tasks = tasks
-  if (wordLibrary) stores.wordLibrary = [wordLibrary]
   if (agentConversations.length > 0) stores.agentConversations = agentConversations
   if (images.length > 0) stores.images = images.map(lightweightImage)
   return {
@@ -72,7 +62,6 @@ export function defaultLegacyDataExportFileName(now = new Date()): string {
 
 export interface LegacyDataImportSummary {
   tasks: number
-  wordLibrary: number
   agentConversations: number
   images: number
 }
@@ -116,7 +105,6 @@ export async function importLegacyDataPayload(
   return importLegacyStoreRecords(
     {
       tasks: payload.stores.tasks,
-      wordLibrary: payload.stores.wordLibrary,
       agentConversations: payload.stores.agentConversations,
       images: payload.stores.images,
     },
@@ -128,7 +116,6 @@ export async function importLegacyDataPayload(
 export function describeLegacyDataPayload(payload: LegacyDataFilePayload): string {
   const parts: string[] = []
   if (payload.stores.tasks?.length) parts.push(`任务 ${payload.stores.tasks.length} 条`)
-  if (payload.stores.wordLibrary?.length) parts.push(`词条库 ${payload.stores.wordLibrary.length} 份`)
   if (payload.stores.agentConversations?.length) parts.push(`Agent 对话 ${payload.stores.agentConversations.length} 个`)
   if (payload.stores.images?.length) parts.push(`图片记录 ${payload.stores.images.length} 条`)
   return parts.length > 0 ? parts.join('、') : '（空数据）'

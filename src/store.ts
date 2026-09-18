@@ -43,10 +43,6 @@ import type {
   ResponsesOutputItem,
   WorkspaceTab,
   WorkspaceTabGroup,
-  WordLibraryGroup,
-  WordLibraryEntry,
-  WordGenerationBatch,
-  WordLibraryExportData,
   AssetCollection,
 } from './types'
 import type { StoredImage, StoredImageThumbnail, ThumbnailVariant } from './types'
@@ -102,7 +98,6 @@ import {
   patchStrategyAssetForDetachedImages,
   patchTaskForDetachedInputs,
   patchWorkspaceTabForDetachedImages,
-  patchWordGenerationBatchForDetachedImages,
 } from './lib/assetDetach'
 import {
   getAssetsByIds,
@@ -139,8 +134,6 @@ import {
   getAllAgentConversations,
   replaceAgentConversations,
   clearAgentConversations as dbClearAgentConversations,
-  getWordLibraryState,
-  putWordLibraryState,
   getImage,
   getImageThumbnail,
   getStoredImageThumbnail,
@@ -347,8 +340,6 @@ let localImageSaveQueue = Promise.resolve()
 let agentRoundSummarySaveQueue = Promise.resolve()
 let agentConversationPersistenceReady = false
 let agentConversationMigrationPending = false
-let wordLibraryPersistenceReady = false
-let wordLibraryMigrationPending = false
 let imageStorageMigrationPromise: Promise<number> | null = null
 const OPENAI_INTERRUPTED_ERROR = '请求中断'
 const AGENT_STOPPED_MESSAGE = '已停止生成。'
@@ -2218,13 +2209,6 @@ export function getPersistedState(state: AppState) {
     schedule: state.schedule,
     supportPromptDismissed: state.supportPromptDismissed,
     supportPromptSkippedForImportedData: state.supportPromptSkippedForImportedData,
-    ...(wordLibraryMigrationPending && !wordLibraryPersistenceReady
-      ? {
-          wordLibraryGroups: state.wordLibraryGroups,
-          wordLibraryEntries: state.wordLibraryEntries,
-          wordGenerationBatches: state.wordGenerationBatches,
-        }
-      : {}),
     ...(state.workspaceTabs.length > 0
       ? {
           workspaceTabs: state.workspaceTabs.map((tab) => ({
@@ -2331,11 +2315,6 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     persisted.defaultFavoriteCollectionId,
   )
   const schedule = normalizeScheduleState(persisted.schedule, currentState.schedule)
-  if (Array.isArray(persisted.wordLibraryGroups) || Array.isArray(persisted.wordLibraryEntries)) {
-    wordLibraryMigrationPending = true
-  }
-  const wordLibraryGroups = normalizeWordLibraryGroups(persisted.wordLibraryGroups, currentState.wordLibraryGroups)
-  const persistedWordLibraryEntries = normalizeWordLibraryEntries(persisted.wordLibraryEntries, wordLibraryGroups)
   // Gallery 模式下顶层输入状态（params/inputImageFolder）应镜像活动 workspace 标签页，
   // 与 setAppMode 的恢复逻辑保持一致。
   const normalizedWorkspaceTabs =
@@ -2410,34 +2389,6 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     favoritePickerTaskIds: null,
     supportPromptDismissed: Boolean(persisted.supportPromptDismissed),
     supportPromptSkippedForImportedData: Boolean(persisted.supportPromptSkippedForImportedData),
-    wordLibraryGroups,
-    wordLibraryEntries:
-      Array.isArray(persisted.wordLibraryEntries) && persistedWordLibraryEntries.length > 0
-        ? persistedWordLibraryEntries
-        : currentState.wordLibraryEntries,
-    wordGenerationBatches: Array.isArray(persisted.wordGenerationBatches)
-      ? persisted.wordGenerationBatches
-          .filter(
-            (batch): batch is WordGenerationBatch =>
-              isRecord(batch) &&
-              typeof batch.id === 'string' &&
-              typeof batch.skillName === 'string' &&
-              typeof batch.sourcePrompt === 'string',
-          )
-          .map((batch) => ({
-            id: batch.id,
-            skillName: batch.skillName,
-            sourcePrompt: batch.sourcePrompt,
-            referenceImageIds: Array.isArray(batch.referenceImageIds)
-              ? batch.referenceImageIds.filter((id): id is string => typeof id === 'string')
-              : [],
-            entryIds: Array.isArray(batch.entryIds)
-              ? batch.entryIds.filter((id): id is string => typeof id === 'string')
-              : [],
-            createdAt: typeof batch.createdAt === 'number' ? batch.createdAt : Date.now(),
-            archivedAt: typeof batch.archivedAt === 'number' ? batch.archivedAt : null,
-          }))
-      : currentState.wordGenerationBatches,
     workspaceTabs: normalizedWorkspaceTabs,
     activeWorkspaceTabId: persistedActiveWorkspaceTabId,
     workspaceTabGroups:
@@ -2651,62 +2602,6 @@ interface AppState {
   setPromptInputDialog: (config: PromptInputDialogConfig | null) => void
 
   // Random prompt generator
-  randomPromptModalOpen: boolean
-  setRandomPromptModalOpen: (open: boolean) => void
-
-  // Word library sidebar
-
-  // Word library (词条库)
-  wordLibraryGroups: WordLibraryGroup[]
-  wordLibraryEntries: WordLibraryEntry[]
-  wordGenerationBatches: WordGenerationBatch[]
-  createWordLibraryGroup: (name: string, parentId?: string | null) => { id: string; name: string }
-  renameWordLibraryGroup: (id: string, name: string) => void
-  updateWordLibraryGroup: (id: string, patch: Partial<WordLibraryGroup>) => void
-  deleteWordLibraryGroup: (id: string) => void
-  mergeWordLibraryGroups: (sourceId: string, targetId: string) => void
-  archiveWordLibraryGroup: (id: string, archived?: boolean) => void
-  createWordLibraryEntry: (groupId: string, key?: string) => WordLibraryEntry
-  updateWordLibraryEntry: (id: string, patch: Partial<WordLibraryEntry>) => void
-  deleteWordLibraryEntry: (id: string) => void
-  moveWordLibraryEntry: (entryId: string, targetGroupId: string) => void
-  /** 批量软删除（进入回收站） */
-  batchDeleteWordLibraryEntries: (ids: string[]) => void
-  /** 批量移动到目标分组 */
-  batchMoveWordLibraryEntries: (ids: string[], targetGroupId: string) => void
-  /** 按给定 id 顺序重排置顶后的排序权重（仅更新 sortOrder） */
-  reorderWordLibraryEntries: (orderedIds: string[]) => void
-  toggleWordLibraryEntryPinned: (id: string) => void
-  toggleWordLibraryEntryFavorite: (id: string) => void
-  /** 批量追加标签（去重合并） */
-  batchAddTagsToWordLibraryEntries: (ids: string[], tags: string[]) => void
-  /** 从回收站恢复 */
-  restoreWordLibraryEntries: (ids: string[]) => void
-  /** 永久删除（真正移除） */
-  destroyWordLibraryEntries: (ids: string[]) => void
-  /** 清空回收站 */
-  emptyWordLibraryTrash: () => void
-  /** 记录一次使用（使用频率 +1） */
-  touchWordLibraryEntryUsage: (id: string) => void
-  createWordGenerationBatch: (
-    input: Omit<WordGenerationBatch, 'id' | 'createdAt' | 'archivedAt'>,
-  ) => WordGenerationBatch
-  archiveWordGenerationBatch: (id: string, archived?: boolean) => void
-  /** 导出当前词条库（含回收站）为可迁移的数据结构 */
-  exportWordLibrary: () => WordLibraryExportData
-  /** 导入词条库数据；strategy 为 'merge'（按 id 合并，保留既有）或 'replace'（整体替换） */
-  importWordLibrary: (
-    data: unknown,
-    strategy: 'merge' | 'replace',
-  ) => { added: number; updated: number; groupsAdded: number }
-  /** 批量复制词条（生成带「副本」后缀的新词条，置顶状态/回收站状态均重置） */
-  duplicateWordLibraryEntries: (ids: string[]) => number
-  /** 批量置顶选中的词条 */
-  batchPinWordLibraryEntries: (ids: string[]) => void
-  /** 按给定 id 顺序重排分组（仅更新分组 sortOrder） */
-  reorderWordLibraryGroups: (orderedIds: string[]) => void
-  /** 清理回收站中超过保留期限（默认 30 天）的词条，返回清理数量 */
-  cleanupExpiredWordLibraryTrash: () => number
 
   // Workspace tabs (工作区标签页)
   workspaceTabs: WorkspaceTab[]
@@ -2810,113 +2705,6 @@ export async function deleteImageIfUnreferenced(imageId: string) {
 }
 
 /** 回收站词条保留期限：超过后自动清理（30 天） */
-const WORD_LIBRARY_TRASH_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
-
-function normalizeWordLibraryGroups(value: unknown, fallback: WordLibraryGroup[]): WordLibraryGroup[] {
-  if (!Array.isArray(value)) return fallback
-  const groups = value
-    .map((group, index): WordLibraryGroup | null => {
-      if (!isRecord(group) || typeof group.id !== 'string' || typeof group.name !== 'string') return null
-      const sortOrder =
-        typeof group.sortOrder === 'number' && Number.isFinite(group.sortOrder) ? group.sortOrder : index
-      return {
-        id: group.id,
-        name: group.name,
-        sortOrder,
-        parentId: typeof group.parentId === 'string' ? group.parentId : null,
-        description: typeof group.description === 'string' ? group.description : '',
-        color: typeof group.color === 'string' ? group.color : '',
-        archivedAt: typeof group.archivedAt === 'number' && Number.isFinite(group.archivedAt) ? group.archivedAt : null,
-      }
-    })
-    .filter((group): group is WordLibraryGroup => group != null)
-  return groups.length > 0 ? groups : fallback
-}
-
-function normalizeWordLibraryEntries(value: unknown, groups: WordLibraryGroup[]): WordLibraryEntry[] {
-  if (!Array.isArray(value)) return []
-  const fallbackGroupId = groups[0]?.id ?? 'default'
-  const groupIds = new Set(groups.map((group) => group.id))
-  const now = Date.now()
-  return value
-    .map((entry, index): WordLibraryEntry | null => {
-      if (!isRecord(entry) || typeof entry.id !== 'string') return null
-      const key = typeof entry.key === 'string' ? entry.key : ''
-      const groupId = typeof entry.groupId === 'string' && groupIds.has(entry.groupId) ? entry.groupId : fallbackGroupId
-      const drawCount =
-        typeof entry.draw_count === 'number' && Number.isFinite(entry.draw_count)
-          ? Math.max(1, Math.trunc(entry.draw_count))
-          : 1
-      const tags = Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === 'string') : []
-      const deletedAt = typeof entry.deletedAt === 'number' && Number.isFinite(entry.deletedAt) ? entry.deletedAt : null
-      const createdAt = typeof entry.createdAt === 'number' && Number.isFinite(entry.createdAt) ? entry.createdAt : now
-      const updatedAt = typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt) ? entry.updatedAt : now
-      return {
-        id: entry.id,
-        groupId,
-        key,
-        label: typeof entry.label === 'string' ? entry.label : key,
-        entries: normalizeStringArray(entry.entries),
-        draw_count: drawCount,
-        sortOrder: typeof entry.sortOrder === 'number' && Number.isFinite(entry.sortOrder) ? entry.sortOrder : index,
-        isPinned: entry.isPinned === true,
-        isFavorite: entry.isFavorite === true,
-        tags,
-        deletedAt,
-        createdAt,
-        updatedAt,
-        usageCount: typeof entry.usageCount === 'number' && Number.isFinite(entry.usageCount) ? entry.usageCount : 0,
-        sourceSkillName: typeof entry.sourceSkillName === 'string' ? entry.sourceSkillName : undefined,
-        generationBatchId: typeof entry.generationBatchId === 'string' ? entry.generationBatchId : undefined,
-      }
-    })
-    .filter((entry): entry is WordLibraryEntry => entry != null)
-}
-
-export function getUniqueWordLibraryEntryKey(
-  entries: Array<Pick<WordLibraryEntry, 'id' | 'key' | 'deletedAt'>>,
-  requestedKey: string,
-  excludeId?: string,
-): string {
-  const usedKeys = new Set(
-    entries.filter((entry) => entry.deletedAt == null && entry.id !== excludeId).map((entry) => entry.key),
-  )
-  if (!requestedKey || !usedKeys.has(requestedKey)) return requestedKey
-
-  const suffixMatch = requestedKey.match(/^(.*?) \((\d+)\)$/)
-  const baseKey = suffixMatch?.[1] || requestedKey
-  let sequence = suffixMatch ? Number(suffixMatch[2]) + 1 : 2
-  while (usedKeys.has(`${baseKey} (${sequence})`)) sequence += 1
-  return `${baseKey} (${sequence})`
-}
-
-function mergeWordLibraryGroups(stored: WordLibraryGroup[], legacy: WordLibraryGroup[]): WordLibraryGroup[] {
-  const merged = new Map<string, WordLibraryGroup>()
-  for (const group of legacy) merged.set(group.id, group)
-  for (const group of stored) merged.set(group.id, group)
-  return [...merged.values()]
-}
-
-function mergeWordLibraryEntries(
-  stored: WordLibraryEntry[],
-  legacy: WordLibraryEntry[],
-  groups: WordLibraryGroup[],
-): WordLibraryEntry[] {
-  const normalizedLegacy = normalizeWordLibraryEntries(legacy, groups)
-  const normalizedStored = normalizeWordLibraryEntries(stored, groups)
-  const merged = new Map<string, WordLibraryEntry>()
-  for (const entry of normalizedLegacy) merged.set(entry.id, entry)
-  for (const entry of normalizedStored) merged.set(entry.id, entry)
-  return [...merged.values()]
-}
-
-async function replaceStoredWordLibrary(
-  groups: WordLibraryGroup[],
-  entries: WordLibraryEntry[],
-  batches: WordGenerationBatch[] = [],
-) {
-  await putWordLibraryState({ groups, entries, batches })
-}
 
 function normalizeInputImages(value: unknown): InputImage[] {
   if (!Array.isArray(value)) return []
@@ -4214,288 +4002,6 @@ export const useStore = create<AppState>()(
       },
 
       // Random prompt generator
-      randomPromptModalOpen: false,
-      setRandomPromptModalOpen: (open) => set({ randomPromptModalOpen: open }),
-
-      // Word library sidebar
-
-      // Word library
-      wordLibraryGroups: [{ id: 'default', name: '默认分组', sortOrder: 0 }],
-      wordLibraryEntries: [],
-      wordGenerationBatches: [],
-      createWordLibraryGroup: (name, parentId = null) => {
-        const group = {
-          id: Math.random().toString(36).slice(2, 9),
-          name,
-          sortOrder: Date.now(),
-          parentId,
-          description: '',
-          color: '',
-          archivedAt: null,
-        }
-        set((s) => ({ wordLibraryGroups: [...s.wordLibraryGroups, group] }))
-        return group
-      },
-      renameWordLibraryGroup: (id, name) =>
-        set((s) => ({ wordLibraryGroups: s.wordLibraryGroups.map((g) => (g.id === id ? { ...g, name } : g)) })),
-      updateWordLibraryGroup: (id, patch) =>
-        set((s) => ({ wordLibraryGroups: s.wordLibraryGroups.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
-      mergeWordLibraryGroups: (sourceId, targetId) =>
-        set((s) => ({
-          wordLibraryGroups: s.wordLibraryGroups
-            .filter((g) => g.id !== sourceId)
-            .map((g) => (g.parentId === sourceId ? { ...g, parentId: null } : g)),
-          wordLibraryEntries: s.wordLibraryEntries.map((entry) =>
-            entry.groupId === sourceId ? { ...entry, groupId: targetId, updatedAt: Date.now() } : entry,
-          ),
-        })),
-      archiveWordLibraryGroup: (id, archived = true) =>
-        set((s) => ({
-          wordLibraryGroups: s.wordLibraryGroups.map((group) =>
-            group.id === id ? { ...group, archivedAt: archived ? Date.now() : null } : group,
-          ),
-        })),
-      deleteWordLibraryGroup: (id) =>
-        set((s) => {
-          if (s.wordLibraryGroups.length <= 1) return s
-          const targetGroup =
-            s.wordLibraryGroups.find((group) => group.id !== id && group.name === '默认分组') ??
-            s.wordLibraryGroups.find((group) => group.id !== id)
-          if (!targetGroup) return s
-          return {
-            wordLibraryGroups: s.wordLibraryGroups
-              .filter((group) => group.id !== id)
-              .map((group) => (group.parentId === id ? { ...group, parentId: null } : group)),
-            wordLibraryEntries: s.wordLibraryEntries.map((entry) =>
-              entry.groupId === id ? { ...entry, groupId: targetGroup.id, updatedAt: Date.now() } : entry,
-            ),
-          }
-        }),
-      createWordLibraryEntry: (groupId, key) => {
-        const id = Math.random().toString(36).slice(2, 9)
-        const now = Date.now()
-        const uniqueKey = getUniqueWordLibraryEntryKey(get().wordLibraryEntries, key ?? '')
-        const entry: WordLibraryEntry = {
-          id,
-          groupId,
-          key: uniqueKey,
-          label: '',
-          entries: [],
-          draw_count: 1,
-          sortOrder: now,
-          isPinned: false,
-          isFavorite: false,
-          tags: [],
-          deletedAt: null,
-          createdAt: now,
-          updatedAt: now,
-          usageCount: 0,
-        }
-        set((s) => ({ wordLibraryEntries: [...s.wordLibraryEntries, entry] }))
-        return entry
-      },
-      updateWordLibraryEntry: (id, patch) =>
-        set((s) => {
-          const uniqueKey =
-            typeof patch.key === 'string'
-              ? getUniqueWordLibraryEntryKey(s.wordLibraryEntries, patch.key, id)
-              : undefined
-          const normalizedPatch =
-            uniqueKey === undefined
-              ? patch
-              : { ...patch, key: uniqueKey, ...(patch.label === patch.key ? { label: uniqueKey } : {}) }
-          return {
-            wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-              e.id === id ? { ...e, ...normalizedPatch, updatedAt: Date.now() } : e,
-            ),
-          }
-        }),
-      deleteWordLibraryEntry: (id) =>
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) => (e.id === id ? { ...e, deletedAt: Date.now() } : e)),
-        })),
-      moveWordLibraryEntry: (entryId, targetGroupId) =>
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            e.id === entryId ? { ...e, groupId: targetGroupId } : e,
-          ),
-        })),
-      batchDeleteWordLibraryEntries: (ids) => {
-        const idSet = new Set(ids)
-        const now = Date.now()
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) => (idSet.has(e.id) ? { ...e, deletedAt: now } : e)),
-        }))
-      },
-      batchMoveWordLibraryEntries: (ids, targetGroupId) => {
-        const idSet = new Set(ids)
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            idSet.has(e.id) ? { ...e, groupId: targetGroupId, updatedAt: Date.now() } : e,
-          ),
-        }))
-      },
-      reorderWordLibraryEntries: (orderedIds) => {
-        const orderMap = new Map<string, number>()
-        orderedIds.forEach((id, index) => orderMap.set(id, index))
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            orderMap.has(e.id) ? { ...e, sortOrder: orderMap.get(e.id)! } : e,
-          ),
-        }))
-      },
-      toggleWordLibraryEntryPinned: (id) =>
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            e.id === id
-              ? {
-                  ...e,
-                  isPinned: !e.isPinned,
-                  sortOrder: e.isPinned ? e.sortOrder : -1e9 + s.wordLibraryEntries.length,
-                  updatedAt: Date.now(),
-                }
-              : e,
-          ),
-        })),
-      toggleWordLibraryEntryFavorite: (id) =>
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            e.id === id ? { ...e, isFavorite: !e.isFavorite, updatedAt: Date.now() } : e,
-          ),
-        })),
-      batchAddTagsToWordLibraryEntries: (ids, tags) => {
-        if (tags.length === 0) return
-        const idSet = new Set(ids)
-        const newTags = tags.map((t) => t.trim()).filter(Boolean)
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) => {
-            if (!idSet.has(e.id)) return e
-            const merged = [...e.tags]
-            for (const t of newTags) if (!merged.includes(t)) merged.push(t)
-            return { ...e, tags: merged, updatedAt: Date.now() }
-          }),
-        }))
-      },
-      restoreWordLibraryEntries: (ids) => {
-        const idSet = new Set(ids)
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            idSet.has(e.id) ? { ...e, deletedAt: null, updatedAt: Date.now() } : e,
-          ),
-        }))
-      },
-      destroyWordLibraryEntries: (ids) => {
-        const idSet = new Set(ids)
-        set((s) => ({ wordLibraryEntries: s.wordLibraryEntries.filter((e) => !idSet.has(e.id)) }))
-      },
-      emptyWordLibraryTrash: () =>
-        set((s) => ({ wordLibraryEntries: s.wordLibraryEntries.filter((e) => e.deletedAt == null) })),
-      touchWordLibraryEntryUsage: (id) =>
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            e.id === id ? { ...e, usageCount: e.usageCount + 1, updatedAt: Date.now() } : e,
-          ),
-        })),
-      createWordGenerationBatch: (input) => {
-        const batch: WordGenerationBatch = {
-          id: `batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-          createdAt: Date.now(),
-          archivedAt: null,
-          ...input,
-        }
-        set((s) => ({ wordGenerationBatches: [batch, ...s.wordGenerationBatches] }))
-        return batch
-      },
-      archiveWordGenerationBatch: (id, archived = true) =>
-        set((s) => ({
-          wordGenerationBatches: s.wordGenerationBatches.map((batch) =>
-            batch.id === id ? { ...batch, archivedAt: archived ? Date.now() : null } : batch,
-          ),
-        })),
-      exportWordLibrary: () => ({
-        version: 1,
-        exportedAt: Date.now(),
-        groups: get().wordLibraryGroups,
-        entries: get().wordLibraryEntries,
-        batches: get().wordGenerationBatches,
-      }),
-      importWordLibrary: (data, strategy) => {
-        if (!isRecord(data)) return { added: 0, updated: 0, groupsAdded: 0 }
-        const incomingGroups = normalizeWordLibraryGroups(data.groups, [])
-        const normalizedIncoming = normalizeWordLibraryEntries(data.entries, incomingGroups)
-        if (strategy === 'replace') {
-          set({ wordLibraryGroups: incomingGroups, wordLibraryEntries: normalizedIncoming })
-          return { added: normalizedIncoming.length, updated: 0, groupsAdded: incomingGroups.length }
-        }
-        // merge：按 id 合并，导入数据覆盖同 id，新增 id 追加；既有未被导入覆盖的数据保留
-        const groupMap = new Map(get().wordLibraryGroups.map((g) => [g.id, g]))
-        let groupsAdded = 0
-        for (const g of incomingGroups) {
-          if (!groupMap.has(g.id)) groupsAdded++
-          groupMap.set(g.id, g) // 分组名以导入为准
-        }
-        const entryMap = new Map(get().wordLibraryEntries.map((e) => [e.id, e]))
-        let added = 0
-        let updated = 0
-        for (const e of normalizedIncoming) {
-          if (entryMap.has(e.id)) updated++
-          else added++
-          entryMap.set(e.id, e)
-        }
-        set({
-          wordLibraryGroups: [...groupMap.values()].sort((a, b) => a.sortOrder - b.sortOrder),
-          wordLibraryEntries: [...entryMap.values()],
-        })
-        return { added, updated, groupsAdded }
-      },
-      duplicateWordLibraryEntries: (ids) => {
-        const idSet = new Set(ids)
-        const now = Date.now()
-        const copies: WordLibraryEntry[] = []
-        for (const e of get().wordLibraryEntries) {
-          if (!idSet.has(e.id)) continue
-          copies.push({
-            ...e,
-            id: Math.random().toString(36).slice(2, 9),
-            key: `${e.key || '词条'} 副本`,
-            isPinned: false,
-            sortOrder: e.sortOrder + 0.5,
-            deletedAt: null,
-            createdAt: now,
-            updatedAt: now,
-            usageCount: 0,
-          })
-        }
-        if (copies.length > 0) set((s) => ({ wordLibraryEntries: [...s.wordLibraryEntries, ...copies] }))
-        return copies.length
-      },
-      batchPinWordLibraryEntries: (ids) => {
-        const idSet = new Set(ids)
-        const base = -1e9 + get().wordLibraryEntries.length
-        let i = 0
-        set((s) => ({
-          wordLibraryEntries: s.wordLibraryEntries.map((e) =>
-            idSet.has(e.id) ? { ...e, isPinned: true, sortOrder: base + i++, updatedAt: Date.now() } : e,
-          ),
-        }))
-      },
-      reorderWordLibraryGroups: (orderedIds) => {
-        const orderMap = new Map<string, number>()
-        orderedIds.forEach((id, index) => orderMap.set(id, index))
-        set((s) => ({
-          wordLibraryGroups: s.wordLibraryGroups.map((g) =>
-            orderMap.has(g.id) ? { ...g, sortOrder: orderMap.get(g.id)! } : g,
-          ),
-        }))
-      },
-      cleanupExpiredWordLibraryTrash: () => {
-        const cutoff = Date.now() - WORD_LIBRARY_TRASH_MAX_AGE_MS
-        const before = get().wordLibraryEntries.length
-        const remaining = get().wordLibraryEntries.filter((e) => e.deletedAt == null || e.deletedAt >= cutoff)
-        if (remaining.length === before) return 0
-        set({ wordLibraryEntries: remaining })
-        return before - remaining.length
-      },
 
       // Workspace tabs
       workspaceTabs: [],
@@ -4792,57 +4298,6 @@ useStore.subscribe((state) => {
     agentConversationPersistDebounceTimer = null
     void flushAgentConversationsToIndexedDB()
   }, 500)
-})
-
-let lastStoredWordLibraryGroups = useStore.getState().wordLibraryGroups
-let lastStoredWordLibraryEntries = useStore.getState().wordLibraryEntries
-let lastStoredWordGenerationBatches = useStore.getState().wordGenerationBatches
-let wordLibraryPersistRunning = false
-let wordLibraryPersistQueued = false
-let wordLibraryPersistDebounceTimer: ReturnType<typeof setTimeout> | null = null
-
-async function flushWordLibraryToIndexedDB() {
-  if (wordLibraryPersistRunning) {
-    wordLibraryPersistQueued = true
-    return
-  }
-
-  wordLibraryPersistRunning = true
-  try {
-    do {
-      wordLibraryPersistQueued = false
-      const { wordLibraryGroups, wordLibraryEntries, wordGenerationBatches } = useStore.getState()
-      await replaceStoredWordLibrary(wordLibraryGroups, wordLibraryEntries, wordGenerationBatches)
-      lastStoredWordLibraryGroups = wordLibraryGroups
-      lastStoredWordLibraryEntries = wordLibraryEntries
-      lastStoredWordGenerationBatches = wordGenerationBatches
-    } while (
-      wordLibraryPersistQueued ||
-      useStore.getState().wordLibraryGroups !== lastStoredWordLibraryGroups ||
-      useStore.getState().wordLibraryEntries !== lastStoredWordLibraryEntries ||
-      useStore.getState().wordGenerationBatches !== lastStoredWordGenerationBatches
-    )
-  } finally {
-    wordLibraryPersistRunning = false
-  }
-}
-
-useStore.subscribe((state) => {
-  if (
-    state.wordLibraryGroups === lastStoredWordLibraryGroups &&
-    state.wordLibraryEntries === lastStoredWordLibraryEntries &&
-    state.wordGenerationBatches === lastStoredWordGenerationBatches
-  )
-    return
-  if (!wordLibraryPersistenceReady) {
-    wordLibraryPersistQueued = true
-    return
-  }
-  if (wordLibraryPersistDebounceTimer) clearTimeout(wordLibraryPersistDebounceTimer)
-  wordLibraryPersistDebounceTimer = setTimeout(() => {
-    wordLibraryPersistDebounceTimer = null
-    void flushWordLibraryToIndexedDB()
-  }, 300)
 })
 
 // ===== Actions =====
@@ -5601,31 +5056,6 @@ export async function initStore(options: { safeMode?: boolean } = {}) {
   if (shouldRewritePersistedLocalState) {
     // Force persist rewrite by touching a stable field without triggering reactive updates
     useStore.setState((state) => ({ agentConversationsLoaded: state.agentConversationsLoaded }))
-  }
-  const storedWordLibrary = await getWordLibraryState()
-  const wordState = useStore.getState()
-  const legacyWordGroups = normalizeWordLibraryGroups(wordState.wordLibraryGroups, wordState.wordLibraryGroups)
-  const storedWordGroups = normalizeWordLibraryGroups(storedWordLibrary?.groups, legacyWordGroups)
-  const mergedWordGroups = mergeWordLibraryGroups(storedWordGroups, legacyWordGroups)
-  const mergedWordEntries = mergeWordLibraryEntries(
-    storedWordLibrary?.entries ?? [],
-    wordState.wordLibraryEntries,
-    mergedWordGroups,
-  )
-  useStore.setState({
-    wordLibraryGroups: mergedWordGroups,
-    wordLibraryEntries: mergedWordEntries,
-  })
-  const mergedWordBatches = storedWordLibrary?.batches ?? wordState.wordGenerationBatches
-  useStore.setState({ wordGenerationBatches: mergedWordBatches })
-  await replaceStoredWordLibrary(mergedWordGroups, mergedWordEntries, mergedWordBatches)
-  wordLibraryPersistenceReady = true
-  wordLibraryMigrationPending = false
-  lastStoredWordLibraryGroups = mergedWordGroups
-  lastStoredWordLibraryEntries = mergedWordEntries
-  lastStoredWordGenerationBatches = mergedWordBatches
-  if (wordLibraryPersistQueued) {
-    await flushWordLibraryToIndexedDB()
   }
   const { tasks: markedTasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   const interruptedTaskIds = new Set(interruptedTasks.map((task) => task.id))
@@ -7022,17 +6452,6 @@ export async function buildStoreImageReferenceGraph(snapshot?: AssetLibrarySnaps
           })),
         ),
       ),
-      ...state.wordGenerationBatches.flatMap((batch) =>
-        batch.referenceImageIds.map((imageId) => ({
-          imageId,
-          reference: {
-            type: 'strategy-reference' as const,
-            ownerId: batch.id,
-            label: '词条生成参考图',
-            blocking: true,
-          },
-        })),
-      ),
       ...getSopAiRevisionAttachmentReferences().map(({ documentId, imageId }) => ({
         imageId,
         reference: {
@@ -7091,7 +6510,6 @@ async function detachImageReferencesForPurge(items: ForceDetachItem[]): Promise<
   const sopRunIds = new Set<string>()
   const strategyIds = new Set<string>()
   const orderIds = new Set<string>()
-  const wordBatchIds = new Set<string>()
   const sopAiDocumentIds = new Set<string>()
   let sopCoverTouched = false
   let currentInputTouched = false
@@ -7134,8 +6552,7 @@ async function detachImageReferencesForPurge(items: ForceDetachItem[]): Promise<
           break
         case 'strategy-cover':
         case 'strategy-reference':
-          if (state.wordGenerationBatches.some((batch) => batch.id === ref.ownerId)) wordBatchIds.add(ref.ownerId)
-          else strategyIds.add(ref.ownerId)
+          strategyIds.add(ref.ownerId)
           break
         case 'ordering':
           orderIds.add(ref.ownerId)
@@ -7289,16 +6706,6 @@ async function detachImageReferencesForPurge(items: ForceDetachItem[]): Promise<
     useRequirementPrototype.setState({ strategyAssets, strategyAssetVersions, sopLibrary, orders })
   }
 
-  // ---- 词条生成批次（useStore 持久化）----
-  let wordGenerationBatches = workspaceState.wordGenerationBatches
-  if (wordBatchIds.size > 0) {
-    wordGenerationBatches = workspaceState.wordGenerationBatches.map((batch) =>
-      wordBatchIds.has(batch.id) ? patchWordGenerationBatchForDetachedImages(batch, imageIds) : batch,
-    )
-    const changed = wordGenerationBatches.some((batch, index) => batch !== workspaceState.wordGenerationBatches[index])
-    if (changed) useStore.setState({ wordGenerationBatches })
-  }
-
   let patchedModuleRecords = 0
   if (strategyIds.size > 0) {
     patchedModuleRecords += countChanged(requirementState.strategyAssets, strategyAssets)
@@ -7309,8 +6716,6 @@ async function detachImageReferencesForPurge(items: ForceDetachItem[]): Promise<
   }
   if (sopCoverTouched) patchedModuleRecords += countChanged(requirementState.sopLibrary, sopLibrary)
   if (orderIds.size > 0) patchedModuleRecords += countChanged(requirementState.orders, orders)
-  if (wordBatchIds.size > 0)
-    patchedModuleRecords += countChanged(workspaceState.wordGenerationBatches, wordGenerationBatches)
   if (sopAiDocumentIds.size > 0) patchedModuleRecords += removeSopAiRevisionAttachments(imageIds)
 
   return {
@@ -12033,15 +11438,7 @@ export async function exportData(
     const tasks = options.exportTasks || options.exportImages ? await getAllTasks() : []
     const sopPromptRuns = options.exportTasks || options.exportImages ? await getAllSopBatchSnapshots() : []
     const state = useStore.getState()
-    const {
-      settings,
-      agentConversations,
-      favoriteCollections,
-      defaultFavoriteCollectionId,
-      wordLibraryGroups,
-      wordLibraryEntries,
-      wordGenerationBatches,
-    } = state
+    const { settings, agentConversations, favoriteCollections, defaultFavoriteCollectionId } = state
     const exportedAt = Date.now()
     const fileName = `tangbao-backup_${formatExportFileTime(new Date(exportedAt))}.zip`
     const zipSink = await createBrowserZipSink(fileName)
@@ -12076,10 +11473,6 @@ export async function exportData(
           options.exportConfig || options.exportImages ? state.workspaceTabs : [],
           options.exportAssets || options.exportImages ? (assetLibrary?.assets ?? []) : [],
         ),
-        ...(options.exportConfig || options.exportImages
-          ? wordGenerationBatches.flatMap((batch) => batch.referenceImageIds)
-          : []),
-        ...(options.exportTasks || options.exportImages ? sopPromptRuns.flatMap((run) => run.referenceImageIds) : []),
       ]),
     ]
     const imageRefs = await buildExportImageRefs(imageIds, getImage)
@@ -12187,9 +11580,6 @@ export async function exportData(
       manifest.settings = sanitizeSettingsForBackup(settings, options.includeSecrets === true)
       manifest.favoriteCollections = favoriteCollections
       manifest.defaultFavoriteCollectionId = defaultFavoriteCollectionId
-      manifest.wordLibraryGroups = wordLibraryGroups
-      manifest.wordLibraryEntries = wordLibraryEntries
-      manifest.wordGenerationBatches = wordGenerationBatches
       manifest.compositeState = compositeBackup!.compositeState
       manifest.compositeAssetFiles = compositeBackup!.compositeAssetFiles
       manifest.postprocessMediaState = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
@@ -12251,9 +11641,6 @@ export async function exportDataToPath(
           options.exportConfig || options.exportImages ? state.workspaceTabs : [],
           options.exportAssets || options.exportImages ? (assetLibrary?.assets ?? []) : [],
         ),
-        ...(options.exportConfig || options.exportImages
-          ? state.wordGenerationBatches.flatMap((batch) => batch.referenceImageIds)
-          : []),
         ...(options.exportTasks || options.exportImages ? sopPromptRuns.flatMap((run) => run.referenceImageIds) : []),
         ...(options.exportImages
           ? useRequirementPrototype
@@ -12313,9 +11700,6 @@ export async function exportDataToPath(
             settings: sanitizeSettingsForBackup(state.settings, options.includeSecrets === true),
             favoriteCollections: state.favoriteCollections,
             defaultFavoriteCollectionId: state.defaultFavoriteCollectionId,
-            wordLibraryGroups: state.wordLibraryGroups,
-            wordLibraryEntries: state.wordLibraryEntries,
-            wordGenerationBatches: state.wordGenerationBatches,
             compositeState: compositeBackup!.compositeState,
             compositeAssetFiles: compositeBackup!.compositeAssetFiles,
             postprocessMediaState: getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
@@ -12811,78 +12195,6 @@ async function importBackupTail(
     })
     await hydrateWorkspaceTabsInStore()
     if (normalizedFavorites.changed) await putTasks(normalizedFavorites.tasks)
-
-    if (data.wordLibraryGroups && data.wordLibraryEntries) {
-      // 合并分组：去重，以导入数据中的分组为准（同名覆盖）
-      const existingGroupMap = new Map(mainState.wordLibraryGroups.map((g) => [g.name, g]))
-      const mergedGroups = [...existingGroupMap.values()]
-      const groupIdMap = new Map<string, string>()
-      for (const importedGroup of data.wordLibraryGroups) {
-        if (!importedGroup || typeof importedGroup.id !== 'string' || typeof importedGroup.name !== 'string') continue
-        const existing = existingGroupMap.get(importedGroup.name)
-        if (!existing) {
-          mergedGroups.push(importedGroup)
-          groupIdMap.set(importedGroup.id, importedGroup.id)
-        } else {
-          groupIdMap.set(importedGroup.id, existing.id)
-        }
-      }
-      const remappedImportedEntries = Array.isArray(data.wordLibraryEntries)
-        ? data.wordLibraryEntries.map((entry) => {
-            if (!isRecord(entry) || typeof entry.groupId !== 'string') return entry
-            return { ...entry, groupId: groupIdMap.get(entry.groupId) ?? entry.groupId }
-          })
-        : []
-      const normalizedImportedEntries = normalizeWordLibraryEntries(remappedImportedEntries, mergedGroups)
-      // 合并词条：去重（按 key + groupId），以导入数据为准
-      const mergedEntries = [...mainState.wordLibraryEntries]
-      for (const importedEntry of normalizedImportedEntries) {
-        const entryKey = `${importedEntry.key}:${importedEntry.groupId}`
-        const existingIndex = mergedEntries.findIndex((e) => `${e.key}:${e.groupId}` === entryKey)
-        if (existingIndex >= 0) {
-          // 覆盖现有词条
-          mergedEntries[existingIndex] = importedEntry
-        } else {
-          // 确保 groupId 在合并后的分组中存在，如果不存在则分配到第一个分组
-          const groupExists = mergedGroups.some((g) => g.id === importedEntry.groupId)
-          if (groupExists) {
-            mergedEntries.push(importedEntry)
-          } else if (mergedGroups.length > 0) {
-            mergedEntries.push({ ...importedEntry, groupId: mergedGroups[0].id })
-          }
-        }
-      }
-      const batchMap = new Map(mainState.wordGenerationBatches.map((batch) => [batch.id, batch]))
-      if (Array.isArray(data.wordGenerationBatches)) {
-        for (const batch of data.wordGenerationBatches) {
-          if (
-            !isRecord(batch) ||
-            typeof batch.id !== 'string' ||
-            typeof batch.skillName !== 'string' ||
-            typeof batch.sourcePrompt !== 'string'
-          )
-            continue
-          batchMap.set(batch.id, {
-            id: batch.id,
-            skillName: batch.skillName,
-            sourcePrompt: batch.sourcePrompt,
-            referenceImageIds: Array.isArray(batch.referenceImageIds)
-              ? batch.referenceImageIds.filter((id): id is string => typeof id === 'string')
-              : [],
-            entryIds: Array.isArray(batch.entryIds)
-              ? batch.entryIds.filter((id): id is string => typeof id === 'string')
-              : [],
-            createdAt: typeof batch.createdAt === 'number' ? batch.createdAt : Date.now(),
-            archivedAt: typeof batch.archivedAt === 'number' ? batch.archivedAt : null,
-          })
-        }
-      }
-      useStore.setState({
-        wordLibraryGroups: mergedGroups,
-        wordLibraryEntries: mergedEntries,
-        wordGenerationBatches: [...batchMap.values()],
-      })
-    }
   }
 }
 

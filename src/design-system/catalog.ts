@@ -678,12 +678,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: [],
   },
   {
-    module: 'src/components/RandomPromptModal.tsx',
-    responsibility: '随机词库管理弹窗',
-    decision: 'retain',
-    targets: ['Dialog', 'Tabs', 'SearchField', 'ListRow', 'EmptyState'],
-  },
-  {
     module: 'src/components/ScheduleModal.tsx',
     responsibility: '日程表、任务单元和预览弹窗',
     decision: 'retain',

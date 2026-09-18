@@ -7,7 +7,6 @@ import type {
   SopBatchSnapshot,
   TaskRecord,
   WorkspaceTab,
-  WordGenerationBatch,
 } from '../types'
 import type { SopLibraryItem, StrategyAsset } from '../features/strategy/types'
 import type { OrderingOrder } from '../features/ordering/types'
@@ -211,14 +210,4 @@ export function patchOrderForDetachedImages(order: OrderingOrder, imageIds: Read
   })
   if (!changed) return order
   return { ...order, units }
-}
-
-/** 解除词条生成批次中对已删除图片的参考图引用。 */
-export function patchWordGenerationBatchForDetachedImages(
-  batch: WordGenerationBatch,
-  imageIds: ReadonlySet<string>,
-): WordGenerationBatch {
-  const referenceImageIds = filterImageIds(batch.referenceImageIds, imageIds)
-  if (referenceImageIds === batch.referenceImageIds) return batch
-  return { ...batch, referenceImageIds: referenceImageIds ?? [] }
 }

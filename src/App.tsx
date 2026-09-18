@@ -38,7 +38,6 @@ const FavoriteCollectionPickerModal = React.lazy(() =>
 const ManageCollectionsModal = React.lazy(() =>
   import('./components/FavoriteCollections').then((m) => ({ default: m.ManageCollectionsModal })),
 )
-const RandomPromptModal = React.lazy(() => import('./components/RandomPromptModal'))
 const ScheduleModal = React.lazy(() => import('./components/ScheduleModal'))
 const ScheduleRunner = React.lazy(() => import('./components/ScheduleRunner'))
 const AgentBatchQueueRunner = React.lazy(() => import('./components/AgentBatchQueueRunner'))
@@ -466,7 +465,6 @@ export default function App() {
           <MaskEditorModal />
           <ImageContextMenu />
           {(appMode === 'gallery' || appMode === 'agent') && <WordLibrarySidebar />}
-          <RandomPromptModal />
           <ScheduleModal />
           <ScheduleRunner />
           <AgentBatchQueueRunner />

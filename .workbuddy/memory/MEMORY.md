@@ -56,6 +56,11 @@
   `compareAssets` 与桌面端 SQL 分页**（只改前者会让第一页顺序错乱）→ §9。
 - **持久化**：`createDesktopJsonStorage(ns)` 是全仓唯一落盘入口；
   **新增 store 忘配白名单 = 完全存不住而 UI 不报**；读失败 → 降级态拒绝写盘。
+- **共享工具（2026-09-18 起为唯一实现，勿再复制）**：`lib/contentEditableText.ts`（contentEditable
+  取纯文本）、`lib/pathBaseName.ts`、`lib/typeGuards.ts`（`isRecord` / `getStringValue`(trim) /
+  **`getUntrimmedStringValue`(不 trim，agentApi 流式解析依赖)**）、`lib/clamp.ts`、
+  `lib/escapeRegExp.ts`、`lib/browserStorage.ts`；`isDataUrl` 与 `getDataUrlDecodedByteSize`
+  的唯一实现在 `lib/imageApiShared.ts`。故意不合并：路径净化 4 份、`escapeHtml` 3 份、`formatDate`。
 - **任务数量不一致** = 落盘不完整（`tasks` vs `assets`），**别去查加载链**。
 - **`InputBar` 的 prompt 是双写**：程序性改写必须先 `isUserInputRef.current = false`。
 - **抓渲染进程报错**：`ELECTRON_ENABLE_LOGGING=1 npm run dev`。

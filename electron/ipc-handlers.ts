@@ -134,7 +134,6 @@ export function backupJsonHasData(value: unknown): boolean {
     nonEmptyArray('agentConversations') ||
     nonEmptyArray('workspaceTabs') ||
     nonEmptyArray('favoriteCollections') ||
-    nonEmptyArray('wordLibraryEntries') ||
     nonEmptyRecord('settings') ||
     nonEmptyRecord('agentInputDrafts')
   )

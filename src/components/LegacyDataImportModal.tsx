@@ -44,7 +44,7 @@ const DEFAULT_SELECTION: LegacyImportSelection = {
  * 两条路径：
  * 1. 从旧 userData 目录（糖包 / tangbao / 糖包 V2 等）复制数据到当前目录
  *    （只复制不覆盖；IndexedDB 仅导入与当前运行模式匹配的 origin 目录，导入后需重启生效）。
- * 2. 「导出数据 / 导入数据文件」：跨运行模式（dev ⇄ 安装版）的任务、词条库、Agent 对话迁移。
+ * 2. 「导出数据 / 导入数据文件」：跨运行模式（dev ⇄ 安装版）的任务、Agent 对话迁移。
  */
 export default function LegacyDataImportModal({ open, onClose }: Props) {
   const showToast = useStore((s) => s.showToast)
@@ -119,7 +119,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
         return
       }
       setLastResult({ dir: source.dir, result: response.result! })
-      const importedIndexedDb = response.result!.imported.some((item) => item.includes('任务与词条库'))
+      const importedIndexedDb = response.result!.imported.some((item) => item.includes('任务'))
       setNeedsRestart(importedIndexedDb)
       if (response.result!.imported.length === 0) {
         showToast('没有可导入的新数据（内容已存在或来源为空）', 'info')
@@ -139,11 +139,10 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
       const payload = await buildLegacyDataExport()
       if (
         !payload.stores.tasks?.length &&
-        !payload.stores.wordLibrary?.length &&
         !payload.stores.agentConversations?.length &&
         !payload.stores.images?.length
       ) {
-        showToast('当前没有可导出的任务/词条库数据', 'info')
+        showToast('当前没有可导出的任务数据', 'info')
         return
       }
       const filePath = await selectSavePath(defaultLegacyDataExportFileName(), [
@@ -184,7 +183,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
     try {
       const summary = await importLegacyDataPayload(pendingFilePayload)
       setFileImportSummary(
-        `任务 ${summary.tasks} 条、词条库 ${summary.wordLibrary} 份、Agent 对话 ${summary.agentConversations} 个、图片记录 ${summary.images} 条`,
+        `任务 ${summary.tasks} 条、Agent 对话 ${summary.agentConversations} 个、图片记录 ${summary.images} 条`,
       )
       showToast('数据文件已导入', 'success')
       setPendingFilePayload(null)
@@ -214,7 +213,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
           <div>
             <h3 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">导入旧版数据</h3>
             <p className="mt-0.5 text-xs text-ds-muted">
-              从旧版本数据目录（糖包 / tangbao / 糖包 V2 等）恢复，或跨模式迁移任务与词条库
+              从旧版本数据目录（糖包 / tangbao / 糖包 V2 等）恢复，或跨模式迁移任务
             </p>
           </div>
           <button
@@ -232,7 +231,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
         {/* 主体 */}
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 custom-scrollbar">
           <div className="rounded-ds-lg border border-ds-border/60 bg-ds-subtle/60 p-3 text-xs leading-relaxed text-ds-muted dark:bg-ds-subtle/40">
-            导入只<strong className="text-ds-text">复制不覆盖</strong>：已存在的数据不会被改动。任务/词条库等 IndexedDB
+            导入只<strong className="text-ds-text">复制不覆盖</strong>：已存在的数据不会被改动。任务等 IndexedDB
             数据与运行模式绑定（安装版与开发模式互不可见），目录导入只恢复当前模式的数据；跨模式迁移请用下方的「导出数据
             / 导入数据文件」。
           </div>
@@ -307,7 +306,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
                           checked={selection.importIndexedDb}
                           onChange={() => toggleSelectionItem(source.dir, 'importIndexedDb')}
                         />
-                        任务与词条库
+                        任务
                         {originMatches.length > 0 && (
                           <span className="text-ds-success">（本模式 {originMatches.length} 个）</span>
                         )}
@@ -348,7 +347,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
 
             {needsRestart && hasImportedSomething && (
               <div className="flex items-center justify-between gap-3 rounded-ds-lg border border-ds-primary/40 bg-ds-primary-subtle px-3 py-2.5 text-xs text-ds-primary dark:border-ds-primary/25 dark:bg-ds-primary/10">
-                <span>任务/词条库数据已复制，需重启应用后生效。</span>
+                <span>任务数据已复制，需重启应用后生效。</span>
                 <button
                   type="button"
                   onClick={() => void relaunchAppAfterImport()}
@@ -361,7 +360,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
 
             {!hasMatchingIndexedDb && hasAnySource && (
               <p className="rounded-ds-lg border border-dashed border-ds-border px-3 py-2 text-xs text-ds-muted">
-                提示：当前运行模式没有匹配的任务/词条库数据目录，跨模式迁移请使用下方「导出数据 / 导入数据文件」。
+                提示：当前运行模式没有匹配的任务数据目录，跨模式迁移请使用下方「导出数据 / 导入数据文件」。
               </p>
             )}
           </section>
@@ -371,7 +370,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
             <h4 className="text-xs font-semibold text-ds-text">导出 / 导入数据文件（跨模式迁移）</h4>
             <p className="text-xs leading-relaxed text-ds-muted">
               在旧版本（或开发模式）中「导出数据」生成 JSON 文件，再在新版本（或安装版）中「导入数据文件」，
-              即可迁移任务、词条库与 Agent 对话；该 JSON 只保存图片引用元数据，不包含原始图片。跨设备恢复原图请使用 ZIP
+              即可迁移任务与 Agent 对话；该 JSON 只保存图片引用元数据，不包含原始图片。跨设备恢复原图请使用 ZIP
               导出并勾选「包含原始图片」。
             </p>
             <div className="flex flex-wrap gap-2">

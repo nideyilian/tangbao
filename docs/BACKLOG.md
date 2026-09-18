@@ -338,7 +338,28 @@
   净删 **+50 −2476**，`npm test` 229 文件 / 2498 用例全绿。
   ⚠️ 两个 localStorage key（`wordLibrarySidebar_pos_v2` / `_dock_v1`）**保留原字面量**，
   改掉会让用户已保存的面板位置与停靠状态丢失。
-- **② 已完成内容（InputBar 链路 + `{{xxx}}` 按选项 a 彻底移除）**
+- **③ 已完成：数据层彻底退役（2026-09-18 杰哥拍板「彻底退役」）** —— 净删 **−1977 行 / 16 文件**
+  - **store.ts**：删 6 个纯函数（含 `replaceStoredWordLibrary`）、state 三字段（`wordLibraryGroups/Entries`、
+    `wordGenerationBatches`）、全部 CRUD action、序列化/反序列化、IDB 持久化订阅与 debounce 落盘、
+    启动水合、备份导出清单与导入合并整段
+  - **db.ts**：删 `StoredWordLibraryState` / `getWordLibraryState` / `putWordLibraryState` 与旧版导入的
+    词条分支。**刻意保留** `STORE_WORD_LIBRARY` 常量与 `createObjectStore`（旧库已含该 store，
+    保留创建语句可确保任何残留老库仍能打开；代价 3 行）
+  - **types.ts**：删 `WordLibraryGroup/Entry/GenerationBatch/ExportData` 四个类型与 `ExportData` 三字段。
+    ⚠️ **保留** `wordLibraryDerivativeRule*` 与 `WordLibraryDerivativeRule`（属设置项，被
+    `lib/agentApi.ts:1883` 使用，与词条库数据无关）
+  - **连锁发现：`RandomPromptModal.tsx`（316 行）是死 UI** —— `setRandomPromptModalOpen`
+    **只被它自己调用**，无任何入口能打开它；而它唯一的业务价值就是词条库通配符抽取。
+    连同 `lib/promptGenerator.ts`（唯一使用者）与 catalog 登记一并删除
+  - **图片引用图**：删 `strategy-reference` 里「词条生成参考图」这一来源；归属判定原本是
+    `if (词条批次) wordBatchIds.add else strategyIds.add` → 改为直接 `strategyIds.add`
+  - **老备份兼容结论**：主路径未知字段被**静默忽略**、旧版记录导入 `putIfMissing` 不执行 —— **不报错**；
+    唯一会报错的是 `ipc-handlers.ts` 的「空备份判定」，已同步删 `wordLibraryEntries` 条件。
+    → **老备份中的词条数据将不再恢复，其余数据照常导入**（这是「彻底退役」的既定代价）
+- **⚠️ 刻意保留**：`stopTask` 及其中止器链路（见 TB-037）；
+  `features/assistantActions` 的 `WordEntryConfig` / `AssistantWordEntryGroup`（**另一个功能**：
+  AI 助手动作配置，不读词条 state，不在本次退役范围）；`WordLibrarySidebar.tsx` 的文件名与两个
+  localStorage key（改掉会丢失用户已保存的面板位置与停靠状态）
   - `InputBar.tsx`（5565 行）摘除 22 处：7 个 store 订阅、`VAR_COLOR_MAP` + `activeWordLibraryKeys`、
     `normalizePromptVariableMarkers` effect、`handleConvertToVariable`（划词转变量）、双击 `wildcard-var`
     打开编辑器、右键「变量还原为文本」+ 4 个拖拽 handler、两处「转换为变量」按钮、

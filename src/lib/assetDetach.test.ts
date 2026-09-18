@@ -12,7 +12,6 @@ import {
   patchStrategyAssetForDetachedImages,
   patchTaskForDetachedInputs,
   patchWorkspaceTabForDetachedImages,
-  patchWordGenerationBatchForDetachedImages,
 } from './assetDetach'
 
 function makeTask(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -322,22 +321,5 @@ describe('patchOrderForDetachedImages', () => {
     }
     const patched = patchOrderForDetachedImages(order, new Set(['img-a']))
     expect(patched.units[0].referenceImageIds).toEqual(['img-b'])
-  })
-})
-
-describe('patchWordGenerationBatchForDetachedImages', () => {
-  it('filters batch reference image ids', () => {
-    const batch = {
-      id: 'wb1',
-      skillName: 's',
-      sourcePrompt: 'p',
-      referenceImageIds: ['img-a', 'img-b'],
-      entryIds: [],
-      createdAt: 1,
-      archivedAt: null,
-    }
-    const patched = patchWordGenerationBatchForDetachedImages(batch, new Set(['img-a']))
-    expect(patched.referenceImageIds).toEqual(['img-b'])
-    expect(patchWordGenerationBatchForDetachedImages(batch, new Set(['img-x']))).toBe(batch)
   })
 })
