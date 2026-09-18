@@ -197,20 +197,28 @@ REMOTE=$(git -c http.sslVerify=false ls-remote origin main | awk '{print $1}')
 
 ### 查 CI
 
+⚠️ **取 token 必须直连 GCM，不要用 `git credential fill`**（2026-09-18 实测踩到）：
+
 ```bash
 TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | \
-  git -c credential.helper= \
-      -c 'credential.helper=!"C:/Program Files/Git/mingw64/bin/git-credential-manager.exe"' \
-      credential fill | grep '^password=' | cut -d= -f2-)
+  "C:/Program Files/Git/mingw64/bin/git-credential-manager.exe" get \
+  | sed -n 's/^password=//p' | tr -d '\r\n')
 
 curl -s --ssl-no-revoke \
   -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/nideyilian/tangbao/actions/runs?per_page=5"
 ```
 
+- **`git credential fill` 与 GCM 会返回两个不同的凭据**：前者给出一个 **93 位 `github_pat_…`（已失效）**，
+  api.github.com 一律 `401 Bad credentials`；后者给出 **`gho_…` OAuth 令牌**，同一个 API 调用立刻 200。
+  本机的全局 `credential.helper` 只有 `helper-selector`（不存在），`fill` 走的是另一条取数路径。
+  → **症状是「push 成功但查 CI 恒 401」**，别误判成 token 过期或权限不足。`gh run list` 用的也是那份坏
+  凭据，同样 401，**不能用它绕过**。
+- 判据：`TOKEN` 以 `gho_` 开头才对；以 `github_pat_` 开头就换 GCM 那条命令。
 - `--ssl-no-revoke` **必须加**，否则返回**空 body**（不是报错），很容易误判成「GitHub API 挂了」。
 - 别用 `-o /dev/null`：TLS 握手失败会被一起吞掉。
-- 未认证 60 次/时，带 token 5000 次/时。token 就是上面的 `git credential fill`（`password=` 那段）。
+- 未认证 60 次/时，带 token 5000 次/时。轮询用 `for i in $(seq 1 12); do … sleep 20; done` 判
+  `status completed`，别靠猜时长（本仓 CI 约 2.5–3min）。
 - **一次 push 只给 head commit 生成一个 run**，中间那几条提交不会有独立 run，别以为漏跑了。
 - job logs 会 302 到带签名的 URL；`curl -L` 带 `Authorization` 会被拒 → 先 `curl -I` 取
   `location`，再无认证头下载。
