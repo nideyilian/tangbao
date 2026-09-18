@@ -1622,7 +1622,6 @@ function skipSupportPromptForImportedData(tasks: TaskRecord[]) {
     if (count <= SUPPORT_PROMPT_IMAGE_THRESHOLD) {
       return { supportPromptSkippedForImportedData: false }
     }
-    if (state.supportPromptOpen) return {}
     return { supportPromptSkippedForImportedData: true }
   })
 }
@@ -1910,7 +1909,6 @@ export function migratePersistedState(persistedState: unknown, version?: number)
     migrated.workspaceTabs = [defaultTab]
     migrated.activeWorkspaceTabId = defaultTab.id
     migrated.workspaceTabGroups = []
-    migrated.workspaceTabBarExpanded = true
   }
   return migrated
 }
@@ -2214,13 +2212,10 @@ export function getPersistedState(state: AppState) {
     agentInputDrafts: getPersistableAgentInputDrafts(state),
     agentSidebarCollapsed: state.agentSidebarCollapsed,
     agentDesktopSidebarCollapsed: state.agentDesktopSidebarCollapsed,
-    agentAssetTab: state.agentAssetTab,
-    agentAssetPanelCollapsed: state.agentAssetPanelCollapsed,
     favoriteCollections: state.favoriteCollections,
     defaultFavoriteCollectionId: state.defaultFavoriteCollectionId,
     schedule: state.schedule,
     supportPromptDismissed: state.supportPromptDismissed,
-    supportPromptOpen: state.supportPromptOpen,
     supportPromptSkippedForImportedData: state.supportPromptSkippedForImportedData,
     ...(wordLibraryMigrationPending && !wordLibraryPersistenceReady
       ? {
@@ -2246,7 +2241,6 @@ export function getPersistedState(state: AppState) {
           workspaceTabGroups: state.workspaceTabGroups,
         }
       : {}),
-    workspaceTabBarExpanded: state.workspaceTabBarExpanded,
     lastAutoBackupAt: state.lastAutoBackupAt,
     firstBackupReminderShown: state.firstBackupReminderShown,
     backupReminderCount: state.backupReminderCount,
@@ -2408,15 +2402,12 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
     agentSidebarCollapsed: Boolean(persisted.agentSidebarCollapsed),
     agentDesktopSidebarCollapsed:
       typeof persisted.agentDesktopSidebarCollapsed === 'boolean' ? persisted.agentDesktopSidebarCollapsed : false,
-    agentAssetTab: persisted.agentAssetTab === 'references' ? 'references' : 'outputs',
-    agentAssetPanelCollapsed: Boolean(persisted.agentAssetPanelCollapsed),
     favoriteCollections,
     defaultFavoriteCollectionId,
     schedule,
     activeFavoriteCollectionId: null,
     favoritePickerTaskIds: null,
     supportPromptDismissed: Boolean(persisted.supportPromptDismissed),
-    supportPromptOpen: Boolean(persisted.supportPromptOpen),
     supportPromptSkippedForImportedData: Boolean(persisted.supportPromptSkippedForImportedData),
     wordLibraryGroups,
     wordLibraryEntries:
@@ -2457,10 +2448,6 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
             collapsed: Boolean(g.collapsed),
           }))
         : currentState.workspaceTabGroups,
-    workspaceTabBarExpanded:
-      typeof persisted.workspaceTabBarExpanded === 'boolean'
-        ? persisted.workspaceTabBarExpanded
-        : currentState.workspaceTabBarExpanded,
     lastAutoBackupAt: persisted.lastAutoBackupAt ?? currentState.lastAutoBackupAt,
     firstBackupReminderShown: Boolean(persisted.firstBackupReminderShown),
     backupReminderCount:
@@ -2490,16 +2477,6 @@ interface PromptInputDialogConfig {
   cancelText?: string
   action: (value: string) => void
   onCancel?: () => void
-}
-
-// ===== 变量条目编辑弹窗 =====
-
-interface VarEntryEditorConfig {
-  entryId?: string
-  varName: string
-  groupId: string
-  entries: string[]
-  onSave: (varName: string, groupId: string, entries: string[]) => void
 }
 
 interface AppState {
@@ -2552,8 +2529,6 @@ interface AppState {
   agentInputDrafts: Record<string, AgentInputDraft>
   agentSidebarCollapsed: boolean
   agentDesktopSidebarCollapsed: boolean
-  agentAssetTab: 'references' | 'outputs'
-  agentAssetPanelCollapsed: boolean
   agentMobileHeaderVisible: boolean
   agentEditingRoundId: string | null
   agentEditingConversationId: string | null
@@ -2566,8 +2541,6 @@ interface AppState {
   reorderAgentConversations: (sourceId: string, targetId: string, position?: 'before' | 'after') => void
   setAgentSidebarCollapsed: (collapsed: boolean) => void
   setAgentDesktopSidebarCollapsed: (collapsed: boolean) => void
-  setAgentAssetTab: (tab: 'references' | 'outputs') => void
-  setAgentAssetPanelCollapsed: (collapsed: boolean) => void
   setAgentMobileHeaderVisible: (visible: boolean) => void
   setAgentEditingRoundId: (id: string | null) => void
   setAgentEditingConversationId: (id: string | null) => void
@@ -2610,8 +2583,6 @@ interface AppState {
   // 搜索和筛选
   searchQuery: string
   setSearchQuery: (q: string) => void
-  filterStatus: 'all' | 'running' | 'done' | 'error'
-  setFilterStatus: (status: AppState['filterStatus']) => void
   filterFavorite: boolean
   setFilterFavorite: (f: boolean) => void
 
@@ -2626,8 +2597,6 @@ interface AppState {
   clearFavoriteCollectionSelection: () => void
 
   // UI
-  galleryNavigateTaskId: string | null
-  setGalleryNavigateTaskId: (taskId: string | null) => void
   detailTaskId: string | null
   detailImageId: string | null
   detailReturnToSchedule: boolean
@@ -2638,11 +2607,8 @@ interface AppState {
   showSettings: boolean
   settingsTabRequest: SettingsTab | null
   setShowSettings: (v: boolean, tab?: SettingsTab) => void
-  supportPromptOpen: boolean
   supportPromptDismissed: boolean
   supportPromptSkippedForImportedData: boolean
-  setSupportPromptOpen: (v: boolean) => void
-  dismissSupportPrompt: () => void
 
   // Toast
   toast: { message: string; type: ToastType; action?: { label: string; onClick: () => void } } | null
@@ -2688,21 +2654,11 @@ interface AppState {
   setRandomPromptModalOpen: (open: boolean) => void
 
   // Word library sidebar
-  wordLibrarySidebarOpen: boolean
-  setWordLibrarySidebarOpen: (open: boolean) => void
-  wordLibraryManagerOpen: boolean
-  setWordLibraryManagerOpen: (open: boolean) => void
 
   // Word library (词条库)
   wordLibraryGroups: WordLibraryGroup[]
   wordLibraryEntries: WordLibraryEntry[]
   wordGenerationBatches: WordGenerationBatch[]
-  wordLibraryEditEntryId: string | null
-  setWordLibraryEditEntryId: (id: string | null) => void
-  varEntryEditor: VarEntryEditorConfig | null
-  setVarEntryEditor: (config: VarEntryEditorConfig | null) => void
-  wordLibraryPromptSelectedVarName: string | null
-  setWordLibraryPromptSelectedVarName: (varName: string | null) => void
   createWordLibraryGroup: (name: string, parentId?: string | null) => { id: string; name: string }
   renameWordLibraryGroup: (id: string, name: string) => void
   updateWordLibraryGroup: (id: string, patch: Partial<WordLibraryGroup>) => void
@@ -2755,11 +2711,9 @@ interface AppState {
   workspaceTabs: WorkspaceTab[]
   activeWorkspaceTabId: string | null
   workspaceTabGroups: WorkspaceTabGroup[]
-  workspaceTabBarExpanded: boolean
   selectedWorkspaceTabIds: string[]
   workspaceTabManagerOpen: boolean
   setActiveWorkspaceTabId: (id: string | null) => void
-  setWorkspaceTabBarExpanded: (expanded: boolean) => void
   setSelectedWorkspaceTabIds: (updater: string[] | ((prev: string[]) => string[])) => void
   toggleWorkspaceTabSelection: (id: string, force?: boolean) => void
   clearWorkspaceTabSelection: () => void
@@ -3429,7 +3383,6 @@ export const useStore = create<AppState>()(
             galleryInputDraft,
             agentMobileHeaderVisible: false,
             agentSidebarCollapsed: true,
-            agentAssetPanelCollapsed: true,
             selectedTaskIds: [],
             selectedFavoriteCollectionIds: [],
             ...restoreAgentInputDraftState(state.agentInputDrafts, state.activeAgentConversationId),
@@ -3690,8 +3643,6 @@ export const useStore = create<AppState>()(
       agentInputDrafts: {},
       agentSidebarCollapsed: true,
       agentDesktopSidebarCollapsed: false,
-      agentAssetTab: 'outputs',
-      agentAssetPanelCollapsed: false,
       agentMobileHeaderVisible: false,
       agentEditingRoundId: null,
       agentEditingConversationId: null,
@@ -3745,7 +3696,6 @@ export const useStore = create<AppState>()(
             activeAgentConversationId: id,
             agentInputDrafts,
             agentSidebarCollapsed: true,
-            agentAssetPanelCollapsed: true,
             agentEditingRoundId: null,
             ...restoreAgentInputDraftState(agentInputDrafts, id),
           }
@@ -3810,8 +3760,6 @@ export const useStore = create<AppState>()(
         }),
       setAgentSidebarCollapsed: (agentSidebarCollapsed) => set({ agentSidebarCollapsed }),
       setAgentDesktopSidebarCollapsed: (agentDesktopSidebarCollapsed) => set({ agentDesktopSidebarCollapsed }),
-      setAgentAssetTab: (agentAssetTab) => set({ agentAssetTab }),
-      setAgentAssetPanelCollapsed: (agentAssetPanelCollapsed) => set({ agentAssetPanelCollapsed }),
       setAgentMobileHeaderVisible: (agentMobileHeaderVisible) => set({ agentMobileHeaderVisible }),
       setAgentEditingRoundId: (agentEditingRoundId) => set({ agentEditingRoundId }),
       setAgentEditingConversationId: (agentEditingConversationId) => set({ agentEditingConversationId }),
@@ -4145,8 +4093,6 @@ export const useStore = create<AppState>()(
       // Search & Filter
       searchQuery: '',
       setSearchQuery: (searchQuery) => set({ searchQuery }),
-      filterStatus: 'all',
-      setFilterStatus: (filterStatus) => set({ filterStatus }),
       filterFavorite: false,
       setFilterFavorite: (filterFavorite) =>
         set(
@@ -4196,8 +4142,6 @@ export const useStore = create<AppState>()(
       clearFavoriteCollectionSelection: () => set({ selectedFavoriteCollectionIds: [] }),
 
       // UI
-      galleryNavigateTaskId: null,
-      setGalleryNavigateTaskId: (galleryNavigateTaskId) => set({ galleryNavigateTaskId }),
       detailTaskId: null,
       detailImageId: null,
       detailReturnToSchedule: false,
@@ -4235,11 +4179,8 @@ export const useStore = create<AppState>()(
           ...(!showSettings ? { settingsTabRequest: null } : {}),
         })
       },
-      supportPromptOpen: false,
       supportPromptDismissed: false,
       supportPromptSkippedForImportedData: false,
-      setSupportPromptOpen: (supportPromptOpen) => set({ supportPromptOpen }),
-      dismissSupportPrompt: () => set({ supportPromptOpen: false, supportPromptDismissed: true }),
 
       // Toast
       toast: null,
@@ -4280,21 +4221,11 @@ export const useStore = create<AppState>()(
       setRandomPromptModalOpen: (open) => set({ randomPromptModalOpen: open }),
 
       // Word library sidebar
-      wordLibrarySidebarOpen: false,
-      setWordLibrarySidebarOpen: (open) => set({ wordLibrarySidebarOpen: open }),
-      wordLibraryManagerOpen: false,
-      setWordLibraryManagerOpen: (open) => set({ wordLibraryManagerOpen: open }),
 
       // Word library
       wordLibraryGroups: [{ id: 'default', name: '默认分组', sortOrder: 0 }],
       wordLibraryEntries: [],
       wordGenerationBatches: [],
-      wordLibraryEditEntryId: null,
-      setWordLibraryEditEntryId: (id) => set({ wordLibraryEditEntryId: id }),
-      varEntryEditor: null,
-      setVarEntryEditor: (config) => set({ varEntryEditor: config }),
-      wordLibraryPromptSelectedVarName: null,
-      setWordLibraryPromptSelectedVarName: (varName) => set({ wordLibraryPromptSelectedVarName: varName }),
       createWordLibraryGroup: (name, parentId = null) => {
         const group = {
           id: Math.random().toString(36).slice(2, 9),
@@ -4573,7 +4504,6 @@ export const useStore = create<AppState>()(
       workspaceTabs: [],
       activeWorkspaceTabId: null,
       workspaceTabGroups: [],
-      workspaceTabBarExpanded: true,
       selectedWorkspaceTabIds: [],
       workspaceTabManagerOpen: false,
       setActiveWorkspaceTabId: (id) =>
@@ -4617,7 +4547,6 @@ export const useStore = create<AppState>()(
           }
           return { activeWorkspaceTabId: id, workspaceTabs: updatedTabs }
         }),
-      setWorkspaceTabBarExpanded: (expanded) => set({ workspaceTabBarExpanded: expanded }),
       setSelectedWorkspaceTabIds: (updater) =>
         set((s) => ({
           selectedWorkspaceTabIds: typeof updater === 'function' ? updater(s.selectedWorkspaceTabIds) : updater,
@@ -5693,7 +5622,6 @@ export async function initStore(options: { safeMode?: boolean } = {}) {
   const mergedWordBatches = storedWordLibrary?.batches ?? wordState.wordGenerationBatches
   useStore.setState({ wordGenerationBatches: mergedWordBatches })
   await replaceStoredWordLibrary(mergedWordGroups, mergedWordEntries, mergedWordBatches)
-  const shouldRewriteWordLibraryLocalState = wordLibraryMigrationPending
   wordLibraryPersistenceReady = true
   wordLibraryMigrationPending = false
   lastStoredWordLibraryGroups = mergedWordGroups
@@ -5701,9 +5629,6 @@ export async function initStore(options: { safeMode?: boolean } = {}) {
   lastStoredWordGenerationBatches = mergedWordBatches
   if (wordLibraryPersistQueued) {
     await flushWordLibraryToIndexedDB()
-  }
-  if (shouldRewriteWordLibraryLocalState) {
-    useStore.setState((state) => ({ wordLibraryEditEntryId: state.wordLibraryEditEntryId }))
   }
   const { tasks: markedTasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   const interruptedTaskIds = new Set(interruptedTasks.map((task) => task.id))
@@ -11669,77 +11594,6 @@ export async function removeTask(task: TaskRecord) {
   showToast(summaryParts.length > 0 ? `已删除任务（${summaryParts.join('；')}）` : '已删除任务', 'success')
 }
 
-export async function clearFailedTasks() {
-  const { tasks, setTasks, showToast, setConfirmDialog } = useStore.getState()
-  const failedTasks = tasks.filter((t) => t.status === 'error')
-  const partialFailureTasks = tasks.filter(
-    (t) => t.status === 'done' && t.batchItemStatuses?.some((s) => s === 'error'),
-  )
-  if (!failedTasks.length && !partialFailureTasks.length) {
-    showToast('没有失败记录', 'info')
-    return
-  }
-  const totalCount = failedTasks.length + partialFailureTasks.length
-  const hasPartial = partialFailureTasks.length > 0
-  setConfirmDialog({
-    title: '清除失败记录',
-    message: hasPartial
-      ? `确定清空 **${failedTasks.length}** 条完全失败的任务记录，并清除 **${partialFailureTasks.length}** 条部分失败任务中的失败标记？成功的图片会保留，不可恢复。`
-      : `确定清空所有 **${failedTasks.length}** 条生成失败的任务记录？此操作会同步清理对应的孤立图片资源，不可恢复。`,
-    tone: 'danger',
-    buttons: [
-      {
-        label: '清除',
-        tone: 'danger',
-        action: async () => {
-          useStore.getState().setConfirmDialog(null)
-          const currentTasks = useStore.getState().tasks
-          const remainingTasks = currentTasks.filter((t) => t.status !== 'error')
-          const remaining = await scrubAgentOutputPayloadsForDeletedTasks(failedTasks, remainingTasks)
-          const updatedTasks = remaining.map((t) => {
-            if (t.batchItemStatuses?.some((s) => s === 'error')) {
-              const { batchItemStatuses, batchItemErrors, ...rest } = t
-              return rest
-            }
-            return t
-          })
-          setTasks(updatedTasks)
-          const updatedTabs = useStore.getState().workspaceTabs.map((tab) => ({
-            ...tab,
-            tasks: tab.tasks
-              .filter((t) => t.status !== 'error')
-              .map((t) => {
-                if (t.batchItemStatuses?.some((s) => s === 'error')) {
-                  const { batchItemStatuses, batchItemErrors, ...rest } = t
-                  return rest
-                }
-                return t
-              }),
-          }))
-          useStore.setState({ workspaceTabs: updatedTabs })
-          for (const task of failedTasks) {
-            clearFalRecoveryTimer(task.id)
-            clearCustomRecoveryTimer(task.id)
-            clearOpenAIWatchdogTimer(task.id)
-            useRuntimeStore.getState().clearTaskProgress(task.id)
-            await dbDeleteTask(task.id)
-          }
-          for (const task of partialFailureTasks) {
-            void saveTaskToLocalFS(task.id)
-          }
-          const failedImageIds = new Set<string>()
-          for (const t of failedTasks) addTaskReferencedImageIds(failedImageIds, t)
-          await deleteUnreferencedImageIds(failedImageIds)
-          // 清除失败记录时同步删除其本地导出真实文件
-          await deleteLocalSavedOutputFilesForTasks(failedTasks)
-          showToast(`已清除 ${totalCount} 条失败记录${hasPartial ? '（部分失败仅清标记）' : ''}`, 'success')
-        },
-      },
-      { label: '取消', tone: 'secondary', action: () => useStore.getState().setConfirmDialog(null) },
-    ],
-  })
-}
-
 /** 清空数据选项 */
 export interface ClearOptions {
   clearConfig?: boolean
@@ -11786,7 +11640,6 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
     useStore.setState({
       agentConversations: [],
       activeAgentConversationId: null,
-      supportPromptOpen: false,
       supportPromptSkippedForImportedData: false,
     })
     clearInputImages()

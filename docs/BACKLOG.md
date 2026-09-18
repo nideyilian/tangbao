@@ -254,16 +254,37 @@
   则 `store.ts:2293-2295` 的归一化与 `:3407` 的分支要同步改
 
 ### TB-037 清理兼容残留（C 档）
-- **状态**：TODO · 阻塞：**等杰哥确认**
-- **内容**
-  1. **标签体系**：删 `AssetLibraryTagSection.tsx` / `AssetTagChips.tsx` + 7 个无调用的 tag action；
-     **保留** `AssetTag` 类型、`tagIds` 字段与备份链路（`store.ts:12374/12503/12920`）——
-     这是 `PRODUCT.md` M18 明确的设计意图（备份可无损恢复）
-  2. **`galleryViewMode`**：必须**先摘掉 `InputBar.tsx:768/3915/4115` 的读取** → 再删字段与 setter →
-     最后删 `TaskGrid`。⚠️ 现状是「InputBar 在读一个永远不更新的字段」（写入方 `TaskGrid.tsx:313` 已零引用），
-     这是本次发现的**真隐患**
-  3. **死 action**：`stopTask`(`store.ts:336`)、`getAllOrphanedImageIds`(`store.ts:7675`)
-- **验收标准**：`npm run verify` 全绿 + 老备份导入仍能恢复标签数据
+- **状态**：✅ **主体 DONE（2026-09-18）** ① `cd410fd`（−2730）· ② 真死 state/action（同批）
+- **① 已完成（`cd410fd`）**
+  1. **`galleryViewMode` 死字段** —— 两处写入方 `assetCommands.ts:116`(addReference) / `:167`(reuseTask)
+     写的都是常量 **`'tasks'`**，而唯一读取方 `InputBar` 只判断 `=== 'images'` → **两个分支永不可达**。
+     已删 InputBar 的订阅与两处分支、`store` 的字段与 setter、`lib/galleryPreferences.ts`，
+     连带删除 `selectedGalleryImageCount`（唯一消费者）。**无独有偶：`filterStatus` 同型**
+     （初值 `'all'`、`setFilterStatus` 零调用、InputBar 与 `galleryTaskFilter` 在读），一并处理。
+  2. **标签体系 UI**：删 `AssetTagChips.tsx`（**零引用**）与 `AssetLibraryTagSection.tsx`
+     （**M18 移除标签体系时漏删**，仅剩自己的测试引用）→ 这是 `PRODUCT.md` M18 写了、代码没清的典型。
+     **数据层一律未动**：`AssetTag` 类型、`tagIds`、SQLite/IndexedDB 标签表、备份 v6/v7 的 `assetTags`
+     继续读写（`AssetLibraryTagSection` 的 `buildTagTree`/`flattenTagRows` 一并删除）。
+  3. **`AssistantActionBar.tsx`（1567 行）** 零生产引用，仅 catalog 一条登记 → 删除。
+     ⚠️ `features/assistantActions/` **整体是活的**（`builtInActions`/`matcher`/`runner` 均有引用），
+     本次只删这一个组件，不是整目录。
+- **② 已完成（真死 state / action）**
+  - **纯写入、零读取**（连「静默常量」都算不上，因为根本没人读）：`galleryNavigateTaskId`、
+    `varEntryEditor` + `VarEntryEditorConfig`、`wordLibrarySidebarOpen`/`ManagerOpen`/`EditEntryId`/
+    `PromptSelectedVarName`（组件已随 TB-038 删除）、`supportPromptOpen`（SupportPromptModal 已删，
+    无人写 true）、`agentAssetTab`、`agentAssetPanelCollapsed`、`workspaceTabBarExpanded`、`filterStatus`
+  - **死文件**：`lib/galleryTaskFilter.ts` + 其测试（零生产引用）
+  - **死函数**：`clearFailedTasks`（71 行，零引用导出）
+  - **no-op 残留**：`store.ts` 水合期的 `setState((s) => ({ wordLibraryEditEntryId: s.wordLibraryEditEntryId }))`
+    连同 `shouldRewriteWordLibraryLocalState` 一并删除（自赋值，逻辑空转）
+- **⚠️ 刻意保留（`stopTask` 及其链路）**：`stopTask`(`store.ts:335`) 虽零引用，但它是
+  `docs/code-optimization-audit.md` 第 1 项**明确要求接线的能力**（`taskAbortControllers` +
+  三个 `clear*RecoveryTimer`）。删它会连带抹掉已实现的中止基础设施 → **保留，记为待接线项**
+- **验收证据**：`tsc -b` 通过；`npx eslint .` 零告警；`npm test` 全量通过
+- **踩坑**：同一个脚本里按行号做多次删除会**互相位移**（先删了 3 行导致后续整段偏移 3 行）。
+  解决办法：**一律按内容定位**（trim 后精确匹配 + 期望命中计数），必要时用完再复核；
+  接口声明与实现是**两段不同文本**，删实现必须同步删 `AppState` 接口声明，否则报
+  「缺少属性」而不是「多余的键」
 
 ### TB-038 彻底下线词条库（D 档 · 已拍板）
 - **状态**：✅ **DONE（2026-09-18）** ① UI 层 `6fda217` · ② 链路层（同批提交，见下）
