@@ -45,7 +45,7 @@ web
 
 - 现有产品说明与功能证据位于 `README.md` 和 `CODE_WIKI.md`。
 - 现有设计基线位于 `design-system/tangbao/MASTER.md`、`design-system/tangbao/COMPONENTS.md` 和 `src/design-system/`。
-- 现有任务画廊、图片瀑布流、任务详情、收藏夹、工作区标签页和图片缓存实现位于 `src/components/TaskGrid.tsx`、`src/components/GalleryImageTile.tsx`、`src/components/DetailModal.tsx`、`src/components/FavoriteCollections.tsx`、`src/components/WorkspaceTabBar.tsx`、`src/lib/db.ts` 和 `src/store.ts`。
+- 现有任务画廊、图片瀑布流、任务详情、收藏夹、工作区标签页和图片缓存实现位于 `src/components/GalleryImageTile.tsx`、`src/components/TaskCard.tsx`、`src/components/DetailModal.tsx`、`src/components/FavoriteCollections.tsx`、`src/components/WorkspaceTabBar.tsx`、`src/lib/db.ts` 和 `src/store.ts`。（旧的 `TaskGrid.tsx` / `SearchBar.tsx` / `GalleryTaskNavigator.tsx` 已于 2026-09-18 随 M21 清理删除）
 - Electron 原图托管、迁移、清理和流式备份设计位于 `docs/superpowers/specs/2026-06-30-storage-and-streaming-export-design.md`。
 - 当前没有需要在素材库界面中展示的客户案例、商业指标或外部内容，不得虚构。
 
@@ -89,5 +89,19 @@ web
     两种形式都不随「紧凑 / 标准 / 大图」密度变化（密度控件在分组模式下隐藏）；整卡/整组作为框选视觉单元（`useDragSelect` 的 getItemIds / getItemId）。
 
 - **自包含素材库（M20）**：素材数据收敛为「库根」自包含文件夹（设计 `docs/superpowers/specs/2026-08-20-self-contained-library-design.md`，计划 `docs/superpowers/plans/2026-08-20-self-contained-library.md`）——`electron/library-paths.ts` 统一解析库根下 `db/`（SQLite 权威目录）、`cache-images/`（内容寻址原图）、`thumbs/`（磁盘缩略图缓存）、`backups/`（ZIP 默认位置）与 `library.json`；启动自动迁移旧位置数据库（`catalog-migration.ts`：`PRAGMA integrity_check` 通过才移动含 WAL，失败保留旧路径；`library.json` 记录 `catalogMigratedAt`）；修改库根 = 整库搬家（`changeLibraryRoot`：关内核 → 移动 → 重开，冲突/失败回退）；缩略图三级读取（磁盘 → IndexedDB → 生成，懒迁移双写，WebP 尺寸头解析）；ZIP 导出默认落库根 `backups/` + 设置页「打开备份目录」；数据管理区新增「导出元数据清单（JSONL）」与「运行库完整性校验」（只读：SQLite 完整性 + 原图 SHA-256 抽查 + 孤儿/缺失报告）；「复制库根文件夹 = 完整备份」心智写入设置页与 README。
+- **冗余清理（M21，2026-09-18）**：按 `docs/redundancy-audit.md` 清理迭代中已下线但残留的整套子系统。
+  - **已删除**：策略编辑 + 下单孤岛 4479 行（根为 `requirementPrototype/AppShell.tsx`，此前实测 0 处引用）、
+    旧画廊与任务导航残留（`TaskGrid` / `SearchBar` / `SupportPromptModal` / `GalleryTaskNavigator`）、
+    助手技能条 `AssistantActionBar.tsx`（1567 行，零生产引用）、标签体系 UI（`AssetTagChips` /
+    `AssetLibraryTagSection`）、零引用工具模块若干。
+  - **词条库整体下线**：业务上已被 SOP 变量体系完全替代（产品决策）。4 个词条 UI 组件删除、
+    侧栏改造为纯素材详情面板、`InputBar` 摘除 22 处耦合、手打 `{{xxx}}` 语法彻底移除。
+    **数据层保留**（`AssetTag` / `tagIds` / IDB `wordLibrary` / 备份 v6 v7 manifest）以保证老备份可无损导入；
+    且 `RandomPromptModal` 的通配符抽取仍只读 `wordLibraryEntries`（无新建入口）。
+  - **`galleryViewMode` 字段删除**：M10 时保留为兼容字段，实际写入方只写常量 `'tasks'`，
+    读取方只判断 `'images'` → 两个分支永不可达。
+  - **重复实现收敛**：9 组 → 6 个唯一实现模块（`contentEditableText` / `pathBaseName` /
+    `typeGuards` / `clamp` / `escapeRegExp` / `browserStorage`）。
+  - 累计净删约 **1.2 万行**；逐条证据见 `docs/BACKLOG.md` 的 `TB-034`~`TB-038`。
 
 实施约束：首版只管理生成图片；原图单份、内容哈希作素材 ID；V1 不迁移/重命名现有 cache-images；素材管理界面在 M3 引用规则落地后才开放（App 层“图片”视角已启用，回收站与永久删除依赖引用图保护）。
