@@ -113,7 +113,6 @@ function createDefaultDependencies(): AssetCommandDependencies {
       const { useStore } = await import('../store')
       const state = useStore.getState()
       state.setAppMode(target)
-      if (target === 'gallery') state.setGalleryViewMode('tasks')
       if (state.inputImages.some((item) => item.id === image.id)) {
         state.showToast('这张图片已在参考图中', 'info')
         return false
@@ -164,7 +163,6 @@ function createDefaultDependencies(): AssetCommandDependencies {
       const { reuseConfig, useStore } = await import('../store')
       const state = useStore.getState()
       state.setAppMode('gallery')
-      state.setGalleryViewMode('tasks')
       await reuseConfig(task)
       return true
     },

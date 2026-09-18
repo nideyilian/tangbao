@@ -123,7 +123,6 @@ import { upsertFromTask } from './lib/assetLibraryRepository'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
 import { pickDeepestCollectionId } from './features/projectTree/params'
 import { useProjectTreeParamsStore } from './features/projectTree/storeProjectTreeParams'
-import { loadGalleryViewMode, saveGalleryViewMode, type GalleryViewMode } from './lib/galleryPreferences'
 import { isScrollActive } from './lib/scrollActivity'
 import { buildLocalImageUrl, isLocalImageUrl, localImageUrlToDataUrl } from './lib/localImageUrl'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
@@ -2627,8 +2626,6 @@ interface AppState {
   clearFavoriteCollectionSelection: () => void
 
   // UI
-  galleryViewMode: GalleryViewMode
-  setGalleryViewMode: (mode: GalleryViewMode) => void
   galleryNavigateTaskId: string | null
   setGalleryNavigateTaskId: (taskId: string | null) => void
   detailTaskId: string | null
@@ -4199,11 +4196,6 @@ export const useStore = create<AppState>()(
       clearFavoriteCollectionSelection: () => set({ selectedFavoriteCollectionIds: [] }),
 
       // UI
-      galleryViewMode: loadGalleryViewMode(),
-      setGalleryViewMode: (galleryViewMode) => {
-        saveGalleryViewMode(galleryViewMode)
-        set({ galleryViewMode })
-      },
       galleryNavigateTaskId: null,
       setGalleryNavigateTaskId: (galleryNavigateTaskId) => set({ galleryNavigateTaskId }),
       detailTaskId: null,

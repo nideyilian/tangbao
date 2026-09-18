@@ -727,7 +727,6 @@ export default function InputBar() {
   const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
   const filterStatus = useStore((s) => s.filterStatus)
   const filterFavorite = useStore((s) => s.filterFavorite)
-  const galleryViewMode = useStore((s) => s.galleryViewMode)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const searchQuery = useStore((s) => s.searchQuery)
@@ -3710,13 +3709,6 @@ export default function InputBar() {
 
   const showFavoriteCollectionBatchBar = inCollectionOverview && selectedFavoriteCollectionIds.length > 0
   const showTaskBatchBar = !showFavoriteCollectionBatchBar && selectedTaskIds.length > 0
-  const selectedGalleryImageCount =
-    galleryViewMode === 'images'
-      ? selectedTaskIds.reduce(
-          (count, taskId) => count + (tasks.find((task) => task.id === taskId)?.outputImages.length ?? 0),
-          0,
-        )
-      : 0
 
   return (
     <>
@@ -3911,15 +3903,6 @@ export default function InputBar() {
         {showTaskBatchBar && (
           <div className="flex justify-center mb-3">
             <div className="bg-ds-surface/90 dark:bg-ds-subtle/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-ds-border/50 dark:border-ds-border pointer-events-auto">
-              {galleryViewMode === 'images' && (
-                <span
-                  data-testid="gallery-selection-count"
-                  aria-live="polite"
-                  className="px-2 text-xs font-semibold tabular-nums text-ds-text dark:text-ds-text-subtle"
-                >
-                  已选择 {selectedGalleryImageCount} 张图片
-                </span>
-              )}
               <BatchActionButton
                 onClick={clearSelection}
                 className="p-2 text-ds-muted dark:text-ds-muted hover:text-ds-text dark:hover:text-white transition-colors"

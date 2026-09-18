@@ -904,31 +904,11 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Card', 'Thumbnail', 'Button'],
   },
   {
-    module: 'src/features/assetLibrary/AssetLibraryTagSection.tsx',
-    responsibility:
-      '侧栏标签区（Eagle 式）：树形标签（多级 parentId）+ 多选 AND 筛选 + hover/右键管理菜单（新建子标签/重命名/设置颜色/合并到…/删除）',
-    decision: 'compose',
-    targets: ['Menu', 'IconButton', 'Tooltip', 'Dialog'],
-  },
-  {
-    module: 'src/features/assetLibrary/AssetTagChips.tsx',
-    responsibility:
-      'Eagle 式标签编辑器：当前标签 chip（可移除）+ 输入添加（自动补全已有标签，Enter 新建不存在标签），供详情面板与查看器复用',
-    decision: 'compose',
-    targets: ['Button', 'Tooltip'],
-  },
-  {
     module: 'src/features/assetLibrary/AssetQuickPreview.tsx',
     responsibility:
       'Eagle 式空格快速预览：按住空格显示选中素材大图（悬浮层），松开关闭；与全屏查看器（Enter/双击）独立',
     decision: 'compose',
     targets: ['Surface', 'Dialog'],
-  },
-  {
-    module: 'src/features/assistantActions/AssistantActionBar.tsx',
-    responsibility: '助手技能、设置、加载和结果面板',
-    decision: 'retain',
-    targets: ['Toolbar', 'SegmentedControl', 'Switch', 'Fieldset', 'Alert', 'Progress', 'CodeBlock'],
   },
   {
     module: 'src/components/DerivePolicyModal.tsx',
