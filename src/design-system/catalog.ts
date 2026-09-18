@@ -1016,7 +1016,8 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/components/PresetProjectTree.tsx',
-    responsibility: '水印归属树：项目树层级管理（新建/改名/删除/移动）+ 归属（拖入绑定、按渠道就地设置）',
+    responsibility:
+      '水印归属树：项目树层级管理（新建/改名/删除/移动）+ 归属（拖入绑定、按渠道就地设置）。行上不挂分类 / 来源 / 状态标签，没绑定就一个节点一行',
     decision: 'retain',
     targets: ['Panel', 'ListRow', 'IconButton', 'Button', 'EmptyState'],
   },

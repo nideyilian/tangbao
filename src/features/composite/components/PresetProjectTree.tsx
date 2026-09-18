@@ -12,23 +12,28 @@
  *
  * 预设组退役之后，这棵树同时承担两件事，不再有中间层：
  * - **层级管理**：新建子节点 / 重命名 / 删除 / 拖动换父级
- * - **归属**：拖入预设绑定、chip 解绑、恢复继承；渠道分叉的归属点开「按渠道」chip 改
+ * - **归属**：拖入预设绑定、chip 解绑、恢复继承；渠道分叉的归属点节点行右侧的「按渠道」图标改
  *
  * 四条设计口径：
  * - **树不另建**：结构来自 `AssetCollection`（唯一主源），与左侧栏、SOP、后处理同一棵树同一批 id。
  * - **值不另存**：读写的就是项目树参数层那份 `watermarkPresetIds`，不引入第二处存储。
- * - **继承可见**：节点显示的是**生效值**，并标明它来自本级、某个祖先、还是全局默认。
- *   未表态（`undefined`）才继承；空数组是「这个方向就是不加水印」，两者在界面上必须能区分。
+ * - **行上不挂标签**（2026-09-18 第三轮）：层级靠缩进表达，不再标「产品线 / 产品」；来源
+ *   （本级自定义 / 继承自「X」/ 跟随全局）与状态（不加水印）一律不显示——那些都是注释，
+ *   一排灰底小字会把树压成两行一个节点，真正要看的「这个方向绑了哪几套水印」反而被淹掉。
+ *   于是**没有绑定的节点就是一个节点一行**（行下那排整块不渲染）。
+ *   ⚠️ 代价：`undefined`（继承）与 `[]`（显式不加水印）在树上不再可区分，只剩「恢复继承」
+ *   按钮的有无。要看生效明细去后处理面板的「水印归属」区块——那里是逐方向列出来的。
  * - **首次改动即物化**：在继承态下加/减一个水印，会把当前生效的那份复制成显式数组再改，
  *   否则直接写结果数组会把「少一个」错表达成「一个都不要」。
  */
 
 import { useMemo, useState } from 'react'
-import { Checkbox, IconButton, Menu, MenuItem, MenuSeparator, Popover } from '../../../design-system'
+import { Checkbox, Menu, MenuItem, MenuSeparator, Popover } from '../../../design-system'
 import {
   ChevronDownIcon,
   ChevronRightIcon,
   FolderPlusIcon,
+  Layers3Icon,
   MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
@@ -49,12 +54,10 @@ import { useAssetLibraryStore } from '../../assetLibrary/store'
 import {
   resolveNodeWatermarkBinding,
   resolveNodeWatermarkBindingsByMedia,
-  resolveProjectNodeKind,
   type ResolvedMediaWatermarkBinding,
   type ResolvedWatermarkBinding,
 } from '../../projectTree/params'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
-import { PROJECT_NODE_KIND_LABELS } from '../../projectTree/types'
 import { PRESET_LIBRARY_DRAG_TYPE, parsePresetDragPayload } from '../lib/compositePresetLibrary'
 import { bindPresetToNode, bindPresetsToNode, summarizeBoundPresets, unbindPresetFromNode } from '../lib/presetBinding'
 import { useCompositeV2Store } from '../storeV2'
@@ -124,7 +127,7 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
    * 按渠道单独绑的那部分（`byMedia`）。
    *
    * 只收「与通用值不同」的渠道：多数方向各渠道共用一套水印，把每个渠道都列出来
-   * 反而会把「哪些渠道真的不一样」淹掉。要改就点节点行上的「按渠道」chip。
+   * 反而会把「哪些渠道真的不一样」淹掉。要改就点节点行右侧的「按渠道」图标。
    */
   const mediaBindings = useMemo(() => {
     const map = new Map<string, ResolvedMediaWatermarkBinding[]>()
@@ -279,15 +282,6 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
 
   // ---- 渲染 ----
 
-  const renderSourceChip = (binding: ResolvedWatermarkBinding) => {
-    if (binding.overridden) return <span className={chipClass}>本级自定义</span>
-    if (binding.sourcedFrom) {
-      const source = collections.find((item) => item.id === binding.sourcedFrom)
-      return <span className={chipClass}>继承自「{source?.name ?? '已删除节点'}」</span>
-    }
-    return <span className={chipClass}>跟随全局</span>
-  }
-
   const renderNode = (node: PostprocessProjectTreeNode) => {
     const expanded = expandedIds.has(node.id)
     const indentClass = INDENT_CLASS[Math.min(node.depth, INDENT_CLASS.length - 1)]
@@ -299,9 +293,14 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
     const isDropTarget = dropTargetId === node.id
     const isMoveTarget = moveTargetId === node.id
     const isEditing = editingId === node.id
-    const kindLabel = PROJECT_NODE_KIND_LABELS[resolveProjectNodeKind(node.depth)]
     const highlight = isDropTarget || isMoveTarget
     const channelOverride = params[node.id]?.postprocess?.byMedia
+    const hasChannelOverride = channelBindings.length > 0
+    /**
+     * 行下那排只在真有东西可看时才占位：没有绑定、没有失效引用、也没有可恢复的覆盖就整块不渲染。
+     * 否则每个节点都拖着一条空白行，树会被压成两行一个 —— 而「哪几套水印」本来一眼就该看完。
+     */
+    const hasWatermarkRow = summary.presets.length > 0 || summary.missingIds.length > 0 || binding.overridden
 
     return (
       // 缩进放在最外层：整块（节点行 + 水印 chip 行）一起右移，chip 行再在此基础上内缩一点
@@ -398,7 +397,7 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
                 {node.name}
               </button>
             )}
-            <span className={`${chipClass} shrink-0`}>{kindLabel}</span>
+            {/* 这里原先挂一个「产品线 / 产品」标签。层级缩进已经说清了，标签只是重复一遍。 */}
             <div className="ml-auto flex shrink-0 items-center gap-0.5">
               <button
                 type="button"
@@ -415,6 +414,37 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
                 onClick={() => bindPresets(node, bindingCandidates)}
               >
                 <PlusIcon className="h-3.5 w-3.5" />
+              </button>
+              {/* 按渠道从「行上的标签」改成操作区里的一个图标：有渠道分叉时点亮成强调色，
+                  点开在节点行下方就地展开勾选表。入口必须常驻——源表里 56 个方向的水印是按渠道
+                  给的，没有入口就没地方维护；但它本身不该占掉树的一行。 */}
+              <button
+                type="button"
+                aria-label={`${node.name} 的按渠道水印`}
+                aria-expanded={channelEditorNodeId === node.id}
+                title={
+                  hasChannelOverride
+                    ? `这些渠道各自绑了不同的水印：\n${channelBindings
+                        .map((item) => {
+                          const names = summarizeBoundPresets(item.presetIds, presets).presets.map(
+                            (preset) => preset.name,
+                          )
+                          return `${mediaNameById.get(item.mediaId) ?? item.mediaId}：${names.join('、') || '不加水印'}`
+                        })
+                        .join('\n')}\n点一下改`
+                    : '默认各渠道共用上面这套；只有同一方向在不同渠道要叠不同水印时才需要在这里单独设'
+                }
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setChannelEditorNodeId((current) => (current === node.id ? '' : node.id))
+                }}
+                className={
+                  hasChannelOverride
+                    ? 'cursor-pointer rounded p-0.5 text-ds-accent hover:bg-ds-subtle'
+                    : 'cursor-pointer rounded p-0.5 text-ds-muted hover:bg-ds-subtle hover:text-ds-primary dark:text-ds-muted dark:hover:bg-ds-subtle'
+                }
+              >
+                <Layers3Icon className="h-3.5 w-3.5" />
               </button>
               <div className="relative">
                 <button
@@ -456,96 +486,64 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 pb-1 pl-5">
-            {renderSourceChip(binding)}
-            {/* 「按渠道」既是显示也是入口：源表是按「方向 × 渠道」给的，同一方向在厂商 / 百度 /
-                头条叠的合规水印本来就不同。没有覆盖时也保留入口——否则这个需求再次出现时无处可设。 */}
-            <button
-              type="button"
-              aria-expanded={channelEditorNodeId === node.id}
-              title={
-                channelBindings.length > 0
-                  ? `这些渠道各自绑了不同的水印：\n${channelBindings
-                      .map((item) => {
-                        const names = summarizeBoundPresets(item.presetIds, presets).presets.map(
-                          (preset) => preset.name,
-                        )
-                        return `${mediaNameById.get(item.mediaId) ?? item.mediaId}：${names.join('、') || '不加水印'}`
-                      })
-                      .join('\n')}\n点一下改`
-                  : '默认各渠道共用上面这套；只有同一方向在不同渠道要叠不同水印时才需要在这里单独设'
-              }
-              onClick={(event) => {
-                event.stopPropagation()
-                setChannelEditorNodeId((current) => (current === node.id ? '' : node.id))
-              }}
-              className={
-                channelBindings.length > 0
-                  ? 'cursor-pointer rounded-ds-lg border border-ds-accent/40 bg-ds-accent/10 px-1.5 py-0.5 text-xs text-ds-accent'
-                  : `${chipClass} cursor-pointer hover:border-ds-primary/40 hover:text-ds-primary dark:hover:text-ds-primary`
-              }
-            >
-              {channelBindings.length > 0 ? `按渠道 ${channelBindings.length}` : '按渠道'}
-            </button>
-            {/* 只有渠道覆盖、通用值为空时，不能显示成「不加水印」——那是另一回事 */}
-            {summary.presets.length === 0 && summary.missingIds.length === 0 && channelBindings.length === 0 && (
-              <span className={chipClass}>不加水印</span>
-            )}
-            {visible.map((preset) => (
-              <span
-                key={preset.id}
-                data-bound-preset={preset.id}
-                className="group inline-flex max-w-[10rem] items-center gap-0.5 rounded-ds-lg border border-ds-primary/40 bg-ds-primary-subtle px-1.5 py-0.5 text-xs text-ds-primary dark:border-ds-primary/40 dark:bg-ds-primary/10 dark:text-ds-primary"
-              >
+          {hasWatermarkRow && (
+            <div className="flex flex-wrap items-center gap-1 pb-1 pl-5">
+              {visible.map((preset) => (
+                <span
+                  key={preset.id}
+                  data-bound-preset={preset.id}
+                  className="group inline-flex max-w-[10rem] items-center gap-0.5 rounded-ds-lg border border-ds-primary/40 bg-ds-primary-subtle px-1.5 py-0.5 text-xs text-ds-primary dark:border-ds-primary/40 dark:bg-ds-primary/10 dark:text-ds-primary"
+                >
+                  <button
+                    type="button"
+                    className="cursor-pointer truncate"
+                    title={`切到这个水印去编辑图层：${preset.name}`}
+                    onClick={() => setSelectedPreviewPresetId(preset.id)}
+                  >
+                    {preset.name}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`从 ${node.name} 解绑水印 ${preset.name}`}
+                    title="从这个方向解绑（不影响预设本身）"
+                    onClick={() => unbindPreset(node, preset.id)}
+                    className="cursor-pointer opacity-60 hover:opacity-100"
+                  >
+                    <XIcon className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              {overflow > 0 && (
+                // 不指向「参数弹窗」了：那里已经不管水印归属，指过去会是一次空跑
+                <span
+                  className={chipClass}
+                  title="一行放不下，没有逐个列出；绑定关系本身不受影响，点开「按渠道」或到下方水印库搜索都能找到它们"
+                >
+                  +{overflow}
+                </span>
+              )}
+              {summary.missingIds.length > 0 && (
+                <span
+                  className="rounded-ds-lg border border-ds-danger/40 bg-ds-danger-subtle px-1.5 py-0.5 text-xs text-ds-danger"
+                  title={`绑定的水印里有 ${summary.missingIds.length} 个已经不存在了（预设被删），它们不会产出。点「恢复继承」可以清掉，或到水印库重建同 id 的预设。`}
+                >
+                  已失效 {summary.missingIds.length}
+                </span>
+              )}
+              {binding.overridden && (
                 <button
                   type="button"
-                  className="cursor-pointer truncate"
-                  title={`切到这个水印去编辑图层：${preset.name}`}
-                  onClick={() => setSelectedPreviewPresetId(preset.id)}
+                  aria-label={`恢复 ${node.name} 的水印继承`}
+                  title="去掉本级的覆盖，重新跟随上级"
+                  onClick={() => resetBinding(node)}
+                  className="inline-flex cursor-pointer items-center gap-0.5 rounded-ds-lg px-1 py-0.5 text-xs text-ds-muted hover:text-ds-primary dark:text-ds-muted dark:hover:text-ds-primary"
                 >
-                  {preset.name}
+                  <RotateCcwIcon className="h-3 w-3" />
+                  恢复继承
                 </button>
-                <button
-                  type="button"
-                  aria-label={`从 ${node.name} 解绑水印 ${preset.name}`}
-                  title="从这个方向解绑（不影响预设本身）"
-                  onClick={() => unbindPreset(node, preset.id)}
-                  className="cursor-pointer opacity-60 hover:opacity-100"
-                >
-                  <XIcon className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            {overflow > 0 && (
-              // 不指向「参数弹窗」了：那里已经不管水印归属，指过去会是一次空跑
-              <span
-                className={chipClass}
-                title="一行放不下，没有逐个列出；绑定关系本身不受影响，点开「按渠道」或到下方水印库搜索都能找到它们"
-              >
-                +{overflow}
-              </span>
-            )}
-            {summary.missingIds.length > 0 && (
-              <span
-                className="rounded-ds-lg border border-ds-danger/40 bg-ds-danger-subtle px-1.5 py-0.5 text-xs text-ds-danger"
-                title={`绑定的水印里有 ${summary.missingIds.length} 个已经不存在了（预设被删），它们不会产出。点「恢复继承」可以清掉，或到水印库重建同 id 的预设。`}
-              >
-                已失效 {summary.missingIds.length}
-              </span>
-            )}
-            {binding.overridden && (
-              <button
-                type="button"
-                aria-label={`恢复 ${node.name} 的水印继承`}
-                title="去掉本级的覆盖，重新跟随上级"
-                onClick={() => resetBinding(node)}
-                className="inline-flex cursor-pointer items-center gap-0.5 rounded-ds-lg px-1 py-0.5 text-xs text-ds-muted hover:text-ds-primary dark:text-ds-muted dark:hover:text-ds-primary"
-              >
-                <RotateCcwIcon className="h-3 w-3" />
-                恢复继承
-              </button>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* 按渠道编辑**就地展开**而不是弹层：树的滚动容器会裁掉绝对定位的浮层，
               而在归属这件事上「看得见上下文」比「少占两行」重要。 */}

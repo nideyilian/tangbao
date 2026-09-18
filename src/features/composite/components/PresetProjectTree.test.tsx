@@ -5,7 +5,8 @@
  *
  * 重点不在「渲染出几个节点」，而在三条容易写错、写错了又很难发现的语义：
  * ① 继承态下第一次改动必须**物化**成本级显式数组（否则「少一个」会被写成「一个都不要」）；
- * ② `undefined`（继承）与 `[]`（显式不加水印）在界面上必须能区分；
+ * ② `undefined`（继承）与 `[]`（显式不加水印）在行上已经没有标签可看了，只剩「恢复继承」
+ *    出口的有无这一条区别 —— 所以要守住这个出口；
  * ③ 同一行既是「预设的 drop 目标」又是「节点的拖出源」，靠载荷类型分流，不能串味。
  *
  * 层级管理（新建 / 重命名 / 删除 / 移动）走的是 `useAssetLibraryStore` 的 collections CRUD，
@@ -129,10 +130,14 @@ function findNodeRow(root: ReactTestInstance, nodeId: string) {
   return root.find((node) => node.props['data-preset-tree-node'] === nodeId)
 }
 
+/**
+ * 点击一个靠 aria-label 定位的元素。默认补一个空事件对象——行内按钮普遍会先
+ * `event.stopPropagation()`（行本身是 drop 目标），不传参就会当场抛错。
+ */
 function clickByAriaLabel(root: ReactTestInstance, label: string) {
   const matches = root.findAll((node) => node.props['aria-label'] === label)
   if (matches.length === 0) throw new Error(`未找到 aria-label=${label} 的元素`)
-  act(() => matches[0].props.onClick())
+  act(() => matches[0].props.onClick({ stopPropagation: () => {}, preventDefault: () => {} }))
 }
 
 /** 菜单项是带 `role="menuitem"` 的按钮，取文本相等的那一个。 */
@@ -237,13 +242,14 @@ describe('PresetProjectTree', () => {
     expect(getNodeText(root.root)).toContain('竖版展示')
   })
 
-  it('没配过的地方显示为「跟随全局」而不是空着', () => {
+  it('行上不挂任何分类 / 来源 / 状态标签，没绑定就只剩一个节点名', () => {
+    // 层级靠缩进表达，不必再标「产品线 / 产品」；「跟随全局 / 本级自定义 / 继承自 X / 不加水印」
+    // 全是注释，一排灰底小字会把树压成两行一个节点。没有绑定 → 行下那排整块不渲染。
     const root = render()
-    expect(rowText(root.root, LINE)).toContain('跟随全局')
-    expect(rowText(root.root, LINE)).toContain('不加水印')
+    expect(rowText(root.root, LINE)).toBe('智能客服')
   })
 
-  it('点节点上的「+」把当前选中的水印绑上去，子方向显示为继承', () => {
+  it('点节点上的「+」把当前选中的水印绑上去，子方向拿到同一份值', () => {
     const root = render()
     clickByAriaLabel(root.root, '把水印绑定到 智能客服')
 
@@ -251,8 +257,9 @@ describe('PresetProjectTree', () => {
     expect(boundPresetIds(root.root, LINE)).toEqual(['preset-a'])
 
     expand(root.root, '智能客服')
-    expect(rowText(root.root, PRODUCT)).toContain('继承自「智能客服」')
+    // 值确实继承下来了，但行上不再标「继承自谁」——来源是内部实现，用户要看的是绑了哪几套
     expect(boundPresetIds(root.root, PRODUCT)).toEqual(['preset-a'])
+    expect(rowText(root.root, PRODUCT)).not.toContain('继承自')
   })
 
   it('从预设库把水印拖到某个方向上即完成绑定', () => {
@@ -264,8 +271,8 @@ describe('PresetProjectTree', () => {
 
     expect(storedPresetIds(DIRECTION)).toEqual(['preset-b'])
     expect(boundPresetIds(root.root, DIRECTION)).toEqual(['preset-b'])
-    // 拖过去的是方向自己那一级，来源标记必须是「本级自定义」
-    expect(rowText(root.root, DIRECTION)).toContain('本级自定义')
+    // 「拖到哪一级就落在哪一级」由存储值证明，行上不再标「本级自定义」
+    expect(rowText(root.root, DIRECTION)).not.toContain('本级自定义')
   })
 
   it('库多选的水印点一次「+」就全部绑上，顺序即产出顺序', () => {
@@ -323,10 +330,13 @@ describe('PresetProjectTree', () => {
     // 只写了这一个字段 → 整条记录被删掉，回到「未配置」
     expect(useProjectTreeParamsStore.getState().params[DIRECTION]).toBeUndefined()
     expect(boundPresetIds(root.root, DIRECTION)).toEqual(['preset-a'])
-    expect(rowText(root.root, DIRECTION)).toContain('继承自「智能客服」')
+    // 回到继承态后连「恢复继承」这个出口也一起消失（本级已经没有覆盖可摘）
+    expect(
+      findNodeRow(root.root, DIRECTION).findAll((node) => node.props['aria-label'] === '恢复 竖版展示 的水印继承'),
+    ).toHaveLength(0)
   })
 
-  it('显式「这个方向不加水印」与「还没配」在界面上能区分', () => {
+  it('显式「这个方向不加水印」不再靠标签表达，只剩「恢复继承」这个出口', () => {
     useProjectTreeParamsStore.setState({
       params: { [DIRECTION]: { postprocess: { watermarkPresetIds: [] } } },
     })
@@ -334,12 +344,17 @@ describe('PresetProjectTree', () => {
     expand(root.root, '智能客服')
     expand(root.root, '机器人')
 
-    expect(rowText(root.root, DIRECTION)).toContain('本级自定义')
-    expect(rowText(root.root, DIRECTION)).toContain('不加水印')
-    // 显式空数组是可恢复继承的，要给出出口
+    // 撤掉「本级自定义 / 不加水印」之后，显式空数组在行上就是一片空白——视觉上等于「没有水印」
+    expect(boundPresetIds(root.root, DIRECTION)).toEqual([])
+    expect(rowText(root.root, DIRECTION)).not.toContain('不加水印')
+    // 但它仍是「本级表过态」而不是「没表态」，必须留一条回到继承的路。
+    // 没表过态的兄弟节点没有这个出口 —— 这是两者现在唯一可见的区别。
     expect(
       findNodeRow(root.root, DIRECTION).findAll((node) => node.props['aria-label'] === '恢复 竖版展示 的水印继承'),
     ).toHaveLength(1)
+    expect(
+      findNodeRow(root.root, PRODUCT).findAll((node) => node.props['aria-label'] === '恢复 机器人 的水印继承'),
+    ).toHaveLength(0)
   })
 
   it('绑定的预设被删掉时给出失效提示，不静默少显示', () => {
@@ -368,21 +383,16 @@ describe('PresetProjectTree', () => {
     // 而用户要做的是去后处理里改启用范围，不是在树上折腾水印。
     usePostprocessMediaStore.setState({ selectedCollectionIds: [] })
     const root = render()
-    expect(rowText(root.root, LINE)).not.toContain('未启用')
-    expect(rowText(root.root, LINE)).toContain('跟随全局')
+    expect(rowText(root.root, LINE)).toBe('智能客服')
   })
 
-  it('「按渠道」入口就在树上，点开就地改该渠道专属的水印', () => {
+  it('「按渠道」是节点行上一个图标入口而不是标签，点开就地改该渠道专属的水印', () => {
     // 归属的编辑入口只有树这一个。渠道分叉（同一方向在厂商/百度叠不同水印）也必须在这里改，
-    // 否则源表那 56 个按渠道分叉的方向就没有地方维护。
+    // 否则源表那 56 个按渠道分叉的方向就没有地方维护。但它是**动作**，不该占树的一行。
     const root = render()
 
-    const channelButton = findNodeRow(root.root, LINE).find(
-      (node) => getNodeText(node) === '按渠道' && typeof node.props.onClick === 'function',
-    )
-    act(() => {
-      channelButton!.props.onClick({ stopPropagation: () => {} })
-    })
+    expect(rowText(root.root, LINE)).not.toContain('按渠道')
+    clickByAriaLabel(root.root, '智能客服 的按渠道水印')
     expect(getNodeText(root.root)).toContain('勾选 = 该渠道单独用这套')
 
     // 第一个渠道（厂商）下的第一个预设：勾上 → 落成该渠道的显式数组

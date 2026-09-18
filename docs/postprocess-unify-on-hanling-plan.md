@@ -336,6 +336,24 @@
     （判 `undefined` 而非 `length`：`[]` 是「明确不加水印」），所以产出预览的条数与实际产出一致。
     全局 `watermarkPresetIds` 从此只作「树里没表态的方向」的兜底值，面板里不再编辑它。
 
+- **归属树的标签全撤（2026-09-18 第三轮）**：✅ 完成。
+  杰哥：「保持树结构清晰简洁，移除所有用于标注的标签，例如『产品线』『跟随产品』等，不保留任何此类
+  分类或注释信息」。
+  - **删掉三类纯注释**：分类（`PROJECT_NODE_KIND_LABELS` →「产品线 / 产品 / 方向」，本组件不再 import）、
+    来源（`renderSourceChip` 整段：`本级自定义` / `继承自「X」` / `跟随全局`）、状态（`不加水印`）。
+    层级本来就有**缩进**在表达（`INDENT_CLASS`），再标一遍只是噪音。
+  - **行下那排改成按需渲染**（`hasWatermarkRow = 有绑定 || 有失效引用 || overridden`）→
+    **没有绑定的节点就是一个节点一行**。改前那排因为「跟随全局」恒存在而永远渲染，把每个节点都撑成两行，
+    这才是树看起来挤的主因。
+  - **「按渠道」从 chip 改成操作区图标**（`Layers3Icon`，`aria-label="{节点名} 的按渠道水印"`）：
+    它是**动作**不是注释，但也不该占掉一行。有渠道分叉时点亮成 `ds-accent`，点开仍在行下就地展开。
+    入口必须常驻——源表里 56 个方向的水印是按渠道给的，收进「更多」菜单就没人找得到了。
+  - ⚠️ **代价（知情取舍）**：`undefined`（继承）与 `[]`（显式不加水印）在树上不再有标签可区分，
+    只剩「恢复继承」出口的有无。要看逐方向的生效明细，走后处理面板的「水印归属」区块。
+    守门用例已改成守住这条出口本身（`PresetProjectTree.test.tsx`）。
+  - **保留**（都不是分类 / 注释）：水印 chip 本身、`已失效 N` 告警、`+N` 折叠提示、`恢复继承`，
+    以及三个动作入口（绑定 `+` / 按渠道 / 更多）。
+
 **已完成部分的关键顺序**（下次接着做时照用）：先删消费方 → 再剥字段 → 最后清 store + 删纯逻辑。
 反过来的话，剥字段会一次性炸出 70+ 个编译错误，分不清哪些来自「要删的文件」、哪些来自「要改的文件」。
 
@@ -354,7 +372,7 @@
 | `src/features/postprocess/renderVariant.ts`                  | `renderWithMaxKb`（尺寸压缩 + 水印叠加）                                                           |
 | `src/features/postprocess/PostprocessDistributionFields.tsx` | 分发表单（面板与节点参数弹窗共用）                                                                 |
 | `src/features/projectTree/params.ts`                         | 继承链遍历与逐级合并                                                                               |
-| `src/features/composite/components/PresetProjectTree.tsx`    | 水印归属树：项目树层级管理 + 归属（拖入绑定、按渠道就地编辑）；**只管归属，不碰其他参数**          |
+| `src/features/composite/components/PresetProjectTree.tsx`    | 水印归属树：项目树层级管理 + 归属（拖入绑定、按渠道图标就地编辑）；**只管归属，行上不挂任何分类 / 来源 / 状态标签**          |
 | `src/features/composite/lib/compositePresetLibrary.ts`       | 水印库筛选 + 跨组件拖拽 MIME（`PRESET_LIBRARY_DRAG_TYPE`，载荷 = id 数组 JSON）                    |
 | `src/features/composite/lib/presetBinding.ts`                | 单个 / 批量绑定纯函数（`bindPresetsToNode` 保住顺序即产出顺序）                                    |
 
@@ -372,7 +390,7 @@
 | `features/projectTree/params.ts`                      | `normalizeByMediaOverride` / `mergeByMediaOverride`；`resolveProjectPostprocessSlice` 加 `mediaId` |
 | `features/projectTree/ProjectNodeParamsDialog.tsx`    | 「按渠道分别设置」区块（只剩输出目录一项，默认收起）                                               |
 | `features/postprocess/taskPostprocess.ts`             | 按渠道拆桶（+ 纯净版单独一桶）                                                                     |
-| `features/composite/components/PresetProjectTree.tsx` | 节点行「按渠道 N」chip＝入口，点开就地展开渠道 × 预设勾选表                                        |
+| `features/composite/components/PresetProjectTree.tsx` | 节点行「按渠道」**图标**＝入口（第三轮起不再是 chip / 标签），点开就地展开渠道 × 预设勾选表          |
 
 - **合并是逐渠道的，不是整份替换**。界面上一次只改一个渠道的一个字段，整份替换会把没提到的渠道
   **静默抹掉**（改完百度发现头条没了，还看不到提示）。渠道内的 `undefined` 表示「恢复继承」，
