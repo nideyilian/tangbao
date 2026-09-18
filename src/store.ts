@@ -2508,9 +2508,6 @@ interface AppState {
   // 模式
   appMode: AppMode
   setAppMode: (mode: AppMode) => void
-  /** 水印预设工作区是否以弹窗形式打开（不切走素材库）；不参与持久化 */
-  postprocessDialogOpen: boolean
-  setPostprocessDialogOpen: (open: boolean) => void
   // 设置
   settings: AppSettings
   setSettings: (s: Partial<AppSettings>) => void
@@ -3379,8 +3376,6 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       // Mode
       appMode: 'gallery',
-      postprocessDialogOpen: false,
-      setPostprocessDialogOpen: (open) => set({ postprocessDialogOpen: open }),
       setAppMode: (appMode) => {
         if (appMode === 'gallery') {
           const state = get()
@@ -3397,6 +3392,16 @@ export const useStore = create<AppState>()(
             agentEditingRoundId: null,
             ...restored,
           }))
+          return
+        }
+
+        if (appMode === 'postprocess') {
+          // 水印预设工作区：与素材库 / Agent 同级的第三个 tab。它没有输入栏，
+          // 只需把两边的输入草稿存下来再切——否则从 Agent 切过来会丢掉正在写的那段提示词。
+          const state = get()
+          const agentInputDrafts = saveActiveAgentInputDrafts(state)
+          const galleryInputDraft = saveGalleryInputDraft(state)
+          set({ appMode, agentInputDrafts, galleryInputDraft, agentMobileHeaderVisible: true })
           return
         }
 

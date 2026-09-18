@@ -363,10 +363,40 @@ describe('PresetProjectTree', () => {
     expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe('preset-b')
   })
 
-  it('不在启用范围内的方向会标出来（配了也不产出）', () => {
+  it('树上不显示与「用哪几套水印」无关的后处理状态', () => {
+    // 启用范围属于后处理的配置，不归归属树管。留在树上会让「未启用」看起来像归属失效，
+    // 而用户要做的是去后处理里改启用范围，不是在树上折腾水印。
     usePostprocessMediaStore.setState({ selectedCollectionIds: [] })
     const root = render()
-    expect(rowText(root.root, LINE)).toContain('未启用')
+    expect(rowText(root.root, LINE)).not.toContain('未启用')
+    expect(rowText(root.root, LINE)).toContain('跟随全局')
+  })
+
+  it('「按渠道」入口就在树上，点开就地改该渠道专属的水印', () => {
+    // 归属的编辑入口只有树这一个。渠道分叉（同一方向在厂商/百度叠不同水印）也必须在这里改，
+    // 否则源表那 56 个按渠道分叉的方向就没有地方维护。
+    const root = render()
+
+    const channelButton = findNodeRow(root.root, LINE).find(
+      (node) => getNodeText(node) === '按渠道' && typeof node.props.onClick === 'function',
+    )
+    act(() => {
+      channelButton!.props.onClick({ stopPropagation: () => {} })
+    })
+    expect(getNodeText(root.root)).toContain('勾选 = 该渠道单独用这套')
+
+    // 第一个渠道（厂商）下的第一个预设：勾上 → 落成该渠道的显式数组
+    const firstUnchecked = root.root
+      .findAll((node) => node.type === 'input' && node.props.type === 'checkbox')
+      .find((node) => node.props.checked === false)
+    act(() => {
+      firstUnchecked!.props.onChange({ target: { checked: true } })
+    })
+
+    const byMedia = useProjectTreeParamsStore.getState().params[LINE]?.postprocess?.byMedia ?? {}
+    const entries = Object.entries(byMedia)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]![1].watermarkPresetIds).toEqual([PRESET_A.id])
   })
 
   it('绑定已满一行时折叠成 +N', () => {

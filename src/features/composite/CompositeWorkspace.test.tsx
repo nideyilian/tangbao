@@ -14,7 +14,10 @@ describe('CompositeWorkspace', () => {
     })
 
     const workspace = renderer.root.findByType('main')
-    expect(workspace.props.className).toContain('h-[calc(100vh-var(--app-header-offset))]')
+    // 顶栏在自己的 return 里放了一块等高的 invisible 占位，所以「视口 − 顶栏高度」即整屏；
+    // 窄屏顶栏多一行工作区切换，与素材库同口径取 7rem。
+    expect(workspace.props.className).toContain('h-[calc(100dvh-7rem)]')
+    expect(workspace.props.className).toContain('sm:h-[calc(100dvh-var(--app-header-offset))]')
     expect(workspace.props.className).toContain('overflow-hidden')
   })
 

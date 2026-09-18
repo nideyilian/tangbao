@@ -142,6 +142,21 @@ export interface PostprocessProjectTarget {
   product: string
   /** 方向名（第三级；用户自己起的名字，不做尺寸推导） */
   direction: string
+  /**
+   * 该方向**归属到**的水印预设 id（项目树参数层解析出来的结果），顺序即产出顺序。
+   *
+   * 由调用方注入——`lib` 不能反向依赖项目树参数层。`undefined` = 没给，退回外层那份水印列表；
+   * **空数组是有效值**，表示「这个方向明确不加水印」。这两件事必须分开判（用 `undefined` 而不是
+   * `length`），否则「少一个预设」会被写成「一个都不要」。
+   */
+  watermarkPresetIds?: string[]
+  /**
+   * 同上，但**按渠道**细分（键为媒体 id）；命中时优先于 `watermarkPresetIds`。
+   *
+   * 同一个方向的厂商 / 百度 / 头条叠的合规水印常常不同，而水印是「每个渠道尺寸各出一份」的
+   * 维度之一，不按渠道给就算不出正确的产出条数。纯净版不叠水印，所以它不在这张表里。
+   */
+  watermarkPresetIdsByMedia?: Record<string, string[]>
 }
 
 /** 产出用的水印预设引用：只带 id 与展示名，让 lib 层不依赖 composite 的类型。 */
@@ -317,8 +332,17 @@ export interface BuildPostprocessOutputsInput {
   /**
    * 水印预设维度；缺省或空数组 → 每个尺寸只出 1 个不叠水印的单元。
    * 非空时再乘一层：同一尺寸按预设各出一份，顺序即产出顺序。
+   *
+   * 项目自带归属（`project.watermarkPresetIds`）时以归属为准，这份只作兜底。
    */
   watermarks?: PostprocessWatermarkRef[]
+  /**
+   * 预设 id → 展示名；用来给项目级归属解出名字。
+   *
+   * 归属只带 id（它来自项目树参数层，那边不认识 composite 的预设对象），
+   * 查不到名字时退回 id——宁可在文件名里看见 id，也不要出现一个空段。
+   */
+  presetNames?: Record<string, string>
 }
 
 /** 按 id 去重（保序），丢掉空 id 的条目。 */
@@ -365,6 +389,7 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
   const direction = input.direction ?? (sizeValid ? sourceDirection : 'landscape')
   const mediaIds = dedupeMediaIds(input.mediaIds)
   const watermarks = dedupeWatermarks(input.watermarks)
+  const presetNames = input.presetNames ?? {}
   // 项目维度缺省用单个 null 占位，让下面的循环只有一份实现
   const projects: (PostprocessProjectTarget | null)[] = input.projects?.length ? input.projects : [null]
 
@@ -374,6 +399,15 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
 
   for (const project of projects) {
     const projectField = project ? { project } : {}
+    // 项目自带的归属优先：同一个方向在厂商 / 百度 / 头条叠的水印本来就不同，用一份全局列表
+    // 展开出来的清单跟实际产出对不上，用户就没法拿它确认配置。
+    // 一律判 `undefined` 而不是 `length`——空数组是「这个方向明确不加水印」，跟「没给」是两件事。
+    const watermarksForMedia = (mediaId: string): PostprocessWatermarkRef[] => {
+      const byMedia = project?.watermarkPresetIdsByMedia?.[mediaId]
+      const declared = byMedia !== undefined ? byMedia : project?.watermarkPresetIds
+      if (declared === undefined) return watermarks
+      return dedupeWatermarks(declared.map((id) => ({ id, name: presetNames[id] ?? id })))
+    }
 
     for (const mediaId of mediaIds) {
       if (mediaId === PURE_MEDIA_ID) {
@@ -402,6 +436,8 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
         }
         continue
       }
+      // 逐渠道算一次而不是在尺寸循环里反复算：水印是「每渠道各出一套」的维度
+      const mediaWatermarks = watermarksForMedia(mediaId)
       for (const size of matchMediaSizes(target, direction)) {
         const unit: PostprocessOutputUnit = {
           mediaId: target.id,
@@ -415,11 +451,11 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
           ...projectField,
         }
         // 没配预设 → 该尺寸只出一份不叠水印的；配了 → 每个预设各出一份
-        if (watermarks.length === 0) {
+        if (mediaWatermarks.length === 0) {
           units.push(unit)
           continue
         }
-        for (const watermark of watermarks) units.push({ ...unit, watermark })
+        for (const watermark of mediaWatermarks) units.push({ ...unit, watermark })
       }
     }
   }

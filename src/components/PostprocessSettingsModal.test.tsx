@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetOverlayManager } from '../design-system/overlayManager'
 import { useAssetLibraryStore } from '../features/assetLibrary/store'
 import { useCompositeV2Store } from '../features/composite/storeV2'
+import { useProjectTreeParamsStore } from '../features/projectTree/storeProjectTreeParams'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from '../lib/postprocessNaming'
 import type { AssetCollection } from '../types'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from '../storePostprocessMedia'
@@ -169,39 +170,53 @@ describe('PostprocessSettingsModal', () => {
     expect(body).toContain('缺少 {seq}')
   })
 
-  it('水印预设是多选，文案讲清「一个都不勾 = 不叠水印」', () => {
+  it('水印归属列的是「各方向实际会叠的」，不是水印库全集', () => {
+    // 归属只在水印工作区的树上改；面板里列出「库里有哪些水印」回答不了
+    // 「这批图实际会叠什么」，而后者才是用户在产出前要确认的。
+    act(() => {
+      useProjectTreeParamsStore.setState({
+        params: { 'direction-a': { postprocess: { watermarkPresetIds: ['preset-a'] } } },
+      })
+      usePostprocessMediaStore.getState().toggleSelectedCollection('direction-a')
+    })
     const body = render()
-    expect(body).toContain('水印预设')
-    expect(body).toContain('一个都不勾 = 不叠水印')
+
+    expect(body).toContain('水印归属')
+    expect(body).toContain('机器人 / 竖版展示')
+    expect(body).toContain('糖包水印')
+    // 面板里不再提供「勾选水印」的入口，避免归属有两个来源
+    expect(body).not.toContain('一个都不勾 = 不叠水印')
   })
 
-  it('「管理水印预设」入口直接打开水印预设工作区', () => {
-    // 水印编辑（图层/画布）在独立工作区里做，面板只负责挑预设；
-    // 没有这个入口，用户勾不到预设时不知道该去哪儿建。
-    useStore.setState({ postprocessDialogOpen: false })
+  it('「设置水印归属」入口切到水印预设工作区', () => {
+    useStore.setState({ appMode: 'gallery' })
     render()
 
     act(() => {
-      findButton('管理水印预设').click()
+      findButton('设置水印归属').click()
     })
 
-    expect(useStore.getState().postprocessDialogOpen).toBe(true)
+    expect(useStore.getState().appMode).toBe('postprocess')
   })
 
-  it('没有水印预设时，空态文案指向新入口而不是已退役的「预设管理」标签页', () => {
+  it('没有启用范围时不列水印归属，而是给空态', () => {
     useCompositeV2Store.setState({ presets: [] })
     const body = render()
 
-    expect(body).toContain('还没有水印预设')
+    expect(body).toContain('勾选启用范围后，这里显示各方向实际会叠的水印。')
     expect(body).not.toContain('后期处理 → 预设管理')
   })
 
-  it('引用了不存在的水印预设时提示会整批跳过', () => {
+  it('归属里引用了不存在的水印预设时提示会整批跳过', () => {
     act(() => {
-      usePostprocessMediaStore.getState().setWatermarkPresetIds(['preset-ghost'])
+      useProjectTreeParamsStore.setState({
+        params: { 'direction-a': { postprocess: { watermarkPresetIds: ['preset-ghost'] } } },
+      })
+      usePostprocessMediaStore.getState().toggleSelectedCollection('direction-a')
     })
     const body = render()
     expect(body).toContain('引用的水印预设已不存在')
+    expect(body).toContain('已失效')
   })
 
   it('项目勾选里出现已删除的 id 时给出跳过提示', () => {

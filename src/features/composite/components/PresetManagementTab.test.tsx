@@ -95,13 +95,14 @@ describe('PresetManagementTab', () => {
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-management-workspace')).toHaveLength(
       1,
     )
-    // 左栏只有两段：统一树 + 水印库。预设组退役后不该再有第三段或第二根分隔条 ——
-    // 「树 / 组 / 库」三段两分隔条是这次要消灭的形态。
+    // 三栏并列：归属树 | 水印库 | 画布。
+    // 左栏不再分段（树与库各占一栏），也就不需要分隔条；「预设详情」栏退役后由水印库补位。
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-library')).toHaveLength(1)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-rail')).toHaveLength(0)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(0)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(0)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(0)
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'canvas-pane')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'logo-sidebar')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'layer-bottom-panel')).toHaveLength(1)
@@ -113,30 +114,6 @@ describe('PresetManagementTab', () => {
       (node) => typeof node.props.className === 'string' && node.props.className.includes('min-h-[680px]'),
     )
     expect(fixedMinimumHeightNodes).toHaveLength(0)
-  })
-
-  it('resizes the rail split from the tree divider', () => {
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const divider = renderer!.root.findByProps({ 'data-layout': 'tree-resizer' })
-    const pointerTarget = {
-      parentElement: { getBoundingClientRect: () => ({ top: 100, height: 400 }) },
-      setPointerCapture: () => {},
-      releasePointerCapture: () => {},
-    }
-    act(() => {
-      divider.props.onPointerDown({ pointerId: 1, clientY: 300, currentTarget: pointerTarget })
-      divider.props.onPointerMove({ pointerId: 1, clientY: 220, currentTarget: pointerTarget })
-      divider.props.onPointerUp({ pointerId: 1, currentTarget: pointerTarget })
-    })
-
-    expect(
-      renderer!.root.find((node) => node.props['data-layout'] === 'preset-rail').props.style.gridTemplateRows,
-    ).toContain('30%')
   })
 
   it('replaces an existing LOGO layer instead of adding an image layer', async () => {
@@ -189,8 +166,8 @@ describe('PresetManagementTab', () => {
     })
   })
 
-  it('selects the preset base canvas from the three supported sizes', () => {
-    const preset = createDefaultCompositeV2Preset(1)
+  it('基准尺寸选择器挂在画布工具栏上（原「预设详情」栏已退役）', () => {
+    const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-size' }
     useCompositeV2Store.setState({
       presets: [preset],
       selectedPreviewPresetId: preset.id,
@@ -209,9 +186,9 @@ describe('PresetManagementTab', () => {
         label: getNodeText(option),
       })),
     ).toEqual([
-      { value: '1280x720', label: '1280×720' },
-      { value: '1080x1920', label: '1080×1920' },
-      { value: '800x800', label: '800×800' },
+      { value: '1280x720', label: '1280 × 720' },
+      { value: '1080x1920', label: '1080 × 1920' },
+      { value: '800x800', label: '800 × 800' },
     ])
 
     act(() => {
@@ -384,47 +361,24 @@ describe('PresetManagementTab', () => {
     expect(getNodeText(renderer!.root)).toContain('Beta Preset')
   })
 
-  it('左栏只分两段：统一树在上、水印库在下，中间一根分隔条', () => {
+  it('三栏并列：归属树 | 水印库 | 画布，没有分隔条也不再分段', () => {
     let renderer: ReturnType<typeof create>
     act(() => {
       renderer = create(<PresetManagementTab />)
     })
     mountedRenderers.push(renderer!)
 
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-rail')).toHaveLength(1)
-    expect(
-      renderer!.root.find((node) => node.props['data-layout'] === 'preset-rail').props.style.gridTemplateRows,
-    ).toContain('45%')
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(1)
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-library')).toHaveLength(1)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-rail')).toHaveLength(0)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(0)
     // 预设组退役后不再有「组」这一层，也就不该再有第二根分隔条
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(0)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(0)
-  })
 
-  it('拖动树与库之间的分隔条只改这一处比例', () => {
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const divider = renderer!.root.findByProps({ 'data-layout': 'tree-resizer' })
-    const pointerTarget = {
-      parentElement: { getBoundingClientRect: () => ({ top: 100, height: 400 }) },
-      setPointerCapture: () => {},
-      releasePointerCapture: () => {},
-    }
-    act(() => {
-      divider.props.onPointerDown({ pointerId: 1, clientY: 300, currentTarget: pointerTarget })
-      divider.props.onPointerMove({ pointerId: 1, clientY: 260, currentTarget: pointerTarget })
-      divider.props.onPointerUp({ pointerId: 1, currentTarget: pointerTarget })
-    })
-
-    expect(
-      renderer!.root.find((node) => node.props['data-layout'] === 'preset-rail').props.style.gridTemplateRows,
-    ).toContain('40%')
+    // 水印库与归属树同屏是硬要求：绑定的动作就是「从库里拖到一个方向上」，两者不同屏就做不成
+    const grid = renderer!.root.find((node) => node.props['data-layout'] === 'preset-management-workspace')
+    expect(grid.props.className).toContain('grid-cols-[300px_260px_minmax(0,1fr)]')
   })
 
   it('从预设库拖一个水印到树节点上，绑定的就是这个预设', () => {

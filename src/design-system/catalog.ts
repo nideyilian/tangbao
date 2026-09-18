@@ -637,7 +637,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/components/PostprocessSettingsModal.tsx',
-    responsibility: '后处理编排面板：项目 × 媒体 × 尺寸 × 水印预设的批量产出配置、命名模板与产出预览',
+    responsibility: '后处理编排面板：启用范围、媒体与尺寸、输出与命名、水印归属汇总（来源为项目树参数）与产出预览',
     decision: 'compose',
     targets: [
       'Dialog',
@@ -1010,13 +1010,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/components/PresetManagementTab.tsx',
-    responsibility: '水印预设工作区左栏（统一树 + 水印库两段）与画布编辑',
+    responsibility: '水印预设工作区三栏装配（归属树 / 水印库 / 画布编辑）',
     decision: 'retain',
     targets: ['Tabs', 'Panel', 'ListRow', 'Menu', 'EmptyState'],
   },
   {
     module: 'src/features/composite/components/PresetProjectTree.tsx',
-    responsibility: '水印统一树：项目树层级管理（新建/改名/删除/移动）+ 水印归属（拖入绑定）',
+    responsibility: '水印归属树：项目树层级管理（新建/改名/删除/移动）+ 归属（拖入绑定、按渠道就地设置）',
     decision: 'retain',
     targets: ['Panel', 'ListRow', 'IconButton', 'Button', 'EmptyState'],
   },
@@ -1342,9 +1342,9 @@ export const pageCoverage: PageCoverage[] = [
   },
   {
     id: 'postprocess',
-    workspace: '后期/合成工作台',
-    entry: '80% 界面弹窗（postprocessDialogOpen），素材库保持底层可见',
-    differences: ['80% 界面弹窗', '图层拖拽编辑', 'Ctrl+Z 撤销'],
+    workspace: '水印预设工作区',
+    entry: "appMode==='postprocess'（顶栏第三个 tab，与素材库 / Agent 同级）",
+    differences: ['与素材库/Agent 同级 tab', '图层拖拽编辑', 'Ctrl+Z 撤销'],
     document: 'design-system/tangbao/pages/postprocess.md',
   },
   {

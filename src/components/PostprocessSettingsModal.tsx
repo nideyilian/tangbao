@@ -40,6 +40,8 @@ import { useCompositeV2Store } from '../features/composite/storeV2'
 import PostprocessDistributionFields from '../features/postprocess/PostprocessDistributionFields'
 import ProjectNodeParamsDialog from '../features/projectTree/ProjectNodeParamsDialog'
 import ProjectTreeWorkbench from '../features/projectTree/ProjectTreeWorkbench'
+import { resolveNodeWatermarkBinding } from '../features/projectTree/params'
+import { useProjectTreeParamsStore } from '../features/projectTree/storeProjectTreeParams'
 import {
   DEFAULT_POSTPROCESS_NAME_PATTERN,
   POSTPROCESS_NAME_TOKENS,
@@ -82,6 +84,9 @@ const DIRECTION_OPTIONS: Array<{ value: DirectionValue; label: string }> = [
 /** 方向不可预知时用于预览的示例尺寸，仅用于展示，不参与落盘。 */
 const FALLBACK_PREVIEW_SIZE = { width: 1024, height: 1024 }
 
+/** 水印归属明细默认列几条。启用范围动辄几十个方向，全铺开会把下面的分发给挤没。 */
+const BINDING_PREVIEW_LIMIT = 6
+
 function parseSourceSize(size: string): { width: number; height: number } | null {
   const match = /^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/.exec(size ?? '')
   if (!match) return null
@@ -116,14 +121,14 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   const setOutputDir = usePostprocessMediaStore((state) => state.setOutputDir)
   const setNamePattern = usePostprocessMediaStore((state) => state.setNamePattern)
   const setCreator = usePostprocessMediaStore((state) => state.setCreator)
-  const toggleWatermarkPreset = usePostprocessMediaStore((state) => state.toggleWatermarkPreset)
   const setAutoCompanionClean = usePostprocessMediaStore((state) => state.setAutoCompanionClean)
   const patchDistribution = usePostprocessMediaStore((state) => state.patchDistribution)
 
   const showToast = useStore((state) => state.showToast)
-  const setPostprocessDialogOpen = useStore((state) => state.setPostprocessDialogOpen)
+  const setAppMode = useStore((state) => state.setAppMode)
   const collections = useAssetLibraryStore((state) => state.collections)
   const presets = useCompositeV2Store((state) => state.presets)
+  const params = useProjectTreeParamsStore((state) => state.params)
 
   const config = useMemo(
     () => ({
@@ -153,24 +158,77 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   )
 
   const projectTree = useMemo(() => buildPostprocessProjectTree(collections), [collections])
-  const projectTargets = useMemo(
-    () => resolvePostprocessProjectTargets(collections, selectedCollectionIds),
-    [collections, selectedCollectionIds],
-  )
-  const missingProjectIds = useMemo(
-    () => findMissingProjectCollectionIds(collections, selectedCollectionIds),
-    [collections, selectedCollectionIds],
-  )
 
-  const parsedSource = useMemo(() => parseSourceSize(sourceSize), [sourceSize])
-  const previewSource = parsedSource ?? FALLBACK_PREVIEW_SIZE
-
-  /** 预设 id → 展示名：产出预览要按它展开「项目 × 媒体 × 尺寸 × 预设」的完整单元数。 */
+  /** 预设 id → 展示名：产出预览要按它展开单元数，归属只带 id，也靠它显示成人看得懂的名字。 */
   const presetNames = useMemo(() => {
     const names: Record<string, string> = {}
     for (const preset of presets) names[preset.id] = preset.name
     return names
   }, [presets])
+
+  /**
+   * 产出目标 = 启用范围内的每个节点，并**带上它归属到的水印**。
+   *
+   * 归属来自项目树参数层（水印工作区那棵树在改），**逐渠道**解析——同一个方向在
+   * 厂商 / 百度 / 头条叠的合规水印本来就不同，拿一份全局列表展开，预览出来的数量
+   * 跟实际产出对不上，用户就没法用它确认配置。
+   */
+  const projectTargets = useMemo(
+    () =>
+      resolvePostprocessProjectTargets(collections, selectedCollectionIds).map((target) => {
+        const byMedia: Record<string, string[]> = {}
+        for (const item of media) {
+          byMedia[item.id] = resolveNodeWatermarkBinding(
+            collections,
+            params,
+            target.collectionId,
+            watermarkPresetIds,
+            item.id,
+          ).presetIds
+        }
+        return {
+          ...target,
+          watermarkPresetIds: resolveNodeWatermarkBinding(collections, params, target.collectionId, watermarkPresetIds)
+            .presetIds,
+          watermarkPresetIdsByMedia: byMedia,
+        }
+      }),
+    [collections, selectedCollectionIds, params, watermarkPresetIds, media],
+  )
+
+  const missingProjectIds = useMemo(
+    () => findMissingProjectCollectionIds(collections, selectedCollectionIds),
+    [collections, selectedCollectionIds],
+  )
+
+  /**
+   * 「这个方向会叠哪几套水印」的汇总。
+   *
+   * 数据源是**归属**，不是水印库全集：列全集只回答了「有哪些水印可买」，
+   * 而用户在产出前要确认的是「这批图实际会叠什么」。
+   */
+  const watermarkBindingRows = useMemo(
+    () =>
+      projectTargets.map((target) => {
+        const ids = target.watermarkPresetIds ?? []
+        return {
+          collectionId: target.collectionId,
+          label: [target.product || target.line, target.direction].filter(Boolean).join(' / ') || target.collectionId,
+          names: ids.map((id) => presetNames[id] ?? id),
+          missingCount: ids.filter((id) => !presetNames[id]).length,
+        }
+      }),
+    [projectTargets, presetNames],
+  )
+
+  /** 树里没单独表态的方向会用这套；它也得有个地方让人看见，否则归属显得凭空少了一块。 */
+  const globalWatermarkNames = useMemo(
+    () => watermarkPresetIds.map((id) => presetNames[id] ?? id),
+    [watermarkPresetIds, presetNames],
+  )
+
+  const parsedSource = useMemo(() => parseSourceSize(sourceSize), [sourceSize])
+  const previewSource = parsedSource ?? FALLBACK_PREVIEW_SIZE
 
   const plan = useMemo(
     () => selectPostprocessOutputPlan(config, previewSource, projectTargets, presetNames),
@@ -186,6 +244,8 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [previewExpanded, setPreviewExpanded] = useState(false)
+  /** 水印归属明细是否展开全部方向 */
+  const [bindingExpanded, setBindingExpanded] = useState(false)
   /** 左栏点某个节点的「参数」→ 单节点参数弹窗（按 collectionId 存，逐级继承） */
   const [paramTarget, setParamTarget] = useState<string | null>(null)
   /** 左栏「参数表格」→ 完整工作台（结构增删改 + 各节点参数来源一览） */
@@ -218,6 +278,11 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   // 没有项目就没有产出目标：此时 `plan` 会退化成「单个匿名项目」，不能拿来当预览数量
   const previewUnits = projectTargets.length > 0 ? plan.units : []
   const visibleUnits = previewExpanded ? previewUnits : previewUnits.slice(0, 6)
+
+  const visibleBindingRows = bindingExpanded
+    ? watermarkBindingRows
+    : watermarkBindingRows.slice(0, BINDING_PREVIEW_LIMIT)
+  const hasMissingWatermarkPreset = watermarkBindingRows.some((row) => row.missingCount > 0)
 
   const chooseOutputDir = async () => {
     try {
@@ -487,53 +552,79 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
                   placeholder="供 {creator} 使用"
                 />
 
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-ds-text dark:text-ds-text">水印预设</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      data-testid="postprocess-manage-watermarks"
-                      title="打开水印预设工作区：编辑图层、画布与 LOGO"
-                      onClick={() => setPostprocessDialogOpen(true)}
-                    >
-                      管理水印预设
-                    </Button>
-                  </div>
-                  <p className="text-xs text-ds-muted dark:text-ds-muted">
-                    可多选：每个渠道尺寸各出一套，产物自动按预设名分子目录；一个都不勾 = 不叠水印。
-                  </p>
-                  {presets.length === 0 ? (
-                    <p className="text-xs text-ds-muted dark:text-ds-muted">
-                      还没有水印预设，点上方「管理水印预设」新建。
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
-                      {presets.map((preset) => (
-                        <Checkbox
-                          key={preset.id}
-                          checked={watermarkPresetIds.includes(preset.id)}
-                          onChange={() => toggleWatermarkPreset(preset.id)}
-                          label={preset.name}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-
                 <Switch
                   label="纯净版自动伴随"
                   description="勾了任一渠道媒体时，额外多产一份无水印原图。"
                   checked={autoCompanionClean}
                   onCheckedChange={setAutoCompanionClean}
                 />
-
-                {watermarkPresetIds.some((presetId) => !presets.some((preset) => preset.id === presetId)) && (
-                  <Alert tone="warning">
-                    引用的水印预设已不存在，归属此方向的图片会整批跳过——不静默降级成无水印，避免交付错的投放素材。
-                  </Alert>
-                )}
               </div>
+            </section>
+
+            {/* 水印归属：列的是**实际会叠的**，不是水印库里有哪些。
+                这里曾经是一排「把整个水印库列出来勾选」的框，于是归属有了两个来源
+                （树里按方向 → 这里按整批），同一个方向到底叠什么得两处对着看才能说清。 */}
+            <section>
+              <SectionHeader
+                title="水印归属"
+                description={`按图片所在方向自动取用，在「水印归属」树里改。树里没单独表态的方向跟随全局默认${
+                  globalWatermarkNames.length > 0 ? `（${globalWatermarkNames.join('、')}）` : '（当前为空 = 不加水印）'
+                }。`}
+                actions={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid="postprocess-open-watermark-binding"
+                    title="打开水印预设工作区：编辑水印图层，并设置各方向的归属"
+                    onClick={() => {
+                      onClose()
+                      setAppMode('postprocess')
+                    }}
+                  >
+                    设置水印归属
+                  </Button>
+                }
+              />
+              {watermarkBindingRows.length === 0 ? (
+                <EmptyState
+                  className="mt-2"
+                  title="勾选启用范围后，这里显示各方向实际会叠的水印。"
+                  description={presets.length === 0 ? '水印库里还没有预设。' : undefined}
+                />
+              ) : (
+                <ul className="mt-2 space-y-1">
+                  {visibleBindingRows.map((row) => (
+                    <li
+                      key={row.collectionId}
+                      className="flex items-center gap-2 rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-1.5 text-xs dark:border-ds-border dark:bg-ds-surface"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-ds-text dark:text-ds-text-subtle" title={row.label}>
+                        {row.label}
+                      </span>
+                      <span className="shrink-0 text-ds-muted dark:text-ds-muted">
+                        {row.names.length > 0 ? row.names.join('、') : '不加水印'}
+                      </span>
+                      {row.missingCount > 0 && (
+                        <span className="shrink-0 rounded-ds-lg border border-ds-danger/40 bg-ds-danger-subtle px-1.5 py-0.5 text-ds-danger">
+                          已失效 {row.missingCount}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                  {watermarkBindingRows.length > BINDING_PREVIEW_LIMIT && (
+                    <li>
+                      <Button variant="ghost" size="sm" onClick={() => setBindingExpanded((value) => !value)}>
+                        {bindingExpanded ? '收起' : `展开全部 ${watermarkBindingRows.length} 条`}
+                      </Button>
+                    </li>
+                  )}
+                </ul>
+              )}
+              {hasMissingWatermarkPreset && (
+                <Alert tone="warning" className="mt-1.5">
+                  有方向引用的水印预设已不存在，归属它的图片会整批跳过——不静默降级成无水印，避免交付错的投放素材。
+                </Alert>
+              )}
             </section>
 
             <section>

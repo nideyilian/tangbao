@@ -23,12 +23,6 @@ import { PresetLayerPanel } from './PresetLayerPanel'
 import { PresetProjectTree } from './PresetProjectTree'
 import { useAppDialog } from '../../../hooks/useAppDialog'
 
-const PRESET_BASE_SIZES = [
-  { value: '1280x720', label: '1280×720', width: 1280, height: 720 },
-  { value: '1080x1920', label: '1080×1920', width: 1080, height: 1920 },
-  { value: '800x800', label: '800×800', width: 800, height: 800 },
-] as const
-
 export function PresetManagementTab() {
   const store = useCompositeV2Store()
   const { openConfirmDialog, openInfoDialog } = useAppDialog()
@@ -40,6 +34,7 @@ export function PresetManagementTab() {
   const [editingPresetId, setEditingPresetId] = useState('')
   const [editingPresetName, setEditingPresetName] = useState('')
   const [draggingLibraryPresetId, setDraggingLibraryPresetId] = useState('')
+
   /**
    * 库里多选出来、准备批量绑定的预设。
    *
@@ -54,21 +49,6 @@ export function PresetManagementTab() {
     setLibrarySelection((prev) =>
       prev.includes(presetId) ? prev.filter((id) => id !== presetId) : [...prev, presetId],
     )
-
-  /** 读回上次拖的分隔条比例。越界或坏值一律回退默认，不让一次坏写把左栏挤成一条线。 */
-  function readStoredSplit(key: string, fallback: number) {
-    try {
-      const saved = localStorage.getItem(key)
-      if (saved) {
-        const val = parseFloat(saved)
-        if (Number.isFinite(val) && val >= 20 && val <= 80) return val
-      }
-    } catch {}
-    return fallback
-  }
-
-  const [treeSplit, setTreeSplit] = useState(() => readStoredSplit('tangbao-composite-tree-split', 45))
-  const resizingTreeRef = useRef(false)
 
   const sortedLogoAssets = useMemo(() => {
     const assets =
@@ -104,12 +84,6 @@ export function PresetManagementTab() {
       active = false
     }
   }, [store.projectLogos])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('tangbao-composite-tree-split', String(treeSplit))
-    } catch {}
-  }, [treeSplit])
 
   const visiblePresets = useMemo(() => filterPresetsByQuery(store.presets, query), [query, store.presets])
   const activePreset = store.presets.find((preset) => preset.id === store.selectedPreviewPresetId) ?? null
@@ -250,49 +224,6 @@ export function PresetManagementTab() {
     setEditingPresetName('')
   }
 
-  /** 按指针位置换算上栏占比。host 传分隔条的父容器（被分割的那个网格）。 */
-  function computeSplit(clientY: number, host: HTMLElement | null) {
-    if (!host) return null
-    const rect = host.getBoundingClientRect()
-    if (rect.height <= 0) return null
-    return Math.max(20, Math.min(80, ((clientY - rect.top) / rect.height) * 100))
-  }
-
-  function resizeTreePane(clientY: number, host: HTMLElement | null) {
-    if (!resizingTreeRef.current) return
-    const next = computeSplit(clientY, host)
-    if (next !== null) setTreeSplit(next)
-  }
-
-  /**
-   * 分隔条的指针事件三件套。`activeRef` 是「正在拖」的标记：
-   * 没有它，鼠标只是划过分隔条也会改尺寸。
-   */
-  function resizerProps(
-    dataLayout: string,
-    activeRef: React.MutableRefObject<boolean>,
-    resize: (clientY: number, host: HTMLElement | null) => void,
-  ) {
-    return {
-      'data-layout': dataLayout,
-      role: 'separator' as const,
-      'aria-orientation': 'horizontal' as const,
-      tabIndex: 0,
-      onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
-        activeRef.current = true
-        event.currentTarget.setPointerCapture(event.pointerId)
-        resize(event.clientY, event.currentTarget.parentElement)
-      },
-      onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
-        resize(event.clientY, event.currentTarget.parentElement)
-      },
-      onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => {
-        activeRef.current = false
-        event.currentTarget.releasePointerCapture(event.pointerId)
-      },
-    }
-  }
-
   function selectNewestLayer(presetId: string) {
     const latestPreset = useCompositeV2Store.getState().presets.find((preset) => preset.id === presetId)
     const newestLayerId = latestPreset?.layers.at(-1)?.id ?? ''
@@ -323,209 +254,159 @@ export function PresetManagementTab() {
   return (
     <div
       data-layout="preset-management-workspace"
-      className="grid h-full min-h-0 min-w-[1180px] flex-1 grid-cols-[260px_280px_minmax(0,1fr)] overflow-hidden border border-ds-border bg-ds-surface dark:border-ds-border dark:bg-ds-scrim"
+      className="grid h-full min-h-0 min-w-[1180px] flex-1 grid-cols-[300px_260px_minmax(0,1fr)] overflow-hidden border border-ds-border bg-ds-surface dark:border-ds-border dark:bg-ds-scrim"
     >
-      {/* 左栏两段：统一树 + 水印库。
-          树在最上且常驻——绑定的主要动作是「从下方库拖到某个方向」，两者不同屏就做不成。
-          预设组退役后左栏只剩这两段，再没有「组」这个中间层。 */}
-      <div
-        data-layout="preset-rail"
-        className="grid min-h-0 overflow-hidden border-r border-ds-border dark:border-ds-border"
-        style={{ gridTemplateRows: `${treeSplit}% 5px minmax(0, 1fr)` }}
+      {/* 左栏：水印归属。整栏只回答一件事——「这个产品 / 这个方向用哪几套水印」。
+          调参（输出目录、命名、渠道规格）全在后处理那边，这里一概不放：同一个参数
+          有两个入口，迟早会出现「在 A 改了、在 B 看不到」。 */}
+      <PresetProjectTree librarySelection={librarySelection} />
+
+      {/* 中栏：水印库。原先它在左栏下段、与归属树共用一条分隔条；「预设详情」栏在归属与
+          参数各自归位后已经空了，把库挪过来正好补上这个位置——拖出方（库）与拖入方（树）
+          仍在一屏之内，一次绑定不用换界面。 */}
+      <section
+        data-layout="preset-library"
+        className="flex min-h-0 flex-col overflow-hidden border-r border-ds-border bg-ds-surface dark:border-ds-border dark:bg-ds-scrim"
       >
-        <PresetProjectTree librarySelection={librarySelection} />
-
-        <div
-          {...resizerProps('tree-resizer', resizingTreeRef, resizeTreePane)}
-          className="cursor-row-resize border-y border-ds-border bg-ds-surface hover:bg-ds-primary-subtle dark:border-ds-border dark:bg-ds-scrim dark:hover:bg-ds-primary/10"
-        />
-
-        <section
-          data-layout="preset-library"
-          className="flex min-h-0 flex-col overflow-hidden bg-ds-surface dark:bg-ds-scrim"
-        >
-          <header className="flex items-center justify-between border-b border-ds-border px-3 py-2 dark:border-ds-border shrink-0">
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold">水印库</h2>
-              <p className="truncate text-xs text-ds-muted">
-                {librarySelection.length > 0 ? `已选 ${librarySelection.length} 个` : '拖到上方方向即可归属'}
-              </p>
-            </div>
+        <header className="flex items-center justify-between border-b border-ds-border px-3 py-2 dark:border-ds-border shrink-0">
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold">水印库</h2>
+            <p className="truncate text-xs text-ds-muted">
+              {librarySelection.length > 0 ? `已选 ${librarySelection.length} 个` : '拖到上方方向即可归属'}
+            </p>
+          </div>
+          <button
+            type="button"
+            title="新建预设"
+            onClick={() => {
+              store.createPreset('新预设')
+              useStore.getState().showToast('已创建预设', 'success')
+            }}
+            className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md border border-ds-border dark:border-ds-border hover:bg-ds-subtle dark:hover:bg-ds-subtle"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </header>
+        <div className="shrink-0 space-y-1.5 p-3">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="按名称搜索"
+            aria-label="搜索预设"
+            className="w-full rounded-md border border-ds-border bg-ds-surface px-3 py-2 text-sm dark:border-ds-border dark:bg-ds-scrim"
+          />
+          {librarySelection.length > 0 && (
             <button
               type="button"
-              title="新建预设"
-              onClick={() => {
-                store.createPreset('新预设')
-                useStore.getState().showToast('已创建预设', 'success')
-              }}
-              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md border border-ds-border dark:border-ds-border hover:bg-ds-subtle dark:hover:bg-ds-subtle"
+              onClick={() => setLibrarySelection([])}
+              className="cursor-pointer text-xs text-ds-muted underline-offset-2 hover:text-ds-primary hover:underline dark:text-ds-muted dark:hover:text-ds-primary"
             >
-              <Plus className="h-4 w-4" />
+              清空选择
             </button>
-          </header>
-          <div className="shrink-0 space-y-1.5 p-3">
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="按名称搜索"
-              aria-label="搜索预设"
-              className="w-full rounded-md border border-ds-border bg-ds-surface px-3 py-2 text-sm dark:border-ds-border dark:bg-ds-scrim"
-            />
-            {librarySelection.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setLibrarySelection([])}
-                className="cursor-pointer text-xs text-ds-muted underline-offset-2 hover:text-ds-primary hover:underline dark:text-ds-muted dark:hover:text-ds-primary"
-              >
-                清空选择
-              </button>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-0.5 px-2 pb-2">
-            {visiblePresets.length === 0 && (
-              <p className="px-2 py-3 text-xs text-ds-muted">没有匹配的水印。点右上角 + 新建一个。</p>
-            )}
-            {visiblePresets.map((preset) => (
-              <div
-                key={preset.id}
-                draggable={editingPresetId !== preset.id}
-                onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = 'copy'
-                  // 拖的那一行如果在多选里，就把整批带上。否则用户勾了三个却只绑上一个，
-                  // 界面上没有任何反馈——典型「操作了但结果不符预期」的静默失败。
-                  const payload = librarySelection.includes(preset.id) ? librarySelection : [preset.id]
-                  ;(event.dataTransfer as { setData?: (type: string, value: string) => void }).setData?.(
-                    LIBRARY_PRESET_DRAG_TYPE,
-                    serializePresetDragPayload(payload),
-                  )
-                  setDraggingLibraryPresetId(preset.id)
-                }}
-                onDragEnd={() => setDraggingLibraryPresetId('')}
-                className={`group relative rounded-md px-2 py-1.5 transition-colors ${preset.id === store.selectedPreviewPresetId ? 'bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary' : 'hover:bg-ds-subtle dark:hover:bg-ds-subtle'} ${draggingLibraryPresetId === preset.id ? 'opacity-50' : ''}`}
-              >
-                {editingPresetId === preset.id ? (
-                  <input
-                    autoFocus
-                    value={editingPresetName}
-                    onChange={(e) => setEditingPresetName(e.target.value)}
-                    onBlur={finishPresetRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        finishPresetRename()
-                      }
-                      if (e.key === 'Escape') {
-                        setEditingPresetId('')
-                        setEditingPresetName('')
-                      }
-                    }}
-                    className="w-full rounded border border-ds-primary/35 bg-ds-surface px-2 py-0.5 text-ds-sm text-ds-text outline-none dark:bg-ds-scrim dark:text-ds-text-subtle"
-                  />
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      checked={librarySelection.includes(preset.id)}
-                      onChange={() => toggleLibrarySelection(preset.id)}
-                      aria-label={`把水印「${preset.name}」加入待绑定`}
-                      className={
-                        librarySelection.includes(preset.id) ? 'shrink-0' : 'shrink-0 opacity-0 group-hover:opacity-100'
-                      }
-                    />
-                    <button
-                      type="button"
-                      aria-pressed={preset.id === store.selectedPreviewPresetId}
-                      onClick={() => store.setSelectedPreviewPresetId(preset.id)}
-                      onDoubleClick={() => beginPresetRename(preset.id, preset.name)}
-                      className="flex min-w-0 flex-1 items-center justify-between text-left"
-                    >
-                      <div className="truncate font-medium text-ds-sm">{preset.name}</div>
-                      <div className="ml-2 shrink-0 text-xs opacity-70">
-                        {preset.layers.length}层 · {preset.baseCanvas.width}x{preset.baseCanvas.height}
-                      </div>
-                    </button>
-                    {preset.id === store.selectedPreviewPresetId && (
-                      <div className="flex shrink-0 items-center gap-0.5">
-                        <button
-                          type="button"
-                          title="复制为新预设"
-                          onClick={() => {
-                            store.duplicatePreset(preset.id)
-                            useStore.getState().showToast(`已复制为新预设「${preset.name}」`, 'success')
-                          }}
-                          className="cursor-pointer p-1 text-ds-primary hover:bg-ds-primary-subtle rounded-md dark:text-ds-primary dark:hover:bg-ds-primary/20"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          title="删除预设"
-                          onClick={() =>
-                            openConfirmDialog({
-                              title: '删除预设？',
-                              message: `将永久删除预设「${preset.name}」。`,
-                              confirmText: '确认删除',
-                              tone: 'danger',
-                              action: () => {
-                                store.deletePreset(preset.id)
-                                useStore.getState().showToast(`已删除预设「${preset.name}」`, 'success')
-                              },
-                            })
-                          }
-                          className="cursor-pointer p-1 text-ds-danger hover:bg-ds-danger-subtle rounded-md dark:text-ds-danger dark:hover:bg-ds-danger/20"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <div className="flex min-h-0 flex-col border-r border-ds-border bg-ds-surface/30 dark:border-ds-border dark:bg-ds-scrim/10">
-        <header className="flex items-center justify-between border-b border-ds-border px-3 py-2 dark:border-ds-border shrink-0">
-          <h2 className="text-sm font-semibold">预设详情</h2>
-          {activePreset && (
-            <span className="text-sm text-ds-muted font-medium truncate max-w-[150px]">{activePreset.name}</span>
-          )}
-        </header>
-        <div className="flex-1 overflow-y-auto p-4">
-          {activePreset ? (
-            <div className="divide-y divide-gray-200 dark:divide-white/[0.08]">
-              {/* 基本设置 */}
-              <div className="space-y-4 pb-4">
-                <label className="block text-xs font-medium text-ds-muted">
-                  基准尺寸
-                  <select
-                    aria-label="基准尺寸"
-                    value={`${activePreset.baseCanvas.width}x${activePreset.baseCanvas.height}`}
-                    onChange={(event) => {
-                      const selected = PRESET_BASE_SIZES.find((size) => size.value === event.target.value)
-                      if (selected) {
-                        store.updatePreset(activePreset.id, {
-                          baseCanvas: { width: selected.width, height: selected.height },
-                        })
-                      }
-                    }}
-                    className="mt-1 w-full cursor-pointer rounded-md border border-ds-border bg-ds-surface px-3 py-2 text-sm dark:border-ds-border dark:bg-ds-scrim"
-                  >
-                    {PRESET_BASE_SIZES.map((size) => (
-                      <option key={size.value} value={size.value}>
-                        {size.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-ds-muted">请在左侧选择一个预设</div>
           )}
         </div>
-      </div>
+        <div className="flex-1 overflow-y-auto space-y-0.5 px-2 pb-2">
+          {visiblePresets.length === 0 && (
+            <p className="px-2 py-3 text-xs text-ds-muted">没有匹配的水印。点右上角 + 新建一个。</p>
+          )}
+          {visiblePresets.map((preset) => (
+            <div
+              key={preset.id}
+              draggable={editingPresetId !== preset.id}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = 'copy'
+                // 拖的那一行如果在多选里，就把整批带上。否则用户勾了三个却只绑上一个，
+                // 界面上没有任何反馈——典型「操作了但结果不符预期」的静默失败。
+                const payload = librarySelection.includes(preset.id) ? librarySelection : [preset.id]
+                ;(event.dataTransfer as { setData?: (type: string, value: string) => void }).setData?.(
+                  LIBRARY_PRESET_DRAG_TYPE,
+                  serializePresetDragPayload(payload),
+                )
+                setDraggingLibraryPresetId(preset.id)
+              }}
+              onDragEnd={() => setDraggingLibraryPresetId('')}
+              className={`group relative rounded-md px-2 py-1.5 transition-colors ${preset.id === store.selectedPreviewPresetId ? 'bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary' : 'hover:bg-ds-subtle dark:hover:bg-ds-subtle'} ${draggingLibraryPresetId === preset.id ? 'opacity-50' : ''}`}
+            >
+              {editingPresetId === preset.id ? (
+                <input
+                  autoFocus
+                  value={editingPresetName}
+                  onChange={(e) => setEditingPresetName(e.target.value)}
+                  onBlur={finishPresetRename}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      finishPresetRename()
+                    }
+                    if (e.key === 'Escape') {
+                      setEditingPresetId('')
+                      setEditingPresetName('')
+                    }
+                  }}
+                  className="w-full rounded border border-ds-primary/35 bg-ds-surface px-2 py-0.5 text-ds-sm text-ds-text outline-none dark:bg-ds-scrim dark:text-ds-text-subtle"
+                />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    checked={librarySelection.includes(preset.id)}
+                    onChange={() => toggleLibrarySelection(preset.id)}
+                    aria-label={`把水印「${preset.name}」加入待绑定`}
+                    className={
+                      librarySelection.includes(preset.id) ? 'shrink-0' : 'shrink-0 opacity-0 group-hover:opacity-100'
+                    }
+                  />
+                  <button
+                    type="button"
+                    aria-pressed={preset.id === store.selectedPreviewPresetId}
+                    onClick={() => store.setSelectedPreviewPresetId(preset.id)}
+                    onDoubleClick={() => beginPresetRename(preset.id, preset.name)}
+                    className="flex min-w-0 flex-1 items-center justify-between text-left"
+                  >
+                    <div className="truncate font-medium text-ds-sm">{preset.name}</div>
+                    <div className="ml-2 shrink-0 text-xs opacity-70">
+                      {preset.layers.length}层 · {preset.baseCanvas.width}x{preset.baseCanvas.height}
+                    </div>
+                  </button>
+                  {preset.id === store.selectedPreviewPresetId && (
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        title="复制为新预设"
+                        onClick={() => {
+                          store.duplicatePreset(preset.id)
+                          useStore.getState().showToast(`已复制为新预设「${preset.name}」`, 'success')
+                        }}
+                        className="cursor-pointer p-1 text-ds-primary hover:bg-ds-primary-subtle rounded-md dark:text-ds-primary dark:hover:bg-ds-primary/20"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="删除预设"
+                        onClick={() =>
+                          openConfirmDialog({
+                            title: '删除预设？',
+                            message: `将永久删除预设「${preset.name}」。`,
+                            confirmText: '确认删除',
+                            tone: 'danger',
+                            action: () => {
+                              store.deletePreset(preset.id)
+                              useStore.getState().showToast(`已删除预设「${preset.name}」`, 'success')
+                            },
+                          })
+                        }
+                        className="cursor-pointer p-1 text-ds-danger hover:bg-ds-danger-subtle rounded-md dark:text-ds-danger dark:hover:bg-ds-danger/20"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div
         data-layout="editor-shell"

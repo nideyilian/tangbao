@@ -20,6 +20,27 @@ type Props = {
 
 type PreviewBackdropMode = 'white' | 'transparent' | 'black'
 
+/**
+ * 基准尺寸候选。
+ *
+ * 从原「预设详情」栏搬到这里：图层坐标都按基准画布的绝对像素存，改基准尺寸等于同时
+ * 改了每个图层的位置与字号基准，所以它挨着画布比单独占一栏更容易被理解。
+ */
+const PRESET_BASE_SIZES = [
+  { value: '1280x720', label: '1280 × 720', width: 1280, height: 720 },
+  { value: '1080x1920', label: '1080 × 1920', width: 1080, height: 1920 },
+  { value: '800x800', label: '800 × 800', width: 800, height: 800 },
+] as const
+
+function presetBaseSizeValue(preset: CompositeV2Preset): string {
+  return `${preset.baseCanvas.width}x${preset.baseCanvas.height}`
+}
+
+/** 当前尺寸不在候选里时，下拉要额外挂一个同名项——否则浏览器会退到第一项，看起来像被改过。 */
+function isKnownBaseSize(preset: CompositeV2Preset): boolean {
+  return PRESET_BASE_SIZES.some((size) => size.value === presetBaseSizeValue(preset))
+}
+
 const previewBackdropOrder: PreviewBackdropMode[] = ['white', 'transparent', 'black']
 
 function getPreviewBackdropLabel(mode: PreviewBackdropMode) {
@@ -476,8 +497,32 @@ export function PresetCanvasEditor(props: Props) {
 
       {/* Zoom Controls Bar */}
       <div className="flex h-ds-control-lg shrink-0 items-center justify-between border-t border-ds-border bg-ds-surface px-4 dark:border-ds-border dark:bg-ds-scrim">
-        <div className="text-xs text-ds-muted">
-          {preset ? `画布大小: ${preset.baseCanvas.width} × ${preset.baseCanvas.height}` : ''}
+        <div className="flex items-center gap-2 text-xs text-ds-muted">
+          {preset && (
+            <>
+              <span>基准尺寸</span>
+              <select
+                aria-label="基准尺寸"
+                value={presetBaseSizeValue(preset)}
+                onChange={(event) => {
+                  const size = PRESET_BASE_SIZES.find((item) => item.value === event.target.value)
+                  if (size) props.onUpdatePreset?.({ baseCanvas: { width: size.width, height: size.height } })
+                }}
+                className="cursor-pointer rounded-md border border-ds-border bg-ds-surface px-1.5 py-0.5 text-xs text-ds-text dark:border-ds-border dark:bg-ds-scrim dark:text-ds-text-subtle"
+              >
+                {PRESET_BASE_SIZES.map((size) => (
+                  <option key={size.value} value={size.value}>
+                    {size.label}
+                  </option>
+                ))}
+                {!isKnownBaseSize(preset) && (
+                  <option value={presetBaseSizeValue(preset)}>
+                    {preset.baseCanvas.width} × {preset.baseCanvas.height}（当前）
+                  </option>
+                )}
+              </select>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <button

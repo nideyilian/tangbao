@@ -309,6 +309,33 @@
   - ⚠️ 导入**只填表格里有的东西**：`selectedMediaIds`（当前只有 `clean` + `gdt`）与
     `selectedCollectionIds`（当前只有 1 个方向）是**全局启用范围**，属于人的决策，不替用户改。
 
+- **水印工作区改 tab + 归属与参数各归一处（2026-09-18 第二轮）**：✅ 完成。
+  杰哥定案：「水印预设改为与 agent、画廊一致的 tab 形式，移除弹窗；水印归属完全采用树结构管理但精简；
+  后处理弹窗里显示的具体水印预设应来源于归属配置，而不是水印库；水印库移到预设详情所在的位置」。
+  - **水印预设升为顶栏第三个 tab**：`appMode === 'postprocess'`，`Header` 的 `SegmentedControl` 直接
+    `setAppMode`，删掉 `postprocessDialogOpen` / `setPostprocessDialogOpen` 与 `App.tsx` 里那层 `Dialog`。
+    `CompositeWorkspace` 去掉 `embedded`，高度对齐素材库（窄屏 7rem，`sm:` 起用 `--app-header-offset`）。
+    ⚠️ **`store.setAppMode` 的兜底分支会把任何「非 gallery / strategy / ordering」的值改写成 `agent`**：
+    漏补 `postprocess` 分支时，`setAppMode('postprocess')` 会被静默吞掉（还会顺手校验 Agent 配置、
+    弹一个「需要 Responses API」的对话框）。**以后再加工作区，这里必须一并补分支。**
+  - **归属的唯一入口 = 树**：`ProjectNodeParamsDialog` 删掉「水印预设」字段（只保留输出目录的按渠道
+    设置），后处理弹窗不再提供「勾选水印」；`PresetProjectTree` 删掉 `未启用` chip 与
+    `isCollectionWithinSelection` 依赖——启用范围是后处理的配置，挂在归属树上会让「未启用」
+    看起来像归属失效。
+  - **按渠道归属在树上就地编辑**：节点行的「按渠道」chip 既是显示也是入口（无覆盖时也保留入口），
+    点开后在**节点行下方就地展开**渠道 × 预设勾选表，**不用浮层**——树的滚动容器会裁掉绝对定位的弹层。
+    首次按渠道改动同样要**物化**：先取 `resolveNodeWatermarkBinding(..., mediaId)` 的当前生效值再增减，
+    否则「加一个」会导致继承来的其余预设静默消失。
+  - **水印库搬到中栏**：原「预设详情」栏里唯一还有内容的就是基准尺寸下拉（命名 / 输出 / 归属早已归别处），
+    把它挪到画布编辑器底部工具栏（`PresetCanvasEditor`，`aria-label="基准尺寸"`）后，中栏让给水印库。
+    左栏只剩归属树 → **不再需要 `tree-resizer` 与 `treeSplit`**（`localStorage` 的
+    `tangbao-composite-tree-split` 变成死键，留着无害）。
+  - **后处理弹窗的水印 = 归属的汇总**：「水印预设」勾选区换成「水印归属」只读明细（方向 → 生效预设），
+    数据来自 `resolveNodeWatermarkBinding`。`resolvePostprocessProjectTargets` 的结果在调用方被补上
+    `watermarkPresetIds` 与 `watermarkPresetIdsByMedia`，`buildPostprocessOutputs` **按渠道**取水印
+    （判 `undefined` 而非 `length`：`[]` 是「明确不加水印」），所以产出预览的条数与实际产出一致。
+    全局 `watermarkPresetIds` 从此只作「树里没表态的方向」的兜底值，面板里不再编辑它。
+
 **已完成部分的关键顺序**（下次接着做时照用）：先删消费方 → 再剥字段 → 最后清 store + 删纯逻辑。
 反过来的话，剥字段会一次性炸出 70+ 个编译错误，分不清哪些来自「要删的文件」、哪些来自「要改的文件」。
 
@@ -327,7 +354,7 @@
 | `src/features/postprocess/renderVariant.ts`                  | `renderWithMaxKb`（尺寸压缩 + 水印叠加）                                                           |
 | `src/features/postprocess/PostprocessDistributionFields.tsx` | 分发表单（面板与节点参数弹窗共用）                                                                 |
 | `src/features/projectTree/params.ts`                         | 继承链遍历与逐级合并                                                                               |
-| `src/features/composite/components/PresetProjectTree.tsx`    | 统一树：项目树层级管理（新建/改名/删除/移动）+ 水印归属（拖入绑定）                                |
+| `src/features/composite/components/PresetProjectTree.tsx`    | 水印归属树：项目树层级管理 + 归属（拖入绑定、按渠道就地编辑）；**只管归属，不碰其他参数**          |
 | `src/features/composite/lib/compositePresetLibrary.ts`       | 水印库筛选 + 跨组件拖拽 MIME（`PRESET_LIBRARY_DRAG_TYPE`，载荷 = id 数组 JSON）                    |
 | `src/features/composite/lib/presetBinding.ts`                | 单个 / 批量绑定纯函数（`bindPresetsToNode` 保住顺序即产出顺序）                                    |
 
@@ -341,11 +368,11 @@
 
 | 位置                                                  | 职责                                                                                               |
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `lib/postprocessMedia.ts`                             | `PostprocessMediaOverride` 类型；`applyPostprocessOverride(base, override, mediaId)`               |
+| `lib/postprocessMedia.ts`                             | `PostprocessMediaOverride` 类型；`applyPostprocessOverride(base, override, mediaId)`；`PostprocessProjectTarget.watermarkPresetIds(ByMedia)` |
 | `features/projectTree/params.ts`                      | `normalizeByMediaOverride` / `mergeByMediaOverride`；`resolveProjectPostprocessSlice` 加 `mediaId` |
-| `features/projectTree/ProjectNodeParamsDialog.tsx`    | 「按渠道分别设置」区块（只给这两项提供入口，默认收起）                                             |
+| `features/projectTree/ProjectNodeParamsDialog.tsx`    | 「按渠道分别设置」区块（只剩输出目录一项，默认收起）                                               |
 | `features/postprocess/taskPostprocess.ts`             | 按渠道拆桶（+ 纯净版单独一桶）                                                                     |
-| `features/composite/components/PresetProjectTree.tsx` | 节点行「按渠道 N」chip（明细放 title）                                                             |
+| `features/composite/components/PresetProjectTree.tsx` | 节点行「按渠道 N」chip＝入口，点开就地展开渠道 × 预设勾选表                                        |
 
 - **合并是逐渠道的，不是整份替换**。界面上一次只改一个渠道的一个字段，整份替换会把没提到的渠道
   **静默抹掉**（改完百度发现头条没了，还看不到提示）。渠道内的 `undefined` 表示「恢复继承」，
@@ -378,4 +405,6 @@
 
 - 编排设置：素材库工具栏「项目树」按钮；后处理设置面板（输入栏胶囊）。
 - 手动产出：选中素材时的「跑后处理 (N)」（`runManualPostprocess`）。
-- 水印编辑：后处理设置面板「水印预设」标题右侧的「管理水印预设」。
+- 水印编辑 + 归属：顶栏 `SegmentedControl` 的「水印预设」tab（`appMode='postprocess'`）；
+  归属只在左栏那棵树上改，后处理面板的「设置水印归属」按钮会切过去。
+  参数（输出目录 / 命名 / 渠道 / 分发 / 启停）走后处理面板左栏节点右侧的「参数」与标题右侧的「参数表格」。

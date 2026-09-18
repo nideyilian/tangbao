@@ -139,7 +139,6 @@ function GenerationStatsBar() {
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
   const setAppMode = useStore((s) => s.setAppMode)
-  const setPostprocessDialogOpen = useStore((s) => s.setPostprocessDialogOpen)
   const themeMode = useStore((s) => s.settings.themeMode)
   const skinId = useStore((s) => s.settings.skinId)
   const setSettings = useStore((s) => s.setSettings)
@@ -156,15 +155,8 @@ export default function Header() {
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
 
-  // 水印预设已弹窗化：顶部入口直接打开弹窗，不切走当前工作区（素材库保持可见）
-  const handleModeChange = (mode: AppMode) => {
-    if (mode === 'postprocess') {
-      setPostprocessDialogOpen(true)
-      return
-    }
-    setPostprocessDialogOpen(false)
-    setAppMode(mode)
-  }
+  // 三个工作区一视同仁地切：水印预设与素材库、Agent 一样是 tab，不再是盖在素材库上的弹窗
+  const handleModeChange = (mode: AppMode) => setAppMode(mode)
 
   useEffect(() => {
     if (appMode === 'agent') {

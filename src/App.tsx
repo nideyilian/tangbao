@@ -26,7 +26,6 @@ import VarEntryEditor from './components/VarEntryEditor'
 import WorkspaceTabBar from './components/WorkspaceTabBar'
 import AppPageRail from './components/AppPageRail'
 import RequirementQueueRunner from './features/requirementPrototype/QueueRunner'
-import { Dialog } from './design-system'
 const AgentWorkspace = React.lazy(() => import('./components/AgentWorkspace'))
 const CompositeWorkspace = React.lazy(() => import('./features/composite/CompositeWorkspace'))
 // 策略（strategy）与下单（ordering）模块已屏蔽：不再懒加载对应工作区，历史 appMode 值兜底渲染素材库
@@ -73,8 +72,6 @@ function waitForStoreHydration(): Promise<void> {
 
 export default function App() {
   const appMode = useStore((s) => s.appMode)
-  const postprocessDialogOpen = useStore((s) => s.postprocessDialogOpen)
-  const setPostprocessDialogOpen = useStore((s) => s.setPostprocessDialogOpen)
   const themeMode = useStore((s) => s.settings.themeMode)
   const skinId = useStore((s) => s.settings.skinId)
   const themeAppliedRef = useRef(false)
@@ -428,7 +425,7 @@ export default function App() {
 
   const legacyWorkspace = (
     <ErrorBoundary>
-      {appMode !== 'gallery' && <WorkspaceTabBar />}
+      {appMode === 'agent' && <WorkspaceTabBar />}
       <AppPageRail enabled={appMode === 'gallery' || appMode === 'agent'} />
       <div className="app-shell-with-docked-panels">
         <Header />
@@ -443,9 +440,16 @@ export default function App() {
           <React.Suspense fallback={null}>
             <AgentWorkspace />
           </React.Suspense>
+        ) : appMode === 'postprocess' ? (
+          // 水印预设工作区：顶栏一个 tab，与素材库 / Agent 同级。
+          // 它自带撤销栈与画布编辑快捷键，所以是「工作区」而不是面板；但不再盖在素材库上，
+          // 因为归属要边看项目树边配，弹窗形式会让下层内容既不可用又占着版面。
+          <React.Suspense fallback={null}>
+            <CompositeWorkspace />
+          </React.Suspense>
         ) : (
           // 单一画廊模式：素材库（收藏夹概览 / 收藏夹素材 / 图片与批次分组都在素材库界面内完成）；
-          // 后期处理已弹窗化（见下方 Dialog），不再占用 appMode；已屏蔽的 strategy / ordering 模式同样兜底到这里
+          // 已屏蔽的 strategy / ordering 模式同样兜底到这里
           <React.Suspense fallback={null}>
             <AssetLibraryWorkspace />
           </React.Suspense>
@@ -473,19 +477,7 @@ export default function App() {
           <WorkspaceTabManagerModal />
           <UpdateReleaseNotesModal />
         </React.Suspense>
-        {/* 水印预设工作区：近全屏弹窗形式，不切走素材库；素材库保持在底层可见 */}
-        <React.Suspense fallback={null}>
-          <Dialog
-            open={postprocessDialogOpen}
-            onOpenChange={setPostprocessDialogOpen}
-            title="水印预设"
-            description="编辑水印预设的图层与画布；批量产出走后处理（素材库工具栏的「跑后处理」）。"
-            className="ds-dialog--postprocess"
-            closeOnBackdrop={false}
-          >
-            <CompositeWorkspace embedded />
-          </Dialog>
-        </React.Suspense>
+        {/* 水印预设已升为同级工作区（见上方 appMode === 'postprocess' 分支），不再有弹窗形态 */}
       </div>
     </ErrorBoundary>
   )

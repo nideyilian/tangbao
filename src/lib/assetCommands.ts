@@ -145,8 +145,9 @@ function createDefaultDependencies(): AssetCommandDependencies {
         import('../store'),
       ])
       useCompositeV2Store.getState().setBackgrounds(withSource)
-      // 弹窗形式打开水印预设工作区，不切走素材库（素材库保持在底层可见）
-      useStore.getState().setPostprocessDialogOpen(true)
+      // 切到水印预设工作区（顶栏的一个 tab）。这里刻意不预设某个水印——
+      // 换底图是为了看水印效果，有没有选中预设由用户自己决定。
+      useStore.getState().setAppMode('postprocess')
       return true
     },
     getTask: async (taskId) => {

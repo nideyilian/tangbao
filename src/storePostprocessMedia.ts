@@ -472,6 +472,7 @@ export function selectPostprocessOutputPlan(
     projects,
     // id → 展示名；调用方查不到名字时退回 id，宁可在文件名里看见 id 也不要出现空段
     watermarks: config.watermarkPresetIds.map((id) => ({ id, name: presetNames[id] ?? id })),
+    presetNames,
   })
 }
 

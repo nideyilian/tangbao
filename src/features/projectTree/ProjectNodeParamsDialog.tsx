@@ -6,6 +6,10 @@
  * - 字段右上角标明它是「本级自定义」还是「继承自某某」，并给一个「恢复继承」按钮把覆盖摘掉；
  * - 「恢复继承」写的是 `undefined`（而不是写入当前值）——否则值被固化在本级，
  *   以后改上层就再也影响不到这个节点了。
+ *
+ * **这里不管水印归属**。归属只在水印预设工作区的「水印归属」树里改：
+ * 同一件事有两个入口，迟早会出现「在 A 改了、在 B 看不到」，而归属还额外背着
+ * 「未表态 = 继承 / 空数组 = 明确不加水印」这套语义，最经不起两处打架。
  */
 
 import { useMemo, useState } from 'react'
@@ -32,7 +36,6 @@ import { useStore } from '../../store'
 import PostprocessDistributionFields from '../postprocess/PostprocessDistributionFields'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../assetLibrary/store'
-import { useCompositeV2Store } from '../composite/storeV2'
 import { PROJECT_NODE_KIND_LABELS } from './types'
 import {
   resolveProjectNodeIdChain,
@@ -55,11 +58,6 @@ const DIRECTION_OPTIONS: Array<{ value: DirectionValue; label: string }> = [
   { value: 'portrait', label: '竖版' },
   { value: 'square', label: '方形' },
 ]
-
-/** 勾选/取消一个水印预设 id：追加保序，取消时保持其余顺序。 */
-function togglePresetId(current: string[], presetId: string): string[] {
-  return current.includes(presetId) ? current.filter((id) => id !== presetId) : [...current, presetId]
-}
 
 /** 字段外壳：标题 + 来源标记 + 恢复继承。 */
 function FieldRow({
@@ -118,7 +116,6 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
   const globalAutoCompanionClean = usePostprocessMediaStore((state) => state.autoCompanionClean)
   const globalDistribution = usePostprocessMediaStore((state) => state.distribution)
-  const presets = useCompositeV2Store((state) => state.presets)
 
   const globalConfig = useMemo<PostprocessMediaConfig>(
     () => ({
@@ -157,8 +154,8 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   /**
    * 每个渠道各自解析一次生效配置。
    *
-   * 渠道覆盖（`byMedia`）只影响输出目录与水印预设，但界面上要回答的**不是**「本级写没写」，
-   * 而是「这个渠道现在到底用哪个目录、叠哪几套水印」——没单独设过时得看得见它继承到了什么。
+   * 渠道覆盖（`byMedia`）现在只剩输出目录一项（水印归属已归水印工作区），但界面上要回答的
+   * **不是**「本级写没写」，而是「这个渠道现在到底输出到哪个目录」——没单独设过时得看得见它继承到了什么。
    */
   const perMediaEffective = useMemo(() => {
     const map: Record<string, PostprocessMediaConfig> = {}
@@ -168,8 +165,8 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
     return map
   }, [media, collections, params, collectionId, globalConfig])
 
-  /** 「按渠道分别设置」的展开态，两个字段各自独立。默认收起：多数方向各渠道共用一个目录。 */
-  const [expandedMediaOverride, setExpandedMediaOverride] = useState<'outputDir' | 'watermarkPresetIds' | null>(null)
+  /** 「输出目录按渠道分别设置」的展开态。默认收起：多数方向各渠道共用一个目录。 */
+  const [outputDirByMediaOpen, setOutputDirByMediaOpen] = useState(false)
 
   // 节点本身可能已被删除（弹窗开着时另一处删掉了它）——此时 title 与路径都退化为占位文案，不抛错
   const self = useMemo(() => collections.find((item) => item.id === collectionId), [collections, collectionId])
@@ -192,32 +189,27 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
     override?.byMedia?.[mediaId]?.[key] !== undefined
 
   /**
-   * 「按渠道分别设置」区块。
+   * 「输出目录按渠道分别设置」区块。
    *
-   * 只给输出目录与水印预设提供入口——这正是业务上确实会按渠道分叉的两项：同一个方向的
-   * 厂商/百度/头条可能交付到完全不同的目录、叠不同的合规水印。其余字段按渠道分只会让
-   * 「到底哪个值生效」需要递归推理，所以这里根本不提供入口。
+   * 只给输出目录保留入口——这是 `byMedia` 里仅剩的一项：同一个方向的厂商 / 百度 / 头条
+   * 会交付到完全不同的共享盘目录，而三段目录连层级顺序都不同，塞不进一个值。
    *
    * 默认收起并在收起时用一句话交代「哪几个渠道已单独设置」——多数方向各渠道共用一个目录，
    * 一上来就把每个渠道铺开只会把简单情况显得很复杂。
    */
-  const mediaOverrideBlock = (
-    field: 'outputDir' | 'watermarkPresetIds',
-    renderRow: (mediaId: string) => React.ReactNode,
-  ) => {
-    const expanded = expandedMediaOverride === field
-    const overriddenNames = media.filter((item) => mediaOverridden(item.id, field)).map((item) => item.name)
+  const outputDirByMediaBlock = (renderRow: (mediaId: string) => React.ReactNode) => {
+    const overriddenNames = media.filter((item) => mediaOverridden(item.id, 'outputDir')).map((item) => item.name)
     return (
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setExpandedMediaOverride(expanded ? null : field)}>
-            {expanded ? '收起按渠道设置' : '按渠道分别设置'}
+          <Button variant="ghost" size="sm" onClick={() => setOutputDirByMediaOpen((open) => !open)}>
+            {outputDirByMediaOpen ? '收起按渠道设置' : '按渠道分别设置'}
           </Button>
-          {!expanded && overriddenNames.length > 0 && (
+          {!outputDirByMediaOpen && overriddenNames.length > 0 && (
             <span className="text-xs text-ds-accent dark:text-ds-accent">{overriddenNames.join('、')} 已单独设置</span>
           )}
         </div>
-        {expanded && (
+        {outputDirByMediaOpen && (
           <div className="space-y-1.5">
             <p className="text-xs text-ds-muted dark:text-ds-muted">
               留空 = 用上面的通用值。只有同一方向各渠道不一样时才需要在这里单独填。
@@ -340,7 +332,7 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
         </section>
 
         <section className="space-y-3">
-          <SectionHeader title="产出参数" />
+          <SectionHeader title="产出参数" description="水印归属不在这里——它只在水印预设工作区的「水印归属」树里改。" />
 
           <FieldRow
             label="画面方向"
@@ -354,63 +346,6 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
               options={DIRECTION_OPTIONS}
               onValueChange={(value) => apply({ direction: value === 'auto' ? null : value })}
             />
-          </FieldRow>
-
-          <FieldRow
-            label="水印预设"
-            overridden={overridden('watermarkPresetIds')}
-            sourceHint={sourceName}
-            onReset={() => reset('watermarkPresetIds')}
-          >
-            <div className="space-y-2">
-              {presets.length === 0 ? (
-                <span className="text-xs text-ds-muted dark:text-ds-muted">还没有水印预设可勾选。</span>
-              ) : (
-                <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-                  {presets.map((preset) => (
-                    <Checkbox
-                      key={preset.id}
-                      checked={effective.watermarkPresetIds.includes(preset.id)}
-                      onChange={() =>
-                        apply({ watermarkPresetIds: togglePresetId(effective.watermarkPresetIds, preset.id) })
-                      }
-                      label={preset.name}
-                    />
-                  ))}
-                </div>
-              )}
-              {mediaOverrideBlock('watermarkPresetIds', (mediaId) => {
-                const ids = perMediaEffective[mediaId]?.watermarkPresetIds ?? []
-                return (
-                  <>
-                    <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
-                      {presets.map((preset) => (
-                        <Checkbox
-                          key={preset.id}
-                          checked={ids.includes(preset.id)}
-                          onChange={() =>
-                            apply({ byMedia: { [mediaId]: { watermarkPresetIds: togglePresetId(ids, preset.id) } } })
-                          }
-                          label={preset.name}
-                        />
-                      ))}
-                      {presets.length === 0 && (
-                        <span className="text-xs text-ds-muted dark:text-ds-muted">没有预设可选。</span>
-                      )}
-                    </div>
-                    {mediaOverridden(mediaId, 'watermarkPresetIds') && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => apply({ byMedia: { [mediaId]: { watermarkPresetIds: undefined } } })}
-                      >
-                        恢复继承
-                      </Button>
-                    )}
-                  </>
-                )
-              })}
-            </div>
           </FieldRow>
 
           <FieldRow
@@ -458,7 +393,7 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
                   选择…
                 </Button>
               </div>
-              {mediaOverrideBlock('outputDir', (mediaId) => (
+              {outputDirByMediaBlock((mediaId) => (
                 <>
                   <TextField
                     label=""
