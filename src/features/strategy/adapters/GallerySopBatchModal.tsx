@@ -13,9 +13,7 @@ import {
   BookmarkIcon as Bookmark,
   BookOpenCheckIcon as BookOpenCheck,
   CheckCircleIcon as CheckCircle2,
-  CheckIcon as Check,
   ChevronDownIcon as ChevronDown,
-  ChevronRightIcon as ChevronRight,
   CloseIcon as X,
   CopyIcon as Copy,
   ImageIcon,
@@ -38,7 +36,7 @@ import {
   subscribeImageThumbnail,
   useStore,
 } from '../../../store'
-import type { InputImage, SopBatchSnapshot, TaskRecord } from '../../../types'
+import type { InputImage, SopBatchSnapshot } from '../../../types'
 import {
   deleteSopBatchSnapshot,
   getAllSopBatchSnapshots,
@@ -2052,7 +2050,7 @@ export default function GallerySopBatchModal({
                   activeSeriesMode && seriesAnchorRef.current && item.series
                     ? progressiveAnchorWaiters.get(item.series.groupIndex)
                     : undefined
-                let dispatched = false
+                let dispatched: boolean
                 let deferredDispatch = false
                 if (firstImageGroupIndex !== null) {
                   const taskId = await dispatchProgressivePrompt(item, promptIndex, null, generationInputImages)

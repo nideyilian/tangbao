@@ -547,7 +547,6 @@ export default function AgentWorkspace() {
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
   const agentGeneratingTitleIds = useStore((s) => s.agentGeneratingTitleIds)
   const conversation = conversations.find((item) => item.id === activeConversationId) ?? null
-  const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
   const [editingConversationTitle, setEditingConversationTitle] = useState('')
   const [collapsedAssistantMessageIds, setCollapsedAssistantMessageIds] = useState<Set<string>>(() => new Set())
   const [expandedAssistantMessageIds, setExpandedAssistantMessageIds] = useState<Set<string>>(() => new Set())

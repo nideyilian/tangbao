@@ -1,5 +1,5 @@
 import { memo, useMemo, useRef, useState } from 'react'
-import type { AssetLibraryFilters, PinnedFilter } from '../../types'
+import type { AssetLibraryFilters } from '../../types'
 import { PinIcon, XIcon } from '../../design-system/icons'
 import { COLOR_LABEL_NAMES } from './colorLabels'
 import { useAssetLibraryStore } from './store'

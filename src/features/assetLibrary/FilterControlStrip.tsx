@@ -18,12 +18,6 @@ const SOURCE_MODE_LABELS: Record<NonNullable<AssetLibraryFilters['sourceMode']>,
   unknown: '未知',
 }
 
-const ORIENTATION_LABELS: Record<NonNullable<AssetLibraryFilters['orientation']>, string> = {
-  landscape: '横向',
-  portrait: '纵向',
-  square: '方形',
-}
-
 const CONTROL_OPTIONS: Array<{ key: FilterControlKey; label: string }> = [
   { key: 'favoriteOnly', label: '仅看收藏' },
   { key: 'minRating', label: '最低评分' },

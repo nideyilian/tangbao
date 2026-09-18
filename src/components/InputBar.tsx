@@ -29,8 +29,8 @@ import {
   getActiveAgentRounds,
 } from '../store'
 import { DEFAULT_PARAMS, type TaskParams, type TaskRecord } from '../types'
-import { getActiveApiProfile, getAgentApiProfile, normalizeSettings } from '../lib/apiProfiles'
-import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, normalizeParamsForSettings } from '../lib/paramCompatibility'
+import { getActiveApiProfile, getAgentApiProfile } from '../lib/apiProfiles'
+import { DEFAULT_FAL_IMAGE_SIZE } from '../lib/paramCompatibility'
 import { MAX_DIRECT_INPUT_IMAGES, MAX_FOLDER_IMAGES } from '../lib/inputImageLimits'
 import {
   convertVariableMentionAtVisibleOffsetToText,
@@ -65,7 +65,7 @@ import {
   formatExportFileTime,
   getGeneratedImageDownloadEntries,
 } from '../lib/downloadImages'
-import { selectLocalSaveDirectory, readDirectory, readFileBuffer, joinPath, checkPathExists } from '../lib/localSave'
+import { selectLocalSaveDirectory, readDirectory, readFileBuffer, joinPath } from '../lib/localSave'
 import { getImage, storeImage } from '../lib/db'
 import { blobToDataUrl } from '../lib/blobDataUrl'
 import { assetCommands } from '../lib/assetCommands'
@@ -76,15 +76,7 @@ import { usePostprocessMediaStore } from '../storePostprocessMedia'
 import ViewportTooltip from './ViewportTooltip'
 import ModelSwitcher from './ModelSwitcher'
 import { CloseIcon, FolderOpenIcon, TagsIcon } from './icons'
-import {
-  CheckIcon,
-  FileImageIcon,
-  ImageIcon,
-  ImagesIcon,
-  ShieldCheckIcon,
-  SlidersHorizontalIcon,
-  SparklesIcon,
-} from '../design-system/icons'
+import { CheckIcon, FileImageIcon, ImageIcon, ImagesIcon, ShieldCheckIcon, SparklesIcon } from '../design-system/icons'
 import { getGallerySopPromptRunStorageKey, type GallerySopRunStatus } from '../features/strategy/adapters/gallerySopRun'
 import { getSopRunCounts, getSopTotalImageCount, MAX_SOP_IMAGES_PER_PROMPT } from '../features/strategy/sopPromptBatch'
 import { buildSopSeriesConfig, SOP_SERIES_DEFAULT_FIXED_DIMENSIONS } from '../features/strategy/sopSeriesDimensions'
@@ -92,7 +84,6 @@ import SeriesConsistencyControl, { type SeriesConsistencyValue } from '../featur
 import { generateVariablePromptTwoPhase, generateVisualSkill } from '../features/strategy/adapters/storeSopGeneration'
 import {
   buildVisualSkillBatchPrompt,
-  buildVisualSkillPrompts,
   getReferenceStyleThemes,
   parseVisualSkill,
   readVisualSkills,
@@ -1433,7 +1424,6 @@ export default function InputBar() {
   ])
 
   const maskDraft = useStore((s) => s.maskDraft)
-  const clearMaskDraft = useStore((s) => s.clearMaskDraft)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const moveInputImage = useStore((s) => s.moveInputImage)
 
@@ -1524,7 +1514,7 @@ export default function InputBar() {
     params.postprocess_max_size_kb == null ? '' : String(params.postprocess_max_size_kb),
   )
   const [nInput, setNInput] = useState(String(params.n))
-  const [nInputFocused, setNInputFocused] = useState(false)
+  const [, setNInputFocused] = useState(false)
   const dragCounter = useRef(0)
   const isMobile = useIsMobile()
 
@@ -1545,13 +1535,6 @@ export default function InputBar() {
       ? (agentConversations.find((conversation) => conversation.id === activeAgentConversationId) ?? null)
       : null
   const activeAgentIsRunning = Boolean(activeAgentConversation?.rounds.some((round) => round.status === 'running'))
-  const effectiveSettings = useMemo(
-    () =>
-      activeProfile.id === currentActiveProfile.id
-        ? settings
-        : normalizeSettings({ ...settings, activeProfileId: activeProfile.id }),
-    [activeProfile.id, currentActiveProfile.id, settings],
-  )
   const hasSubmitApiConfig = Boolean(activeProfile.apiKey)
   // 一键衍生阶段文案：驱动按钮显示「生成中…」进度，避免黑盒等待
   const [oneClickDerivePhase, setOneClickDerivePhase] = useState('')

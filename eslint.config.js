@@ -39,14 +39,15 @@ export default tseslint.config(
       'react-hooks/rules-of-hooks': 'error',
       // exhaustive-deps 先以 warn 接入，避免一次性大量改动
       'react-hooks/exhaustive-deps': 'warn',
-      // any 先以 warn 收敛（存量 51 处），新代码应避免
-      '@typescript-eslint/no-explicit-any': 'warn',
-      // 空接口保持宽松；未使用变量以 warn 接入 —— 它是「声称改了但调用点没换」这类
-      // 半成品事故的唯一自动拦截点（v0.8.19 的 db.ts 死 import 就是这么溜过 verify 的）。
-      // 先 warn 观察存量，清干净后再收紧为 error。
+      // any 存量已清零，2026-09-18 从 warn 收紧为 error
+      '@typescript-eslint/no-explicit-any': 'error',
+      // 空接口保持宽松。
+      // 未使用符号：2026-09-18 存量 114 处已全部清零，故从 warn 收紧为 error。
+      // 它是「声称改了但调用点没换」这类半成品事故的唯一自动拦截点
+      // （v0.8.19 的 db.ts 死 import 就是这么溜过 verify 并写进 RELEASE 的）。
       '@typescript-eslint/no-empty-object-type': 'off',
       '@typescript-eslint/no-unused-vars': [
-        'warn',
+        'error',
         {
           // 函数形参不报（回调与接口实现的噪音远大于信号）
           args: 'none',

@@ -1,16 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
-import {
-  CalendarIcon,
-  PlusIcon,
-  CloseIcon,
-  ChevronDownIcon,
-  SettingsIcon,
-  CopyIcon,
-  EditIcon,
-  TrashIcon,
-  Layers3Icon,
-} from './icons'
+import { CalendarIcon, PlusIcon, CloseIcon, SettingsIcon, CopyIcon, EditIcon, TrashIcon, Layers3Icon } from './icons'
 import type { WorkspaceTab, WorkspaceTabGroup } from '../types'
 import { Button, IconButton, ListRow, SearchField } from '../design-system'
 import { useMediaQuery } from '../hooks/useMediaQuery'

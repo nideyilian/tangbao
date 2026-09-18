@@ -36,7 +36,6 @@ import {
   putAssetCollections,
   putAssetTags,
   putAssetTombstones,
-  putGeneratedAsset as putGeneratedAssetRecord,
   putGeneratedAssets as putGeneratedAssetRecords,
   putAssetBlobs,
   putAssetVersions,

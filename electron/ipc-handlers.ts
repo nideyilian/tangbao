@@ -21,15 +21,9 @@ import {
 } from 'fs'
 import { promises as fsPromises } from 'fs'
 import { writeStreamingZip, type StreamingZipRequest } from './streaming-zip'
-import { handleChecked, onChecked } from './ipc-guard'
+import { handleChecked } from './ipc-guard'
 import { openZipHandle, readZipEntryBytes, readZipManifest } from './backup-zip-reader'
-import {
-  ensureLibraryLayout,
-  getDefaultLibraryRoot,
-  getLibraryPaths,
-  LIBRARY_LAYOUT_VERSION,
-  resolveCatalogDbPathFor,
-} from './library-paths'
+import { ensureLibraryLayout, getDefaultLibraryRoot, getLibraryPaths, LIBRARY_LAYOUT_VERSION } from './library-paths'
 import { moveLibraryData } from './catalog-migration'
 import { runLibraryIntegrityCheck } from './library-integrity'
 import { exportProjectTreeCopies, type ProjectCopyEntry } from './project-tree-export'

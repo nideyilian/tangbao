@@ -1,10 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import {
-  BarChart3Icon as BarChart3,
   BookOpenCheckIcon as BookOpenCheck,
   CircleUserRoundIcon as CircleUserRound,
   ClipboardPlusIcon as ClipboardPlus,
-  Clock3Icon as Clock3,
   DatabaseIcon as Database,
   FolderOpenIcon as FolderOpen,
   ImageIcon,
@@ -12,7 +10,6 @@ import {
   ListChecksIcon as ListChecks,
   LogOutIcon as LogOut,
   PlusIcon as Plus,
-  SaveIcon as Save,
   Settings2Icon as Settings2,
   ShieldCheckIcon as ShieldCheck,
   SparklesIcon as Sparkles,
@@ -27,7 +24,7 @@ import {
   RequirementOrderingHistoryPage,
 } from '../ordering/adapters/RequirementOrderingWorkspace'
 import { useRequirementPrototype } from './store'
-import type { CatalogChannel, CatalogMaterialType, CatalogProduct, RequirementRole, RequirementRoute } from './types'
+import type { CatalogChannel, CatalogProduct, RequirementRole, RequirementRoute } from './types'
 
 const roleLabel: Record<RequirementRole, string> = {
   optimizer: '信息流优化师',
@@ -132,242 +129,6 @@ function LoginPage() {
           </div>
         </div>
       </Card>
-    </div>
-  )
-}
-
-function LegacyStrategyPage() {
-  const userId = useRequirementPrototype((state) => state.sessionUserId)
-  const users = useRequirementPrototype((state) => state.users)
-  const catalog = useRequirementPrototype((state) => state.catalog)
-  const drafts = useRequirementPrototype((state) => state.strategyDrafts)
-  const versions = useRequirementPrototype((state) => state.strategyVersions)
-  const saveDraft = useRequirementPrototype((state) => state.saveStrategyDraft)
-  const submitDraft = useRequirementPrototype((state) => state.submitStrategyDraft)
-  const publishDraft = useRequirementPrototype((state) => state.publishStrategyDraft)
-  const rollback = useRequirementPrototype((state) => state.rollbackMaterialType)
-  const createStrategyTest = useRequirementPrototype((state) => state.createStrategyTest)
-  const saveMaterialType = useRequirementPrototype((state) => state.saveMaterialType)
-  const user = users.find((item) => item.id === userId)
-  const [selectedId, setSelectedId] = useState(catalog.materialTypes[0]?.id ?? '')
-  const selected = catalog.materialTypes.find((item) => item.id === selectedId)
-  const storedDraft = selected ? drafts[selected.id] : undefined
-  const [summary, setSummary] = useState('')
-  const [strategy, setStrategy] = useState('')
-  const [rules, setRules] = useState('')
-  const [ratios, setRatios] = useState<Array<'16:9' | '9:16'>>(['16:9', '9:16'])
-  const [testMessage, setTestMessage] = useState('')
-
-  const load = (materialType: CatalogMaterialType) => {
-    const draft = drafts[materialType.id]
-    setSelectedId(materialType.id)
-    setSummary(draft?.summary ?? materialType.summary)
-    setStrategy(draft?.strategy ?? materialType.strategy)
-    setRules((draft?.fixedRules ?? materialType.fixedRules ?? []).join('\n'))
-    setRatios(draft?.supportedRatios ?? materialType.supportedRatios ?? ['16:9', '9:16'])
-  }
-
-  if (!selected) return null
-  const currentSummary = summary || storedDraft?.summary || selected.summary
-  const currentStrategy = strategy || storedDraft?.strategy || selected.strategy
-  const currentRules = rules || (storedDraft?.fixedRules ?? selected.fixedRules ?? []).join('\n')
-
-  const save = () =>
-    saveDraft({
-      materialTypeId: selected.id,
-      baseVersion: selected.version,
-      summary: currentSummary,
-      strategy: currentStrategy,
-      fixedRules: currentRules
-        .split('\n')
-        .map((item) => item.trim())
-        .filter(Boolean),
-      supportedRatios: ratios,
-      status: 'draft',
-    })
-
-  return (
-    <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-      <Card className="self-start overflow-hidden">
-        <div className="border-b border-ds-border p-4 dark:border-ds-border-strong">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="font-semibold">生图策略与固定规则</h2>
-            <button
-              onClick={() => {
-                const created: CatalogMaterialType = {
-                  id: `type-${Date.now()}`,
-                  name: '新素材类型',
-                  summary: '请补充方向说明',
-                  mode: 'intelligent',
-                  strategy: '请补充生图策略',
-                  color: 'from-blue-500 to-cyan-500',
-                  published: false,
-                  version: 1,
-                }
-                saveMaterialType(created)
-                load(created)
-              }}
-              className="rounded-lg border border-ds-border p-1.5 hover:bg-ds-subtle dark:border-ds-border-strong dark:hover:bg-ds-subtle"
-              title="新增素材类型"
-            >
-              <Plus size={14} />
-            </button>
-          </div>
-          <p className="mt-1 text-xs text-ds-muted">优化师只会使用已发布版本。</p>
-        </div>
-        {catalog.materialTypes.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => load(item)}
-            className={`flex w-full items-center justify-between border-b border-ds-border p-4 text-left dark:border-ds-border-strong ${item.id === selected.id ? 'bg-ds-primary-subtle dark:bg-ds-primary-subtle/20' : 'hover:bg-ds-subtle dark:hover:bg-ds-subtle'}`}
-          >
-            <span>
-              <span className="block text-sm font-medium">{item.name}</span>
-              <span className="mt-1 block text-xs text-ds-muted">
-                {item.mode === 'fixed' ? '固定规则' : '智能策略'} · v{item.version}
-              </span>
-            </span>
-            {drafts[item.id] && (
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs ${drafts[item.id].status === 'review' ? 'bg-ds-warning-subtle text-ds-warning' : 'bg-ds-surface text-ds-muted dark:bg-ds-subtle dark:text-ds-muted'}`}
-              >
-                {drafts[item.id].status === 'review' ? '待审核' : '草稿'}
-              </span>
-            )}
-          </button>
-        ))}
-      </Card>
-      <div className="space-y-5">
-        <Card className="p-5">
-          <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold">{selected.name}</h2>
-              <p className="mt-1 text-sm text-ds-muted">
-                当前线上版本 v{selected.version} · {selected.mode === 'fixed' ? '固定规则' : '智能差异化'}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() =>
-                  saveMaterialType({ ...selected, archived: !selected.archived, version: selected.version + 1 })
-                }
-                className="rounded-lg border border-ds-danger/35 px-3 py-2 text-sm text-ds-danger hover:bg-ds-danger-subtle dark:border-ds-danger dark:hover:bg-ds-danger/30"
-              >
-                {selected.archived ? '恢复类型' : '删除类型'}
-              </button>
-              <button
-                onClick={save}
-                className="flex items-center gap-2 rounded-lg border border-ds-border px-3 py-2 text-sm hover:bg-ds-subtle dark:border-ds-border-strong dark:hover:bg-ds-subtle"
-              >
-                <Save size={15} />
-                保存草稿
-              </button>
-              <button
-                onClick={() => {
-                  save()
-                  const result = createStrategyTest(selected.id)
-                  setTestMessage(result.error ?? '')
-                }}
-                className="rounded-lg border border-ds-primary/35 px-3 py-2 text-sm text-ds-primary hover:bg-ds-primary-subtle dark:border-ds-primary dark:text-ds-primary dark:hover:bg-ds-primary/30"
-              >
-                测试生成 1 张
-              </button>
-              {storedDraft?.status !== 'review' && (
-                <button
-                  onClick={() => {
-                    save()
-                    submitDraft(selected.id)
-                  }}
-                  className="rounded-lg bg-ds-primary px-3 py-2 text-sm text-ds-text-inverse hover:bg-ds-primary-hover"
-                >
-                  提交审核
-                </button>
-              )}
-              {user?.role === 'admin' && storedDraft?.status === 'review' && (
-                <button
-                  onClick={() => publishDraft(selected.id)}
-                  className="rounded-lg bg-ds-success px-3 py-2 text-sm text-ds-text-inverse hover:bg-ds-success-hover"
-                >
-                  审核并发布
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="grid gap-4">
-            {testMessage && (
-              <p className="rounded-lg bg-ds-danger-subtle px-3 py-2 text-sm text-ds-danger dark:bg-ds-danger/30 dark:text-ds-danger">
-                {testMessage}
-              </p>
-            )}
-            <label>
-              <span className="mb-2 block text-sm font-medium">方向说明</span>
-              <input
-                value={currentSummary}
-                onChange={(event) => setSummary(event.target.value)}
-                className="h-ds-control-lg w-full rounded-lg border border-ds-border bg-ds-surface px-3 text-sm dark:border-ds-border-strong dark:bg-ds-scrim"
-              />
-            </label>
-            <label>
-              <span className="mb-2 block text-sm font-medium">生图策略</span>
-              <textarea
-                value={currentStrategy}
-                onChange={(event) => setStrategy(event.target.value)}
-                className="min-h-28 w-full rounded-lg border border-ds-border bg-ds-surface p-3 text-sm leading-6 dark:border-ds-border-strong dark:bg-ds-scrim"
-              />
-            </label>
-            {selected.mode === 'fixed' && (
-              <>
-                <label>
-                  <span className="mb-2 block text-sm font-medium">固定生图规范（每行一条）</span>
-                  <textarea
-                    value={currentRules}
-                    onChange={(event) => setRules(event.target.value)}
-                    className="min-h-44 w-full rounded-lg border border-ds-border bg-ds-surface p-3 text-sm leading-6 dark:border-ds-border-strong dark:bg-ds-scrim"
-                  />
-                </label>
-                <div>
-                  <span className="mb-2 block text-sm font-medium">支持尺寸</span>
-                  <div className="flex gap-2">
-                    {(['16:9', '9:16'] as const).map((ratio) => (
-                      <button
-                        key={ratio}
-                        onClick={() =>
-                          setRatios((current) =>
-                            current.includes(ratio) ? current.filter((item) => item !== ratio) : [...current, ratio],
-                          )
-                        }
-                        className={`rounded-lg border px-4 py-2 text-sm ${ratios.includes(ratio) ? 'border-ds-primary bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary-subtle/30 dark:text-ds-primary' : 'border-ds-border dark:border-ds-border-strong'}`}
-                      >
-                        {ratio}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </Card>
-        {user?.role === 'admin' && (versions[selected.id]?.length ?? 0) > 0 && (
-          <Card className="p-5">
-            <h3 className="font-semibold">版本历史</h3>
-            <div className="mt-3 divide-y divide-gray-100 dark:divide-gray-800">
-              {versions[selected.id].map((version) => (
-                <div key={version.version} className="flex items-center justify-between py-3 text-sm">
-                  <span>
-                    v{version.version} · {version.summary}
-                  </span>
-                  <button
-                    onClick={() => rollback(selected.id, version.version)}
-                    className="rounded-lg border border-ds-border px-3 py-1.5 text-xs hover:bg-ds-subtle dark:border-ds-border-strong dark:hover:bg-ds-subtle"
-                  >
-                    回滚为新版本
-                  </button>
-                </div>
-              ))}
-            </div>
-          </Card>
-        )}
-      </div>
     </div>
   )
 }

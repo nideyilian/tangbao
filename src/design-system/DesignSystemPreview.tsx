@@ -41,7 +41,6 @@ import {
   SegmentedControl,
   ColorSchemeSwitcher,
   ColorPresetGrid,
-  COLOR_SCHEME_OPTIONS,
   type ColorSchemeValue,
   SelectField,
   SettingsIcon,

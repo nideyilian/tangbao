@@ -201,12 +201,6 @@ async function dropNode(root: ReactTestInstance, draggedId: string, targetId: st
   })
 }
 
-function clickByText(root: ReactTestInstance, text: string) {
-  const matches = root.findAll((node) => typeof node.props.onClick === 'function' && getNodeText(node) === text)
-  if (matches.length === 0) throw new Error(`未找到文本为 ${text} 的可点元素`)
-  act(() => matches[0].props.onClick())
-}
-
 function findInputByAriaLabel(root: ReactTestInstance, label: string) {
   return root.findAllByType('input').find((node: ReactTestInstance) => node.props['aria-label'] === label)
 }

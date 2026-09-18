@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DatabaseSync } from 'node:sqlite'
 import type { GeneratedAsset } from '../src/types'
 import { AssetCatalog } from './asset-catalog'
 

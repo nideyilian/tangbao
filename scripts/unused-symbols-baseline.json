@@ -1,8 +1,0 @@
-{
-  "note": "死符号棘轮基线：只许减少，不许增加。清理完存量后用 --update 刷新。",
-  "updatedAt": "2026-09-18",
-  "counts": {
-    "@typescript-eslint/no-unused-vars": 114,
-    "@typescript-eslint/no-explicit-any": 0
-  }
-}

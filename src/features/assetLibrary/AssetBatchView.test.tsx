@@ -117,16 +117,10 @@ const assets: GeneratedAsset[] = [
   makeAsset('e', 't9'),
 ]
 
-let resizeCallback: (() => void) | undefined
-
 beforeEach(() => {
-  resizeCallback = undefined
   vi.stubGlobal(
     'ResizeObserver',
     class {
-      constructor(callback: () => void) {
-        resizeCallback = callback
-      }
       observe() {}
       disconnect() {}
     },

@@ -238,7 +238,7 @@ export async function runPostprocessDistribution(
   for (const item of items) {
     const baseDir = await resolveBaseTargetDir(api, item, config)
     if (config.targetDir.trim() && !authorizedRoots.has(baseDir)) {
-      let authorized = true
+      let authorized: boolean
       try {
         authorized = (await api.authorizeCompositeOutputDirectory?.(baseDir)) ?? true
       } catch {

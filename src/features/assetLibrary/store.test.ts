@@ -1471,10 +1471,6 @@ describe('moveCollectionsToPosition (Eagle 式拖拽排序与嵌套)', () => {
 })
 
 describe('undo / redo (Eagle 式 Ctrl+Z / Ctrl+Shift+Z)', () => {
-  function makeCollection(id: string, parentId: string | null, order: number) {
-    return { id, name: id, normalizedName: id, parentId, order, createdAt: 1, updatedAt: 1 }
-  }
-
   it('undoes and redoes an asset patch (rating)', async () => {
     const asset = makeAsset('a', { rating: 1 })
     useAssetLibraryStore.setState({ assetsById: { a: asset }, assetOrder: ['a'] })

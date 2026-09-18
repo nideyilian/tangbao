@@ -69,13 +69,6 @@ function directionsToText(directions: BatchDirectionInput[]) {
     .join('; ')
 }
 
-function splitSelections(value: string) {
-  return value
-    .split(/[、,，;；|]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
 function resizeTextareaElement(textarea: HTMLTextAreaElement) {
   textarea.style.height = 'auto'
   textarea.style.height = `${Math.max(36, textarea.scrollHeight)}px`
@@ -225,11 +218,6 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
   ])
   const plan = planResult.plan
   const activePreset = presets.find((preset) => preset.id === activePresetId) ?? null
-  const channelOptions = useMemo(() => [...new Set(rows.flatMap((row) => splitSelections(row.channel)))], [rows])
-  const specificationOptions = useMemo(
-    () => [...new Set(rows.flatMap((row) => splitSelections(row.specification)))],
-    [rows],
-  )
 
   const updateRow = (index: number, patch: Partial<BatchTaskInput>) => {
     setRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)))

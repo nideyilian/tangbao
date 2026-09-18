@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { createDesktopJsonStorage } from './lib/desktopJsonStorage'
 import { applyApiSecrets, extractApiSecrets, stripApiSecrets, type ApiSecretBundle } from './lib/apiSecrets'
-import { calculateImageSize, inferSizeTier, normalizeImageSize } from './lib/size'
+import { calculateImageSize, inferSizeTier } from './lib/size'
 import { parseVariablePrompt, renderVariablePromptBatch } from './lib/variablePrompt'
 import { useRuntimeStore } from './stores/runtimeStore'
 import {
@@ -49,7 +49,7 @@ import type {
   AssetCollection,
 } from './types'
 import type { StoredImage, StoredImageThumbnail, ThumbnailVariant } from './types'
-import type { CallApiOptions, CallApiResult } from './lib/imageApiShared'
+import type { CallApiResult } from './lib/imageApiShared'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS } from './types'
 import {
   createDefaultScheduleRows,
@@ -60,8 +60,6 @@ import {
   resolveScheduleOutputTarget,
 } from './lib/schedule'
 import {
-  DEFAULT_MAX_CONCURRENT,
-  DEFAULT_MAX_RETRIES,
   DEFAULT_SETTINGS,
   getActiveApiProfile,
   getAgentImageApiProfile,
@@ -108,7 +106,6 @@ import {
 import {
   getAssetsByIds,
   getAssetsByImageIds,
-  hydrate,
   hydrateFull,
   mergeImportedAssetLibrary,
   putGeneratedAssets,
@@ -123,7 +120,6 @@ import {
 } from './lib/assetLibraryModel'
 import { getTaskSourceMode, type AssetTaskContext } from './lib/generatedAssetOrigin'
 import { upsertFromTask } from './lib/assetLibraryRepository'
-import { assetCommands } from './lib/assetCommands'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
 import { pickDeepestCollectionId } from './features/projectTree/params'
 import { useProjectTreeParamsStore } from './features/projectTree/storeProjectTreeParams'
@@ -153,7 +149,6 @@ import {
   getAllImages,
   getLegacyImageBatch,
   putImage,
-  putImageThumbnail,
   deleteImage,
   clearImages,
   clearGeneratedAssets,
@@ -196,7 +191,6 @@ import {
   callBatchImageSingle,
   parseBatchImageCallArguments,
   type AgentApiResultImage,
-  type BatchImageCallResult,
 } from './lib/agentApi'
 import {
   collectAgentRoundOutputImageSlots,
@@ -245,7 +239,7 @@ import {
   type ImageFingerprintLike,
 } from './lib/imageBatchOrchestrator'
 import { orderInputImagesForMask } from './lib/mask'
-import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
+import { normalizeParamsForSettings } from './lib/paramCompatibility'
 import { Zip, ZipDeflate, ZipPassThrough, Unzip, UnzipInflate, UnzipPassThrough, strToU8, strFromU8 } from 'fflate'
 import {
   isElectron as isElectronEnv,
@@ -6008,7 +6002,7 @@ export async function initStore(options: { safeMode?: boolean } = {}) {
       if (!img.dataUrl) idsToFetch.add(img.id)
     }
   }
-  for (const [conversationId, draft] of Object.entries(agentInputDrafts)) {
+  for (const [, draft] of Object.entries(agentInputDrafts)) {
     for (const img of draft.inputImages) {
       if (!img.dataUrl) idsToFetch.add(img.id)
     }
@@ -7011,41 +7005,11 @@ function uniqueIds(ids: string[]) {
   return Array.from(new Set(ids.filter(Boolean)))
 }
 
-function addAgentReferencedImageIds(
-  target: Set<string>,
-  conversations = useStore.getState().agentConversations,
-  inputDrafts = useStore.getState().agentInputDrafts,
-) {
-  for (const conversation of conversations) {
-    for (const round of conversation.rounds) {
-      for (const id of round.inputImageIds) target.add(id)
-      if (round.maskImageId) target.add(round.maskImageId)
-    }
-    for (const message of conversation.messages) {
-      if (message.maskImageId) target.add(message.maskImageId)
-    }
-  }
-  for (const draft of Object.values(inputDrafts)) {
-    for (const img of draft.inputImages) target.add(img.id)
-  }
-}
-
-function addInputDraftReferencedImageIds(target: Set<string>, draft: AgentInputDraft | null) {
-  if (!draft) return
-  for (const img of draft.inputImages) target.add(img.id)
-}
-
 function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
   for (const id of task.inputImageIds || []) target.add(id)
   if (task.maskImageId) target.add(task.maskImageId)
   for (const id of task.outputImages || []) target.add(id)
   for (const id of task.streamPartialImageIds || []) target.add(id)
-}
-
-function addSopRunReferencedImageIds(target: Set<string>, runs: SopBatchSnapshot[]) {
-  for (const run of runs) {
-    for (const imageId of run.referenceImageIds) target.add(imageId)
-  }
 }
 
 function addSopCoverReferencedImageIds(target: Set<string>) {
@@ -8006,10 +7970,6 @@ function mergeResponseOutputItems(previous: ResponsesOutputItem[], next: Respons
 }
 
 function countResponseToolCalls(output: ResponsesOutputItem[]) {
-  return output.filter((item) => item.type === 'image_generation_call').length
-}
-
-function countResponseImageCalls(output: ResponsesOutputItem[]) {
   return output.filter((item) => item.type === 'image_generation_call').length
 }
 
@@ -9891,187 +9851,6 @@ async function executeTask(taskId: string) {
 
     const apiMaxN = getApiMaxN(activeProfile)
 
-    async function executeInBatches<T>(
-      items: T[],
-      batchHandler: (item: T, index: number) => Promise<CallApiResult>,
-      expectedImagesPerItem: number | ((item: T, index: number) => number) = 1,
-    ): Promise<CallApiResult & { batchItemStatuses?: BatchItemStatus[]; batchItemErrors?: BatchItemError[] }> {
-      if (items.length === 0) return { images: [] }
-
-      const totalBatches = items.length
-      const getExpectedImages = (item: T, index: number) =>
-        Math.max(
-          1,
-          Math.floor(
-            typeof expectedImagesPerItem === 'function' ? expectedImagesPerItem(item, index) : expectedImagesPerItem,
-          ),
-        )
-      const imageBaseIndexes = items.reduce<number[]>((indexes, item, index) => {
-        const previousBase = indexes[index - 1] ?? 0
-        const previousCount = index === 0 ? 0 : getExpectedImages(items[index - 1], index - 1)
-        indexes.push(previousBase + previousCount)
-        return indexes
-      }, [])
-      const totalImages = items.reduce((count, item, index) => count + getExpectedImages(item, index), 0)
-      let allImages: string[] = []
-      let allActualParamsList: Array<Partial<TaskParams> | undefined> = []
-      let allRevisedPrompts: Array<string | undefined> = []
-      let allRawImageUrls: string[] = []
-      let firstActualParamsValue: Partial<TaskParams> | undefined
-      let successBatchCount = 0
-      let failureBatchCount = 0
-      const imageStatuses: BatchItemStatus[] = new Array(totalImages).fill('done')
-      const imageErrors: BatchItemError[] = []
-
-      async function retryItem(fn: () => Promise<CallApiResult>): Promise<CallApiResult> {
-        let lastError: unknown
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-          if (attempt > 0) {
-            const delayMs = Math.min(30_000, 1000 * Math.pow(2, attempt - 1))
-            release()
-            try {
-              await new Promise((resolve) => setTimeout(resolve, delayMs))
-            } finally {
-              await acquire()
-            }
-          }
-          try {
-            return await fn()
-          } catch (err) {
-            lastError = err
-            if (attempt < maxRetries && isRetryableError(err)) continue
-            throw err
-          }
-        }
-        throw lastError
-      }
-
-      let activeCount = 0
-      const waitQueue: Array<() => void> = []
-
-      async function acquire() {
-        if (activeCount < effectiveMaxConcurrent) {
-          activeCount++
-          return
-        }
-        await new Promise<void>((resolve) => waitQueue.push(resolve))
-      }
-
-      function release() {
-        activeCount--
-        if (waitQueue.length > 0 && activeCount < effectiveMaxConcurrent) {
-          activeCount++
-          const next = waitQueue.shift()!
-          next()
-        }
-      }
-
-      async function storeBatchResult(result: CallApiResult, item: T, index: number) {
-        const imageBaseIndex = imageBaseIndexes[index]
-        const expectedImages = getExpectedImages(item, index)
-
-        const itemImages = result.images
-        const itemActualParamsList = result.actualParamsList?.length
-          ? result.actualParamsList
-          : result.images.map(() => result.actualParams)
-        const itemRevisedPrompts = result.revisedPrompts?.length
-          ? result.revisedPrompts
-          : result.images.map(() => undefined)
-        const itemRawImageUrls = result.rawImageUrls ?? []
-
-        const newOutputIds: string[] = []
-        const processedActualParamsList: Array<Partial<TaskParams> | undefined> = []
-        for (let i = 0; i < itemImages.length; i++) {
-          const stored = await processAndStoreGeneratedImage(itemImages[i], taskParams, itemActualParamsList[i])
-          newOutputIds.push(stored.id)
-          processedActualParamsList.push(stored.actualParams)
-        }
-
-        allImages = allImages.concat(itemImages)
-        allActualParamsList = allActualParamsList.concat(processedActualParamsList)
-        allRevisedPrompts = allRevisedPrompts.concat(itemRevisedPrompts)
-        allRawImageUrls = allRawImageUrls.concat(itemRawImageUrls)
-        if (!firstActualParamsValue) {
-          firstActualParamsValue = firstActualParams(processedActualParamsList) ?? result.actualParams
-        }
-        if (itemImages.length > 0) successBatchCount++
-        if (itemImages.length < expectedImages) {
-          failureBatchCount++
-          const missingCount = expectedImages - itemImages.length
-          const errorMsg = `服务商返回的图片数量少于请求数量：请求 ${expectedImages} 张，实际返回 ${itemImages.length} 张。`
-          for (let j = 0; j < missingCount; j++) {
-            const missingIndex = imageBaseIndex + itemImages.length + j
-            imageStatuses[missingIndex] = 'error'
-            imageErrors.push({ index: missingIndex, error: errorMsg })
-          }
-        }
-        const currentTask = useStore.getState().tasks.find((t) => t.id === taskId)
-        if (currentTask && currentTask.status === 'running') {
-          const existingOutputIds = currentTask.outputImages || []
-          updateTaskProgress(taskId, 'generating')
-          updateTaskInStore(taskId, {
-            outputImages: [...existingOutputIds, ...newOutputIds],
-          })
-          void saveTaskImagesToLocalFS(taskId, newOutputIds, existingOutputIds.length)
-          scheduleOpenAIWatchdog(taskId, activeProfile.timeout, activeProfile)
-        }
-      }
-
-      function recordBatchFailure(error: unknown, itemOrIndex: T | number, maybeIndex?: number) {
-        const index = typeof maybeIndex === 'number' ? maybeIndex : Number(itemOrIndex)
-        const item = typeof maybeIndex === 'number' ? (itemOrIndex as T) : items[index]
-        const imageBaseIndex = imageBaseIndexes[index]
-        const expectedImages = getExpectedImages(item, index)
-        failureBatchCount++
-        const errorMsg = error instanceof Error ? error.message : String(error)
-        for (let j = 0; j < expectedImages; j++) {
-          imageStatuses[imageBaseIndex + j] = 'error'
-          imageErrors.push({ index: imageBaseIndex + j, error: errorMsg })
-        }
-      }
-
-      await Promise.allSettled(
-        items.map(async (item, index) => {
-          const latestTaskCheck = useStore.getState().tasks.find((t) => t.id === taskId)
-          if (!latestTaskCheck || latestTaskCheck.status !== 'running') {
-            recordBatchFailure(new Error('任务已中止'), index)
-            return
-          }
-
-          if (!useFolderMode && allImages.length >= totalImages) {
-            return
-          }
-
-          await acquire()
-          try {
-            if (!useFolderMode && allImages.length >= totalImages) {
-              return
-            }
-            const result = await retryItem(() => batchHandler(item, index))
-            await storeBatchResult(result, item, index)
-          } catch (err) {
-            recordBatchFailure(err, item, index)
-          } finally {
-            release()
-          }
-        }),
-      )
-
-      if (successBatchCount === 0) {
-        throw new Error('所有请求均失败')
-      }
-
-      const actualParams = { ...firstActualParamsValue, n: allImages.length }
-      return {
-        images: allImages,
-        actualParams,
-        actualParamsList: allActualParamsList,
-        revisedPrompts: allRevisedPrompts,
-        ...(allRawImageUrls.length ? { rawImageUrls: allRawImageUrls } : {}),
-        ...(failureBatchCount > 0 ? { batchItemStatuses: imageStatuses, batchItemErrors: imageErrors } : {}),
-      }
-    }
-
     /**
      * 多图（n>1）的编排执行：使用纯函数编排器保证数量、去重与补偿。
      * - 按供应商能力拆分首轮请求（fal 每请求最多 4 张，OpenAI 兼容每请求 1 张）。
@@ -10192,7 +9971,6 @@ async function executeTask(taskId: string) {
           waitQueue.shift()!()
         }
       }
-      const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
       const committed = new Map<
         number,
@@ -11784,7 +11562,7 @@ async function deleteLocalSavedOutputFilesForTasks(tasks: TaskRecord[]): Promise
 }
 
 export async function removeMultipleTasks(taskIds: string[]) {
-  const { tasks, setTasks, showToast, clearSelection, selectedTaskIds, workspaceTabs } = useStore.getState()
+  const { tasks, setTasks, showToast, selectedTaskIds, workspaceTabs } = useStore.getState()
 
   if (!taskIds.length) return
 
@@ -11904,7 +11682,7 @@ export async function removeTask(task: TaskRecord) {
 }
 
 export async function clearFailedTasks() {
-  const { tasks, setTasks, workspaceTabs, showToast, setConfirmDialog } = useStore.getState()
+  const { tasks, setTasks, showToast, setConfirmDialog } = useStore.getState()
   const failedTasks = tasks.filter((t) => t.status === 'error')
   const partialFailureTasks = tasks.filter(
     (t) => t.status === 'done' && t.batchItemStatuses?.some((s) => s === 'error'),

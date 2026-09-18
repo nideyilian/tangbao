@@ -23,7 +23,6 @@ import { ActualValueBadge, DetailParamValue } from './paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { isLocalImageUrl } from '../lib/localImageUrl'
-import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import {
   downloadImageEntries,
   downloadImageEntriesAsZip,
@@ -36,7 +35,7 @@ import { getHoverPreviewPosition, getHoverPreviewSize } from '../lib/hoverPrevie
 import { isElectron as isElectronEnv, openInExplorer } from '../lib/localSave'
 import { findTaskSavedImagePath } from '../lib/imageRevealPath'
 import { buildVariableColorMap } from '../lib/promptVariableColors'
-import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, FolderOpenIcon, LinkIcon, TrashIcon } from './icons'
+import { CloseIcon, CopyIcon, DownloadIcon, EditIcon, FolderOpenIcon, TrashIcon } from './icons'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import PromptVariableEditor from './PromptVariableEditor'
@@ -61,7 +60,6 @@ export default function DetailModal() {
   const detailImageId = useStore((s) => s.detailImageId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
-  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
   const openFavoritePicker = useStore((s) => s.openFavoritePicker)
@@ -81,7 +79,7 @@ export default function DetailModal() {
   const [now, setNow] = useState(Date.now())
   const [showRawUrlsModal, setShowRawUrlsModal] = useState(false)
   const [showRawResponseModal, setShowRawResponseModal] = useState(false)
-  const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
+  const [, setStreamPreviewLoaded] = useState(false)
   const [hoverPreview, setHoverPreview] = useState<{
     imageId: string
     src: string
@@ -97,12 +95,6 @@ export default function DetailModal() {
   const rawUrlsBackdropPointerDownRef = useRef(false)
   const rawResponseBackdropPointerDownRef = useRef(false)
 
-  const copyErrorTooltip = useTooltip()
-  const copyRawUrlsTooltip = useTooltip()
-  const viewRawResponseTooltip = useTooltip()
-  const downloadPartialImagesTooltip = useTooltip()
-  const retryTooltip = useTooltip()
-  const downloadImageTooltip = useTooltip()
   const downloadAllTooltip = useTooltip()
   const openImageDirectoryTooltip = useTooltip()
 
@@ -180,11 +172,6 @@ export default function DetailModal() {
     })
     setHoverPreview({ imageId, src, ...position, ...size })
   }
-
-  const containingTab = useMemo(
-    () => (detailTaskId ? workspaceTabs.find((tab) => tab.tasks.some((t) => t.id === detailTaskId)) : undefined),
-    [detailTaskId, workspaceTabs],
-  )
 
   const streamPreviewItems = useMemo(() => {
     const slotEntries = streamPreviewSlots
@@ -275,7 +262,6 @@ export default function DetailModal() {
   }, [detailTaskId, taskInputImageIds, taskMaskImageId])
 
   const currentOutputImageId = (imageIndex < taskOutputImages.length ? taskOutputImages[imageIndex] : '') || ''
-  const currentOutputPreviewSrc = currentOutputImageId ? outputPreviewSrcs[currentOutputImageId] || '' : ''
 
   // 输出图走本地文件协议直出，文件被外部删除/移出库根时会 404：回退 dataUrl，避免列表出现破图。
   const handleOutputPreviewError = (imageId: string) => {
@@ -439,9 +425,6 @@ export default function DetailModal() {
   const progressDisplay = getTaskProgressDisplay(task, liveTaskProgress)
   const showProgressDetails = displayTaskStatus !== 'done' || progressDisplay.cardLabel === '数量不够'
   const rawImageUrls = task.rawImageUrls ?? []
-  const streamPreviewLen = streamPreviewItems.length
-  const currentStreamPreviewSrc = activeStreamPreviewSrc
-  const streamPartialImageIds = task.streamPartialImageIds ?? []
 
   const formatTime = (ts: number | null) => {
     if (!ts) return ''
@@ -469,13 +452,6 @@ export default function DetailModal() {
 
   const handleEdit = () => {
     editOutputs(task)
-    setDetailTaskId(null)
-  }
-
-  const handleMaskEditCurrentOutput = () => {
-    const imgId = task.outputImages?.[imageIndex]
-    if (!imgId) return
-    setMaskEditorImageId(imgId)
     setDetailTaskId(null)
   }
 
@@ -533,13 +509,6 @@ export default function DetailModal() {
     }
   }
 
-  const handleStartEdit = () => {
-    if (!task) return
-    setEditPrompt(task.prompt)
-    setEditParams(task.params)
-    setIsEditingParams(true)
-  }
-
   const handleSaveEdit = () => {
     if (!task) return
     updateTaskInStore(task.id, { prompt: editPrompt, params: editParams })
@@ -563,24 +532,6 @@ export default function DetailModal() {
 
   const handleCancelEdit = () => {
     setIsEditingParams(false)
-  }
-
-  const handleDownloadCurrentOutput = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!currentOutputImageId || !task) return
-
-    try {
-      const entries = getGeneratedImageDownloadEntries([task], workspaceTabs, settings, [currentOutputImageId])
-      const result = await downloadImageEntries(entries)
-      if (result.successCount === 0) {
-        showToast('下载失败', 'error')
-      } else {
-        showToast('下载成功', 'success')
-      }
-    } catch (err) {
-      console.error(err)
-      showToast('下载失败', 'error')
-    }
   }
 
   const handleDownloadOutputImage = async (imageId: string, e: React.MouseEvent) => {
@@ -650,28 +601,6 @@ export default function DetailModal() {
         showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
       } else {
         showToast(result.successCount > 1 ? `下载成功：${result.successCount} 张图片` : '下载成功', 'success')
-      }
-    } catch (err) {
-      console.error(err)
-      showToast('下载失败', 'error')
-    }
-  }
-
-  const handleDownloadPartialImages = async () => {
-    if (!task || !streamPartialImageIds.length) return
-
-    try {
-      const fileNameBase = `task-${task.id}-partial`
-      const entries = getGeneratedImageDownloadEntries([task], workspaceTabs, settings, streamPartialImageIds)
-      const result = settings.zipDownloadRoutes.includes('task-detail-partial')
-        ? await downloadImageEntriesAsZip(entries, fileNameBase)
-        : await downloadImageEntries(entries)
-      if (result.successCount === 0) {
-        showToast('下载失败', 'error')
-      } else if (result.failCount > 0) {
-        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
-      } else {
-        showToast(`下载成功：${result.successCount} 张中间步骤图`, 'success')
       }
     } catch (err) {
       console.error(err)
@@ -826,7 +755,6 @@ export default function DetailModal() {
                     let height: number | null = null
 
                     // 1. 先从已有的 imageSizes/imageRatios 获取
-                    const currentRatio = imageRatios[imageId]
                     const currentSize = imageSizes[imageId]
                     if (currentSize) {
                       const [w, h] = currentSize.split('×').map(Number)

@@ -34,7 +34,7 @@
 
 | ID | 风险 | 触发条件 | 检测 | 缓解 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| R-10 | **门禁放行"声称改了但没落地"**：`noUnusedLocals/Parameters=false`（`tsconfig.json:19-20`）+ `no-unused-vars: warn`（`eslint.config.js:48`），死 import 零告警 | 只加 import 没换调用点 | `npm run lint` 无输出（漏检） | 打开 `error`（TB-021）；✅ **已修（2026-09-18）**：新增死符号**棘轮门禁**（`scripts/check-unused-symbols.mjs` + `unused-symbols-baseline.json`，已接进 `ci.yml`）—— 存量 114 处允许、**新增一律拦截**；另外对关键改动仍应补**结构性断言**测试 | **MITIGATED** |
+| R-10 | **门禁放行"声称改了但没落地"**：`noUnusedLocals/Parameters=false`（`tsconfig.json:19-20`）+ `no-unused-vars: warn`（`eslint.config.js:48`），死 import 零告警 | 只加 import 没换调用点 | `npm run lint` 无输出（漏检） | 打开 `error`（TB-021）；✅ **已修（2026-09-18）**：存量 114 处**已全部清零**，`no-unused-vars` 与 `no-explicit-any` 在 `src/**` + `electron/**` 上从 `warn` 收紧为 **`error`**（`eslint.config.js`）→ CI 的 Lint 步骤即守卫，**新增即红**。过渡用的棘轮脚本已按计划退役（规则本身已是硬门禁）。对关键改动仍应补**结构性断言**测试 | **RESOLVED** |
 | R-11 | **记忆入库可能连带本机隐私**：记忆文件含本机绝对路径、密钥字节数、凭据获取方式 | TB-025 执行时 | 入库前全文检索 `token` / `pat` / `sk-` / `C:\Users` / 主机名 | ✅ **已执行（2026-09-18）**：扫描确认**无完整凭据**（命中的只有 `github_pat_…` / `gho_…` 这类前缀示意）；仓库实测为 **public** → 进一步收敛为**只入库 `MEMORY.md`**，过程日志留本地 | **MITIGATED** |
 | R-12 | **`store.setAppMode` 兜底分支把非白名单值改写成 `agent`** → 顶栏切换"点了没反应、零报错" | 新增 `AppMode` 值时未补分支 | 点 tab 后查 `appMode` 实际值 | 新增工作区必须补分支；已有测试守住 | MITIGATED |
 | R-13 | **`InputBar` 的 prompt 是双写**（store + contentEditable）：程序性改写未置 `isUserInputRef.current = false` 会被 effect 吞掉，下次从 DOM 回读把改动整个抹掉 | 新增任何"程序性改写 prompt"的入口 | 改完后在输入框多敲一个字，看改动是否还在 | 改写前必须复位标志；effect 已收紧为「DOM 纯文本 === prompt 才跳过」 | MITIGATED |

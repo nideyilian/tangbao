@@ -460,7 +460,7 @@ function buildSopSeriesFixedInstruction(input: {
   lockedFixedBlock: string
   freeFixedDimensions: string[]
 }) {
-  const { freeFixedDimensions, lockedFixedBlock, seriesConfig, seriesFixedBlock } = input
+  const { freeFixedDimensions, lockedFixedBlock, seriesFixedBlock } = input
   if (seriesFixedBlock)
     return [
       '本组固定块已锁定，必须逐字沿用，不得改写、增删、调换顺序或重新措辞：',

@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Checkbox } from '../../../design-system'
 import { CopyIcon as Copy, PlusIcon as Plus, TrashIcon as Trash2 } from '../../../design-system/icons'
 import {
   PRESET_LIBRARY_DRAG_TYPE as LIBRARY_PRESET_DRAG_TYPE,
   filterPresetsByQuery,
-  parsePresetDragPayload,
   serializePresetDragPayload,
 } from '../lib/compositePresetLibrary'
 import type { CompositeFsImage } from '../lib/compositeTypes'
@@ -27,8 +26,8 @@ export function PresetManagementTab() {
   const store = useCompositeV2Store()
   const { openConfirmDialog, openInfoDialog } = useAppDialog()
   const [query, setQuery] = useState('')
-  const [logoStatusText, setLogoStatusText] = useState('支持拖拽添加 LOGO。')
-  const [isRefreshingLogos, setIsRefreshingLogos] = useState(false)
+  const [logoStatusText] = useState('支持拖拽添加 LOGO。')
+  const [isRefreshingLogos] = useState(false)
   const [logoObjectUrls, setLogoObjectUrls] = useState<Record<string, string>>({})
   const [selectedLayerId, setSelectedLayerId] = useState('')
   const [editingPresetId, setEditingPresetId] = useState('')

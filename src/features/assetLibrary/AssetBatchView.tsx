@@ -196,7 +196,6 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
     return group.task ?? batchTasks(group)[0] ?? null
   }, [group, batchTasks])
   const taskList = batchTasks(group)
-  const groupAssetIds = group.assets.map((asset) => asset.id)
   const outputImagesByTask = useMemo(() => {
     const result = new Map<string, string[]>()
     for (const asset of group.assets) {

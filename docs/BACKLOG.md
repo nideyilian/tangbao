@@ -105,14 +105,27 @@
   **报告已生成，无害**；但退出码可能非 0，所以不要把它直接接进 CI。
 
 ### TB-021 收紧未使用符号门禁
-- **状态**：DONE（2026-09-18）· **改用棘轮，而非一次清零**
-- **验收证据**：新增 `scripts/check-unused-symbols.mjs` +
-  `scripts/unused-symbols-baseline.json`（基线：`no-unused-vars` **114** 处、`no-explicit-any` **0** 处），
-  已接进 `.github/workflows/ci.yml`（Lint 之后）。**存量允许、新增一律拦截**。
-- **为什么不用"一次清 114 处"**：部分告警是局部变量赋值（`'x' is assigned a value but never used`），
-  **右侧可能带副作用，不能盲删**；且改动面覆盖 `store.ts` 等核心文件，风险与本次目标不成比例。
-  棘轮能立刻达成目标（**让"删了调用点却没删 import"这类改动再也混不过去**），
-  存量再按文件分批清（清完跑 `--update` 收紧基线）。
+- **状态**：DONE（2026-09-18）· **存量 114 处已全部清零，规则直接收紧为 `error`**
+- **最终形态**：`@typescript-eslint/no-unused-vars` 与 `@typescript-eslint/no-explicit-any`
+  在 `src/**` + `electron/**` 上**均为 `error`**（`eslint.config.js`）。CI 的 Lint 步骤即守卫 —— **新增即红**。
+- **棘轮已退役**：原 `scripts/check-unused-symbols.mjs` + `unused-symbols-baseline.json` **已删除**，
+  CI 里的对应步骤也一并移除。理由：棘轮是"存量无法一次清零"时的过渡手段；
+  存量清零后它与 `error` 规则功能重叠，留着就是两个机制管同一件事（违背单一真相源/简单优先）。
+- **清零过程（可复用的操作要点）**
+  1. 按"零风险 → 需判断"分层：import 类 → 解构/局部变量类 → 死函数与多行常量类。
+  2. 批量替换**必须校验唯一性**：命中数 > 1 就报错停下，绝不"改第一个"。
+  3. 多行函数/常量用**括号配平**定位边界（扫描时跳过字符串与注释里的括号）。
+  4. ⚠️ **必须用 `tsc` 立刻复验**。本次 tsc 抓出两处真错：
+     - `store.ts` 同一行 import 里**只有 `getChangedParams` 未被使用**，误删整行 →
+       `normalizeParamsForSettings` 8 处断层（eslint 的报错粒度是"符号"，不是"行"）。
+     - 我用"文本出现序号"替换，但 eslint 报的是**行号**，二者不等价 → 改错了
+       `promptGenerator.test.ts` 里两处**正在使用 `text`** 的用例。
+  5. 删除死代码会暴露**级联死符号**（114 → 39 → 8 → 0），需要迭代，不是一轮能完。
+- **净效果**：**删除 600+ 行死代码**（`DetailModal` 4 个未使用 handler、`store.ts` 5 个未使用函数
+  与 12 处死 import、`AppShell` 的 `LegacyStrategyPage` 235 行、`AgentBatchPlannerModal` 的
+  `splitSelections`、若干个已废弃的 `state`/`setter` 组合等）。
+- **验收证据**：`npx eslint .` **零输出**（0 error / 0 warning）；
+  `tsc -b` 通过；`npm run verify` 全绿；**删除后 238 文件 / 2535 用例零回归**。
 - **依据**：`docs/project-health-audit.md` P2-10 / `RISK.md` R-10
 
 ### TB-022 `store.ts` 拆分
@@ -180,7 +193,9 @@
   `dist-verify/` 等磁盘残留 —— **属破坏性操作，需杰哥确认后再做**
 
 ### TB-032 收口 `contentEditable` 双写模式（新发现，2026-09-18）
-- **状态**：TODO · 阻塞：需在**无 dev 运行时**执行（会改 `src/`）
+- **状态**：TODO · 阻塞已解除（"需停 dev"不再是限制）
+- **本轮进展**：两个涉及组件的死符号已随 `TB-021` 清空（含 `PromptVariableEditor` 的两处死 import），
+  收口时可少绕一步
 - **发现**：`getContentEditablePlainText` 与 `isUserInputRef` 这套"prompt 双写"模式在
   **两个组件里各实现一份** —— `InputBar.tsx:374`（`isUserInputRef` 有 **18 处**引用）
   与 `PromptVariableEditor.tsx:30`

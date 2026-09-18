@@ -65,7 +65,6 @@ import {
   Pause as LucidePause,
   Pencil as LucidePencil,
   Pin as LucidePin,
-  PinOff as LucidePinOff,
   Play as LucidePlay,
   Plus as LucidePlus,
   RefreshCw as LucideRefresh,

@@ -1,5 +1,5 @@
 import React, { type ReactNode, useState, useMemo } from 'react'
-import { Edit2Icon as Edit2, PlusIcon as Plus, RefreshIcon, TrashIcon as Trash2 } from '../../../design-system/icons'
+import { Edit2Icon as Edit2, PlusIcon as Plus, TrashIcon as Trash2 } from '../../../design-system/icons'
 import { useTooltip } from '../../../hooks/useTooltip'
 import ViewportTooltip from '../../../components/ViewportTooltip'
 import type { CompositeFsImage } from '../lib/compositeTypes'

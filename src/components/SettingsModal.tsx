@@ -74,7 +74,6 @@ import {
   useDialogFocusTrap,
   ColorPresetGrid,
   SectionHeader,
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -965,8 +964,7 @@ export default function SettingsModal() {
   const [isLoadingBackups, setIsLoadingBackups] = useState(false)
   const [selectedBackups, setSelectedBackups] = useState<Set<string>>(new Set())
   const [isSelectMode, setIsSelectMode] = useState(false)
-  const [backupPath, setBackupPath] = useState<string>('')
-  const [isSelectingPath, setIsSelectingPath] = useState(false)
+  const [, setBackupPath] = useState<string>('')
   const [isExportingData, setIsExportingData] = useState(false)
   const [isImportingData, setIsImportingData] = useState(false)
   const [isCleaningData, setIsCleaningData] = useState(false)
@@ -1183,11 +1181,11 @@ export default function SettingsModal() {
   const [copyImportUrlOptions, setCopyImportUrlOptions] = useState<CopyImportUrlOptions>(readCopyImportUrlOptions)
   const [agentModels, setAgentModels] = useState<AvailableModel[]>([])
   const [agentModelsLoading, setAgentModelsLoading] = useState(false)
-  const [agentModelsError, setAgentModelsError] = useState<string | null>(null)
+  const [, setAgentModelsError] = useState<string | null>(null)
   const [agentModelManualEntry, setAgentModelManualEntry] = useState(false)
   const [apiModels, setApiModels] = useState<AvailableModel[]>([])
   const [apiModelsLoading, setApiModelsLoading] = useState(false)
-  const [apiModelsError, setApiModelsError] = useState<string | null>(null)
+  const [, setApiModelsError] = useState<string | null>(null)
   const [apiConnectionFeedback, setApiConnectionFeedback] = useState<ConnectionFeedback>(null)
   const [agentConnectionFeedback, setAgentConnectionFeedback] = useState<ConnectionFeedback>(null)
   const apiCatalogRequestRef = useRef(0)

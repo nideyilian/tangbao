@@ -207,7 +207,6 @@ export default function SopBatchDetailModal({
   const allTasks = useStore((state) => state.tasks)
   const lightboxImageId = useStore((state) => state.lightboxImageId)
   const showToast = useStore((state) => state.showToast)
-  const workspaceTabs = useStore((state) => state.workspaceTabs)
   // 遮罩关闭保护窗口：挂载后短时间内的遮罩点击忽略（连点/双击打开时第二下会落在遮罩上）
   const backdropCloseGuardUntilRef = useRef(Date.now() + BACKDROP_CLOSE_GUARD_MS)
   useCloseOnEscape(!lightboxImageId, onClose)

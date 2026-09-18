@@ -4,7 +4,6 @@ import {
   Checkbox,
   DialogPane,
   DialogWorkspace,
-  EmptyState,
   IconButton,
   SelectField,
   StatusIndicator,

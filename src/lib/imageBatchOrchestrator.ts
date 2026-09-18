@@ -375,7 +375,6 @@ export function applyProviderResult(
     }
   }
 
-  const rejectedSet = new Set(rejected?.slotIndexes ?? [])
   let duplicateCount = state.duplicateCount
   let nearDuplicateCount = state.nearDuplicateCount
   if (rejected?.kind === 'exact-duplicate') duplicateCount += rejected.slotIndexes.length

@@ -8,8 +8,6 @@ import {
   getSelectedImageMentionLabel,
   createVariableMention,
   resolveVariableMentionEntry,
-  VAR_END,
-  VAR_START,
 } from '../lib/promptImageMentions'
 import { normalizePromptVariableMarkers, replaceVariableNameInPrompt } from '../lib/promptVariableEditor'
 import { buildVariableColorMap } from '../lib/promptVariableColors'

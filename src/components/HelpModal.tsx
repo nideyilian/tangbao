@@ -4,7 +4,6 @@ import type { AppMode } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useDialogFocusTrap } from '../design-system'
-import { useStore } from '../store'
 
 interface HelpModalProps {
   appMode: AppMode

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getUniqueWordLibraryEntryKey, useStore } from '../store'
 import { createVariableMention, parseVariableMention, VAR_MENTION_RE } from '../lib/promptImageMentions'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
@@ -315,7 +315,6 @@ export default function WordLibraryManagerModal() {
     }
   }
 
-  const entryById = useMemo(() => new Map(activeEntries.map((entry) => [entry.id, entry])), [activeEntries])
   const activeBatches = useMemo(() => batches.filter((batch) => !batch.archivedAt), [batches])
   const handleViewTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, currentView: View) => {
     const views: View[] = ['library', 'batches', 'archived', 'trash']

@@ -6,14 +6,7 @@ import { usePreventBackgroundScroll } from '../../hooks/usePreventBackgroundScro
 import { IconButton, useDialogFocusTrap } from '../../design-system'
 import { XIcon } from '../../design-system/icons'
 import { useAssetLibraryStore } from './store'
-import {
-  queryAssets,
-  mergePagedAssets,
-  assetMatchesQueryState,
-  resolveEffectiveAssets,
-  toByTagMap,
-  type AssetSidebarCounts,
-} from './query'
+import { queryAssets, mergePagedAssets, resolveEffectiveAssets, toByTagMap, type AssetSidebarCounts } from './query'
 import { hasTaskFailure } from '../../lib/assetBatchGrouping'
 import AssetLibrarySidebar from './AssetLibrarySidebar'
 import AssetLibraryToolbar from './AssetLibraryToolbar'

@@ -109,12 +109,6 @@ function AssetCardMenuInner({
     onClose()
   }
 
-  const openDetail = () => {
-    useAssetLibraryStore.getState().setActiveAsset(asset.id)
-    useAssetLibraryStore.getState().setDetailOpen(true)
-    onClose()
-  }
-
   const copyImage = async () => {
     onClose()
     try {

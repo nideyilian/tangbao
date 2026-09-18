@@ -452,14 +452,6 @@ function deleteElectronRecord(namespace: string, id: string): Promise<void> | nu
     .then(() => undefined)
 }
 
-function deleteManyElectronRecords(namespace: string, ids: string[]): Promise<void> | null {
-  const api = getElectronAppDataApi()
-  if (!api) return null
-  return ensureElectronAppDataMigrated()
-    .then(() => api.appDataDeleteMany(namespace, ids))
-    .then(() => undefined)
-}
-
 function clearElectronRecords(namespace: string): Promise<void> | null {
   const api = getElectronAppDataApi()
   if (!api) return null

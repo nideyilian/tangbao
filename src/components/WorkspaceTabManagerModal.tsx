@@ -19,7 +19,6 @@ export default function WorkspaceTabManagerModal() {
   const createWorkspaceTabGroup = useStore((s) => s.createWorkspaceTabGroup)
   const renameWorkspaceTabGroup = useStore((s) => s.renameWorkspaceTabGroup)
   const deleteWorkspaceTabGroup = useStore((s) => s.deleteWorkspaceTabGroup)
-  const moveWorkspaceTabToGroup = useStore((s) => s.moveWorkspaceTabToGroup)
   const setActiveWorkspaceTabId = useStore((s) => s.setActiveWorkspaceTabId)
   const setSelectedWorkspaceTabIds = useStore((s) => s.setSelectedWorkspaceTabIds)
   const toggleWorkspaceTabSelection = useStore((s) => s.toggleWorkspaceTabSelection)

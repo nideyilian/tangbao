@@ -359,7 +359,6 @@ import {
   subscribeImageThumbnail,
   GRID_THUMBNAIL_VARIANT,
   resolveImageDisplaySrc,
-  purgeGeneratedAssets,
   runManualPostprocess,
   useStore,
 } from './store'

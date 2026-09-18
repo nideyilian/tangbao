@@ -120,8 +120,8 @@ describe('render_prompt', () => {
       },
     }
 
-    const [text1] = render_prompt(state, 0)
-    const [text2] = render_prompt(state, 0)
+    render_prompt(state, 0)
+    render_prompt(state, 0)
 
     // With only 3 entries and Math.random, it's extremely unlikely both calls pick the same
     // We check that at least one of multiple tries differs
@@ -163,7 +163,7 @@ describe('render_prompt', () => {
   })
 
   it('draws all available entries when draw_count exceeds entries length', () => {
-    const [text, reports] = render_prompt(
+    const [, reports] = render_prompt(
       {
         segments: [{ type: 'wildcard', id: 'nums' }],
         library: { nums: { entries: ['1', '2', '3'], draw_count: 5, label: '数字' } },
@@ -190,7 +190,7 @@ describe('render_prompt', () => {
   })
 
   it('deduplicates and removes empty strings from entries before drawing', () => {
-    const [text, reports] = render_prompt(
+    const [, reports] = render_prompt(
       {
         segments: [{ type: 'wildcard', id: 'items' }],
         library: { items: { entries: ['a', '', 'a', 'b'], draw_count: 2, label: '项目' } },

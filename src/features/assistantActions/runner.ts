@@ -58,13 +58,6 @@ const SHARED_VISUAL_SEMANTIC_BASE = [
   '所有技能都输出一条提示词和一条分维度上位概念描述；生成词条的技能还输出与提示词变量对应的词条。准确提示词直接描述要生成的画面；上位概念描述只表达各维度的概念级设计方向，不复述画面细节。不包含“经过分析”“视觉定位如下”等解释性文字；不包含多个编号方案；不出现没有依据的产品事实或商业承诺；所有 {{变量}} 都存在对应词条分类；所有词条都能直接替换进提示词；没有对应词条的占位符自动转成普通文字；输出前逐字段检查并改写所有英文字母、英文单词和英文缩写，最终字段值只能包含中文、数字及必要标点。',
 ].join('\n')
 
-const ACTION_TITLES: Record<string, string> = {
-  'prompt-optimize': '提示词优化',
-  'image-describe': '图片描述',
-  'super-derive': '超级衍生',
-  'wild-derive': '赌狗模式',
-}
-
 interface AssistantJsonPayload {
   prompt?: string
   alternativePrompt?: string
@@ -425,20 +418,6 @@ function createAssistantActionInput(
     content.push({ type: 'input_image', image_url: (image as InputImage).dataUrl })
   }
   return [{ role: 'user', content }]
-}
-
-function normalizeVisualIdentity(value: unknown): VisualIdentity {
-  const empty: VisualIdentity = { subject: '', composition: '', color: '', scene: '', textLayout: '', style: '' }
-  if (!value || typeof value !== 'object') return empty
-  const record = value as Record<string, unknown>
-  return {
-    subject: typeof record.subject === 'string' ? record.subject.trim() : '',
-    composition: typeof record.composition === 'string' ? record.composition.trim() : '',
-    color: typeof record.color === 'string' ? record.color.trim() : '',
-    scene: typeof record.scene === 'string' ? record.scene.trim() : '',
-    textLayout: typeof record.textLayout === 'string' ? record.textLayout.trim() : '',
-    style: typeof record.style === 'string' ? record.style.trim() : '',
-  }
 }
 
 /** Normalize the parsed payload into a single-prompt V2 result. Unmapped

@@ -36,12 +36,6 @@ function getNodeText(node: ReactTestInstance): string {
     .join('')
 }
 
-function findButtonByText(root: ReactTestInstance, text: string) {
-  return root
-    .findAll((node: ReactTestInstance) => node.type === 'button')
-    .find((node: ReactTestInstance) => getNodeText(node).includes(text))
-}
-
 function findInputByAriaLabel(root: ReactTestInstance, label: string) {
   return root.findAllByType('input').find((node: ReactTestInstance) => node.props['aria-label'] === label)
 }

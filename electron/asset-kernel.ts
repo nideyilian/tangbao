@@ -13,15 +13,8 @@ import { randomBytes } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type {
-  AssetCatalogQuery,
-  AssetCollection,
-  AssetTag,
-  AssetTombstone,
-  AssetUsageEvent,
-  GeneratedAsset,
-} from '../src/types'
-import { AssetCatalog, assetSearchText, type AssetCatalogUpsert } from './asset-catalog'
+import type { AssetCatalogQuery, AssetCollection, AssetTag, AssetTombstone, AssetUsageEvent } from '../src/types'
+import { assetSearchText, type AssetCatalogUpsert } from './asset-catalog'
 import { CatalogClient } from './catalog-client'
 import { serveLocalImageRequest } from './local-image-protocol'
 import { AssetApiServer, type ExternalAssetCommand } from './asset-api-server'

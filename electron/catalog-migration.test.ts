@@ -12,10 +12,6 @@ vi.mock('electron', () => ({
   },
 }))
 
-function writeSettings(settings: Record<string, unknown>) {
-  writeFileSync(path.join(mockUserData, 'local-settings.json'), JSON.stringify(settings), 'utf-8')
-}
-
 function createValidSqlite(filePath: string) {
   const db = new DatabaseSync(filePath)
   db.exec('CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);')

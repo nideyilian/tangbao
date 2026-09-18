@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlignLeftIcon as AlignLeft,
   ClipboardPlusIcon as ClipboardPlus,
-  ChevronDownIcon as ChevronDown,
   CloseIcon as Close,
   CollectionManageIcon as List,
   CopyIcon as Copy,
