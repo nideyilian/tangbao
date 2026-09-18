@@ -14,7 +14,8 @@
 | [`RISK.md`](RISK.md) | 唯一风险登记册：`R-###` 分级与缓解 | 现行 |
 | [`work-protocol.md`](work-protocol.md) | 写线协议 + 开工/收工清单 + 角色边界 | 现行 |
 | [`adr/`](adr/README.md) | 决策记录：为什么不那么做 | 现行 |
-| [`pm-upgrade-plan.md`](pm-upgrade-plan.md) | 本次升级的诊断与方案（一次性报告） | 参考 |
+| [`pm-upgrade-plan.md`](pm-upgrade-plan.md) | 项目管理升级的诊断与方案（一次性报告） | 参考 |
+| [`redundancy-audit.md`](redundancy-audit.md) | **冗余功能盘点**：保留 / 整合 / 删除三分，含逐项引用计数证据（对应 `TB-034`~`TB-038`） | 现行 |
 
 ## 操作配方与规范
 

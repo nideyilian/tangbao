@@ -696,12 +696,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['ToastMessage', 'StatusIndicator', 'Progress'],
   },
   {
-    module: 'src/components/SearchBar.tsx',
-    responsibility: '画廊筛选和搜索工具条',
-    decision: 'compose',
-    targets: ['Toolbar', 'SearchField', 'SelectField', 'IconButton'],
-  },
-  {
     module: 'src/components/Select.tsx',
     responsibility: '支持动作和拖拽排序的高级选择器',
     decision: 'retain',
@@ -732,22 +726,10 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Card', 'Thumbnail', 'StatusIndicator', 'Toolbar'],
   },
   {
-    module: 'src/components/SupportPromptModal.tsx',
-    responsibility: '支持与赞助说明弹窗',
-    decision: 'compose',
-    targets: ['Dialog', 'Alert', 'Button'],
-  },
-  {
     module: 'src/components/TaskCard.tsx',
     responsibility: '图片生成任务卡及动作',
     decision: 'retain',
     targets: ['Card', 'Thumbnail', 'StatusIndicator', 'Toolbar', 'Menu'],
-  },
-  {
-    module: 'src/components/TaskGrid.tsx',
-    responsibility: '任务虚拟网格和批次分组',
-    decision: 'retain',
-    targets: ['Grid', 'Skeleton', 'EmptyState'],
   },
   {
     module: 'src/components/TaskPostprocessModal.tsx',
@@ -814,12 +796,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     responsibility: '可停靠词库侧栏',
     decision: 'retain',
     targets: ['SplitPane', 'Panel', 'SearchField', 'NavList'],
-  },
-  {
-    module: 'src/components/WordLibrarySidebarToggle.tsx',
-    responsibility: '词库侧栏切换按钮',
-    decision: 'migrate',
-    targets: ['IconButton', 'Tooltip'],
   },
   {
     module: 'src/components/WorkspaceTabBar.tsx',

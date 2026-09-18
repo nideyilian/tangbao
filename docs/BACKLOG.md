@@ -212,6 +212,72 @@
 
 ---
 
+## M4 · 冗余清理（2026-09-18 盘点，**待杰哥确认后再动手**）
+
+> 完整证据链与执行顺序见 `docs/redundancy-audit.md`。删除属破坏性操作，**未经确认不执行**。
+> 盘点规模：约 7000 行（A 档 ~5470 / B 档 ~200 / C 档 ~300 / D 档待定）。
+
+### TB-034 删除零引用文件（A2 档，992 行）
+- **状态**：TODO · 阻塞：**等杰哥确认**
+- **内容**：`TaskGrid.tsx`(516) / `SupportPromptModal.tsx`(120) / `legacyTagsToCollections.ts`(116) /
+  `SearchBar.tsx`(95) / `wordEntryGroups.ts`(51) / `assetDerivation.ts`(41) /
+  `WordLibrarySidebarToggle.tsx`(27) / `collectionPath.ts`(26)
+- **前置**：同步删 `design-system/catalog.ts` 的登记（否则 `compliance.test.ts` 红）；用 `rm` 不用 `git rm`
+- **验收标准**：`npm run verify` 全绿；无残留引用
+
+### TB-035 合并 9 组重复实现（B 档）
+- **状态**：TODO · 阻塞：**等杰哥确认**
+- **内容**：`getContentEditablePlainText`(3→1)、`getPathBaseName`(2→1)、
+  `isRecordValue`+`getStringValue`(3→1)、`getStorage`(3→1)、`escapeRegExp`(3→1)、
+  `clamp`(3→1)、`isRecord`(2→1)、`isDataUrl`(2→1)、`getDataUrlDecodedByteSize`(2→1)
+- **明确不做**：路径净化 4 份（前三份已共享内核、第四份**刻意不合并**）、`escapeHtml` 3 份（字符集/用途不同）、
+  `formatDate` 4 份（入参与格式各异）
+- **验收标准**：`npm run verify` 全绿；每组合并都补或改对应单测
+
+### TB-036 删除「策略编辑 + 下单」孤岛（A1 档，4479 行）
+- **状态**：TODO · 阻塞：**等杰哥确认**（本次最大的一块）
+- **根因**：`App.tsx:31` / `Header.tsx:24` 已说明 strategy 工作区屏蔽，但编辑子树仍在代码里；
+  孤岛根 `requirementPrototype/AppShell.tsx` **实测 0 处引用**
+- **顺序**：**从叶子删到根**（叶 → 中间层 → `AppShell.tsx`）—— 反过来会一次炸出几十个编译错误
+- **⚠️ 必须保留**：`strategy/model.ts` + `strategy/contracts.ts`（被 `requirementPrototype/store.ts:15` 使用）、
+  `ordering/planner.ts` + `ordering/types.ts`（被 `requirementPrototype/planner.ts` re-export）
+- **验收标准**：`npm run verify` 全绿；若同时收敛 `AppMode` 的 `strategy`/`ordering`，
+  则 `store.ts:2293-2295` 的归一化与 `:3407` 的分支要同步改
+
+### TB-037 清理兼容残留（C 档）
+- **状态**：TODO · 阻塞：**等杰哥确认**
+- **内容**
+  1. **标签体系**：删 `AssetLibraryTagSection.tsx` / `AssetTagChips.tsx` + 7 个无调用的 tag action；
+     **保留** `AssetTag` 类型、`tagIds` 字段与备份链路（`store.ts:12374/12503/12920`）——
+     这是 `PRODUCT.md` M18 明确的设计意图（备份可无损恢复）
+  2. **`galleryViewMode`**：必须**先摘掉 `InputBar.tsx:768/3915/4115` 的读取** → 再删字段与 setter →
+     最后删 `TaskGrid`。⚠️ 现状是「InputBar 在读一个永远不更新的字段」（写入方 `TaskGrid.tsx:313` 已零引用），
+     这是本次发现的**真隐患**
+  3. **死 action**：`stopTask`(`store.ts:336`)、`getAllOrphanedImageIds`(`store.ts:7675`)
+- **验收标准**：`npm run verify` 全绿 + 老备份导入仍能恢复标签数据
+
+### TB-038 彻底下线词条库（D 档 · 已拍板）
+- **状态**：TODO · 阻塞：**只剩「手打 `{{xxx}}` 怎么处理」的 a/b/c 三选一**，其余可直接开工
+- **决策依据**：杰哥 2026-09-18 明确「词条库已被 SOP 完全替代，我不需要再用了」。
+  ⚠️ 初稿把「彻底下线」评为"不建议"是**错的** —— 那是把「代码是活的」当成了「业务还需要」，
+  这类判断只能由产品负责人做。教训与修正过程见 `docs/redundancy-audit.md` §5
+- **关键结论（已验证）**：SOP 与词条库**零耦合** —— `variablePrompt.ts:48-137` 的
+  `parseVariablePrompt` 只从正文「可变项：」区块解析 options；`storeSopGeneration.ts:615/651/660`
+  全程只用模板本身 → **下线不影响 SOP 的批量变量展开**
+- **唯一会断的地方**：输入框手打 `{{xxx}}` 旁路（`promptImageMentions.ts:307-310`，
+  取值源 `store.ts:9835-9836`）→ 取值失败会 `?? marker` 原样发送（**不崩，但变哑变量**）
+- **⚠️ 最大的坑**：`App.tsx:470` 挂的 `WordLibrarySidebar` **同时承载素材详情面板**
+  （`WordLibrarySidebar.tsx:530-536`）→ **必须改造，不能删组件**
+- **会一并丢失的能力**：划词一键建词条（`InputBar.tsx:1925-1947`）—— SOP 无等价交互，
+  若你其实用得上，就要改成"只下线候选池 UI"
+- **数据策略**：**删功能、保留字段** —— IDB `wordLibrary` store（`db.ts:667-673`）、
+  `ExportData` 字段（`types.ts:1270-1272`）、`legacyDataTransfer` 与备份 v7 链路
+  （`store.ts:12468/12977-13047`）**全部保留**，否则老备份导入会丢词条数据
+- **执行清单**：见 `docs/redundancy-audit.md` §5「下线执行清单」9 项（按风险从低到高）
+- **验收标准**：`npm run verify` 全绿；**素材详情侧栏**与**备份导入**两项功能不受影响
+
+---
+
 ## 记录模板（新需求照抄）
 
 ```markdown

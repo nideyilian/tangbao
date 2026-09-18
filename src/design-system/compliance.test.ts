@@ -100,7 +100,6 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'components/InputBar.tsx|hex': 7,
   'components/MaskEditorModal.tsx|hex': 16,
   'components/PromptVariableEditor.tsx|hex': 7,
-  'components/SupportPromptModal.tsx|hex': 11,
   'features/assetLibrary/AssetBatchView.tsx|hex': 7,
   'features/assetLibrary/AssetGrid.tsx|hex': 7,
   'features/assetLibrary/AssetLibrarySidebar.tsx|hex': 10,
