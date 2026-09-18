@@ -14,6 +14,7 @@ import type {
 } from '../types'
 import { sanitizeGeneratedImageFilenamePart } from './generatedImageFilename'
 import { decodeDataUrlToBytes } from './imageFingerprint'
+import { escapeRegExp } from './escapeRegExp'
 
 type ElectronAPI = {
   apiFetch?: (
@@ -621,10 +622,6 @@ export async function saveRawCacheImageToLocal(
 
   const success = await saveImageViaApi(api, filePath, dataUrl, options.bytes)
   return success ? filePath : null
-}
-
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 const imageSaveQueues = new Map<string, Promise<void>>()

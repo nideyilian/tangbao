@@ -229,13 +229,31 @@
 - **验收标准**：`npm run verify` 全绿；无残留引用
 
 ### TB-035 合并 9 组重复实现（B 档）
-- **状态**：TODO · 阻塞：**等杰哥确认**
-- **内容**：`getContentEditablePlainText`(3→1)、`getPathBaseName`(2→1)、
-  `isRecordValue`+`getStringValue`(3→1)、`getStorage`(3→1)、`escapeRegExp`(3→1)、
-  `clamp`(3→1)、`isRecord`(2→1)、`isDataUrl`(2→1)、`getDataUrlDecodedByteSize`(2→1)
-- **明确不做**：路径净化 4 份（前三份已共享内核、第四份**刻意不合并**）、`escapeHtml` 3 份（字符集/用途不同）、
-  `formatDate` 4 份（入参与格式各异）
-- **验收标准**：`npm run verify` 全绿；每组合并都补或改对应单测
+- **状态**：✅ **DONE（2026-09-18）** —— 9 组全部收敛，共享实现 +6 个模块
+- **新建的唯一实现**：`lib/contentEditableText.ts`、`lib/pathBaseName.ts`、`lib/typeGuards.ts`、
+  `lib/clamp.ts`、`lib/escapeRegExp.ts`、`lib/browserStorage.ts`
+- **收敛明细**：`getContentEditablePlainText` 2→1、`getPathBaseName` 2→1、
+  `isRecordValue`+`isRecord` **5→1**（这两组原本是同一个函数，分散在 agentApi / agentWebSearch /
+  openaiCompatibleImageApi / apiProfiles / store 五处）、`getStorage` 3→1、`escapeRegExp` 3→1、
+  `clamp` 3→1、`isDataUrl` 2→1（并入 `imageApiShared`）、`getDataUrlDecodedByteSize` 2→1（并入 `imageApiShared`）
+- **⭐ 两处「看着像重复、其实语义不同」—— 必须保留差异，不能一刀切**：
+  1. **`getStringValue`**：`agentApi.ts` 原实现是「非空即返回」（**不 trim**），另两份是「trim 后非空」。
+     → 抽出两个具名导出 `getStringValue`（trim）与 `getUntrimmedStringValue`（不 trim），
+     并在模块注释里写明差异来源，避免后来者再合并成一份
+  2. **`getDataUrlDecodedByteSize`**：`imageApiShared` 用「字符数 + 无 try/catch」，
+     `sopReferenceImageCompression` 用「TextEncoder 字节数 + 容错」。→ 取**健壮版**为唯一实现；
+     实测调用方（`falAiImageApi` / `openaiCompatibleImageApi` 的遮罩主图与遮罩文件）**全部传 base64**，
+     非 base64 分支的行为差异不影响线上路径
+- **一处类型收窄副作用**：`isDataUrl` 迁移到类型守卫版（`value is string`）后，
+  `dataUrls.map((d) => (isDataUrl(d) ? null : d))` 的负向分支被收窄成 `never`，
+  数组从 `(string|null)[]` 推断成 `null[]` → 改为显式标注 `Array<string | null>` 并加注释
+- **踩坑**：写批量插 import 的脚本时，`/^type\s/` 会匹配到 `type Xxx = {` 类型声明体，
+  导致 import 被插进声明内部（4 个文件语法直接崩）。→ **判断"是否顶层语句"不能只靠开头几个字符**，
+  必须判断该行是否完整结束了语句
+- **明确不做（已核实）**：路径净化 4 份（前三份共享内核 `sanitizeFileNameCore`、
+  第四份**先压空白再剥非法字符**，有测试断言依赖）、`escapeHtml` 3 份（字符集与用途不同）、
+  `formatDate`（入参与格式各异）
+- **验收证据**：`tsc -b` 通过、`npx eslint .` 零告警、`npm test` 225 文件 / 2470 用例全绿
 
 ### TB-036 删除「策略编辑 + 下单」孤岛（A1 档，4479 行）
 - **状态**：✅ **DONE（2026-09-18，commit `f925b99`）**

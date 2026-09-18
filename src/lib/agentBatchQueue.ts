@@ -1,4 +1,5 @@
 import type { AgentBatchPlan } from './agentBatchPlanner'
+import { getBrowserStorage } from './browserStorage'
 
 export const AGENT_BATCH_QUEUE_STORAGE_KEY = 'tangbao.agent-batch-queue.v1'
 export const AGENT_BATCH_QUEUES_STORAGE_KEY = 'tangbao.agent-batch-queues.v2'
@@ -45,10 +46,6 @@ type LegacyAgentBatchQueue = {
   lastError?: string
 }
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
-
-function getStorage(): StorageLike | null {
-  return typeof localStorage === 'undefined' ? null : localStorage
-}
 
 function isQueue(value: unknown): value is AgentBatchQueue {
   return (
@@ -100,7 +97,7 @@ export function createAgentBatchQueue(
   return { version: 2, id: `agent-batch-${now}`, createdAt: now, status: 'waiting', plan, submitted: {}, receipt }
 }
 
-export function loadAgentBatchQueues(storage: StorageLike | null = getStorage()): AgentBatchQueue[] {
+export function loadAgentBatchQueues(storage: StorageLike | null = getBrowserStorage()): AgentBatchQueue[] {
   if (!storage) return []
   try {
     const current = JSON.parse(storage.getItem(AGENT_BATCH_QUEUES_STORAGE_KEY) ?? 'null')
@@ -112,11 +109,11 @@ export function loadAgentBatchQueues(storage: StorageLike | null = getStorage())
   }
 }
 
-export function saveAgentBatchQueues(queues: AgentBatchQueue[], storage: StorageLike | null = getStorage()) {
+export function saveAgentBatchQueues(queues: AgentBatchQueue[], storage: StorageLike | null = getBrowserStorage()) {
   storage?.setItem(AGENT_BATCH_QUEUES_STORAGE_KEY, JSON.stringify(queues))
 }
 
-export function updateAgentBatchQueue(queue: AgentBatchQueue, storage: StorageLike | null = getStorage()) {
+export function updateAgentBatchQueue(queue: AgentBatchQueue, storage: StorageLike | null = getBrowserStorage()) {
   const queues = loadAgentBatchQueues(storage)
   const index = queues.findIndex((item) => item.id === queue.id)
   saveAgentBatchQueues(
@@ -125,15 +122,15 @@ export function updateAgentBatchQueue(queue: AgentBatchQueue, storage: StorageLi
   )
 }
 
-export function loadAgentBatchQueue(storage: StorageLike | null = getStorage()): AgentBatchQueue | null {
+export function loadAgentBatchQueue(storage: StorageLike | null = getBrowserStorage()): AgentBatchQueue | null {
   return loadAgentBatchQueues(storage).at(-1) ?? null
 }
 
-export function saveAgentBatchQueue(queue: AgentBatchQueue, storage: StorageLike | null = getStorage()) {
+export function saveAgentBatchQueue(queue: AgentBatchQueue, storage: StorageLike | null = getBrowserStorage()) {
   updateAgentBatchQueue(queue, storage)
 }
 
-export function clearAgentBatchQueue(storage: StorageLike | null = getStorage()) {
+export function clearAgentBatchQueue(storage: StorageLike | null = getBrowserStorage()) {
   storage?.removeItem(AGENT_BATCH_QUEUE_STORAGE_KEY)
   storage?.removeItem(AGENT_BATCH_QUEUES_STORAGE_KEY)
 }

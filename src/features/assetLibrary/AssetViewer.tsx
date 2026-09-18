@@ -19,13 +19,10 @@ import { useAssetLibraryStore } from './store'
 import AssetParamBreakdown from './AssetParamBreakdown'
 import { DerivedChain, NotesEditor } from './AssetDetailPanel'
 import { COLOR_LABELS_WITH_NAMES } from './colorLabels'
+import { clamp } from '../../lib/clamp'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 8
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value))
-}
 
 /** Eagle 式全屏查看器：大图缩放/拖拽 + 前后导航 + 右信息面板 + 底部类似图。 */
 function AssetViewerInner() {

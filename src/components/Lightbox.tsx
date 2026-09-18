@@ -6,6 +6,7 @@ import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { useDialogFocusTrap } from '../design-system'
+import { clamp } from '../lib/clamp'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 10
@@ -15,10 +16,6 @@ const DOUBLE_TAP_DELAY = 350
 const DOUBLE_TAP_DISTANCE = 40
 
 type TouchIntent = 'none' | 'horizontal-swipe' | 'vertical-move' | 'zoom-pan' | 'pinch'
-
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v))
-}
 
 export default function Lightbox() {
   const lightboxImageId = useStore((s) => s.lightboxImageId)

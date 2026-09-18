@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  compressSopReferenceImageIfNeeded,
-  getDataUrlDecodedByteSize,
-  MAX_SOP_REFERENCE_IMAGE_SEND_BYTES,
-} from './sopReferenceImageCompression'
+import { compressSopReferenceImageIfNeeded, MAX_SOP_REFERENCE_IMAGE_SEND_BYTES } from './sopReferenceImageCompression'
+// 该工具已抽到 imageApiShared 作为唯一实现，这里直接从实现处引用
+import { getDataUrlDecodedByteSize } from './imageApiShared'
 
 const canvasImageMocks = vi.hoisted(() => ({
   loadImageOriented: vi.fn(),

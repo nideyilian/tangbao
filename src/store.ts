@@ -10,6 +10,7 @@ import {
   restorePostprocessMediaConfig,
   usePostprocessMediaStore,
 } from './storePostprocessMedia'
+import { isRecord } from './lib/typeGuards'
 // 只引类型：执行体在 `scheduleTaskPostprocess` 里动态 import。
 // 静态 import 会把 features/postprocess → features/composite 整条链拉进 store.ts 的模块图，
 // 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
@@ -2806,10 +2807,6 @@ export async function deleteImageIfUnreferenced(imageId: string) {
   } catch {
     // 清理是内存/存储优化，失败不影响替换结果。
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 /** 回收站词条保留期限：超过后自动清理（30 天） */

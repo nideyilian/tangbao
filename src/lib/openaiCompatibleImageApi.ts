@@ -30,6 +30,7 @@ import {
   normalizeBase64Image,
   pickActualParams,
 } from './imageApiShared'
+import { getStringValue, isRecord } from './typeGuards'
 
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
 
@@ -106,15 +107,6 @@ function isEventStreamResponse(response: Response): boolean {
   return response.headers.get('Content-Type')?.toLowerCase().includes('text/event-stream') ?? false
 }
 
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
-
-function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
-  const value = source[key]
-  return typeof value === 'string' && value.trim() ? value : undefined
-}
-
 function getNumberValue(source: Record<string, unknown>, key: string): number | undefined {
   const value = source[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
@@ -122,7 +114,7 @@ function getNumberValue(source: Record<string, unknown>, key: string): number | 
 
 function getStreamEventErrorMessage(event: Record<string, unknown>): string | null {
   const error = event.error
-  if (isRecordValue(error)) {
+  if (isRecord(error)) {
     const message = getStringValue(error, 'message')
     if (message) return message
   }
@@ -168,7 +160,7 @@ async function readJsonServerSentEvents(
     } catch {
       throw new Error('流式响应包含无法解析的 JSON 事件')
     }
-    if (!isRecordValue(event)) return
+    if (!isRecord(event)) return
 
     const errorMessage = getStreamEventErrorMessage(event)
     if (errorMessage) throw new Error(errorMessage)
@@ -437,10 +429,10 @@ async function parseImagesApiStreamResponse(
 
 function getResponsesStreamPayload(event: Record<string, unknown>): ResponsesApiResponse | null {
   const response = event.response
-  if (isRecordValue(response)) return response as ResponsesApiResponse
+  if (isRecord(response)) return response as ResponsesApiResponse
 
   const item = event.item
-  if (isRecordValue(item) && item.type === 'image_generation_call') {
+  if (isRecord(item) && item.type === 'image_generation_call') {
     return { output: [item as ResponsesOutputItem] }
   }
 

@@ -1,4 +1,5 @@
 import { canvasToBlob, getSourceHeight, getSourceWidth, loadImageOriented } from './canvasImage'
+import { getDataUrlDecodedByteSize } from './imageApiShared'
 
 export const MAX_SOP_REFERENCE_IMAGE_SEND_BYTES = 4 * 1024 * 1024
 
@@ -13,25 +14,6 @@ export interface SopReferenceImageCompressionResult {
   compressed: boolean
   originalBytes: number
   finalBytes: number
-}
-
-export function getDataUrlDecodedByteSize(dataUrl: string) {
-  const commaIndex = dataUrl.indexOf(',')
-  if (commaIndex < 0) return dataUrl.length
-
-  const metadata = dataUrl.slice(0, commaIndex)
-  const payload = dataUrl.slice(commaIndex + 1)
-  if (!/;base64/i.test(metadata)) {
-    try {
-      return new TextEncoder().encode(decodeURIComponent(payload)).byteLength
-    } catch {
-      return payload.length
-    }
-  }
-
-  const normalized = payload.replace(/\s/g, '')
-  const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0
-  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding)
 }
 
 export async function compressSopReferenceImageIfNeeded(

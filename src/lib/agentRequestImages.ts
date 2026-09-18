@@ -1,4 +1,5 @@
 import { compressSopReferenceImageIfNeeded } from './sopReferenceImageCompression'
+import { isDataUrl } from './imageApiShared'
 
 export const MAX_AGENT_REQUEST_IMAGE_ENCODED_BYTES = 7 * 1024 * 1024
 export const MAX_AGENT_SINGLE_IMAGE_ENCODED_BYTES = 4 * 1024 * 1024
@@ -13,10 +14,6 @@ export interface PrepareAgentImagesOptions {
   maxSingleEncodedBytes?: number
   signal?: AbortSignal
   compressImage?: CompressAgentImage
-}
-
-function isDataUrl(value: string) {
-  return value.startsWith('data:')
 }
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -35,7 +32,9 @@ export async function prepareAgentImageDataUrls(
   const maxTotalEncodedBytes = options.maxTotalEncodedBytes ?? MAX_AGENT_REQUEST_IMAGE_ENCODED_BYTES
   const maxSingleEncodedBytes = options.maxSingleEncodedBytes ?? MAX_AGENT_SINGLE_IMAGE_ENCODED_BYTES
   const compressImage = options.compressImage ?? compressSopReferenceImageIfNeeded
-  const prepared = dataUrls.map((dataUrl) => (isDataUrl(dataUrl) ? null : dataUrl))
+  // isDataUrl 是类型守卫（`value is string`），负向分支会被收窄成 never，
+  // 这里显式标注数组类型，避免 prepared 被推断成 null[]
+  const prepared: Array<string | null> = dataUrls.map((dataUrl) => (isDataUrl(dataUrl) ? null : dataUrl))
   let remainingBytes = maxTotalEncodedBytes
   let dataImageIndex = 0
 

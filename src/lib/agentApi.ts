@@ -21,6 +21,7 @@ import { getAdNegativeRule } from './adNegativeRules'
 import { apiFetch as fetch } from './desktopApiFetch'
 import { getAgentTextProtocol, isGeminiModel, normalizeSettings } from './apiProfiles'
 import { prepareAgentImageDataUrls, prepareAgentInputImages } from './agentRequestImages'
+import { getUntrimmedStringValue, isRecord } from './typeGuards'
 
 export interface AgentApiMessage {
   role: 'user' | 'assistant'
@@ -280,15 +281,6 @@ function isEventStreamResponse(response: Response): boolean {
   return response.headers.get('Content-Type')?.toLowerCase().includes('text/event-stream') ?? false
 }
 
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
-
-function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
-  const value = source[key]
-  return typeof value === 'string' && value ? value : undefined
-}
-
 function getNumberValue(source: Record<string, unknown>, key: string): number | undefined {
   const value = source[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
@@ -335,21 +327,21 @@ function applyUrlCitations(text: string, annotations: ResponseTextAnnotation[] |
 
 function getStreamEventErrorMessage(event: Record<string, unknown>): string | null {
   const error = event.error
-  if (isRecordValue(error)) {
-    const message = getStringValue(error, 'message')
+  if (isRecord(error)) {
+    const message = getUntrimmedStringValue(error, 'message')
     if (message) return message
   }
   if (typeof error === 'string' && error.trim()) return error
 
-  const type = getStringValue(event, 'type')
-  if (type?.endsWith('.failed')) return getStringValue(event, 'message') ?? 'Agent 流式请求失败'
+  const type = getUntrimmedStringValue(event, 'type')
+  if (type?.endsWith('.failed')) return getUntrimmedStringValue(event, 'message') ?? 'Agent 流式请求失败'
   return null
 }
 
 function getErrorMessageFromValue(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return value.trim()
-  if (!isRecordValue(value)) return null
-  return getStringValue(value, 'message') ?? getStringValue(value, 'code') ?? null
+  if (!isRecord(value)) return null
+  return getUntrimmedStringValue(value, 'message') ?? getUntrimmedStringValue(value, 'code') ?? null
 }
 
 function getImageToolFailureFromOutputItem(
@@ -357,7 +349,7 @@ function getImageToolFailureFromOutputItem(
   item?: ResponsesOutputItem,
 ): AgentApiImageToolFailure | null {
   if (item?.type !== 'image_generation_call' || item.status !== 'failed') return null
-  const toolCallId = (typeof item.id === 'string' && item.id) || getStringValue(event, 'item_id')
+  const toolCallId = (typeof item.id === 'string' && item.id) || getUntrimmedStringValue(event, 'item_id')
   if (!toolCallId) return null
   const itemRecord = item as Record<string, unknown>
   return {
@@ -365,7 +357,7 @@ function getImageToolFailureFromOutputItem(
     error:
       getErrorMessageFromValue(itemRecord.error) ??
       getErrorMessageFromValue(event.error) ??
-      getStringValue(event, 'message') ??
+      getUntrimmedStringValue(event, 'message') ??
       '内置 image_generation 工具调用失败',
   }
 }
@@ -421,7 +413,7 @@ async function readJsonServerSentEvents(
     } catch {
       throw new Error(appendStreamingFormatHint(data))
     }
-    if (!isRecordValue(event)) return
+    if (!isRecord(event)) return
 
     const errorMessage = getStreamEventErrorMessage(event)
     if (errorMessage) throw new Error(errorMessage)
@@ -581,10 +573,10 @@ function extractImageFromOutputItem(item: ResponsesOutputItem, fallbackMime: str
 
 function getStreamResponsePayload(event: Record<string, unknown>): ResponsesApiResponse | null {
   const response = event.response
-  if (isRecordValue(response)) return response as ResponsesApiResponse
+  if (isRecord(response)) return response as ResponsesApiResponse
 
   const item = event.item
-  if (isRecordValue(item)) return { output: [item as ResponsesOutputItem] }
+  if (isRecord(item)) return { output: [item as ResponsesOutputItem] }
 
   return null
 }
@@ -638,7 +630,7 @@ async function parseAgentStreamResponse(
   }
 
   const publishWebSearchStatus = (event: Record<string, unknown>, status: string, actionType?: string) => {
-    const id = getStringValue(event, 'item_id')
+    const id = getUntrimmedStringValue(event, 'item_id')
     if (!id) return
 
     const index = outputItems.findIndex((item) => item.id === id)
@@ -658,11 +650,11 @@ async function parseAgentStreamResponse(
   await readJsonServerSentEvents(
     response,
     async (event) => {
-      const type = getStringValue(event, 'type')
+      const type = getUntrimmedStringValue(event, 'type')
 
       if (type === 'response.image_generation_call.partial_image') {
-        const toolCallId = getStringValue(event, 'item_id')
-        const b64 = getStringValue(event, 'partial_image_b64')
+        const toolCallId = getUntrimmedStringValue(event, 'item_id')
+        const b64 = getUntrimmedStringValue(event, 'partial_image_b64')
         if (toolCallId && b64) {
           await onImagePartialImage?.({
             toolCallId,
@@ -692,7 +684,7 @@ async function parseAgentStreamResponse(
       }
 
       if (type === 'response.output_text.delta') {
-        const delta = getStringValue(event, 'delta')
+        const delta = getUntrimmedStringValue(event, 'delta')
         if (delta) {
           streamedText += delta
           onTextDelta?.(delta)
@@ -731,7 +723,7 @@ async function parseAgentStreamResponse(
         return
       }
 
-      if (type === 'response.completed' || isRecordValue(event.response)) {
+      if (type === 'response.completed' || isRecord(event.response)) {
         completedPayload = payload
       }
     },
@@ -898,7 +890,7 @@ function toChatContent(content: unknown): unknown {
 
   const parts: Array<Record<string, unknown>> = []
   for (const part of content) {
-    if (!isRecordValue(part)) continue
+    if (!isRecord(part)) continue
     if ((part.type === 'input_text' || part.type === 'output_text') && typeof part.text === 'string') {
       parts.push({ type: 'text', text: part.text })
       continue
@@ -908,7 +900,7 @@ function toChatContent(content: unknown): unknown {
     }
   }
 
-  return parts.length === 1 && isRecordValue(parts[0]) && parts[0].type === 'text' ? parts[0].text : parts
+  return parts.length === 1 && isRecord(parts[0]) && parts[0].type === 'text' ? parts[0].text : parts
 }
 
 function toChatCompletionMessages(input: unknown): Array<Record<string, unknown>> {
@@ -932,7 +924,7 @@ function toChatCompletionMessages(input: unknown): Array<Record<string, unknown>
   }
 
   for (const value of input) {
-    if (!isRecordValue(value)) continue
+    if (!isRecord(value)) continue
     if (value.role === 'user' || value.role === 'assistant') {
       messages.push({ role: value.role, content: toChatContent(value.content) })
       continue
@@ -987,8 +979,8 @@ function createChatOutputItems(text: string, toolCalls: ChatToolCall[], response
 function parseChatToolCalls(value: unknown): ChatToolCall[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((toolCall, index) => {
-    if (!isRecordValue(toolCall)) return []
-    const fn = isRecordValue(toolCall.function) ? toolCall.function : null
+    if (!isRecord(toolCall)) return []
+    const fn = isRecord(toolCall.function) ? toolCall.function : null
     const name = fn && typeof fn.name === 'string' ? fn.name : ''
     if (!name) return []
     return [
@@ -1051,7 +1043,7 @@ export async function callAgentChatCompletionsApi(opts: AgentApiCallOptions): Pr
           if (typeof event.id === 'string') responseId = event.id
           const choices = Array.isArray(event.choices) ? event.choices : []
           for (const choice of choices) {
-            if (!isRecordValue(choice) || !isRecordValue(choice.delta)) continue
+            if (!isRecord(choice) || !isRecord(choice.delta)) continue
             const delta = choice.delta
             if (typeof delta.content === 'string' && delta.content) {
               text += delta.content
@@ -1059,10 +1051,10 @@ export async function callAgentChatCompletionsApi(opts: AgentApiCallOptions): Pr
             }
             if (!Array.isArray(delta.tool_calls)) continue
             for (const rawToolCall of delta.tool_calls) {
-              if (!isRecordValue(rawToolCall)) continue
+              if (!isRecord(rawToolCall)) continue
               const index = typeof rawToolCall.index === 'number' ? rawToolCall.index : streamedToolCalls.size
               const previous = streamedToolCalls.get(index) ?? { id: '', name: '', arguments: '' }
-              const fn = isRecordValue(rawToolCall.function) ? rawToolCall.function : null
+              const fn = isRecord(rawToolCall.function) ? rawToolCall.function : null
               streamedToolCalls.set(index, {
                 id: typeof rawToolCall.id === 'string' ? rawToolCall.id : previous.id,
                 name: fn && typeof fn.name === 'string' ? previous.name + fn.name : previous.name,
@@ -1089,8 +1081,8 @@ export async function callAgentChatCompletionsApi(opts: AgentApiCallOptions): Pr
 
     const payload = (await response.json()) as Record<string, unknown>
     const choices = Array.isArray(payload.choices) ? payload.choices : []
-    const firstChoice = choices.find(isRecordValue)
-    const message = firstChoice && isRecordValue(firstChoice.message) ? firstChoice.message : null
+    const firstChoice = choices.find(isRecord)
+    const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : null
     const text = message && typeof message.content === 'string' ? message.content.trim() : ''
     const toolCalls = parseChatToolCalls(message?.tool_calls)
     const responseId = typeof payload.id === 'string' ? payload.id : undefined
@@ -1174,8 +1166,8 @@ export async function callAgentConversationTitleApi(opts: {
       if (!response.ok) throw new Error(await getApiErrorMessage(response))
       const payload = (await response.json()) as Record<string, unknown>
       const choices = Array.isArray(payload.choices) ? payload.choices : []
-      const firstChoice = choices.find(isRecordValue)
-      const message = firstChoice && isRecordValue(firstChoice.message) ? firstChoice.message : null
+      const firstChoice = choices.find(isRecord)
+      const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : null
       return parseAgentConversationTitleXml(message && typeof message.content === 'string' ? message.content : '')
     }
 
@@ -1510,8 +1502,8 @@ async function reviseDocumentWithConversation(
     if (useChatCompletions) {
       const payload = (await response.json()) as Record<string, unknown>
       const choices = Array.isArray(payload.choices) ? payload.choices : []
-      const firstChoice = choices.find(isRecordValue)
-      const message = firstChoice && isRecordValue(firstChoice.message) ? firstChoice.message : null
+      const firstChoice = choices.find(isRecord)
+      const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : null
       resultText = message && typeof message.content === 'string' ? message.content : ''
     } else {
       resultText = extractText((await response.json()) as ResponsesApiResponse)
@@ -1753,8 +1745,8 @@ export async function reviseVariablePromptOptions(opts: {
     if (useChatCompletions) {
       const payload = (await response.json()) as Record<string, unknown>
       const choices = Array.isArray(payload.choices) ? payload.choices : []
-      const firstChoice = choices.find(isRecordValue)
-      const message = firstChoice && isRecordValue(firstChoice.message) ? firstChoice.message : null
+      const firstChoice = choices.find(isRecord)
+      const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : null
       resultText = message && typeof message.content === 'string' ? message.content : ''
     } else {
       resultText = extractText((await response.json()) as ResponsesApiResponse)
@@ -1811,8 +1803,8 @@ export async function transformSopDocument(opts: {
       if (!response.ok) throw new Error(await getApiErrorMessage(response))
       const payload = (await response.json()) as Record<string, unknown>
       const choices = Array.isArray(payload.choices) ? payload.choices : []
-      const firstChoice = choices.find(isRecordValue)
-      const message = firstChoice && isRecordValue(firstChoice.message) ? firstChoice.message : null
+      const firstChoice = choices.find(isRecord)
+      const message = firstChoice && isRecord(firstChoice.message) ? firstChoice.message : null
       result = message && typeof message.content === 'string' ? message.content : ''
     } else {
       const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
@@ -2148,10 +2140,10 @@ export async function callBatchImageSingle(opts: {
       await readJsonServerSentEvents(
         response,
         async (event) => {
-          const type = getStringValue(event, 'type')
+          const type = getUntrimmedStringValue(event, 'type')
 
           if (type === 'response.image_generation_call.partial_image') {
-            const b64 = getStringValue(event, 'partial_image_b64')
+            const b64 = getUntrimmedStringValue(event, 'partial_image_b64')
             if (b64) {
               await onPartialImage?.({
                 image: normalizeBase64Image(b64, mime),
@@ -2174,7 +2166,7 @@ export async function callBatchImageSingle(opts: {
             return
           }
 
-          if (type === 'response.completed' || isRecordValue(event.response)) {
+          if (type === 'response.completed' || isRecord(event.response)) {
             const payload = getStreamResponsePayload(event)
             if (payload) rawPayload = JSON.stringify(payload, null, 2)
             if (!completedImage && payload) {

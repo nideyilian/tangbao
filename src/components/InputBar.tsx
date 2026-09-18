@@ -104,6 +104,7 @@ import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { Badge, Button, Switch, useDialogFocusTrap } from '../design-system'
 import { useAssetLibraryStore } from '../features/assetLibrary/store'
 import { APPLY_SOP_TO_GALLERY_EVENT } from '../lib/assetCommands'
+import { getContentEditablePlainText } from '../lib/contentEditableText'
 
 const AgentBatchPlannerModal = lazy(() => import('./AgentBatchPlannerModal'))
 const GallerySopBatchModal = lazy(() => import('../features/strategy/adapters/GallerySopBatchModal'))
@@ -329,23 +330,6 @@ function getContentEditableSelection(el: HTMLElement): { start: number; end: num
     const end = el.textContent?.length ?? 0
     return { start: end, end }
   }
-}
-
-function getContentEditablePlainText(el: HTMLElement): string {
-  let text = ''
-  const appendNodeText = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent ?? ''
-      return
-    }
-    if (node instanceof HTMLElement && node.classList.contains('mention-tag')) {
-      text += node.dataset.mentionText ?? node.textContent ?? ''
-      return
-    }
-    node.childNodes.forEach(appendNodeText)
-  }
-  el.childNodes.forEach(appendNodeText)
-  return text.replace(/\r\n?/g, '\n')
 }
 
 /**

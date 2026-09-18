@@ -1,3 +1,4 @@
+import { getBrowserStorage } from '../../lib/browserStorage'
 export type SopAiRevisionAttachment = {
   id: string
   name: string
@@ -54,10 +55,6 @@ const revisionJobs = new Map<string, SopAiRevisionJob>()
 const revisionJobListeners = new Map<string, Set<(state: SopAiRevisionJobState) => void>>()
 const IDLE_JOB_STATE: SopAiRevisionJobState = { status: 'idle' }
 
-function getStorage(): Storage | null {
-  return typeof window === 'undefined' ? null : window.localStorage
-}
-
 function storageKey(documentId: string) {
   return `${STORAGE_PREFIX}${documentId}`
 }
@@ -90,7 +87,7 @@ function isRevisionMessage(value: unknown): value is SopAiRevisionMessage {
 
 export function loadSopAiRevisionThread(
   documentId: string,
-  storage: StorageLike | null = getStorage(),
+  storage: StorageLike | null = getBrowserStorage(),
 ): SopAiRevisionThread {
   const emptyThread = { documentId, messages: [], updatedAt: 0 }
   if (!storage) return emptyThread
@@ -110,7 +107,7 @@ export function loadSopAiRevisionThread(
 export function saveSopAiRevisionThread(
   documentId: string,
   messages: SopAiRevisionMessage[],
-  storage: StorageLike | null = getStorage(),
+  storage: StorageLike | null = getBrowserStorage(),
 ) {
   if (!storage) return
   const thread: SopAiRevisionThread = {
@@ -125,7 +122,7 @@ export function saveSopAiRevisionThread(
   }
 }
 
-export function clearSopAiRevisionThread(documentId: string, storage: StorageLike | null = getStorage()) {
+export function clearSopAiRevisionThread(documentId: string, storage: StorageLike | null = getBrowserStorage()) {
   try {
     storage?.removeItem(storageKey(documentId))
   } catch {
@@ -134,7 +131,7 @@ export function clearSopAiRevisionThread(documentId: string, storage: StorageLik
 }
 
 export function getSopAiRevisionAttachmentReferences(
-  storage: EnumerableStorageLike | null = getStorage(),
+  storage: EnumerableStorageLike | null = getBrowserStorage(),
 ): Array<{ documentId: string; imageId: string }> {
   if (!storage || typeof storage.length !== 'number' || typeof storage.key !== 'function') return []
   const references: Array<{ documentId: string; imageId: string }> = []
@@ -157,7 +154,7 @@ export function getSopAiRevisionAttachmentReferences(
 
 export function removeSopAiRevisionAttachments(
   imageIds: ReadonlySet<string>,
-  storage: EnumerableStorageLike | null = getStorage(),
+  storage: EnumerableStorageLike | null = getBrowserStorage(),
 ): number {
   if (!storage || typeof storage.length !== 'number' || typeof storage.key !== 'function' || imageIds.size === 0)
     return 0
@@ -228,7 +225,7 @@ export function clearSopAiRevisionJob(documentId: string) {
 export function startSopAiRevisionJob(
   documentId: string,
   run: () => Promise<SopAiRevisionResult>,
-  storage: StorageLike | null = getStorage(),
+  storage: StorageLike | null = getBrowserStorage(),
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const activeJob = revisionJobs.get(documentId)
   if (activeJob?.state.status === 'running' && activeJob.promise) return activeJob.promise

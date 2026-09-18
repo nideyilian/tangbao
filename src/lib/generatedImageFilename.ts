@@ -1,4 +1,5 @@
 import { INVALID_FILE_NAME_CHARS } from './sanitizeFileName'
+import { escapeRegExp } from './escapeRegExp'
 
 export interface GeneratedImageFilenameSettings {
   imageFilenameDatePrefix: boolean
@@ -167,8 +168,4 @@ export function findNextGeneratedImageSequence(
     maxSequence = Math.max(maxSequence, Number.parseInt(match[1], 10))
   }
   return maxSequence + 1
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

@@ -63,7 +63,14 @@ export function getDataUrlDecodedByteSize(dataUrl: string): number {
 
   const meta = dataUrl.slice(0, commaIndex)
   const payload = dataUrl.slice(commaIndex + 1)
-  if (!/;base64/i.test(meta)) return decodeURIComponent(payload).length
+  if (!/;base64/i.test(meta)) {
+    // 非 base64（多为 URL 编码）：按 UTF-8 字节数计，解码失败退回字符数
+    try {
+      return new TextEncoder().encode(decodeURIComponent(payload)).byteLength
+    } catch {
+      return payload.length
+    }
+  }
 
   const normalized = payload.replace(/\s/g, '')
   const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0

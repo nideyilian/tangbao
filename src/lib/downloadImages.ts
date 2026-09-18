@@ -20,6 +20,7 @@ import {
   selectZipSavePath,
 } from './localSave'
 import { localImagePathFromUrl } from './localImageUrl'
+import { getPathBaseName } from './pathBaseName'
 
 /** 协议地址回读字节时按扩展名还原 MIME（与 local-image-protocol.ts 的白名单一致）。 */
 const EXTENSION_MIME: Record<string, string> = {
@@ -326,16 +327,6 @@ export function getImageZipEntries(imageIds: string[], fileNameBase = 'image'): 
     imageId,
     fileNameBase: multiple ? `${fileNameBase}-${String(index + 1).padStart(2, '0')}` : fileNameBase,
   }))
-}
-
-function getPathBaseName(value?: string): string | null {
-  if (!value) return null
-  const parts = value
-    .trim()
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]+/)
-    .filter(Boolean)
-  return parts[parts.length - 1] || null
 }
 
 async function getImageBlob(imageIdOrUrl: string): Promise<Blob> {

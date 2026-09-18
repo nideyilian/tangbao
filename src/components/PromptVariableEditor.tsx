@@ -8,6 +8,7 @@ import {
   getPromptMentionParts,
   getSelectedImageMentionLabel,
 } from '../lib/promptImageMentions'
+import { getContentEditablePlainText } from '../lib/contentEditableText'
 
 type PromptVariableEditorProps = {
   value: string
@@ -19,23 +20,6 @@ type PromptVariableEditorProps = {
   onBlur?: (event: FocusEvent<HTMLDivElement>) => void
   onClick?: (event: MouseEvent<HTMLDivElement>) => void
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void
-}
-
-function getContentEditablePlainText(el: HTMLElement): string {
-  let text = ''
-  const appendNodeText = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent ?? ''
-      return
-    }
-    if (node instanceof HTMLElement && node.classList.contains('mention-tag')) {
-      text += node.dataset.mentionText ?? node.textContent ?? ''
-      return
-    }
-    node.childNodes.forEach(appendNodeText)
-  }
-  el.childNodes.forEach(appendNodeText)
-  return text.replace(/\r\n?/g, '\n')
 }
 
 function renderPromptHtml(value: string) {

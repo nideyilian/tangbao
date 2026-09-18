@@ -32,6 +32,7 @@ import { shouldUseApiProxy } from './devProxy'
 import { readRuntimeEnv } from './runtimeEnv'
 import { isImportableConfigUrl } from './customProviderConfigUrl'
 import { normalizeAdNegativeRuleProfiles } from './adNegativeRules'
+import { isRecord } from './typeGuards'
 
 const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 const RAW_DEFAULT_API_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL)
@@ -191,10 +192,6 @@ function normalizeStringArray(value: unknown, fallback: string[]): string[] {
         .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
         .map((item) => item.trim())
     : fallback
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function normalizeDerivativeRuleMode(value: unknown): AppSettings['wordLibraryDerivativeRuleMode'] {

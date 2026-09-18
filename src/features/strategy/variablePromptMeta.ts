@@ -1,5 +1,6 @@
 import { parseVariablePrompt } from '../../lib/variablePrompt'
 import type { SopVariableMeta } from './types'
+import { escapeRegExp } from '../../lib/escapeRegExp'
 
 /**
  * 变量提示词资产的可变项元数据增强层。
@@ -93,8 +94,4 @@ export function replaceVariableOptions(content: string, variableName: string, op
 
   lines[targetIndex] = `{{${variableName}}}：${uniqueOptions.join(' / ')}`
   return lines.join('\n')
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

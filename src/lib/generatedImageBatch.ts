@@ -1,5 +1,6 @@
 import type { SopBatchTaskMeta, TaskRecord, WorkspaceTab } from '../types'
 import { formatGeneratedImageDate } from './generatedImageFilename'
+import { getPathBaseName } from './pathBaseName'
 
 type BatchTask = Pick<
   TaskRecord,
@@ -105,14 +106,4 @@ export function assignMissingGeneratedImageBatches(
     }),
     changedTaskIds: [...assignedByTaskId.keys()],
   }
-}
-
-function getPathBaseName(value?: string): string | null {
-  if (!value) return null
-  const parts = value
-    .trim()
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]+/)
-    .filter(Boolean)
-  return parts[parts.length - 1] || null
 }

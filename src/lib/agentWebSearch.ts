@@ -1,4 +1,5 @@
 import type { AgentRound, ResponsesApiResponse, ResponsesOutputItem, TaskRecord } from '../types'
+import { getStringValue, isRecord } from './typeGuards'
 
 export interface AgentWebSearchCallSummary {
   id?: string
@@ -11,18 +12,9 @@ export interface AgentWebSearchStatus {
   completed: boolean
 }
 
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
-
-function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
-  const value = source[key]
-  return typeof value === 'string' && value.trim() ? value : undefined
-}
-
 function getWebSearchActionType(action: unknown) {
   if (typeof action === 'string' && action.trim()) return action
-  if (!isRecordValue(action)) return 'search'
+  if (!isRecord(action)) return 'search'
   return getStringValue(action, 'type') ?? 'search'
 }
 

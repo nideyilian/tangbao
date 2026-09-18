@@ -1,4 +1,5 @@
 import type { BatchExecutionMode, BatchTaskInput } from './agentBatchPlanner'
+import { getBrowserStorage } from './browserStorage'
 
 export const AGENT_BATCH_DRAFT_STORAGE_KEY = 'tangbao.agent-batch-draft.v1'
 export const AGENT_BATCH_PRESETS_STORAGE_KEY = 'tangbao.agent-batch-presets.v1'
@@ -35,10 +36,6 @@ export interface AgentBatchDraft {
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-function getStorage(): StorageLike | null {
-  return typeof localStorage === 'undefined' ? null : localStorage
-}
-
 function parseJson<T>(value: string | null): T | null {
   if (!value) return null
   try {
@@ -61,7 +58,7 @@ export function createAgentBatchPreset(
   }
 }
 
-export function loadAgentBatchPresets(storage: StorageLike | null = getStorage()): AgentBatchStrategyPreset[] {
+export function loadAgentBatchPresets(storage: StorageLike | null = getBrowserStorage()): AgentBatchStrategyPreset[] {
   const parsed = parseJson<unknown>(storage?.getItem(AGENT_BATCH_PRESETS_STORAGE_KEY) ?? null)
   if (!Array.isArray(parsed)) return []
   return parsed.filter(
@@ -74,7 +71,10 @@ export function loadAgentBatchPresets(storage: StorageLike | null = getStorage()
   )
 }
 
-export function saveAgentBatchPresets(presets: AgentBatchStrategyPreset[], storage: StorageLike | null = getStorage()) {
+export function saveAgentBatchPresets(
+  presets: AgentBatchStrategyPreset[],
+  storage: StorageLike | null = getBrowserStorage(),
+) {
   storage?.setItem(AGENT_BATCH_PRESETS_STORAGE_KEY, JSON.stringify(presets))
 }
 
@@ -99,16 +99,16 @@ export function applyAgentBatchPreset(
   }))
 }
 
-export function loadAgentBatchDraft(storage: StorageLike | null = getStorage()): AgentBatchDraft | null {
+export function loadAgentBatchDraft(storage: StorageLike | null = getBrowserStorage()): AgentBatchDraft | null {
   const parsed = parseJson<AgentBatchDraft>(storage?.getItem(AGENT_BATCH_DRAFT_STORAGE_KEY) ?? null)
   if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.rows) || typeof parsed.name !== 'string') return null
   return parsed
 }
 
-export function saveAgentBatchDraft(draft: AgentBatchDraft, storage: StorageLike | null = getStorage()) {
+export function saveAgentBatchDraft(draft: AgentBatchDraft, storage: StorageLike | null = getBrowserStorage()) {
   storage?.setItem(AGENT_BATCH_DRAFT_STORAGE_KEY, JSON.stringify(draft))
 }
 
-export function clearAgentBatchDraft(storage: StorageLike | null = getStorage()) {
+export function clearAgentBatchDraft(storage: StorageLike | null = getBrowserStorage()) {
   storage?.removeItem(AGENT_BATCH_DRAFT_STORAGE_KEY)
 }
