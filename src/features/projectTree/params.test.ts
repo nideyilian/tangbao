@@ -11,6 +11,7 @@ import {
   resolveProjectNodeKind,
   resolveProjectNodePathNames,
   resolveNodeWatermarkBinding,
+  resolveNodeWatermarkBindingsByMedia,
   resolveProjectOverrideChain,
   resolveProjectPostprocessSlice,
 } from './params'
@@ -429,5 +430,160 @@ describe('resolveNodeWatermarkBinding —— 某方向到底用哪些水印', ()
     const chain: ProjectNodeParamsMap = { [DIRECTION]: { postprocess: { watermarkPresetIds: ['c'] } } }
     resolveNodeWatermarkBinding(COLLECTIONS, chain, DIRECTION, global)
     expect(global).toEqual(['a', 'b'])
+  })
+})
+
+describe('byMedia —— 同一个方向在各渠道上不同', () => {
+  const MEDIA = ['baidu', 'toutiao', 'gdt']
+
+  it('命中渠道优先于本级通用值，未命中渠道回退通用值', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: { postprocess: { outputDir: '通用目录', byMedia: { baidu: { outputDir: '百度目录' } } } },
+    }
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig(), 'baidu').config.outputDir).toBe(
+      '百度目录',
+    )
+    expect(
+      resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig(), 'toutiao').config.outputDir,
+    ).toBe('通用目录')
+    // 不传 mediaId（老调用点）→ 完全忽略 byMedia
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig()).config.outputDir).toBe(
+      '通用目录',
+    )
+  })
+
+  it('父节点按渠道配的值能被整条线下的方向继承', () => {
+    const params: ProjectNodeParamsMap = {
+      [LINE]: { postprocess: { byMedia: { baidu: { outputDir: '产品线-百度' } } } },
+      [DIRECTION]: { postprocess: { byMedia: { toutiao: { outputDir: '方向-头条' } } } },
+    }
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig(), 'baidu').config.outputDir).toBe(
+      '产品线-百度',
+    )
+    expect(
+      resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig(), 'toutiao').config.outputDir,
+    ).toBe('方向-头条')
+  })
+
+  it('渠道内 outputDir 空串 = 该渠道用默认输出位置，不能被通用值顶掉', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: { postprocess: { outputDir: '通用目录', byMedia: { baidu: { outputDir: '' } } } },
+    }
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig(), 'baidu').config.outputDir).toBe(
+      '',
+    )
+  })
+
+  it('渠道内空数组 = 该渠道不加水印，且不牵连其他渠道', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: {
+        postprocess: {
+          watermarkPresetIds: ['通用水印'],
+          byMedia: { baidu: { watermarkPresetIds: [] }, toutiao: { watermarkPresetIds: ['头条水印'] } },
+        },
+      },
+    }
+    const presets = (mediaId: string) =>
+      resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig(), mediaId).config.watermarkPresetIds
+    expect(presets('baidu')).toEqual([])
+    expect(presets('toutiao')).toEqual(['头条水印'])
+    expect(presets('gdt')).toEqual(['通用水印'])
+  })
+
+  it('resolveNodeWatermarkBinding 按渠道解析，本级自定义的判定照旧', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: { postprocess: { byMedia: { baidu: { watermarkPresetIds: ['百度水印'] } } } },
+    }
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, params, DIRECTION, ['全局水印'], 'baidu')).toEqual({
+      presetIds: ['百度水印'],
+      sourcedFrom: DIRECTION,
+      overridden: true,
+    })
+    // 这个渠道本节点没表态 → 跟随全局，不能算本级自定义
+    expect(resolveNodeWatermarkBinding(COLLECTIONS, params, DIRECTION, ['全局水印'], 'gdt')).toEqual({
+      presetIds: ['全局水印'],
+      sourcedFrom: null,
+      overridden: false,
+    })
+  })
+
+  it('resolveNodeWatermarkBindingsByMedia 只回传与通用值不同的渠道', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: {
+        postprocess: {
+          watermarkPresetIds: ['通用水印'],
+          byMedia: {
+            baidu: { watermarkPresetIds: ['百度水印'] },
+            // 与通用值一致 —— 不该出现在列表里
+            toutiao: { watermarkPresetIds: ['通用水印'] },
+            // 只改了目录、没动水印 —— 同样不该出现
+            gdt: { outputDir: '只改了目录' },
+          },
+        },
+      },
+    }
+    expect(resolveNodeWatermarkBindingsByMedia(COLLECTIONS, params, DIRECTION, ['全局水印'], MEDIA)).toEqual([
+      { mediaId: 'baidu', presetIds: ['百度水印'] },
+    ])
+  })
+
+  it('归一化：空对象渠道被丢掉，预设去重去空，非字符串目录被剔除', () => {
+    const normalized = normalizePostprocessNodeOverride({
+      byMedia: {
+        baidu: { outputDir: '百度目录', watermarkPresetIds: ['a', ' a ', '  ', 'b'] },
+        toutiao: {},
+        '   ': { outputDir: '空渠道名' },
+        gdt: { outputDir: 123, watermarkPresetIds: '不是数组' },
+      },
+    })
+    expect(normalized?.byMedia).toEqual({ baidu: { outputDir: '百度目录', watermarkPresetIds: ['a', 'b'] } })
+  })
+
+  it('归一化：一条有效字段都不剩时 byMedia 整个键消失，不留「已按渠道覆盖」的空壳', () => {
+    expect(normalizePostprocessNodeOverride({ byMedia: { baidu: {} } })?.byMedia).toBeUndefined()
+    expect(normalizePostprocessNodeOverride({ byMedia: [] })?.byMedia).toBeUndefined()
+    expect(normalizePostprocessNodeOverride({ byMedia: 'baidu' })?.byMedia).toBeUndefined()
+  })
+
+  it('归一化后的参数表里 byMedia 能原样保留', () => {
+    const result = normalizeProjectNodeParamsMap({
+      [DIRECTION]: {
+        postprocess: { byMedia: { baidu: { outputDir: '百度目录', watermarkPresetIds: [] } } },
+        updatedAt: 7,
+      },
+    })
+    expect(result[DIRECTION]?.postprocess?.byMedia).toEqual({
+      baidu: { outputDir: '百度目录', watermarkPresetIds: [] },
+    })
+  })
+})
+
+describe('byMedia 的合并 —— 逐渠道，不是整份替换', () => {
+  it('改百度不会把头条静默抹掉', () => {
+    const current = { byMedia: { baidu: { outputDir: '百度' }, toutiao: { outputDir: '头条' } } }
+    const merged = mergePostprocessNodeOverride(current, { byMedia: { baidu: { outputDir: '百度-新' } } })
+    expect(merged?.byMedia).toEqual({ baidu: { outputDir: '百度-新' }, toutiao: { outputDir: '头条' } })
+  })
+
+  it('渠道内字段给 undefined 表示恢复继承：字段被删掉，渠道本身还在', () => {
+    const current = { byMedia: { baidu: { outputDir: '百度', watermarkPresetIds: ['a'] } } }
+    const merged = mergePostprocessNodeOverride(current, { byMedia: { baidu: { outputDir: undefined } } })
+    expect(merged?.byMedia).toEqual({ baidu: { watermarkPresetIds: ['a'] } })
+  })
+
+  it('某渠道被清空时该渠道键消失，其余渠道保留', () => {
+    const current = { byMedia: { baidu: { outputDir: '百度' }, toutiao: { outputDir: '头条' } } }
+    const merged = mergePostprocessNodeOverride(current, { byMedia: { baidu: { outputDir: undefined } } })
+    expect(merged?.byMedia).toEqual({ toutiao: { outputDir: '头条' } })
+  })
+
+  it('所有渠道都清空后 byMedia 键整份删除', () => {
+    const current = { byMedia: { baidu: { outputDir: '百度' } } }
+    expect(mergePostprocessNodeOverride(current, { byMedia: { baidu: { outputDir: undefined } } })).toBeUndefined()
+  })
+
+  it('byMedia: undefined 表示把「按渠道覆盖」整份恢复继承，其余字段不动', () => {
+    const current = { byMedia: { baidu: { outputDir: '百度' } }, creator: '设计组' }
+    expect(mergePostprocessNodeOverride(current, { byMedia: undefined })).toEqual({ creator: '设计组' })
   })
 })

@@ -284,6 +284,31 @@
     `CompositeWorkspaceStateSnapshot` / `CompositeProduct` …）已成**死类型**（全仓零引用，
     该文件只剩 `CompositeFsImage` 还在用）。留着容易诱发「再引入第二套」，建议后续单独清理。
 
+- **按渠道覆盖（byMedia）+ 《输出位置明细》导入（2026-09-18）**：✅ 完成。
+  杰哥要「把表格里的对应数据填进对应位置，比如每个方向的导出位置、树里的水印」。
+  - **表格与项目树本来就是同一份源数据**：`src/lib/builtinProjectTree.ts` 头注释写着「内置结构由
+    《输出位置明细-独立版》整理，节点 id 的业务 id 取自明细表」——表格的「分组ID / 产品ID / 方向ID」
+    直接映射到 `collections.id` 的 `builtin-line-* / builtin-product-* / builtin-direction-*`。
+    202 行逐行核对，**0 处对不上**。当初建树时只搬了「结构」，交付信息这半从来没落进系统。
+  - **主要矛盾是渠道维度**：表格是「方向 × 渠道」二维（厂商 / 百度 / 头条 / 广点通），
+    糖包原本是「方向」一维。实测 61 个方向里 **25 个的目录按渠道分叉、56 个的水印按渠道分叉**。
+    三段共享盘目录连层级顺序都不同，塞不进一个值 → 只能给参数加**按渠道覆盖**。
+  - `PostprocessNodeOverride.byMedia: Record<mediaId, PostprocessMediaOverride>`，
+    **只开放 `outputDir` 与 `watermarkPresetIds`**：这两项才是业务上真会按渠道分叉的；
+    `namePattern` / `selectedMediaIds` / `distribution` / `direction` 是全局规格或「要不要跑」的开关，
+    按渠道分只会让「到底哪个值生效」需要递归推理。**类型上保持窄比事后靠约定约束可靠**。
+  - 语义：命中的渠道用渠道值，其余字段/渠道回退**本级通用值**（再往上是继承链）；
+    `outputDir: ''` = 该渠道用默认输出位置，`watermarkPresetIds: []` = 该渠道不加水印，
+    两者都是**有效值**，所以合并必须用 `??` 而不是 `||`。
+  - `taskPostprocess` 改为**按渠道拆桶**：每个渠道用自己的 outputDir + 水印预设各跑一遍；
+    **纯净版没有渠道，单独一桶且 `autoCompanionClean` 置 false**（否则每个渠道桶都会顺手多产一份原图）。
+    任一预设 id 不存在 → **跳过整桶**，刻意不静默降级成「无水印」——那等于交付了错误的投放素材。
+  - **数据落地**：10 个纯文案水印预设（按文案去重，图标图层留空待补）写进 localStorage；
+    58 个节点参数（产品 13 + 方向 45）写进 `app_data_records` 的 `projectTreeParams`。
+    写入法见 runbook 九。写入前已备份到 `backup-before-import-20260918-163254`。
+  - ⚠️ 导入**只填表格里有的东西**：`selectedMediaIds`（当前只有 `clean` + `gdt`）与
+    `selectedCollectionIds`（当前只有 1 个方向）是**全局启用范围**，属于人的决策，不替用户改。
+
 **已完成部分的关键顺序**（下次接着做时照用）：先删消费方 → 再剥字段 → 最后清 store + 删纯逻辑。
 反过来的话，剥字段会一次性炸出 70+ 个编译错误，分不清哪些来自「要删的文件」、哪些来自「要改的文件」。
 
@@ -308,6 +333,28 @@
 
 **类型落点**：`PostprocessMediaConfig` 放 `lib/` 而不是 store 文件 —— `src/types.ts` 的 `ExportData` 要引它，
 放 store 会让基础模块反向依赖 store。
+
+### 按渠道覆盖（`byMedia`）—— 改这几处前先读
+
+渠道是**单元维度**（同一张原图会展开成多个渠道的变体），所以 `mediaId` 必须在**逐单元那一层**传，
+不能只在「一张源图解析一次」那里传。
+
+| 位置                                                  | 职责                                                                                               |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `lib/postprocessMedia.ts`                             | `PostprocessMediaOverride` 类型；`applyPostprocessOverride(base, override, mediaId)`               |
+| `features/projectTree/params.ts`                      | `normalizeByMediaOverride` / `mergeByMediaOverride`；`resolveProjectPostprocessSlice` 加 `mediaId` |
+| `features/projectTree/ProjectNodeParamsDialog.tsx`    | 「按渠道分别设置」区块（只给这两项提供入口，默认收起）                                             |
+| `features/postprocess/taskPostprocess.ts`             | 按渠道拆桶（+ 纯净版单独一桶）                                                                     |
+| `features/composite/components/PresetProjectTree.tsx` | 节点行「按渠道 N」chip（明细放 title）                                                             |
+
+- **合并是逐渠道的，不是整份替换**。界面上一次只改一个渠道的一个字段，整份替换会把没提到的渠道
+  **静默抹掉**（改完百度发现头条没了，还看不到提示）。渠道内的 `undefined` 表示「恢复继承」，
+  所以里层的 `undefined` 也要一起剔除，不能只在外层做。
+- **空对象渠道整个键丢掉**：留一个 `{ baidu: {} }` 会让界面显示成「已按渠道覆盖」却什么都没配。
+- **`resolveNodeWatermarkBindingsByMedia` 只回传与通用值不同的渠道**：否则每个方向都会列出全部渠道，
+  树上一屏全是重复信息，「哪些渠道真的不一样」反而看不出来。
+- **不要给 `byMedia` 加字段**。想加先回答：这个字段按渠道分之后，用户能不能从界面上**推理出**
+  自己看到的那个值是从哪来的？答不上来就别加。
 
 ### 三个容易踩的执行细节
 

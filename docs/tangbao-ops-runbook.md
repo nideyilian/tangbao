@@ -217,8 +217,53 @@ curl -s --ssl-no-revoke \
 
 ### CI / Release 触发条件
 
-| workflow      | 触发           | 注意                                                                 |
-| ------------- | -------------- | -------------------------------------------------------------------- |
-| `ci.yml`      | 任意分支 push  | `tsc -b` + electron typecheck + lint + format:check + vitest（Node 24） |
-| `release.yml` | `v*` tag       | **勿改回 `--publish always`**（124MB exe 必超时）→ `--publish never` + `softprops/action-gh-release@v2`；校验步骤硬编码产物名 |
+| workflow      | 触发          | 注意                                                                                                                          |
+| ------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`      | 任意分支 push | `tsc -b` + electron typecheck + lint + format:check + vitest（Node 24）                                                       |
+| `release.yml` | `v*` tag      | **勿改回 `--publish always`**（124MB exe 必超时）→ `--publish never` + `softprops/action-gh-release@v2`；校验步骤硬编码产物名 |
 
+## 九、批量写入 localStorage（水印预设 / 左栏比例等）—— 2026-09-18 实测定稿
+
+**为什么不能直接改文件**：水印预设存在 **localStorage**（`tangbao-composite-v2-workspace-storage`，
+zustand persist `version: 5`），底层是 Chromium LevelDB：
+
+- 位置 `%APPDATA%\tangbao\Local Storage\leveldb\`（**dev** 用 `tangbao`，打包版是 `糖包`）；
+- **键按 origin 分区**，dev 下是 `http://localhost:41731`（**不是** `127.0.0.1:41731`，两者是不同 origin、
+  数据不互通 —— `vite.config.ts` 写 `host: '127.0.0.1'` 但 vite 报的是 `localhost`，而应用侧最终落在 `localhost`）；
+- **值走 Snappy 压缩**：写完去 `grep preset-compliance` 是**搜不到**的，只能看 `.log` 体积变化，别据此判断失败；
+- **由应用进程独占 `LOCK`**：应用在跑时外部一律打不开，`cp` 备份都会报 `Device or resource busy`。
+
+**正确姿势**（顺序不能换）：
+
+1. **停应用**（`taskkill /PID <electron主进程> /T /F`）。只停 electron 不够 —— vite 也得停，
+   否则第 3 步的静态服务抢不到 41731。**保留** `scripts/mock-image-api.mjs` 等无关 node。
+2. **备份**：`local-saves/`、`Local Storage/`、`Session Storage/` 三份一起拷。必须停应用后再拷。
+3. **用应用自己那份 userData 起一个最小 Electron 脚本**（不要走 `npm run dev`，vite-plugin-electron
+   会顺手把没带调试端口的应用拉起来，撞单实例锁）：
+
+   ```js
+   // write_presets.cjs —— 与 node_modules/electron/dist/electron.exe 一起跑
+   app.setPath('userData', 'C:\\Users\\tt\\AppData\\Roaming\\tangbao') // 必须在 ready 之前
+   // 自己起 http 服务占 127.0.0.1:41731，页面 origin 才会是 http://localhost:41731
+   const server = http.createServer((_q, s) => s.end('<meta charset="utf-8">ready'))
+   await app.whenReady()
+   server.listen(41731, '127.0.0.1')
+   const win = new BrowserWindow({ show: false })
+   await win.loadURL('http://localhost:41731/')
+   await win.webContents.executeJavaScript(script, true) // 在这里读写 localStorage
+   session.defaultSession.flushStorageData()
+   await new Promise((r) => setTimeout(r, 2000)) // 不 flush + 不等待 = 写入还在缓冲里就退出
+   app.quit()
+   ```
+
+   启动前必须 `unset ELECTRON_RUN_AS_NODE`（本机环境默认带它，否则被当 Node 跑、报
+   `does not provide an export named 'BrowserWindow'`）。
+
+4. **合并而不是覆盖**：`JSON.parse(localStorage.getItem(KEY))` → `state.presets` 里按 id
+   替换/追加 → 原样写回，`version` 保持不动（改了版本号会触发 migrate，旧字段静默丢失）。
+5. **回读验证必须用新进程**：再跑一遍只读脚本读 `count / names / layers`，不能信写入进程内的回读。
+6. **把 dev 环境还给用户**：`npm run dev` 后台拉起。
+
+**踩过的坑**：`node:sqlite` 用 `readOnly: true` 读是对的；但**用 read-write 打开一个带残留 WAL 的库时，
+WAL 里未 checkpoint 的帧可能不可见** —— 实测读到 0 条记录、实际 WAL 里有 1 条，差点把「合并」做成
+「覆盖」。所以：**写库前的基线一律先用 `readOnly` 连接读出来**，再开 rw 去 UPDATE。

@@ -18,6 +18,7 @@ import {
   sanitizeFolderName,
   saveCompositeImage,
 } from '../../lib/localSave'
+import { PURE_MEDIA_ID, type PostprocessMediaConfig } from '../../lib/postprocessMedia'
 import { isCollectionWithinSelection, resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
 import {
   runPostprocessDistribution,
@@ -195,81 +196,100 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       continue
     }
 
-    // 逐个解析本方向引用的预设（一个方向可以挂多套水印）。
-    // 任何一个不存在就整张跳过——刻意**不**静默降级成无水印，那等于给用户交付了错误的投放素材。
-    const presetById = new Map<string, CompositeV2Preset>()
-    let missingPresetId: string | null = null
-    for (const presetId of slice.config.watermarkPresetIds) {
-      const preset = resolveWatermarkPreset(presetId)
-      if (!preset) {
-        missingPresetId = presetId
-        break
+    // 按渠道拆桶：输出目录与水印预设都能按渠道覆盖（一个方向的厂商/百度/头条可能交付到
+    // 完全不同的目录、叠不同的合规水印），一份配置展开不了全部渠道。
+    // 纯净版没有渠道，用通用配置单独成桶。
+    const channelIds = slice.config.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)
+    const wantClean =
+      slice.config.selectedMediaIds.includes(PURE_MEDIA_ID) ||
+      (slice.config.autoCompanionClean && channelIds.length > 0)
+    const buckets: PostprocessMediaConfig[] = []
+    if (wantClean) {
+      // `autoCompanionClean` 关掉：纯净版只在这一桶里产出，否则每个渠道桶都会顺手多产一份原图
+      buckets.push({ ...slice.config, selectedMediaIds: [PURE_MEDIA_ID], autoCompanionClean: false })
+    }
+    for (const mediaId of channelIds) {
+      const perChannel = resolveProjectPostprocessSlice(input.collections, params, collectionId, baseConfig, mediaId)
+      buckets.push({ ...perChannel.config, selectedMediaIds: [mediaId], autoCompanionClean: false })
+    }
+
+    for (const bucketConfig of buckets) {
+      // 逐个解析本渠道引用的预设（一个渠道可以挂多套水印）。
+      // 任何一个不存在就跳过这一桶——刻意**不**静默降级成无水印，那等于给用户交付了错误的投放素材。
+      const bucketPresets = new Map<string, CompositeV2Preset>()
+      let missingPreset = false
+      for (const presetId of bucketConfig.watermarkPresetIds) {
+        const preset = resolveWatermarkPreset(presetId)
+        if (!preset) {
+          missingPreset = true
+          break
+        }
+        bucketPresets.set(presetId, preset)
       }
-      presetById.set(presetId, preset)
-    }
-    if (missingPresetId) {
-      warnOnce('部分源图已跳过：引用的水印预设不存在')
-      continue
-    }
+      if (missingPreset) {
+        warnOnce('部分源图已跳过：引用的水印预设不存在')
+        continue
+      }
 
-    const outputRoot = await resolveOutputRootCached(slice.config.outputDir)
-    if (!outputRoot) {
-      warnOnce('部分源图已跳过：无法创建输出目录')
-      continue
-    }
-    await api.authorizeCompositeOutputDirectory?.(outputRoot)
+      const outputRoot = await resolveOutputRootCached(bucketConfig.outputDir)
+      if (!outputRoot) {
+        warnOnce('部分源图已跳过：无法创建输出目录')
+        continue
+      }
+      await api.authorizeCompositeOutputDirectory?.(outputRoot)
 
-    // 预设 id → 展示名：产出的文件名与预设子目录要靠它区分多套水印
-    const presetNames: Record<string, string> = {}
-    for (const [presetId, preset] of presetById) presetNames[presetId] = preset.name
+      // 预设 id → 展示名：产出的文件名与预设子目录要靠它区分多套水印
+      const presetNames: Record<string, string> = {}
+      for (const [presetId, preset] of bucketPresets) presetNames[presetId] = preset.name
 
-    const selected = selectPostprocessOutputPlan(
-      slice.config,
-      { width: source.width, height: source.height },
-      projects,
-      presetNames,
-    )
-    for (const mediaId of selected.skippedMediaIds) {
-      if (!result.skippedMediaIds.includes(mediaId)) result.skippedMediaIds.push(mediaId)
-    }
+      const selected = selectPostprocessOutputPlan(
+        bucketConfig,
+        { width: source.width, height: source.height },
+        projects,
+        presetNames,
+      )
+      for (const mediaId of selected.skippedMediaIds) {
+        if (!result.skippedMediaIds.includes(mediaId)) result.skippedMediaIds.push(mediaId)
+      }
 
-    const { plans, nextSequence } = buildSourceVariantPlans({
-      source: { imageId, index, width: source.width, height: source.height },
-      units: selected.units,
-      config: slice.config,
-      startSequence: sequence,
-      createdAt: input.createdAt,
-    })
-    sequence = nextSequence
-
-    for (const plan of plans) {
-      // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
-      const planPreset = plan.unit.watermark ? (presetById.get(plan.unit.watermark.id) ?? null) : null
-      const path = await writeVariant(api, outputRoot, plan, source.dataUrl, planPreset, result)
-      if (!path) continue
-      result.outputs.push({
-        rawImageId: imageId,
-        path,
-        mediaId: plan.unit.mediaId,
-        mediaName: plan.unit.mediaName,
-        sizeId: plan.unit.sizeId,
-        width: plan.unit.width,
-        height: plan.unit.height,
-        clean: plan.unit.clean,
-        ...(plan.unit.project ? { collectionId: plan.unit.project.collectionId } : {}),
-        createdAt: Date.now(),
+      const { plans, nextSequence } = buildSourceVariantPlans({
+        source: { imageId, index, width: source.width, height: source.height },
+        units: selected.units,
+        config: bucketConfig,
+        startSequence: sequence,
+        createdAt: input.createdAt,
       })
+      sequence = nextSequence
 
-      // 分发在整批产出之后统一做（要按天平均分配，逐张搬没法均分）。
-      // 这里只登记，`outputRoot` 带上是为了「换目录分发」时保留项目/方向/预设的子目录层级。
-      // 只判 `enabled`：配置不完整（没填日期）交给分发内部报错，静默跳过等于什么都没发生。
-      const distribution = slice.config.distribution
-      if (distribution.enabled) {
-        const key = JSON.stringify(distribution)
-        const group = distributionGroups.get(key)
-        const entry = { path, outputRoot }
-        if (group) group.items.push(entry)
-        else distributionGroups.set(key, { config: distribution, items: [entry] })
+      for (const plan of plans) {
+        // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
+        const planPreset = plan.unit.watermark ? (bucketPresets.get(plan.unit.watermark.id) ?? null) : null
+        const path = await writeVariant(api, outputRoot, plan, source.dataUrl, planPreset, result)
+        if (!path) continue
+        result.outputs.push({
+          rawImageId: imageId,
+          path,
+          mediaId: plan.unit.mediaId,
+          mediaName: plan.unit.mediaName,
+          sizeId: plan.unit.sizeId,
+          width: plan.unit.width,
+          height: plan.unit.height,
+          clean: plan.unit.clean,
+          ...(plan.unit.project ? { collectionId: plan.unit.project.collectionId } : {}),
+          createdAt: Date.now(),
+        })
+
+        // 分发在整批产出之后统一做（要按天平均分配，逐张搬没法均分）。
+        // 这里只登记，`outputRoot` 带上是为了「换目录分发」时保留项目/方向/预设的子目录层级。
+        // 只判 `enabled`：配置不完整（没填日期）交给分发内部报错，静默跳过等于什么都没发生。
+        const distribution = bucketConfig.distribution
+        if (distribution.enabled) {
+          const key = JSON.stringify(distribution)
+          const group = distributionGroups.get(key)
+          const entry = { path, outputRoot }
+          if (group) group.items.push(entry)
+          else distributionGroups.set(key, { config: distribution, items: [entry] })
+        }
       }
     }
   }

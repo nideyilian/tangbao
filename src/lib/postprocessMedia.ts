@@ -212,6 +212,25 @@ export interface PostprocessMediaConfig {
 }
 
 /**
+ * 按媒体（渠道）细分的覆盖。
+ *
+ * 只开放「同一个方向在不同渠道上确实不一样」的两项：
+ * - `outputDir`：同一方向各渠道交付到不同目录（实测《输出位置明细》里 25/61 个方向如此，
+ *   且三段目录连层级顺序都不同，没法用公共前缀或目录变量塞进一个值）；
+ * - `watermarkPresetIds`：同一方向各渠道的合规水印不同（56/61 个方向如此）。
+ *
+ * 刻意**不**开放 `namePattern` / `selectedMediaIds` / `distribution` / `direction`：它们要么是
+ * 全局规格，要么是「这个节点要不要跑」的开关，按渠道分只会让「到底哪个值生效」需要递归推理。
+ * 类型上保持窄，比事后靠约定约束可靠。
+ */
+export interface PostprocessMediaOverride {
+  /** 输出目录（绝对路径）；空串 = 用默认输出位置 */
+  outputDir?: string
+  /** 水印预设 id 列表；`[]` = 该渠道不加水印（显式覆盖），`undefined` = 回退通用值 */
+  watermarkPresetIds?: string[]
+}
+
+/**
  * 某个项目树节点（产品线 / 产品 / 方向）对后处理参数的**局部覆盖**。
  *
  * 与 `PostprocessMediaConfig` 的差别：只允许覆盖「逐方向可变」的字段——
@@ -220,6 +239,9 @@ export interface PostprocessMediaConfig {
  *
  * 未出现的字段（`undefined`）表示「不表态」，沿继承链向上取值：方向 → 产品 → 产品线 → 全局默认。
  * 要显式表达「这个方向就是不带水印」，用 `watermarkPresetIds: []`——`undefined` 才是继承。
+ *
+ * `byMedia` 是**同层内的再细分**，不是新的一级继承：本节点某渠道没写时回退到本节点的通用值，
+ * 而不是继续往父节点找。否则「方向级写了百度、产品级写了通用」会拼出无法从界面上推理的组合。
  */
 export interface PostprocessNodeOverride {
   /** 该方向启用的媒体 id（含 `clean`）；undefined = 继承 */
@@ -237,27 +259,41 @@ export interface PostprocessNodeOverride {
   distribution?: PostprocessDistributionConfig
   /** 该方向是否参与自动后处理；false = 归属此方向的图片不产出变体 */
   enabled?: boolean
+  /**
+   * 按渠道细分覆盖；键为媒体 id（`PostprocessMedia.id`）。
+   *
+   * 命中的渠道用这里面的值，其余渠道回退本节点的通用值（再往上是继承链）。
+   * 只对本层生效，不会往父节点继续找——见类型上方注释。
+   */
+  byMedia?: Record<string, PostprocessMediaOverride>
 }
 
 /**
  * 把节点覆盖叠加到基线配置上（纯函数，不改写入参）。
  *
  * `enabled` 是节点自有概念、不属于 `PostprocessMediaConfig`，故不参与合并，由调用方单独读取。
+ *
+ * `mediaId` 给出时，先取该渠道在 `byMedia` 里的值：命中的字段优先于本节点的通用值，
+ * 未命中的字段照旧回退通用值。渠道是**单元维度**（同一张原图会展开成多个渠道的变体），
+ * 所以调用方要在逐单元那一层传入它，不能只在「一张源图解析一次」那里传。
  */
 export function applyPostprocessOverride(
   base: PostprocessMediaConfig,
   override: PostprocessNodeOverride | undefined,
+  mediaId?: string,
 ): PostprocessMediaConfig {
   if (!override) return base
+  const perMedia = mediaId ? override.byMedia?.[mediaId] : undefined
   return {
     media: base.media,
     selectedMediaIds: override.selectedMediaIds ?? base.selectedMediaIds,
     selectedCollectionIds: base.selectedCollectionIds,
     direction: override.direction === undefined ? base.direction : override.direction,
-    outputDir: override.outputDir ?? base.outputDir,
+    // 用 `??` 而不是 `||`：空串是「用默认输出位置」、空数组是「这个渠道不加水印」，都是有效值
+    outputDir: perMedia?.outputDir ?? override.outputDir ?? base.outputDir,
     namePattern: override.namePattern ?? base.namePattern,
     creator: override.creator ?? base.creator,
-    watermarkPresetIds: override.watermarkPresetIds ?? base.watermarkPresetIds,
+    watermarkPresetIds: perMedia?.watermarkPresetIds ?? override.watermarkPresetIds ?? base.watermarkPresetIds,
     autoCompanionClean: override.autoCompanionClean ?? base.autoCompanionClean,
     // 分发是整份配置对象：只读使用，不做深拷贝
     distribution: override.distribution ?? base.distribution,

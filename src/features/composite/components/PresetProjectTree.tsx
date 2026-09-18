@@ -44,8 +44,13 @@ import type { PostprocessProjectTreeNode } from '../../../lib/postprocessProject
 import { useStore } from '../../../store'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
-import { resolveNodeWatermarkBinding, resolveProjectNodeKind } from '../../projectTree/params'
-import type { ResolvedWatermarkBinding } from '../../projectTree/params'
+import {
+  resolveNodeWatermarkBinding,
+  resolveNodeWatermarkBindingsByMedia,
+  resolveProjectNodeKind,
+  type ResolvedMediaWatermarkBinding,
+  type ResolvedWatermarkBinding,
+} from '../../projectTree/params'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { PROJECT_NODE_KIND_LABELS } from '../../projectTree/types'
 import { PRESET_LIBRARY_DRAG_TYPE, parsePresetDragPayload } from '../lib/compositePresetLibrary'
@@ -86,6 +91,7 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
   const selectedPreviewPresetId = useCompositeV2Store((state) => state.selectedPreviewPresetId)
   const setSelectedPreviewPresetId = useCompositeV2Store((state) => state.setSelectedPreviewPresetId)
   const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
+  const media = usePostprocessMediaStore((state) => state.media)
   const selectedCollectionIds = usePostprocessMediaStore((state) => state.selectedCollectionIds)
   const showToast = useStore((state) => state.showToast)
   const { openConfirmDialog } = useAppDialog()
@@ -100,6 +106,7 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
   const tree = useMemo(() => buildPostprocessProjectTree(collections), [collections])
   const flatNodes = useMemo(() => flattenPostprocessProjectTree(tree), [tree])
   const presetNameById = useMemo(() => new Map(presets.map((preset) => [preset.id, preset.name])), [presets])
+  const mediaNameById = useMemo(() => new Map(media.map((item) => [item.id, item.name])), [media])
 
   /** 每个节点的生效水印 + 来源。一次算完，避免递归渲染里反复走继承链。 */
   const bindings = useMemo(() => {
@@ -109,6 +116,24 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
     }
     return map
   }, [collections, flatNodes, globalWatermarkPresetIds, params])
+
+  /**
+   * 按渠道单独绑的那部分（`byMedia`）。
+   *
+   * 只收「与通用值不同」的渠道：多数方向各渠道共用一套水印，把每个渠道都列出来
+   * 反而会把「哪些渠道真的不一样」淹掉。明细放在 chip 的 title 里，要改去参数弹窗。
+   */
+  const mediaBindings = useMemo(() => {
+    const map = new Map<string, ResolvedMediaWatermarkBinding[]>()
+    const mediaIds = media.map((item) => item.id)
+    for (const node of flatNodes) {
+      map.set(
+        node.id,
+        resolveNodeWatermarkBindingsByMedia(collections, params, node.id, globalWatermarkPresetIds, mediaIds),
+      )
+    }
+    return map
+  }, [collections, flatNodes, globalWatermarkPresetIds, params, media])
 
   /** 节点未启用时「设了也不产出」，得提前说，否则是一次「配了半天没反应」 */
   const enabledByAncestor = useMemo(() => {
@@ -250,6 +275,7 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
     const expanded = expandedIds.has(node.id)
     const indentClass = INDENT_CLASS[Math.min(node.depth, INDENT_CLASS.length - 1)]
     const binding = bindings.get(node.id) ?? { presetIds: [], sourcedFrom: null, overridden: false }
+    const channelBindings = mediaBindings.get(node.id) ?? []
     const summary = summarizeBoundPresets(binding.presetIds, presets)
     const overflow = Math.max(0, summary.presets.length - MAX_VISIBLE_CHIPS)
     const visible = summary.presets.slice(0, MAX_VISIBLE_CHIPS)
@@ -415,7 +441,21 @@ export function PresetProjectTree({ librarySelection = [] }: { librarySelection?
 
           <div className="flex flex-wrap items-center gap-1 pb-1 pl-5">
             {renderSourceChip(binding)}
-            {summary.presets.length === 0 && summary.missingIds.length === 0 && (
+            {channelBindings.length > 0 && (
+              <span
+                className="rounded-ds-lg border border-ds-accent/40 bg-ds-accent/10 px-1.5 py-0.5 text-xs text-ds-accent"
+                title={`这些渠道各自绑了不同的水印（点右侧「参数」改）：\n${channelBindings
+                  .map((item) => {
+                    const names = summarizeBoundPresets(item.presetIds, presets).presets.map((preset) => preset.name)
+                    return `${mediaNameById.get(item.mediaId) ?? item.mediaId}：${names.join('、') || '不加水印'}`
+                  })
+                  .join('\n')}`}
+              >
+                按渠道 {channelBindings.length}
+              </span>
+            )}
+            {/* 只有渠道覆盖、通用值为空时，不能显示成「不加水印」——那是另一回事 */}
+            {summary.presets.length === 0 && summary.missingIds.length === 0 && channelBindings.length === 0 && (
               <span className={chipClass}>不加水印</span>
             )}
             {visible.map((preset) => (

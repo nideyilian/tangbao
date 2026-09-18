@@ -11,6 +11,7 @@ import { normalizePostprocessDistributionConfig } from '../../lib/postprocessDis
 import {
   applyPostprocessOverride,
   type PostprocessMediaConfig,
+  type PostprocessMediaOverride,
   type PostprocessNodeOverride,
 } from '../../lib/postprocessMedia'
 // 路径解析与后处理命名模板共用同一份实现，避免「表格里的路径」和「产出文件名里的路径」出现两套口径
@@ -116,12 +117,16 @@ export interface ResolvedPostprocessSlice {
  *
  * `enabled` 单独处理而不是放进 `applyPostprocessOverride`：它是「要不要跑」的开关，
  * 不属于 `PostprocessMediaConfig` 的形状，混进去会让快照对比、备份导出都带上一个假字段。
+ *
+ * `mediaId` 给出时按该渠道解析 `byMedia`（渠道是**单元维度**：同一张原图会展开成多个渠道的变体，
+ * 每个变体的输出目录可能不同）。继承方向不变：链上更深的节点仍然最后应用、覆盖更浅的。
  */
 export function resolveProjectPostprocessSlice(
   collections: AssetCollection[],
   params: ProjectNodeParamsMap,
   collectionId: string | null,
   fallback: PostprocessMediaConfig,
+  mediaId?: string,
 ): ResolvedPostprocessSlice {
   const chain = resolveProjectOverrideChain(collections, params, collectionId)
   let config = fallback
@@ -130,7 +135,7 @@ export function resolveProjectPostprocessSlice(
   let sourcedDepth = -1
 
   for (const entry of chain) {
-    config = applyPostprocessOverride(config, entry.override)
+    config = applyPostprocessOverride(config, entry.override, mediaId)
     if (entry.override.enabled !== undefined) enabled = entry.override.enabled
     sourcedFrom = entry.collectionId
     sourcedDepth = entry.depth
@@ -156,20 +161,24 @@ export interface ResolvedWatermarkBinding {
  * `resolveProjectPostprocessSlice`：水印工作区只关心水印，为了拿一个数组去订阅
  * 媒体表、输出目录、分发配置等九个字段，既绕又容易在字段增删时漏改。
  * 继承口径与全字段合并**共用同一条链**（`resolveProjectOverrideChain`），不会分叉。
+ *
+ * `mediaId` 给出时优先取该渠道在 `byMedia` 里的值，缺失则回退本级通用值。
  */
 export function resolveNodeWatermarkBinding(
   collections: AssetCollection[],
   params: ProjectNodeParamsMap,
   collectionId: string | null,
   globalPresetIds: string[],
+  mediaId?: string,
 ): ResolvedWatermarkBinding {
   const chain = resolveProjectOverrideChain(collections, params, collectionId)
   let presetIds = globalPresetIds
   let sourcedFrom: string | null = null
 
   for (const entry of chain) {
-    const declared = entry.override.watermarkPresetIds
-    // undefined = 不表态（继续继承）；[] = 显式「这个方向不加水印」，必须照收
+    const perMedia = mediaId ? entry.override.byMedia?.[mediaId] : undefined
+    // 渠道值优先于本级通用值；undefined = 不表态（继续继承），[] = 显式「不加水印」，必须照收
+    const declared = perMedia?.watermarkPresetIds ?? entry.override.watermarkPresetIds
     if (declared === undefined) continue
     presetIds = declared
     sourcedFrom = entry.collectionId
@@ -179,6 +188,40 @@ export function resolveNodeWatermarkBinding(
   const overridden = collectionId !== null && sourcedFrom === collectionId
 
   return { presetIds, sourcedFrom, overridden }
+}
+
+/** 某节点在单个渠道上生效的水印绑定。 */
+export interface ResolvedMediaWatermarkBinding {
+  mediaId: string
+  presetIds: string[]
+}
+
+function sameIdList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index])
+}
+
+/**
+ * 列出某节点**按渠道**生效、且与通用值不同的水印绑定。
+ *
+ * 树上的行要能看出「这个方向在头条用这套、在百度用那套」，而 `resolveNodeWatermarkBinding`
+ * 一次只回答一个渠道。这里逐渠道解析，但**只回传与通用值不同的那些**——否则每个方向都会
+ * 列出全部渠道，树上一屏全是重复信息，「哪些渠道真的不一样」反而看不出来。
+ */
+export function resolveNodeWatermarkBindingsByMedia(
+  collections: AssetCollection[],
+  params: ProjectNodeParamsMap,
+  collectionId: string | null,
+  globalPresetIds: string[],
+  mediaIds: string[],
+): ResolvedMediaWatermarkBinding[] {
+  const base = resolveNodeWatermarkBinding(collections, params, collectionId, globalPresetIds)
+  const result: ResolvedMediaWatermarkBinding[] = []
+  for (const mediaId of mediaIds) {
+    const resolved = resolveNodeWatermarkBinding(collections, params, collectionId, globalPresetIds, mediaId)
+    if (sameIdList(resolved.presetIds, base.presetIds)) continue
+    result.push({ mediaId, presetIds: resolved.presetIds })
+  }
+  return result
 }
 
 /**
@@ -201,6 +244,42 @@ export function resolveProjectParams(
     sourcedFrom: slice.sourcedFrom,
     sourcedDepth: slice.sourcedDepth,
   }
+}
+
+/** 归一化水印预设 id 列表：去空、去重、保序。空数组有效（= 显式不加水印）。 */
+function normalizePresetIdList(raw: unknown): string[] {
+  const ids: string[] = []
+  if (!Array.isArray(raw)) return ids
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (!trimmed || ids.includes(trimmed)) continue
+    ids.push(trimmed)
+  }
+  return ids
+}
+
+/**
+ * 归一化「按渠道覆盖」表。
+ *
+ * 口径与通用值一致：字段缺失 = 不表态（回退本节点通用值），`watermarkPresetIds: []` = 该渠道不加水印。
+ * 某渠道一条有效字段都没剩下时整个键丢掉——留一个空对象会让界面显示成「已按渠道覆盖」却什么都没配。
+ */
+function normalizeByMediaOverride(raw: unknown): Record<string, PostprocessMediaOverride> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const result: Record<string, PostprocessMediaOverride> = {}
+  for (const [rawMediaId, rawValue] of Object.entries(raw as Record<string, unknown>)) {
+    const mediaId = typeof rawMediaId === 'string' ? rawMediaId.trim() : ''
+    if (!mediaId || !rawValue || typeof rawValue !== 'object') continue
+    const entry = rawValue as Record<string, unknown>
+    const override: PostprocessMediaOverride = {}
+    if (typeof entry.outputDir === 'string') override.outputDir = entry.outputDir
+    if (Array.isArray(entry.watermarkPresetIds)) {
+      override.watermarkPresetIds = normalizePresetIdList(entry.watermarkPresetIds)
+    }
+    if (Object.keys(override).length > 0) result[mediaId] = override
+  }
+  return Object.keys(result).length > 0 ? result : undefined
 }
 
 /** 归一化单个覆盖切片：丢弃 `undefined`，保证「缺省 = 继承」；空对象回退为 undefined。 */
@@ -229,14 +308,7 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
   // 空数组是**显式**「这个方向不加水印」，必须与「没表态」（undefined）区分，所以数组照收不误。
   // 旧版单值字段（`watermarkPresetId`）一并迁移，否则升级后用户已配的水印会消失。
   if (Array.isArray(input.watermarkPresetIds)) {
-    const presetIds: string[] = []
-    for (const item of input.watermarkPresetIds) {
-      if (typeof item !== 'string') continue
-      const trimmed = item.trim()
-      if (!trimmed || presetIds.includes(trimmed)) continue
-      presetIds.push(trimmed)
-    }
-    result.watermarkPresetIds = presetIds
+    result.watermarkPresetIds = normalizePresetIdList(input.watermarkPresetIds)
   } else if (typeof input.watermarkPresetId === 'string' && input.watermarkPresetId.trim()) {
     result.watermarkPresetIds = [input.watermarkPresetId.trim()]
   } else if (input.watermarkPresetId === null) {
@@ -250,6 +322,8 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
     result.distribution = normalizePostprocessDistributionConfig(input.distribution)
   }
   if (typeof input.enabled === 'boolean') result.enabled = input.enabled
+  const byMedia = normalizeByMediaOverride(input.byMedia)
+  if (byMedia) result.byMedia = byMedia
 
   return Object.keys(result).length > 0 ? result : undefined
 }
@@ -271,11 +345,39 @@ export function normalizeProjectNodeParamsMap(raw: unknown): ProjectNodeParamsMa
 }
 
 /**
+ * 逐渠道合并「按渠道覆盖」表。
+ *
+ * 不能整份替换：界面上一次只改一个渠道的一个字段，整份替换会把没提到的渠道**静默抹掉**——
+ * 用户改完百度发现头条的配置没了，且看不到任何提示。渠道内的字段用 `undefined` 表示
+ * 「恢复继承」，所以里层的 undefined 也要一起剔除，不能只在外层做。
+ */
+function mergeByMediaOverride(
+  current: Record<string, PostprocessMediaOverride> | undefined,
+  patch: Record<string, PostprocessMediaOverride>,
+): Record<string, PostprocessMediaOverride> | undefined {
+  const result: Record<string, PostprocessMediaOverride> = { ...current }
+  for (const [mediaId, patchEntry] of Object.entries(patch)) {
+    if (!patchEntry || typeof patchEntry !== 'object') continue
+    const entry: PostprocessMediaOverride = { ...result[mediaId] }
+    for (const key of Object.keys(patchEntry) as (keyof PostprocessMediaOverride)[]) {
+      const value = patchEntry[key]
+      if (value === undefined) delete entry[key]
+      else (entry as Record<string, unknown>)[key] = value
+    }
+    if (Object.keys(entry).length > 0) result[mediaId] = entry
+    else delete result[mediaId]
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+/**
  * 合并一次参数补丁。
  *
  * `undefined` 的字段从补丁里被剔除（保持继承），`null` 是**有效值**（如水印 = 不带）。
  * 传入空补丁（如 `{ watermarkPresetId: undefined }`）表示「恢复继承」该字段；
  * 补丁后一个字段都不剩时整条记录被删除，让节点回到「未配置」状态。
+ *
+ * `byMedia` 例外地**逐渠道合并**而不是整份替换，理由见 `mergeByMediaOverride`。
  */
 export function mergePostprocessNodeOverride(
   current: PostprocessNodeOverride | undefined,
@@ -284,8 +386,17 @@ export function mergePostprocessNodeOverride(
   const merged: PostprocessNodeOverride = { ...current }
   for (const key of Object.keys(patch) as (keyof PostprocessNodeOverride)[]) {
     const value = patch[key]
-    if (value === undefined) delete merged[key]
-    else (merged as Record<string, unknown>)[key] = value
+    if (value === undefined) {
+      delete merged[key]
+      continue
+    }
+    if (key === 'byMedia') {
+      const next = mergeByMediaOverride(merged.byMedia, value as Record<string, PostprocessMediaOverride>)
+      if (next) merged.byMedia = next
+      else delete merged.byMedia
+      continue
+    }
+    ;(merged as Record<string, unknown>)[key] = value
   }
   return Object.keys(merged).length > 0 ? merged : undefined
 }

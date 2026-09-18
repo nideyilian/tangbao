@@ -8,7 +8,7 @@
  *   以后改上层就再也影响不到这个节点了。
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Alert,
   Button,
@@ -24,6 +24,7 @@ import {
   PURE_MEDIA_ID,
   type OutputDirection,
   type PostprocessMediaConfig,
+  type PostprocessMediaOverride,
   type PostprocessNodeOverride,
 } from '../../lib/postprocessMedia'
 import { isCollectionWithinSelection } from '../../lib/postprocessProjectTree'
@@ -153,6 +154,23 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   )
   const effective = slice.config
 
+  /**
+   * 每个渠道各自解析一次生效配置。
+   *
+   * 渠道覆盖（`byMedia`）只影响输出目录与水印预设，但界面上要回答的**不是**「本级写没写」，
+   * 而是「这个渠道现在到底用哪个目录、叠哪几套水印」——没单独设过时得看得见它继承到了什么。
+   */
+  const perMediaEffective = useMemo(() => {
+    const map: Record<string, PostprocessMediaConfig> = {}
+    for (const item of media) {
+      map[item.id] = resolveProjectPostprocessSlice(collections, params, collectionId, globalConfig, item.id).config
+    }
+    return map
+  }, [media, collections, params, collectionId, globalConfig])
+
+  /** 「按渠道分别设置」的展开态，两个字段各自独立。默认收起：多数方向各渠道共用一个目录。 */
+  const [expandedMediaOverride, setExpandedMediaOverride] = useState<'outputDir' | 'watermarkPresetIds' | null>(null)
+
   // 节点本身可能已被删除（弹窗开着时另一处删掉了它）——此时 title 与路径都退化为占位文案，不抛错
   const self = useMemo(() => collections.find((item) => item.id === collectionId), [collections, collectionId])
   const pathNames = useMemo(() => resolveProjectNodePathNames(collections, collectionId), [collections, collectionId])
@@ -168,6 +186,54 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   const overridden = (key: keyof PostprocessNodeOverride) => override?.[key] !== undefined
   const apply = (patch: PostprocessNodeOverride) => setPostprocessOverride(collectionId, patch)
   const reset = (key: keyof PostprocessNodeOverride) => apply({ [key]: undefined })
+
+  /** 某渠道的某个字段在本级是否写了覆盖。 */
+  const mediaOverridden = (mediaId: string, key: keyof PostprocessMediaOverride) =>
+    override?.byMedia?.[mediaId]?.[key] !== undefined
+
+  /**
+   * 「按渠道分别设置」区块。
+   *
+   * 只给输出目录与水印预设提供入口——这正是业务上确实会按渠道分叉的两项：同一个方向的
+   * 厂商/百度/头条可能交付到完全不同的目录、叠不同的合规水印。其余字段按渠道分只会让
+   * 「到底哪个值生效」需要递归推理，所以这里根本不提供入口。
+   *
+   * 默认收起并在收起时用一句话交代「哪几个渠道已单独设置」——多数方向各渠道共用一个目录，
+   * 一上来就把每个渠道铺开只会把简单情况显得很复杂。
+   */
+  const mediaOverrideBlock = (
+    field: 'outputDir' | 'watermarkPresetIds',
+    renderRow: (mediaId: string) => React.ReactNode,
+  ) => {
+    const expanded = expandedMediaOverride === field
+    const overriddenNames = media.filter((item) => mediaOverridden(item.id, field)).map((item) => item.name)
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setExpandedMediaOverride(expanded ? null : field)}>
+            {expanded ? '收起按渠道设置' : '按渠道分别设置'}
+          </Button>
+          {!expanded && overriddenNames.length > 0 && (
+            <span className="text-xs text-ds-accent dark:text-ds-accent">{overriddenNames.join('、')} 已单独设置</span>
+          )}
+        </div>
+        {expanded && (
+          <div className="space-y-1.5">
+            <p className="text-xs text-ds-muted dark:text-ds-muted">
+              留空 = 用上面的通用值。只有同一方向各渠道不一样时才需要在这里单独填。
+            </p>
+            {media.length === 0 && <Alert tone="warning">媒体表为空，没有可单独设置的渠道。</Alert>}
+            {media.map((item) => (
+              <div key={item.id} className="flex items-start gap-2">
+                <span className="w-14 shrink-0 pt-1.5 text-xs text-ds-text dark:text-ds-text">{item.name}</span>
+                <div className="flex min-w-0 flex-1 items-center gap-2">{renderRow(item.id)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const pickDirectory = async () => {
     try {
@@ -296,22 +362,55 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
             sourceHint={sourceName}
             onReset={() => reset('watermarkPresetIds')}
           >
-            {presets.length === 0 ? (
-              <span className="text-xs text-ds-muted dark:text-ds-muted">还没有水印预设可勾选。</span>
-            ) : (
-              <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-                {presets.map((preset) => (
-                  <Checkbox
-                    key={preset.id}
-                    checked={effective.watermarkPresetIds.includes(preset.id)}
-                    onChange={() =>
-                      apply({ watermarkPresetIds: togglePresetId(effective.watermarkPresetIds, preset.id) })
-                    }
-                    label={preset.name}
-                  />
-                ))}
-              </div>
-            )}
+            <div className="space-y-2">
+              {presets.length === 0 ? (
+                <span className="text-xs text-ds-muted dark:text-ds-muted">还没有水印预设可勾选。</span>
+              ) : (
+                <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                  {presets.map((preset) => (
+                    <Checkbox
+                      key={preset.id}
+                      checked={effective.watermarkPresetIds.includes(preset.id)}
+                      onChange={() =>
+                        apply({ watermarkPresetIds: togglePresetId(effective.watermarkPresetIds, preset.id) })
+                      }
+                      label={preset.name}
+                    />
+                  ))}
+                </div>
+              )}
+              {mediaOverrideBlock('watermarkPresetIds', (mediaId) => {
+                const ids = perMediaEffective[mediaId]?.watermarkPresetIds ?? []
+                return (
+                  <>
+                    <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
+                      {presets.map((preset) => (
+                        <Checkbox
+                          key={preset.id}
+                          checked={ids.includes(preset.id)}
+                          onChange={() =>
+                            apply({ byMedia: { [mediaId]: { watermarkPresetIds: togglePresetId(ids, preset.id) } } })
+                          }
+                          label={preset.name}
+                        />
+                      ))}
+                      {presets.length === 0 && (
+                        <span className="text-xs text-ds-muted dark:text-ds-muted">没有预设可选。</span>
+                      )}
+                    </div>
+                    {mediaOverridden(mediaId, 'watermarkPresetIds') && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => apply({ byMedia: { [mediaId]: { watermarkPresetIds: undefined } } })}
+                      >
+                        恢复继承
+                      </Button>
+                    )}
+                  </>
+                )
+              })}
+            </div>
           </FieldRow>
 
           <FieldRow
@@ -346,17 +445,40 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
             sourceHint={sourceName}
             onReset={() => reset('outputDir')}
           >
-            <div className="flex items-center gap-2">
-              <TextField
-                label=""
-                className="flex-1"
-                value={effective.outputDir}
-                placeholder="留空则用默认输出位置"
-                onChange={(event) => apply({ outputDir: event.target.value })}
-              />
-              <Button variant="secondary" onClick={() => void pickDirectory()}>
-                选择…
-              </Button>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <TextField
+                  label=""
+                  className="flex-1"
+                  value={effective.outputDir}
+                  placeholder="留空则用默认输出位置"
+                  onChange={(event) => apply({ outputDir: event.target.value })}
+                />
+                <Button variant="secondary" onClick={() => void pickDirectory()}>
+                  选择…
+                </Button>
+              </div>
+              {mediaOverrideBlock('outputDir', (mediaId) => (
+                <>
+                  <TextField
+                    label=""
+                    className="flex-1"
+                    value={override?.byMedia?.[mediaId]?.outputDir ?? ''}
+                    // 占位符显示的是**该渠道继承到的**目录：留空不代表没配置，而是正在用这个
+                    placeholder={perMediaEffective[mediaId]?.outputDir.trim() || '留空则用默认输出位置'}
+                    onChange={(event) => apply({ byMedia: { [mediaId]: { outputDir: event.target.value } } })}
+                  />
+                  {mediaOverridden(mediaId, 'outputDir') && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => apply({ byMedia: { [mediaId]: { outputDir: undefined } } })}
+                    >
+                      恢复继承
+                    </Button>
+                  )}
+                </>
+              ))}
             </div>
           </FieldRow>
 

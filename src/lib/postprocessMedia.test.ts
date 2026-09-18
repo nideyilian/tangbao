@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_POSTPROCESS_DISTRIBUTION } from './postprocessDistribution'
 import {
   DEFAULT_POSTPROCESS_MEDIA,
   PURE_MEDIA_ID,
+  applyPostprocessOverride,
   buildPostprocessOutputs,
   findPostprocessMedia,
   getOutputDirectionLabel,
   matchMediaSizes,
   resolveOutputDirection,
   type PostprocessMedia,
+  type PostprocessMediaConfig,
+  type PostprocessNodeOverride,
   type PostprocessProjectTarget,
 } from './postprocessMedia'
 
@@ -344,5 +348,87 @@ describe('多水印预设展开', () => {
       'p2:wm-a',
       'p2:wm-b',
     ])
+  })
+})
+
+describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
+  function baseConfig(): PostprocessMediaConfig {
+    return {
+      media: DEFAULT_POSTPROCESS_MEDIA,
+      selectedMediaIds: ['clean'],
+      selectedCollectionIds: [],
+      direction: null,
+      outputDir: '基线目录',
+      namePattern: '{seq}',
+      creator: '基线',
+      watermarkPresetIds: ['基线水印'],
+      autoCompanionClean: true,
+      distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
+    }
+  }
+
+  it('命中渠道优先于本级通用值', () => {
+    const override: PostprocessNodeOverride = {
+      outputDir: '通用目录',
+      watermarkPresetIds: ['通用水印'],
+      byMedia: { baidu: { outputDir: '百度目录', watermarkPresetIds: ['百度水印'] } },
+    }
+    const baidu = applyPostprocessOverride(baseConfig(), override, 'baidu')
+    expect(baidu.outputDir).toBe('百度目录')
+    expect(baidu.watermarkPresetIds).toEqual(['百度水印'])
+  })
+
+  it('未命中的渠道回退本级通用值，而不是回退基线', () => {
+    const override: PostprocessNodeOverride = {
+      outputDir: '通用目录',
+      byMedia: { baidu: { outputDir: '百度目录' } },
+    }
+    expect(applyPostprocessOverride(baseConfig(), override, 'toutiao').outputDir).toBe('通用目录')
+    // 本级连通用值都没写 → 才轮到基线
+    expect(
+      applyPostprocessOverride(baseConfig(), { byMedia: { baidu: { outputDir: 'x' } } }, 'toutiao').outputDir,
+    ).toBe('基线目录')
+  })
+
+  it('不传 mediaId 时完全忽略 byMedia（既有调用点行为不变）', () => {
+    const override: PostprocessNodeOverride = {
+      outputDir: '通用目录',
+      byMedia: { baidu: { outputDir: '百度目录' } },
+    }
+    expect(applyPostprocessOverride(baseConfig(), override).outputDir).toBe('通用目录')
+  })
+
+  it('渠道内的空串 / 空数组是有效值：合并用 ?? 而不是 ||', () => {
+    const override: PostprocessNodeOverride = {
+      outputDir: '通用目录',
+      watermarkPresetIds: ['通用水印'],
+      byMedia: { baidu: { outputDir: '', watermarkPresetIds: [] } },
+    }
+    const baidu = applyPostprocessOverride(baseConfig(), override, 'baidu')
+    // 空串 = 用默认输出位置；空数组 = 这个渠道不加水印。两者都不能掉回通用值
+    expect(baidu.outputDir).toBe('')
+    expect(baidu.watermarkPresetIds).toEqual([])
+  })
+
+  it('渠道覆盖只作用于这两项，其余字段照旧走通用值', () => {
+    const override: PostprocessNodeOverride = {
+      creator: '通用',
+      namePattern: '{product}',
+      byMedia: { baidu: { outputDir: '百度目录' } },
+    }
+    const baidu = applyPostprocessOverride(baseConfig(), override, 'baidu')
+    expect(baidu.creator).toBe('通用')
+    expect(baidu.namePattern).toBe('{product}')
+  })
+
+  it('不修改基线配置（纯函数）', () => {
+    const config = baseConfig()
+    applyPostprocessOverride(config, { byMedia: { baidu: { outputDir: '百度目录' } } }, 'baidu')
+    expect(config.outputDir).toBe('基线目录')
+  })
+
+  it('override 为空时原样返回基线对象', () => {
+    const config = baseConfig()
+    expect(applyPostprocessOverride(config, undefined, 'baidu')).toBe(config)
   })
 })
