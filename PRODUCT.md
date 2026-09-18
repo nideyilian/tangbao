@@ -94,10 +94,13 @@ web
     旧画廊与任务导航残留（`TaskGrid` / `SearchBar` / `SupportPromptModal` / `GalleryTaskNavigator`）、
     助手技能条 `AssistantActionBar.tsx`（1567 行，零生产引用）、标签体系 UI（`AssetTagChips` /
     `AssetLibraryTagSection`）、零引用工具模块若干。
-  - **词条库整体下线**：业务上已被 SOP 变量体系完全替代（产品决策）。4 个词条 UI 组件删除、
-    侧栏改造为纯素材详情面板、`InputBar` 摘除 22 处耦合、手打 `{{xxx}}` 语法彻底移除。
-    **数据层保留**（`AssetTag` / `tagIds` / IDB `wordLibrary` / 备份 v6 v7 manifest）以保证老备份可无损导入；
-    且 `RandomPromptModal` 的通配符抽取仍只读 `wordLibraryEntries`（无新建入口）。
+  - **词条库整体下线**：业务上已被 SOP 变量体系完全替代（产品决策）。**UI / 链路 / 数据层全部退役** ——
+    4 个词条 UI 组件删除、侧栏改造为纯素材详情面板、`InputBar` 摘除 22 处耦合、手打 `{{xxx}}` 语法移除、
+    store 的 state/CRUD/持久化订阅/启动水合/备份导入合并与 IDB `wordLibrary` 存取全部删除；
+    因唯一数据源消失而失去价值的 `RandomPromptModal`（本身也是无入口打开的死 UI）一并删除。
+    **代价**：老备份中的词条数据不再恢复（其余数据照常导入，不报错）；已存在用户的 `wordLibrary`
+    数据不再被读写。保留 `wordLibraryDerivativeRule*` 设置项与 `assistantActions` 的
+    `WordEntryConfig`（二者与词条库数据无关，只是名字相近）。
   - **`galleryViewMode` 字段删除**：M10 时保留为兼容字段，实际写入方只写常量 `'tasks'`，
     读取方只判断 `'images'` → 两个分支永不可达。
   - **重复实现收敛**：9 组 → 6 个唯一实现模块（`contentEditableText` / `pathBaseName` /
