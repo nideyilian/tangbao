@@ -113,7 +113,9 @@ function getDefaultModelForMode(apiMode: AppSettings['apiMode']) {
 
 const ADD_CUSTOM_PROVIDER_VALUE = '__add_custom_provider__'
 const COPY_IMPORT_URL_OPTIONS_STORAGE_KEY = 'tangbao.copy-import-url-options'
-const SETTINGS_TAB_ORDER: SettingsTab[] = ['api', 'general', 'data', 'backup', 'about']
+// 「备份管理」Tab 已并入「数据管理」：备份列表/恢复/备份间隔全部收进数据管理页，
+// 避免用户在两处找同一件事（见 docs/data-portability-redesign.md TB-042 P2）。
+const SETTINGS_TAB_ORDER: SettingsTab[] = ['api', 'general', 'data', 'about']
 
 const DEFAULT_COPY_IMPORT_URL_OPTIONS = {
   includeApiKey: false,
@@ -1301,13 +1303,14 @@ export default function SettingsModal() {
   }, [])
 
   useEffect(() => {
-    if (activeTab === 'backup' && isElectronEnv()) {
-      setIsLoadingBackups(true)
-      getBackupList()
-        .then((list) => setBackups(list))
-        .finally(() => setIsLoadingBackups(false))
-      getBackupPath().then(setBackupPath)
-    }
+    // 备份列表加载原属「备份管理」Tab，已并入数据管理页（TB-042 P2）→ 条件随之合并。
+    // 备份列表读的是库根/状态目录，而自动备份现在也落库根 backups/，两者终于一致。
+    if (activeTab !== 'data' || !isElectronEnv()) return
+    setIsLoadingBackups(true)
+    getBackupList()
+      .then((list) => setBackups(list))
+      .finally(() => setIsLoadingBackups(false))
+    getBackupPath().then(setBackupPath)
   }, [activeTab])
 
   useEffect(() => {
@@ -2508,31 +2511,6 @@ export default function SettingsModal() {
                   />
                 </svg>
                 数据管理
-              </button>
-              <button
-                role="tab"
-                aria-selected={activeTab === 'backup'}
-                tabIndex={activeTab === 'backup' ? 0 : -1}
-                data-settings-tab="backup"
-                onKeyDown={(event) => handleSettingsTabKeyDown(event, 'backup')}
-                onClick={() => setActiveTab('backup')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-ds-lg transition-colors ${activeTab === 'backup' ? 'bg-ds-surface dark:bg-ds-surface shadow-sm text-ds-primary dark:text-ds-primary font-medium' : 'text-ds-muted dark:text-ds-muted hover:bg-ds-subtle/80 dark:hover:bg-ds-surface'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-                备份管理
               </button>
               <button
                 role="tab"
@@ -4519,7 +4497,9 @@ export default function SettingsModal() {
                 </div>
               )}
 
-              {activeTab === 'backup' && (
+              {/* 备份与恢复：原「备份管理」Tab 的内容并入此处（TB-042 P2）。
+                  与上面的导出/导入同处一页，用户不必在两处找同一件事。 */}
+              {activeTab === 'data' && (
                 <div className="space-y-4">
                   <div className="rounded-ds-xl bg-ds-surface/80 p-4 border border-ds-border/60 dark:bg-ds-surface dark:border-ds-border flex items-start gap-3">
                     <svg
@@ -4536,11 +4516,19 @@ export default function SettingsModal() {
                       />
                     </svg>
                     <div className="text-ds-sm leading-relaxed text-ds-muted dark:text-ds-muted">
-                      每次保存应用状态时，系统会自动备份上一份状态
-                      JSON。备份包含设置、输入草稿、收藏夹、词条库、工作区标签等持久化状态；不包含 IndexedDB
-                      中的任务图片数据。ZIP
-                      导出默认也不包含原始图片，仅保存任务、引用关系和预览图；换电脑时请勾选「包含原始图片」。
-                      自动备份最多保留 30 份，设置为 0 表示每次保存都备份。
+                      <p className="mb-2">
+                        <strong className="text-ds-text dark:text-ds-muted">① 状态快照（本列表）</strong>
+                        ：每次保存应用状态时，系统自动备份上一份状态
+                        JSON。包含设置、输入草稿、收藏夹、工作区标签等持久化状态，
+                        <strong className="text-ds-text dark:text-ds-muted">不含任务与图片数据</strong>；最多保留 30
+                        份。
+                      </p>
+                      <p>
+                        <strong className="text-ds-text dark:text-ds-muted">② ZIP 备份</strong>
+                        ：在上方「导出数据」手动生成，每 7 天也会自动生成一份到库根 <code>backups/</code>（保留 10
+                        份）。
+                        默认只含配置与项目树；需要任务或原始图片时请在上方勾选。导入前还会自动落一份快照到同一目录，供导入失败时回退。
+                      </p>
                     </div>
                   </div>
 
@@ -4842,7 +4830,7 @@ export default function SettingsModal() {
                   ) : (
                     <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface shadow-sm">
                       <p className="text-xs text-ds-muted dark:text-ds-muted">
-                        备份管理功能仅在 Electron 桌面版应用中可用，当前浏览器环境下不可用。
+                        备份功能仅在 Electron 桌面版应用中可用，当前浏览器环境下不可用。
                       </p>
                     </div>
                   )}

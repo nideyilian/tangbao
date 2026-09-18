@@ -394,7 +394,9 @@ function isErrorToastTitle(title: string): boolean {
   return /(?:失败|错误|异常|报错|无法|不能|超时|中断|断开|请先|请输入|已达上限|不存在|已丢失)$/.test(title)
 }
 
-export type SettingsTab = 'general' | 'agent' | 'api' | 'data' | 'backup' | 'about'
+// 'backup' 已并入 'data'（TB-042 P2）：备份列表/恢复/备份间隔不再独立成 Tab，
+// 与导出/导入同处「数据管理」页。移除该成员后 tsc 会抓出所有旧的 setShowSettings(…, 'backup') 调用点。
+export type SettingsTab = 'general' | 'agent' | 'api' | 'data' | 'about'
 
 const TIMEOUT_STREAMING_HINT = '也可尝试打开「流式传输」，并提高「请求中间步骤图像数」来维持连接。'
 const TIMEOUT_PARTIAL_IMAGES_ZERO_HINT =
