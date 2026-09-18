@@ -22,7 +22,9 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 const OWNER = 'nideyilian'
-const REPO = 'doupao'
+// ⚠️ 必须是糖包的仓库名。此前硬编码为豆泡时代的 'doupao'（拆分自 `DOUPAO` 仓时漏改），
+// 导致发布后健康检查全部指向不存在的仓库 —— 检查「通过」与否都没有意义。
+const REPO = 'tangbao'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'))
 const tag = process.argv[2] || `v${packageJson.version}`
@@ -43,7 +45,7 @@ function request(url, method = 'GET', headers = {}) {
         port: target.port || undefined,
         path: target.pathname + target.search,
         method,
-        headers: { 'user-agent': 'doupao-release-check', ...headers },
+        headers: { 'user-agent': 'tangbao-release-check', ...headers },
       },
       (res) => {
         const location = res.headers.location

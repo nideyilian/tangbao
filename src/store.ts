@@ -11585,6 +11585,9 @@ export async function exportData(
     const manifest: ExportData = {
       version: 7,
       exportedAt: new Date(exportedAt).toISOString(),
+      // 档位标记（TB-042）：含任务或图片即完整包，否则为精简包。
+      // ⚠️ 旧备份没有这个字段，导入侧必须把「缺字段」当 full（见 types.ts ExportData.profile 注释）。
+      profile: options.exportTasks || options.exportImages ? 'full' : 'config',
       includesSecrets: options.includeSecrets === true,
       includesOriginalImages: options.exportImages === true,
       ...(imageIds.length > 0 ? { imageRefs } : {}),
@@ -11710,6 +11713,9 @@ export async function exportDataToPath(
     const manifest: ExportData = {
       version: 7,
       exportedAt: new Date(exportedAt).toISOString(),
+      // 档位标记（TB-042）：含任务或图片即完整包，否则为精简包。
+      // ⚠️ 旧备份没有这个字段，导入侧必须把「缺字段」当 full（见 types.ts ExportData.profile 注释）。
+      profile: options.exportTasks || options.exportImages ? 'full' : 'config',
       includesSecrets: options.includeSecrets === true,
       includesOriginalImages: options.exportImages === true,
       ...(ids.length > 0 ? { imageRefs } : {}),

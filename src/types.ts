@@ -1199,6 +1199,15 @@ export type FilterControlKey =
 export interface ExportData {
   version: number
   exportedAt: string
+  /**
+   * 导出档位（TB-042）：`'config'` = 精简包（只有配置 / 项目树等必要数据），
+   * `'full'` = 完整包（额外含任务或图片）。
+   *
+   * ⚠️ 旧备份（v3~v7）没有这个字段 —— 导入侧必须把「缺字段」当作 `'full'`，
+   * 不能默认成 `'config'`（否则老包会被误判成精简包）。本字段只用于提示与可观测，
+   * 不参与「要不要导入」的判定（那个判定由各 `import*` 开关决定）。
+   */
+  profile?: 'config' | 'full'
   includesSecrets?: boolean
   settings?: AppSettings
   tasks?: TaskRecord[]
