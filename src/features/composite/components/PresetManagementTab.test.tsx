@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, create, type ReactTestInstance } from 'react-test-renderer'
-import { createDefaultCompositeV2Preset, createDefaultCompositeV2PresetGroup } from '../lib/compositeV2Defaults'
+import { createDefaultCompositeV2Preset } from '../lib/compositeV2Defaults'
 import { useStore } from '../../../store'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
@@ -85,7 +85,7 @@ describe('PresetManagementTab', () => {
     })
   })
 
-  it('uses a stacked library rail beside a full preview workspace', () => {
+  it('splits the left rail into the unified tree and the watermark library', () => {
     let renderer: ReturnType<typeof create>
     act(() => {
       renderer = create(<PresetManagementTab />)
@@ -95,18 +95,19 @@ describe('PresetManagementTab', () => {
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-management-workspace')).toHaveLength(
       1,
     )
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(1)
-    expect(
-      renderer!.root.find((node) => node.props['data-layout'] === 'stacked-library-rail').props.style.gridTemplateRows,
-    ).toContain('50%')
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(1)
+    // 左栏只有两段：统一树 + 水印库。预设组退役后不该再有第三段或第二根分隔条 ——
+    // 「树 / 组 / 库」三段两分隔条是这次要消灭的形态。
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(1)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-library')).toHaveLength(1)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(0)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(0)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'canvas-pane')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'logo-sidebar')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'layer-bottom-panel')).toHaveLength(1)
 
     const workspace = renderer!.root.find((node) => node.props['data-layout'] === 'preset-management-workspace')
     expect(workspace.props.className).toContain('h-full')
-    expect(workspace.props.className).not.toContain('min-h-[680px]')
 
     const fixedMinimumHeightNodes = renderer!.root.findAll(
       (node) => typeof node.props.className === 'string' && node.props.className.includes('min-h-[680px]'),
@@ -114,14 +115,14 @@ describe('PresetManagementTab', () => {
     expect(fixedMinimumHeightNodes).toHaveLength(0)
   })
 
-  it('resizes the two left library panes from their shared divider', () => {
+  it('resizes the rail split from the tree divider', () => {
     let renderer: ReturnType<typeof create>
     act(() => {
       renderer = create(<PresetManagementTab />)
     })
     mountedRenderers.push(renderer!)
 
-    const divider = renderer!.root.findByProps({ 'data-layout': 'rail-resizer' })
+    const divider = renderer!.root.findByProps({ 'data-layout': 'tree-resizer' })
     const pointerTarget = {
       parentElement: { getBoundingClientRect: () => ({ top: 100, height: 400 }) },
       setPointerCapture: () => {},
@@ -134,78 +135,14 @@ describe('PresetManagementTab', () => {
     })
 
     expect(
-      renderer!.root.find((node) => node.props['data-layout'] === 'stacked-library-rail').props.style.gridTemplateRows,
+      renderer!.root.find((node) => node.props['data-layout'] === 'preset-rail').props.style.gridTemplateRows,
     ).toContain('30%')
-  })
-
-  it('creates and renames preset groups without browser prompts', () => {
-    const initialCount = useCompositeV2Store.getState().presetGroups.length
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const addButton = renderer!.root.findByProps({ title: '新建预设组' })
-    act(() => {
-      addButton.props.onClick()
-    })
-    expect(useCompositeV2Store.getState().presetGroups).toHaveLength(initialCount + 1)
-
-    const created = useCompositeV2Store.getState().presetGroups.at(-1)!
-    const groupButton = findButtonByText(renderer!.root, created.name)
-    act(() => {
-      groupButton?.props.onDoubleClick()
-    })
-
-    const renameInput = findInputByAriaLabel(renderer!.root, `重命名预设组 ${created.name}`)
-    expect(renameInput).toBeDefined()
-    act(() => {
-      renameInput?.props.onChange({ target: { value: '已重命名组' } })
-    })
-    act(() => {
-      findInputByAriaLabel(renderer!.root, `重命名预设组 ${created.name}`)?.props.onKeyDown({
-        key: 'Enter',
-        preventDefault: () => {},
-      })
-    })
-    expect(useCompositeV2Store.getState().presetGroups.at(-1)?.name).toBe('已重命名组')
-  })
-
-  it('reorders preset groups by dragging', () => {
-    const groupA = { ...createDefaultCompositeV2PresetGroup(1), id: 'group-a', name: 'Group A' }
-    const groupB = { ...createDefaultCompositeV2PresetGroup(2), id: 'group-b', name: 'Group B' }
-    useCompositeV2Store.setState({
-      presetGroups: [groupA, groupB],
-      selectedPresetGroupId: groupA.id,
-    })
-
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const source = renderer!.root.findByProps({ 'data-preset-group-id': groupB.id })
-    act(() => {
-      source.props.onDragStart({ dataTransfer: { effectAllowed: '' } })
-    })
-    const target = renderer!.root.findByProps({ 'data-preset-group-id': groupA.id })
-    act(() => {
-      target.props.onDragOver({ preventDefault: () => {} })
-      target.props.onDrop({ preventDefault: () => {} })
-    })
-
-    expect(useCompositeV2Store.getState().presetGroups.map((group) => group.id)).toEqual([groupB.id, groupA.id])
   })
 
   it('replaces an existing LOGO layer instead of adding an image layer', async () => {
     const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-logo' }
-    const group = { ...createDefaultCompositeV2PresetGroup(1), presetIds: [preset.id] }
     useCompositeV2Store.setState({
       presets: [preset],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
       selectedPreviewPresetId: preset.id,
       logoLibraryPath: 'D:/logos',
     })
@@ -254,11 +191,8 @@ describe('PresetManagementTab', () => {
 
   it('selects the preset base canvas from the three supported sizes', () => {
     const preset = createDefaultCompositeV2Preset(1)
-    const group = { ...createDefaultCompositeV2PresetGroup(1), presetIds: [preset.id] }
     useCompositeV2Store.setState({
       presets: [preset],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
       selectedPreviewPresetId: preset.id,
     })
 
@@ -291,11 +225,8 @@ describe('PresetManagementTab', () => {
   })
   it('auto-selects the newly created layer after adding text', () => {
     const preset = createDefaultCompositeV2Preset(1)
-    const group = { ...createDefaultCompositeV2PresetGroup(1), presetIds: [preset.id] }
     useCompositeV2Store.setState({
       presets: [preset],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
       selectedPreviewPresetId: preset.id,
     })
 
@@ -345,92 +276,11 @@ describe('PresetManagementTab', () => {
     expect(useCompositeV2Store.getState().projectLogos[0]?.name).toBe('new.png')
   })
 
-  it('uses aria-pressed and syncs store selection when switching groups', () => {
-    const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Preset A' }
-    const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Preset B' }
-    const groupA = {
-      ...createDefaultCompositeV2PresetGroup(1),
-      id: 'group-a',
-      name: 'Group A',
-      presetIds: [presetA.id],
-    }
-    const groupB = {
-      ...createDefaultCompositeV2PresetGroup(2),
-      id: 'group-b',
-      name: 'Group B',
-      presetIds: [presetB.id],
-    }
-
-    useCompositeV2Store.setState({
-      presets: [presetA, presetB],
-      presetGroups: [groupA, groupB],
-      selectedPresetGroupId: groupA.id,
-      selectedPreviewPresetId: presetA.id,
-    })
-
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const groupAButton = findButtonByText(renderer!.root, 'Group A')
-    const groupBButton = findButtonByText(renderer!.root, 'Group B')
-
-    expect(groupAButton?.props['aria-pressed']).toBe(true)
-    expect(groupBButton?.props['aria-pressed']).toBe(false)
-
-    act(() => {
-      groupBButton?.props.onClick()
-    })
-
-    expect(useCompositeV2Store.getState().selectedPresetGroupId).toBe(groupB.id)
-    expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe(presetA.id)
-    expect(getNodeText(renderer!.root)).toContain('Preset A')
-  })
-
-  it('adds the currently selected library preset into the selected group', () => {
-    const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
-    const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
-    const groupA = { ...createDefaultCompositeV2PresetGroup(1), id: 'group-a', name: 'Group A', presetIds: [] }
-    const groupB = {
-      ...createDefaultCompositeV2PresetGroup(2),
-      id: 'group-b',
-      name: 'Group B',
-      presetIds: [presetB.id],
-    }
-
-    useCompositeV2Store.setState({
-      presets: [presetA, presetB],
-      presetGroups: [groupA, groupB],
-      selectedPresetGroupId: groupA.id,
-      selectedPreviewPresetId: presetB.id,
-    })
-
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const addButton = renderer!.root.findByProps({ title: '添加当前选中预设到组' })
-
-    act(() => {
-      addButton.props.onClick({ stopPropagation: () => {} })
-    })
-
-    expect(useCompositeV2Store.getState().presetGroups[0]?.presetIds).toEqual([presetB.id])
-    expect(useCompositeV2Store.getState().presets).toHaveLength(2)
-  })
-
   it('creates a preset only in the global preset library', () => {
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
-    const group = { ...createDefaultCompositeV2PresetGroup(1), id: 'group-a', name: 'Group A', presetIds: [presetA.id] }
 
     useCompositeV2Store.setState({
       presets: [presetA],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
       selectedPreviewPresetId: presetA.id,
     })
 
@@ -448,29 +298,16 @@ describe('PresetManagementTab', () => {
     })
 
     expect(useCompositeV2Store.getState().presets).toHaveLength(2)
-    expect(useCompositeV2Store.getState().presetGroups[0]?.presetIds).toEqual([presetA.id])
+    // 新建的预设直接进库并成为当前编辑对象，不需要「先建组、再入组」这类前置动作
+    expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe(useCompositeV2Store.getState().presets[1]!.id)
   })
 
-  it('deletes a preset from the global preset library and removes group references', () => {
+  it('deletes a preset from the library and falls back to a valid preview selection', () => {
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
     const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
-    const groupA = {
-      ...createDefaultCompositeV2PresetGroup(1),
-      id: 'group-a',
-      name: 'Group A',
-      presetIds: [presetA.id, presetB.id],
-    }
-    const groupB = {
-      ...createDefaultCompositeV2PresetGroup(2),
-      id: 'group-b',
-      name: 'Group B',
-      presetIds: [presetB.id],
-    }
 
     useCompositeV2Store.setState({
       presets: [presetA, presetB],
-      presetGroups: [groupA, groupB],
-      selectedPresetGroupId: groupA.id,
       selectedPreviewPresetId: presetB.id,
     })
     let renderer: ReturnType<typeof create>
@@ -496,72 +333,15 @@ describe('PresetManagementTab', () => {
     })
 
     expect(useCompositeV2Store.getState().presets.map((preset) => preset.id)).toEqual([presetA.id])
-    expect(useCompositeV2Store.getState().presetGroups[0]?.presetIds).toEqual([presetA.id])
-    expect(useCompositeV2Store.getState().presetGroups[1]?.presetIds).toEqual([])
     expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe(presetA.id)
-  })
-
-  it('adds a preset into a group by dragging from the global preset library', () => {
-    const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
-    const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
-    const group = { ...createDefaultCompositeV2PresetGroup(1), id: 'group-a', name: 'Group A', presetIds: [presetA.id] }
-
-    useCompositeV2Store.setState({
-      presets: [presetA, presetB],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
-      selectedPreviewPresetId: presetA.id,
-    })
-
-    let renderer: ReturnType<typeof create>
-    act(() => {
-      renderer = create(<PresetManagementTab />)
-    })
-    mountedRenderers.push(renderer!)
-
-    const dataTransfer = {
-      effectAllowed: '',
-      dropEffect: '',
-      types: [] as string[],
-      store: new Map<string, string>(),
-      setData(type: string, value: string) {
-        this.store.set(type, value)
-        if (!this.types.includes(type)) this.types.push(type)
-      },
-      getData(type: string) {
-        return this.store.get(type) ?? ''
-      },
-    }
-
-    const libraryPreset = renderer!.root.findAll(
-      (node: ReactTestInstance) => node.props.draggable === true && getNodeText(node).includes('Beta Preset'),
-    )[0]
-    const groupCard = renderer!.root.findByProps({ 'data-preset-group-id': group.id })
-
-    act(() => {
-      libraryPreset?.props.onDragStart({ dataTransfer })
-      groupCard.props.onDragOver({ preventDefault: () => {}, dataTransfer })
-      groupCard.props.onDrop({ preventDefault: () => {}, dataTransfer })
-      libraryPreset?.props.onDragEnd()
-    })
-
-    expect(useCompositeV2Store.getState().presetGroups[0]?.presetIds).toEqual([presetA.id, presetB.id])
   })
 
   it('keeps the current preset details when filtering hides it from the library list', () => {
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
     const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
-    const group = {
-      ...createDefaultCompositeV2PresetGroup(1),
-      id: 'group-a',
-      name: 'Group A',
-      presetIds: [presetA.id, presetB.id],
-    }
 
     useCompositeV2Store.setState({
       presets: [presetA, presetB],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
       selectedPreviewPresetId: presetB.id,
     })
 
@@ -583,17 +363,9 @@ describe('PresetManagementTab', () => {
   it('keeps rendering the current preset details when the library filter returns no results', () => {
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
     const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
-    const group = {
-      ...createDefaultCompositeV2PresetGroup(1),
-      id: 'group-a',
-      name: 'Group A',
-      presetIds: [presetA.id, presetB.id],
-    }
 
     useCompositeV2Store.setState({
       presets: [presetA, presetB],
-      presetGroups: [group],
-      selectedPresetGroupId: group.id,
       selectedPreviewPresetId: presetB.id,
     })
 
@@ -612,7 +384,7 @@ describe('PresetManagementTab', () => {
     expect(getNodeText(renderer!.root)).toContain('Beta Preset')
   })
 
-  it('左栏顶部常驻水印归属树，与预设组/预设库共用同一栏', () => {
+  it('左栏只分两段：统一树在上、水印库在下，中间一根分隔条', () => {
     let renderer: ReturnType<typeof create>
     act(() => {
       renderer = create(<PresetManagementTab />)
@@ -625,12 +397,13 @@ describe('PresetManagementTab', () => {
     ).toContain('45%')
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(1)
-    // 原有的「预设组 / 预设库」两个区块与它们的分隔条都还在
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(1)
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(1)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-library')).toHaveLength(1)
+    // 预设组退役后不再有「组」这一层，也就不该再有第二根分隔条
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(0)
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(0)
   })
 
-  it('树的分隔条独立于预设库的分隔条，互不影响', () => {
+  it('拖动树与库之间的分隔条只改这一处比例', () => {
     let renderer: ReturnType<typeof create>
     act(() => {
       renderer = create(<PresetManagementTab />)
@@ -652,10 +425,6 @@ describe('PresetManagementTab', () => {
     expect(
       renderer!.root.find((node) => node.props['data-layout'] === 'preset-rail').props.style.gridTemplateRows,
     ).toContain('40%')
-    // 预设组/预设库那条没被带着动
-    expect(
-      renderer!.root.find((node) => node.props['data-layout'] === 'stacked-library-rail').props.style.gridTemplateRows,
-    ).toContain('50%')
   })
 
   it('从预设库拖一个水印到树节点上，绑定的就是这个预设', () => {
@@ -699,6 +468,7 @@ describe('PresetManagementTab', () => {
     act(() => {
       dropTarget.props.onDrop({
         preventDefault: () => {},
+        stopPropagation: () => {},
         dataTransfer: { types: [...bag.keys()], getData: (type: string) => bag.get(type) ?? '' },
       })
     })

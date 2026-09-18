@@ -1010,13 +1010,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/components/PresetManagementTab.tsx',
-    responsibility: '预设树和管理操作标签页',
+    responsibility: '水印预设工作区左栏（统一树 + 水印库两段）与画布编辑',
     decision: 'retain',
     targets: ['Tabs', 'Panel', 'ListRow', 'Menu', 'EmptyState'],
   },
   {
     module: 'src/features/composite/components/PresetProjectTree.tsx',
-    responsibility: '水印归属树：每个方向用哪些水印，可拖入绑定',
+    responsibility: '水印统一树：项目树层级管理（新建/改名/删除/移动）+ 水印归属（拖入绑定）',
     decision: 'retain',
     targets: ['Panel', 'ListRow', 'IconButton', 'Button', 'EmptyState'],
   },

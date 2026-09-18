@@ -252,8 +252,37 @@
     `resolveProjectPostprocessSlice`（全字段合并）与新增的 `resolveNodeWatermarkBinding`（单字段查询）
     共用同一条链，避免两处遍历在「空对象算不算表态」「环怎么兜底」上分叉。
   - 继承态下第一次改动会**物化**成本级显式数组——直接写结果数组会把「少一个」表达成「一个都不要」。
-  - 左栏改为三段（树 / 预设组 / 预设库），两根独立分隔条；拖拽 MIME 常量统一到
-    `lib/compositePresetLibrary.ts`（原先两个组件各写一份字面量）。
+  - 拖拽 MIME 常量统一到 `lib/compositePresetLibrary.ts`（原先两个组件各写一份字面量）。
+  - ⚠️ 左栏当时是三段（树 / 预设组 / 预设库）；**预设组已在下一步退役**，见下面的「统一树」小节。
+
+- **统一树（预设组退役，2026-09-18）**：✅ 完成。杰哥定案：「可以去除原本的组的方案，完全按照新的树来」。
+  原设计里 **「预设组」与「水印归属」是两条不相交的线**——`presetGroups` 全仓只有 7 处引用、
+  只服务于左栏水印库的筛选，与「哪个方向用哪些水印」**零关系**；把两者记住全靠人脑，
+  这才是「看不出树」的真正根因，而不是「少画了一棵树」。
+  - **数据模型上消灭「组」**：删掉 `CompositeV2PresetGroup` 类型、`CompositeV2State.presetGroups`、
+    `CompositeV2PersistedSnapshot.selectedPresetGroupId`，以及 8 个分组 action
+    （`createPresetGroup` / `renamePresetGroup` / `movePresetGroup` / `duplicatePresetGroup` /
+    `deletePresetGroup` / `reorderPresetInGroup` / `addPresetToGroup` / `removePresetFromGroup`）
+    与 `setSelectedPresetGroup`。persist **version 4 → 5**，migrate 依旧**丢弃式**：直接不搬这两个字段。
+    不 bump 的话 zustand 根本不跑 migrate、旧字段静默丢失；只搬一半则等于把退役字段当成「还算数」。
+  - **分组交给项目树本身**：`PresetProjectTree` 从「归属视图」升级为**统一树**，除原有的归属
+    （拖入 / 行内 `+` / chip `×` / 恢复继承）外，加上**层级管理**——新建子节点、重命名、删除、拖拽移动，
+    全部复用 `useAssetLibraryStore` 的 `createCollection` / `renameCollection` / `deleteCollection` /
+    `moveCollection`。树是项目树的**投影**，不另建结构，结构改动照旧即时同步到左侧栏与 SOP 分组。
+  - **「预设组」唯一不可替代的能力 = 一次绑一组**，由**水印库多选 + 批量绑定**顶替：
+    库行支持多选（`librarySelection`），逐行拖拽或点节点上的 `+` 一次绑上整批，
+    `lib/presetBinding.ts` 的 `bindPresetsToNode` 逐个走 `bindPresetToNode` 以**保住顺序即产出顺序**；
+    库里没勾任何东西时退回「当前正在编辑的那个预设」，不打断原有的单绑路径。
+  - **同一行的两种拖拽意图靠 MIME 分流**：预设 = `PRESET_LIBRARY_DRAG_TYPE`
+    （载荷是 id 数组的 JSON，兼容早期裸 id），节点 = `COLLECTION_NODE_DRAG_TYPE`。
+    行上的 `onDrop` **必须 `stopPropagation()`**，否则会连带命中根容器「拖到空白处 = 移回顶层」，
+    把刚挪进来的节点又拎出去。`moveNode` 自带**环检测**（目标是自己或后代时拒绝）。
+  - **左栏从三段改两段**（统一树 + 水印库，只剩一根 `tree-resizer`），
+    删掉 `librarySplit` / `resizingLibraryRef` / `resizeLibraryPanes` 与全部组内联编辑状态。
+  - ⚠️ `deletePreset` **刻意不清理**参数层引用：由树显示「已失效 N」让用户自己决定，而不是替他决定。
+  - ⚠️ 遗留：`lib/compositeTypes.ts` 里 A 套 v1 的编排类型（`CompositeOutputPresetGroup` /
+    `CompositeWorkspaceStateSnapshot` / `CompositeProduct` …）已成**死类型**（全仓零引用，
+    该文件只剩 `CompositeFsImage` 还在用）。留着容易诱发「再引入第二套」，建议后续单独清理。
 
 **已完成部分的关键顺序**（下次接着做时照用）：先删消费方 → 再剥字段 → 最后清 store + 删纯逻辑。
 反过来的话，剥字段会一次性炸出 70+ 个编译错误，分不清哪些来自「要删的文件」、哪些来自「要改的文件」。
@@ -273,7 +302,9 @@
 | `src/features/postprocess/renderVariant.ts`                  | `renderWithMaxKb`（尺寸压缩 + 水印叠加）                                                           |
 | `src/features/postprocess/PostprocessDistributionFields.tsx` | 分发表单（面板与节点参数弹窗共用）                                                                 |
 | `src/features/projectTree/params.ts`                         | 继承链遍历与逐级合并                                                                               |
-| `src/features/composite/components/PresetProjectTree.tsx`    | 水印归属树                                                                                         |
+| `src/features/composite/components/PresetProjectTree.tsx`    | 统一树：项目树层级管理（新建/改名/删除/移动）+ 水印归属（拖入绑定）                                |
+| `src/features/composite/lib/compositePresetLibrary.ts`       | 水印库筛选 + 跨组件拖拽 MIME（`PRESET_LIBRARY_DRAG_TYPE`，载荷 = id 数组 JSON）                    |
+| `src/features/composite/lib/presetBinding.ts`                | 单个 / 批量绑定纯函数（`bindPresetsToNode` 保住顺序即产出顺序）                                    |
 
 **类型落点**：`PostprocessMediaConfig` 放 `lib/` 而不是 store 文件 —— `src/types.ts` 的 `ExportData` 要引它，
 放 store 会让基础模块反向依赖 store。

@@ -3,9 +3,13 @@
 /**
  * 水印归属树的行为测试。
  *
- * 重点不在「渲染出几个节点」，而在两条容易写错、写错了又很难发现的语义：
+ * 重点不在「渲染出几个节点」，而在三条容易写错、写错了又很难发现的语义：
  * ① 继承态下第一次改动必须**物化**成本级显式数组（否则「少一个」会被写成「一个都不要」）；
- * ② `undefined`（继承）与 `[]`（显式不加水印）在界面上必须能区分。
+ * ② `undefined`（继承）与 `[]`（显式不加水印）在界面上必须能区分；
+ * ③ 同一行既是「预设的 drop 目标」又是「节点的拖出源」，靠载荷类型分流，不能串味。
+ *
+ * 层级管理（新建 / 重命名 / 删除 / 移动）走的是 `useAssetLibraryStore` 的 collections CRUD，
+ * 这里把它下方的仓储层换成内存实现，好断言「树上的操作确实落到了项目树上」。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,11 +19,35 @@ import { useStore } from '../../../store'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
-import { PRESET_LIBRARY_DRAG_TYPE } from '../lib/compositePresetLibrary'
+import { PRESET_LIBRARY_DRAG_TYPE, serializePresetDragPayload } from '../lib/compositePresetLibrary'
 import { useCompositeV2Store } from '../storeV2'
-import { PresetProjectTree } from './PresetProjectTree'
+import { COLLECTION_NODE_DRAG_TYPE, PresetProjectTree } from './PresetProjectTree'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const dialogMocks = vi.hoisted(() => ({ openConfirmDialog: vi.fn() }))
+vi.mock('../../../hooks/useAppDialog', () => ({
+  useAppDialog: () => ({ openConfirmDialog: dialogMocks.openConfirmDialog }),
+}))
+
+/** 项目树仓储换成内存实现：CRUD 的语义由 store 负责，这里只负责「存下来」。 */
+const repositoryMocks = vi.hoisted(() => ({
+  putCollection: vi.fn(),
+  getCollection: vi.fn(),
+  putCollections: vi.fn(),
+  removeCollection: vi.fn(),
+}))
+// 只替换写/读这一层：其余导出（`hydrate` 等）在模块加载时就被别处抓走了，整体替换会当场炸。
+vi.mock('../../../lib/assetLibraryRepository', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/assetLibraryRepository')>()
+  return {
+    ...actual,
+    putCollection: repositoryMocks.putCollection,
+    getCollection: repositoryMocks.getCollection,
+    putCollections: repositoryMocks.putCollections,
+    removeCollection: repositoryMocks.removeCollection,
+  }
+})
 
 function collection(id: string, name: string, parentId: string | null, order = 0): AssetCollection {
   return { id, name, normalizedName: name, parentId, order, createdAt: 0, updatedAt: 0 }
@@ -28,6 +56,7 @@ function collection(id: string, name: string, parentId: string | null, order = 0
 const LINE = 'line-a'
 const PRODUCT = 'product-a'
 const DIRECTION = 'direction-a'
+const OTHER_LINE = 'line-b'
 const COLLECTIONS: AssetCollection[] = [
   collection(LINE, '智能客服', null, 0),
   collection(PRODUCT, '机器人', LINE, 0),
@@ -52,6 +81,14 @@ beforeEach(() => {
     })),
     selectedPreviewPresetId: 'preset-a',
   })
+
+  dialogMocks.openConfirmDialog.mockReset()
+  repositoryMocks.putCollection.mockImplementation(async (saved: AssetCollection) => saved)
+  repositoryMocks.putCollections.mockResolvedValue(undefined)
+  repositoryMocks.removeCollection.mockResolvedValue(undefined)
+  repositoryMocks.getCollection.mockImplementation(
+    async (id: string) => useAssetLibraryStore.getState().collections.find((item) => item.id === id) ?? null,
+  )
 })
 
 afterEach(() => {
@@ -65,10 +102,10 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function render() {
+function render(props: { librarySelection?: string[] } = {}) {
   let renderer!: ReturnType<typeof create>
   act(() => {
-    renderer = create(<PresetProjectTree />)
+    renderer = create(<PresetProjectTree {...props} />)
   })
   mountedRenderers.push(renderer)
   return renderer
@@ -98,6 +135,13 @@ function clickByAriaLabel(root: ReactTestInstance, label: string) {
   act(() => matches[0].props.onClick())
 }
 
+/** 菜单项是带 `role="menuitem"` 的按钮，取文本相等的那一个。 */
+function clickMenuItem(root: ReactTestInstance, label: string) {
+  const matches = root.findAll((node) => node.props.role === 'menuitem' && getNodeText(node).trim() === label)
+  if (matches.length === 0) throw new Error(`未找到菜单项 ${label}`)
+  act(() => matches[0].props.onClick())
+}
+
 function expand(root: ReactTestInstance, name: string) {
   clickByAriaLabel(root, `展开 ${name}`)
 }
@@ -112,21 +156,66 @@ function boundPresetIds(root: ReactTestInstance, nodeId: string): string[] {
     .map((node) => node.props['data-bound-preset'] as string)
 }
 
-function dropPreset(root: ReactTestInstance, nodeId: string, presetId: string) {
-  const target = findNodeRow(root, nodeId).find((node) => typeof node.props.onDrop === 'function')
+/** 取节点行上第一个承接拖放的元素的 drop 处理器（行容器，不是它里面的按钮）。 */
+function dropTargetOf(root: ReactTestInstance, nodeId: string) {
+  return findNodeRow(root, nodeId).find((node) => typeof node.props.onDrop === 'function')
+}
+
+/**
+ * 拖一个拖拽载荷到节点上。载荷默认走新格式（id 数组）；直接传裸字符串可以模拟
+ * 早期版本的单 id 载荷，传 `{}` 形状的字符串可以模拟坏载荷。
+ */
+function dropPayload(root: ReactTestInstance, nodeId: string, raw: string) {
   const dataTransfer = {
     types: [PRESET_LIBRARY_DRAG_TYPE],
     dropEffect: '',
-    getData: (type: string) => (type === PRESET_LIBRARY_DRAG_TYPE ? presetId : ''),
+    getData: (type: string) => (type === PRESET_LIBRARY_DRAG_TYPE ? raw : ''),
   }
+  const target = dropTargetOf(root, nodeId)
   act(() => {
     target.props.onDragOver({ dataTransfer, preventDefault: () => {} })
-    target.props.onDrop({ dataTransfer, preventDefault: () => {} })
+    target.props.onDrop({ dataTransfer, preventDefault: () => {}, stopPropagation: () => {} })
   })
+}
+
+function dropPreset(root: ReactTestInstance, nodeId: string, presetId: string) {
+  dropPayload(root, nodeId, serializePresetDragPayload([presetId]))
+}
+
+/** 拖一个**节点**到另一个节点上。载荷类型与预设不同，两者共用同一个 drop 目标。 */
+async function dropNode(root: ReactTestInstance, draggedId: string, targetId: string) {
+  const dataTransfer = {
+    types: [COLLECTION_NODE_DRAG_TYPE],
+    dropEffect: '',
+    getData: (type: string) => (type === COLLECTION_NODE_DRAG_TYPE ? draggedId : ''),
+  }
+  const target = dropTargetOf(root, targetId)
+  await act(async () => {
+    target.props.onDragOver({ dataTransfer, preventDefault: () => {} })
+    target.props.onDrop({ dataTransfer, preventDefault: () => {}, stopPropagation: () => {} })
+  })
+}
+
+function clickByText(root: ReactTestInstance, text: string) {
+  const matches = root.findAll((node) => typeof node.props.onClick === 'function' && getNodeText(node) === text)
+  if (matches.length === 0) throw new Error(`未找到文本为 ${text} 的可点元素`)
+  act(() => matches[0].props.onClick())
+}
+
+function findInputByAriaLabel(root: ReactTestInstance, label: string) {
+  return root.findAllByType('input').find((node: ReactTestInstance) => node.props['aria-label'] === label)
 }
 
 function storedPresetIds(nodeId: string): string[] | undefined {
   return useProjectTreeParamsStore.getState().params[nodeId]?.postprocess?.watermarkPresetIds
+}
+
+function collectionsInStore(): AssetCollection[] {
+  return useAssetLibraryStore.getState().collections
+}
+
+function parentOf(nodeId: string): string | null | undefined {
+  return collectionsInStore().find((item) => item.id === nodeId)?.parentId
 }
 
 describe('PresetProjectTree', () => {
@@ -156,7 +245,7 @@ describe('PresetProjectTree', () => {
 
   it('点节点上的「+」把当前选中的水印绑上去，子方向显示为继承', () => {
     const root = render()
-    clickByAriaLabel(root.root, '把当前选中的水印预设绑定到 智能客服')
+    clickByAriaLabel(root.root, '把水印绑定到 智能客服')
 
     expect(storedPresetIds(LINE)).toEqual(['preset-a'])
     expect(boundPresetIds(root.root, LINE)).toEqual(['preset-a'])
@@ -179,13 +268,22 @@ describe('PresetProjectTree', () => {
     expect(rowText(root.root, DIRECTION)).toContain('本级自定义')
   })
 
+  it('库多选的水印点一次「+」就全部绑上，顺序即产出顺序', () => {
+    const root = render({ librarySelection: ['preset-b', 'preset-a'] })
+    clickByAriaLabel(root.root, '把水印绑定到 智能客服')
+
+    expect(storedPresetIds(LINE)).toEqual(['preset-b', 'preset-a'])
+    expect(boundPresetIds(root.root, LINE)).toEqual(['preset-b', 'preset-a'])
+  })
+
   it('拖拽只认预设库的类型，别的拖放不会误绑', () => {
     const root = render()
-    const target = findNodeRow(root.root, LINE).find((node) => typeof node.props.onDrop === 'function')
+    const target = dropTargetOf(root.root, LINE)
     act(() => {
       target.props.onDrop({
         dataTransfer: { types: ['text/plain'], getData: () => 'preset-b' },
         preventDefault: () => {},
+        stopPropagation: () => {},
       })
     })
     expect(storedPresetIds(LINE)).toBeUndefined()
@@ -301,7 +399,103 @@ describe('PresetProjectTree', () => {
   it('写参数后 toast 会告诉用户绑到了哪个方向', () => {
     const showToast = vi.spyOn(useStore.getState(), 'showToast')
     const root = render()
-    clickByAriaLabel(root.root, '把当前选中的水印预设绑定到 智能客服')
+    clickByAriaLabel(root.root, '把水印绑定到 智能客服')
     expect(showToast).toHaveBeenCalledWith('已把水印「糖包角标」绑到「智能客服」', 'success')
+  })
+})
+
+describe('PresetProjectTree 层级管理', () => {
+  it('菜单里新建子节点，建完直接进重命名输入框', async () => {
+    const root = render()
+    expand(root.root, '智能客服')
+
+    clickByAriaLabel(root.root, '智能客服 的更多操作')
+    clickMenuItem(root.root, '新建子节点')
+    await act(async () => {})
+
+    const created = collectionsInStore().find((item) => !COLLECTIONS.some((original) => original.id === item.id))
+    // 层级语义给默认名：产品线下面新建的就是「产品」
+    expect(created?.name).toBe('新产品')
+    expect(created?.parentId).toBe(LINE)
+    expect(collectionsInStore()).toHaveLength(4)
+    // 建完立刻可改名，省掉「建完再回头找它改名」这一步
+    expect(findInputByAriaLabel(root.root, '重命名 新产品')).toBeDefined()
+  })
+
+  it('双击节点名进入重命名，回车落到项目树上', async () => {
+    const root = render()
+    const nameButton = findNodeRow(root.root, LINE).find(
+      (node) => typeof node.props.onDoubleClick === 'function' && getNodeText(node) === '智能客服',
+    )
+    act(() => nameButton.props.onDoubleClick())
+
+    act(() => findInputByAriaLabel(root.root, '重命名 智能客服')!.props.onChange({ target: { value: 'AI 客服' } }))
+    await act(async () => {
+      findInputByAriaLabel(root.root, '重命名 智能客服')!.props.onKeyDown({ key: 'Enter', preventDefault: () => {} })
+    })
+
+    expect(collectionsInStore().find((item) => item.id === LINE)?.name).toBe('AI 客服')
+    expect(getNodeText(root.root)).toContain('AI 客服')
+  })
+
+  it('改名改成空白等于放弃，不会把节点名清掉', async () => {
+    const root = render()
+    const nameButton = findNodeRow(root.root, LINE).find(
+      (node) => typeof node.props.onDoubleClick === 'function' && getNodeText(node) === '智能客服',
+    )
+    act(() => nameButton.props.onDoubleClick())
+
+    act(() => findInputByAriaLabel(root.root, '重命名 智能客服')!.props.onChange({ target: { value: '   ' } }))
+    await act(async () => {
+      findInputByAriaLabel(root.root, '重命名 智能客服')!.props.onKeyDown({ key: 'Enter', preventDefault: () => {} })
+    })
+
+    expect(collectionsInStore().find((item) => item.id === LINE)?.name).toBe('智能客服')
+  })
+
+  it('删除先弹确认（含子级数量），确认后才真的删', async () => {
+    const root = render()
+    clickByAriaLabel(root.root, '智能客服 的更多操作')
+    clickMenuItem(root.root, '删除')
+
+    expect(dialogMocks.openConfirmDialog).toHaveBeenCalledTimes(1)
+    const options = dialogMocks.openConfirmDialog.mock.calls[0]![0] as {
+      message: string
+      action: () => Promise<void>
+    }
+    expect(options.message).toContain('2 个子级')
+    // 没确认之前树不动
+    expect(collectionsInStore()).toHaveLength(3)
+
+    await act(async () => {
+      await options.action()
+    })
+    expect(collectionsInStore()).toHaveLength(0)
+  })
+
+  it('把节点拖到另一个节点上即换父级', async () => {
+    useAssetLibraryStore.setState({ collections: [...COLLECTIONS, collection(OTHER_LINE, '电商', null, 1)] })
+    const root = render()
+    expand(root.root, '智能客服')
+
+    await dropNode(root.root, PRODUCT, OTHER_LINE)
+
+    expect(parentOf(PRODUCT)).toBe(OTHER_LINE)
+    // 节点拖拽不是「绑水印」：不能顺手往参数里写东西
+    expect(storedPresetIds(OTHER_LINE)).toBeUndefined()
+    expect(storedPresetIds(PRODUCT)).toBeUndefined()
+  })
+
+  it('把节点拖进自己的子级会被拒绝，树不动', () => {
+    const showToast = vi.spyOn(useStore.getState(), 'showToast')
+    const root = render()
+    expand(root.root, '智能客服')
+    expand(root.root, '机器人')
+
+    dropNode(root.root, LINE, DIRECTION)
+
+    expect(showToast).toHaveBeenCalledWith('不能把文件夹放进它自己的子级里', 'error')
+    expect(parentOf(LINE)).toBeNull()
+    expect(parentOf(PRODUCT)).toBe(LINE)
   })
 })

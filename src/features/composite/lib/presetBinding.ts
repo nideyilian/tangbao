@@ -20,6 +20,16 @@ export function bindPresetToNode(current: string[], presetId: string): string[] 
   return [...current, id]
 }
 
+/**
+ * 批量绑定（库里选了好几个一次拖进来时用）。
+ *
+ * 逐个走 `bindPresetToNode` 而不是展开去重：顺序即产出顺序，已经有的一定要留在原位
+ * ——直接 `[...current, ...incoming]` 会把先绑的那批挪到后面，产出顺序跟着变。
+ */
+export function bindPresetsToNode(current: string[], presetIds: string[]): string[] {
+  return presetIds.reduce((acc, presetId) => bindPresetToNode(acc, presetId), current)
+}
+
 /** 解绑一个预设，保持其余顺序。 */
 export function unbindPresetFromNode(current: string[], presetId: string): string[] {
   const id = presetId.trim()

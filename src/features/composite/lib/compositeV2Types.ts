@@ -3,10 +3,14 @@
  *
  * 这里曾经有整套「批量导出编排」的类型（导出任务/队列/成功失败项/分发配置/
  * 历史记录/渠道尺寸规则/自定义命名变量）。编排职责已统一到 `features/postprocess`
- * 那一套，本文件因此只保留水印预设本身：画布基准、图层、预设分组、预览背景。
+ * 那一套，本文件因此只保留水印预设本身：画布基准、图层、预览背景。
  *
  * 预设不再带输出路径与命名模板——输出目录、命名、渠道尺寸全部由后处理的
  * 「项目树参数 + 媒体表」决定。同一个参数不再有两个来源，是这次收敛的核心。
+ *
+ * `CompositeV2PresetGroup`（预设组）也已删除：它当时唯一的作用是给左栏库做筛选，
+ * 与归属/产出零关系，于是「哪套水印该给哪个方向用」只能靠人脑记。现在分组这件事
+ * 交给项目树本身——方向节点上挂哪些预设，就是分组，且它就是归属。
  */
 
 export type CompositeV2FitMode = 'crop-fill' | 'contain-blur' | 'stretch'
@@ -114,13 +118,6 @@ export type CompositeV2Preset = {
   updatedAt: number
 }
 
-export type CompositeV2PresetGroup = {
-  id: string
-  name: string
-  presetIds: string[]
-  updatedAt: number
-}
-
 export type CompositeV2BackgroundImage = {
   path: string
   name: string
@@ -149,13 +146,11 @@ export type CompositeV2State = {
   logoOrder: string[]
   projectLogos: CompositeV2ProjectLogo[]
   presets: CompositeV2Preset[]
-  presetGroups: CompositeV2PresetGroup[]
   globalFitMode: CompositeV2FitMode
   backgroundFolders?: string[]
   recursiveBackgrounds?: boolean
 }
 
 export type CompositeV2PersistedSnapshot = CompositeV2State & {
-  selectedPresetGroupId?: string
   selectedPreviewPresetId?: string
 }

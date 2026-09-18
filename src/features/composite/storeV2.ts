@@ -6,8 +6,10 @@
  * 那一套，本 store 只保留前者。
  *
  * 持久化：localStorage（`tangbao-composite-v2-workspace-storage`）。
- * version 3 → 4 的迁移是**丢弃式**的——旧数据里的编排字段（预设的输出目录、命名模板、
- * 自定义变量、渠道尺寸覆盖）在建模上已归后处理，留着只会让人以为它还算数。
+ * version 3 → 4：编排字段（预设的输出目录、命名模板、自定义变量、渠道尺寸覆盖）随 A 套退役。
+ * version 4 → 5：**预设组**退役。它当时唯一的作用是给左栏库做筛选，与归属/产出零关系，
+ * 于是「哪套水印该给哪个方向用」只能靠人脑记。现在分组交给项目树本身——方向节点上
+ * 挂哪些预设就是分组，而且它就是归属。两次迁移都是**丢弃式**的，预设本身原样保留。
  */
 import { create } from 'zustand'
 import { createStore } from 'zustand/vanilla'
@@ -31,7 +33,6 @@ type CompositeV2BatchState = {
   backgrounds: CompositeV2BackgroundImage[]
   previewHistory: string[]
   previewHistoryIndex: number
-  selectedPresetGroupId: string
   selectedPreviewPresetId: string
   clipboardLayer: CompositeV2Layer | null
 }
@@ -45,10 +46,8 @@ type CompositeV2UndoSnapshot = {
   backgrounds: CompositeV2BackgroundImage[]
   previewHistory: string[]
   previewHistoryIndex: number
-  selectedPresetGroupId: string
   selectedPreviewPresetId: string
   presets: CompositeV2State['presets']
-  presetGroups: CompositeV2State['presetGroups']
   globalFitMode: CompositeV2FitMode
 }
 
@@ -76,22 +75,13 @@ type CompositeV2StoreActions = {
   replaceOrAddLogoLayer: (presetId: string, asset: CompositeV2ImageAssetRef, selectedLayerId?: string) => string
   addTextLayer: (presetId: string) => void
   addLogoLayer: (presetId: string) => void
-  setSelectedPresetGroup: (groupId: string) => void
   setSelectedPreviewPresetId: (presetId: string) => void
   pushPreviewBackground: (path: string) => void
   previousPreviewBackground: () => void
   nextPreviewBackground: () => void
-  createPresetGroup: (name: string) => void
   createPreset: (name: string) => void
   deletePreset: (presetId: string) => void
-  renamePresetGroup: (groupId: string, name: string) => void
-  movePresetGroup: (groupId: string, targetIndex: number) => void
-  duplicatePresetGroup: (groupId: string) => void
-  deletePresetGroup: (groupId: string) => void
-  reorderPresetInGroup: (groupId: string, presetId: string, targetIndex: number) => void
   duplicatePreset: (presetId: string) => void
-  addPresetToGroup: (presetId: string, groupId: string) => void
-  removePresetFromGroup: (presetId: string, groupId: string) => void
   copyLayer: (presetId: string, layerId: string) => void
   pasteLayer: (presetId: string) => void
   duplicateLayer: (presetId: string, layerId: string) => void
@@ -116,14 +106,14 @@ const DEFAULT_LAYER_STROKE = { enabled: false, color: '#111827', width: 0 }
 const HISTORY_LIMIT = 100
 const HISTORY_MERGE_WINDOW_MS = 1200
 /**
- * 持久化版本。3 → 4：编排字段（预设的输出目录/命名模板/自定义变量/渠道尺寸覆盖）
- * 随 A 套编排退役而移除，必须靠迁移把它们丢掉——否则旧数据反序列化会把脏字段写回。
+ * 持久化版本。4 → 5：**预设组**退役（分组交给项目树，预设不再需要自己的分组壳）。
+ * 必须靠迁移把 `presetGroups` / `selectedPresetGroupId` 丢掉——否则旧数据反序列化
+ * 会把脏字段写回，且 `merge` 还会拿它去校验当前预览的预设，导致选中态莫名清空。
  */
-const COMPOSITE_V2_PERSIST_VERSION = 4
+const COMPOSITE_V2_PERSIST_VERSION = 5
 
 export function createCompositeV2StoreState(): CompositeV2BatchState & CompositeV2UndoState & CompositeV2State {
   const defaults = createDefaultCompositeV2State()
-  const selectedPresetGroupId = defaults.presetGroups[0]?.id ?? ''
 
   return {
     logoLibraryPath: defaults.logoLibraryPath,
@@ -134,10 +124,8 @@ export function createCompositeV2StoreState(): CompositeV2BatchState & Composite
     backgrounds: [],
     previewHistory: [],
     previewHistoryIndex: -1,
-    selectedPresetGroupId,
-    selectedPreviewPresetId: getFirstPresetIdForGroup(defaults.presetGroups, selectedPresetGroupId),
+    selectedPreviewPresetId: defaults.presets[0]?.id ?? '',
     presets: defaults.presets,
-    presetGroups: defaults.presetGroups,
     globalFitMode: defaults.globalFitMode,
     clipboardLayer: null,
     undoStack: [],
@@ -154,11 +142,9 @@ export function getCompositeV2PersistedState(state: CompositeV2StoreState): Comp
     logoOrder: state.logoOrder ?? [],
     projectLogos: state.projectLogos ?? [],
     presets: state.presets,
-    presetGroups: state.presetGroups,
     globalFitMode: state.globalFitMode,
     backgroundFolders: state.backgroundFolders,
     recursiveBackgrounds: state.recursiveBackgrounds,
-    selectedPresetGroupId: state.selectedPresetGroupId,
     selectedPreviewPresetId: state.selectedPreviewPresetId,
   }
 }
@@ -171,28 +157,19 @@ export function mergeCompositeV2PersistedState(
 
   const persisted = migrateCompositeV2PersistedState(persistedState, COMPOSITE_V2_PERSIST_VERSION)
   const merged = { ...currentState, ...persisted } as CompositeV2StoreState
-  const selectedGroup = getSelectedGroup(
-    merged.presetGroups,
-    persisted.selectedPresetGroupId ?? currentState.selectedPresetGroupId,
-  )
-  const selectedPresetGroupId = selectedGroup?.id ?? ''
-  const groupPresetIds = [...(selectedGroup?.presetIds ?? [])]
   const requestedPreviewPresetId = persisted.selectedPreviewPresetId ?? currentState.selectedPreviewPresetId
-  const selectedPreviewPresetId = groupPresetIds.includes(requestedPreviewPresetId)
-    ? requestedPreviewPresetId
-    : (groupPresetIds[0] ?? '')
+  // 选中态只在「预设确实还在」时保留：预设被删掉之后还留着 id，画布区会永远空着且不回退。
+  const presetExists = merged.presets.some((preset) => preset.id === requestedPreviewPresetId)
+  const selectedPreviewPresetId = presetExists ? requestedPreviewPresetId : (merged.presets[0]?.id ?? '')
 
-  return {
-    ...merged,
-    selectedPresetGroupId,
-    selectedPreviewPresetId,
-  }
+  return { ...merged, selectedPreviewPresetId }
 }
 
 /**
  * 持久化迁移。**只做丢弃，不做换算**：
  * A 套预设的输出目录/命名模板/自定义变量/渠道尺寸覆盖在新模型里没有对应物
  * （后处理那边由「项目树参数 + 媒体表」决定），所以直接不搬。
+ * 预设组同理——分组这件事已归项目树，组本身没有第二处容身之所。
  * 素材本身（预设 id/名称/画布/图层）原样保留，用户的图层工作不会丢。
  */
 export function migrateCompositeV2PersistedState(persistedState: unknown, _version: number): CompositeV2PersistedState {
@@ -200,18 +177,7 @@ export function migrateCompositeV2PersistedState(persistedState: unknown, _versi
     return getCompositeV2PersistedState(createCompositeV2StoreState() as CompositeV2StoreState)
   }
 
-  const legacy = persistedState as {
-    logoLibraryPath?: unknown
-    logoOrder?: unknown
-    projectLogos?: unknown
-    presets?: unknown
-    presetGroups?: unknown
-    globalFitMode?: unknown
-    backgroundFolders?: unknown
-    recursiveBackgrounds?: unknown
-    selectedPresetGroupId?: unknown
-    selectedPreviewPresetId?: unknown
-  }
+  const legacy = persistedState as Record<string, unknown>
   const presets = (Array.isArray(legacy.presets) ? legacy.presets : [])
     .filter((preset): preset is Record<string, unknown> => Boolean(preset) && typeof preset === 'object')
     .map((preset): CompositeV2State['presets'][number] => ({
@@ -229,11 +195,9 @@ export function migrateCompositeV2PersistedState(persistedState: unknown, _versi
     logoOrder: Array.isArray(legacy.logoOrder) ? (legacy.logoOrder as string[]) : [],
     projectLogos: Array.isArray(legacy.projectLogos) ? (legacy.projectLogos as CompositeV2State['projectLogos']) : [],
     presets,
-    presetGroups: Array.isArray(legacy.presetGroups) ? (legacy.presetGroups as CompositeV2State['presetGroups']) : [],
     globalFitMode: normalizeFitMode(legacy.globalFitMode),
     backgroundFolders: Array.isArray(legacy.backgroundFolders) ? (legacy.backgroundFolders as string[]) : [],
     recursiveBackgrounds: Boolean(legacy.recursiveBackgrounds),
-    selectedPresetGroupId: typeof legacy.selectedPresetGroupId === 'string' ? legacy.selectedPresetGroupId : undefined,
     selectedPreviewPresetId:
       typeof legacy.selectedPreviewPresetId === 'string' ? legacy.selectedPreviewPresetId : undefined,
   }
@@ -444,10 +408,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
             }),
             `preset:${presetId}:layers`,
           ),
-        setSelectedPresetGroup: (groupId) =>
-          setWithoutHistory((state) => ({
-            selectedPresetGroupId: getSelectedGroup(state.presetGroups, groupId)?.id ?? '',
-          })),
         setSelectedPreviewPresetId: (selectedPreviewPresetId) => setWithoutHistory(() => ({ selectedPreviewPresetId })),
         pushPreviewBackground: (path) =>
           setWithoutHistory((state) => {
@@ -458,15 +418,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           setWithoutHistory((state) => createPreviewHistoryState(state, (preview) => preview.previous())),
         nextPreviewBackground: () =>
           setWithoutHistory((state) => createPreviewHistoryState(state, (preview) => preview.next())),
-        createPresetGroup: (name) =>
-          setWithHistory((state) => {
-            const now = Date.now()
-            const group = { id: uniqueId('group'), name: name.trim() || '新预设组', presetIds: [], updatedAt: now }
-            return {
-              presetGroups: [...state.presetGroups, group],
-              selectedPresetGroupId: group.id,
-            }
-          }, 'preset-groups:structure'),
         createPreset: (name) =>
           setWithHistory((state) => {
             const now = Date.now()
@@ -487,74 +438,14 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           setWithHistory((state) => {
             const presets = state.presets.filter((preset) => preset.id !== presetId)
             if (presets.length === state.presets.length) return {}
+            // 只动预设本身：项目树参数里对它的引用**不清理**，那是刻意的——
+            // 参数层不该偷偷改用户配好的归属，统一树会把「已失效」显示出来让用户自己决定。
             return {
               presets,
-              presetGroups: state.presetGroups.map((group) => ({
-                ...group,
-                presetIds: group.presetIds.filter((id) => id !== presetId),
-                updatedAt: group.presetIds.includes(presetId) ? Date.now() : group.updatedAt,
-              })),
               selectedPreviewPresetId:
                 state.selectedPreviewPresetId === presetId ? (presets[0]?.id ?? '') : state.selectedPreviewPresetId,
             }
           }, 'presets:structure'),
-        renamePresetGroup: (groupId, name) =>
-          setWithHistory(
-            (state) => ({
-              presetGroups: state.presetGroups.map((group) =>
-                group.id === groupId ? { ...group, name: name.trim() || group.name, updatedAt: Date.now() } : group,
-              ),
-            }),
-            `preset-group:${groupId}:name`,
-          ),
-        movePresetGroup: (groupId, targetIndex) =>
-          setWithHistory((state) => {
-            const sourceIndex = state.presetGroups.findIndex((group) => group.id === groupId)
-            if (sourceIndex < 0) return {}
-            const nextIndex = Math.max(0, Math.min(state.presetGroups.length - 1, targetIndex))
-            if (sourceIndex === nextIndex) return {}
-            const presetGroups = [...state.presetGroups]
-            const [group] = presetGroups.splice(sourceIndex, 1)
-            presetGroups.splice(nextIndex, 0, group!)
-            return { presetGroups }
-          }, 'preset-groups:structure'),
-        duplicatePresetGroup: (groupId) =>
-          setWithHistory((state) => {
-            const source = state.presetGroups.find((group) => group.id === groupId)
-            if (!source) return {}
-            const group = {
-              ...source,
-              id: uniqueId('group'),
-              name: `${source.name} copy`,
-              presetIds: [...source.presetIds],
-              updatedAt: Date.now(),
-            }
-            return { presetGroups: [...state.presetGroups, group] }
-          }, 'preset-groups:structure'),
-        deletePresetGroup: (groupId) =>
-          setWithHistory((state) => {
-            if (state.presetGroups.length <= 1) return {}
-            const presetGroups = state.presetGroups.filter((group) => group.id !== groupId)
-            return {
-              presetGroups,
-              selectedPresetGroupId: presetGroups[0]?.id ?? '',
-            }
-          }, 'preset-groups:structure'),
-        reorderPresetInGroup: (groupId, presetId, targetIndex) =>
-          setWithHistory(
-            (state) => ({
-              presetGroups: state.presetGroups.map((group) => {
-                if (group.id !== groupId) return group
-                const currentIndex = group.presetIds.indexOf(presetId)
-                if (currentIndex < 0) return group
-                const presetIds = [...group.presetIds]
-                const [item] = presetIds.splice(currentIndex, 1)
-                presetIds.splice(targetIndex, 0, item!)
-                return { ...group, presetIds, updatedAt: Date.now() }
-              }),
-            }),
-            `preset-group:${groupId}:preset-order`,
-          ),
         duplicatePreset: (presetId) =>
           setWithHistory((state) => {
             const source = state.presets.find((preset) => preset.id === presetId)
@@ -570,27 +461,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
               selectedPreviewPresetId: preset.id,
             }
           }, 'presets:structure'),
-        addPresetToGroup: (presetId, groupId) =>
-          setWithHistory((state) => {
-            const group = state.presetGroups.find((g) => g.id === groupId)
-            if (!group || group.presetIds.includes(presetId)) return {}
-            return {
-              presetGroups: state.presetGroups.map((g) =>
-                g.id === groupId ? { ...g, presetIds: [...g.presetIds, presetId], updatedAt: Date.now() } : g,
-              ),
-            }
-          }, `preset-group:${groupId}:membership`),
-        removePresetFromGroup: (presetId, groupId) =>
-          setWithHistory(
-            (state) => ({
-              presetGroups: state.presetGroups.map((group) =>
-                group.id === groupId
-                  ? { ...group, presetIds: group.presetIds.filter((id) => id !== presetId), updatedAt: Date.now() }
-                  : group,
-              ),
-            }),
-            `preset-group:${groupId}:membership`,
-          ),
         copyLayer: (presetId, layerId) =>
           setWithoutHistory((state) => {
             const preset = state.presets.find((p) => p.id === presetId)
@@ -644,14 +514,6 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
       migrate: migrateCompositeV2PersistedState,
     },
   )
-}
-
-function getSelectedGroup(presetGroups: CompositeV2State['presetGroups'], groupId: string) {
-  return presetGroups.find((group) => group.id === groupId) ?? presetGroups[0] ?? null
-}
-
-function getFirstPresetIdForGroup(presetGroups: CompositeV2State['presetGroups'], groupId: string) {
-  return getSelectedGroup(presetGroups, groupId)?.presetIds[0] ?? ''
 }
 
 function createRandomPreviewState(
@@ -722,10 +584,8 @@ function captureUndoSnapshot(state: CompositeV2StoreState): CompositeV2UndoSnaps
     backgrounds: [...state.backgrounds],
     previewHistory: [...state.previewHistory],
     previewHistoryIndex: state.previewHistoryIndex,
-    selectedPresetGroupId: state.selectedPresetGroupId,
     selectedPreviewPresetId: state.selectedPreviewPresetId,
     presets: [...state.presets],
-    presetGroups: [...state.presetGroups],
     globalFitMode: state.globalFitMode,
   }
 }

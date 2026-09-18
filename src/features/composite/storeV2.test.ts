@@ -6,7 +6,7 @@ import {
   migrateCompositeV2PersistedState,
   mergeCompositeV2PersistedState,
 } from './storeV2'
-import { createDefaultCompositeV2Preset, createDefaultCompositeV2PresetGroup } from './lib/compositeV2Defaults'
+import { createDefaultCompositeV2Preset } from './lib/compositeV2Defaults'
 import type { CompositeV2ImageLayer, CompositeV2TextLayer } from './lib/compositeV2Types'
 
 afterEach(() => {
@@ -41,7 +41,16 @@ describe('composite v2 store state factory', () => {
       outputRuleGroupsOverride: [{ id: 'gdt', name: '广点通', rules: [], distributionPaths: [] }],
     }
 
-    const migrated = migrateCompositeV2PersistedState({ presets: [legacyPreset], customVariables: [] }, 3)
+    const migrated = migrateCompositeV2PersistedState(
+      // 同时带上 v4 时代的预设组：分组已收敛到项目树，组本身没有第二处容身之所，也必须丢掉
+      {
+        presets: [legacyPreset],
+        customVariables: [],
+        presetGroups: [{ id: 'group-default', name: '默认预设组', presetIds: ['preset-default'], updatedAt: 1 }],
+        selectedPresetGroupId: 'group-default',
+      },
+      3,
+    )
 
     expect(migrated.presets).toEqual([
       {
@@ -53,6 +62,8 @@ describe('composite v2 store state factory', () => {
         updatedAt: 1,
       },
     ])
+    expect(migrated).not.toHaveProperty('presetGroups')
+    expect(migrated).not.toHaveProperty('selectedPresetGroupId')
   })
 
   it('normalizes a broken canvas and fit mode instead of trusting persisted values', () => {
@@ -115,78 +126,51 @@ describe('composite v2 store state factory', () => {
       logoOrder: [],
       projectLogos: [],
       presets: store.getState().presets,
-      presetGroups: store.getState().presetGroups,
       globalFitMode: store.getState().globalFitMode,
       backgroundFolders: ['D:/bg'],
       recursiveBackgrounds: true,
-      selectedPresetGroupId: store.getState().selectedPresetGroupId,
       selectedPreviewPresetId: store.getState().selectedPreviewPresetId,
     })
     expect(persisted).not.toHaveProperty('previewHistory')
     expect(persisted).not.toHaveProperty('backgrounds')
   })
 
-  it('hydrates a coherent non-default preset group selection', () => {
+  it('hydrates the persisted preset selection', () => {
     const source = createCompositeV2Store()
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Preset A' }
     const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Preset B' }
-    const groupA = { ...createDefaultCompositeV2PresetGroup(1), id: 'group-a', presetIds: ['preset-a'] }
-    const groupB = { ...createDefaultCompositeV2PresetGroup(2), id: 'group-b', presetIds: ['preset-b'] }
-    source.setState({
-      presets: [presetA, presetB],
-      presetGroups: [groupA, groupB],
-      selectedPresetGroupId: groupB.id,
-      selectedPreviewPresetId: presetB.id,
-    })
+    source.setState({ presets: [presetA, presetB], selectedPreviewPresetId: presetB.id })
     const persisted = JSON.parse(JSON.stringify(getCompositeV2PersistedState(source.getState())))
 
     const hydrated = mergeCompositeV2PersistedState(persisted, createCompositeV2Store().getState())
 
-    expect(hydrated).toMatchObject({
-      selectedPresetGroupId: 'group-b',
-      selectedPreviewPresetId: 'preset-b',
-    })
+    expect(hydrated.selectedPreviewPresetId).toBe('preset-b')
   })
 
-  it('falls back to a coherent preset selection when persisted IDs are invalid', () => {
+  it('falls back to the first preset when the persisted selection no longer exists', () => {
     const currentStore = createCompositeV2Store()
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Preset A' }
     const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Preset B' }
-    const groupA = { ...createDefaultCompositeV2PresetGroup(1), id: 'group-a', presetIds: ['preset-a'] }
-    const groupB = { ...createDefaultCompositeV2PresetGroup(2), id: 'group-b', presetIds: ['preset-b'] }
-    currentStore.setState({ presets: [presetA, presetB], presetGroups: [groupA, groupB] })
+    currentStore.setState({ presets: [presetA, presetB], selectedPreviewPresetId: presetA.id })
     const persisted = {
       ...getCompositeV2PersistedState(currentStore.getState()),
-      selectedPresetGroupId: 'missing-group',
       selectedPreviewPresetId: 'missing-preset',
     }
 
     const hydrated = mergeCompositeV2PersistedState(JSON.parse(JSON.stringify(persisted)), currentStore.getState())
 
-    expect(hydrated).toMatchObject({
-      selectedPresetGroupId: 'group-a',
-      selectedPreviewPresetId: 'preset-a',
-    })
+    // 预设被删掉之后还留着 id，画布区会永远空着且不回退 —— 所以必须换成一个真实存在的
+    expect(hydrated.selectedPreviewPresetId).toBe('preset-a')
   })
 
-  it('preserves the preview preset when switching groups', () => {
+  it('switches the preview preset without any grouping constraint', () => {
     const store = createCompositeV2Store()
     const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Preset A' }
     const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Preset B' }
-    const presetC = { ...createDefaultCompositeV2Preset(3), id: 'preset-c', name: 'Preset C' }
-    const groupA = { ...createDefaultCompositeV2PresetGroup(1), id: 'group-a', presetIds: ['preset-a', 'preset-b'] }
-    const groupB = { ...createDefaultCompositeV2PresetGroup(2), id: 'group-b', presetIds: ['preset-c', 'preset-b'] }
+    store.setState({ presets: [presetA, presetB], selectedPreviewPresetId: presetA.id })
 
-    store.setState({
-      presets: [presetA, presetB, presetC],
-      presetGroups: [groupA, groupB],
-      selectedPresetGroupId: groupA.id,
-      selectedPreviewPresetId: presetB.id,
-    })
+    store.getState().setSelectedPreviewPresetId(presetB.id)
 
-    store.getState().setSelectedPresetGroup(groupB.id)
-
-    expect(store.getState().selectedPresetGroupId).toBe(groupB.id)
     expect(store.getState().selectedPreviewPresetId).toBe('preset-b')
   })
 
@@ -255,10 +239,9 @@ describe('composite v2 store state factory', () => {
   it('updates a preset immutably and refreshes updatedAt', () => {
     const store = createCompositeV2Store()
     const preset = { ...createDefaultCompositeV2Preset(10), id: 'preset-a', name: 'Preset A' }
-    const group = { ...createDefaultCompositeV2PresetGroup(10), presetIds: [preset.id] }
     vi.spyOn(Date, 'now').mockReturnValue(99)
 
-    store.setState({ presets: [preset], presetGroups: [group] })
+    store.setState({ presets: [preset] })
     const previousPreset = store.getState().presets[0]
 
     store.getState().updatePreset(preset.id, { name: 'Preset A Updated', sampleBackgroundPath: 'D:/sample.jpg' })
@@ -384,27 +367,17 @@ describe('composite v2 store state factory', () => {
     })
   })
 
-  it('creates, renames, duplicates and removes preset groups', () => {
+  it('creates, duplicates and deletes presets without any grouping side effect', () => {
     const store = createCompositeV2Store()
-    store.getState().createPresetGroup('Campaign')
-    const created = store.getState().presetGroups.find((group) => group.name === 'Campaign')
+    store.getState().createPreset('Campaign')
+    const created = store.getState().presets.find((preset) => preset.name === 'Campaign')
     expect(created).toBeTruthy()
-    store.getState().renamePresetGroup(created!.id, 'Campaign 2')
-    store.getState().duplicatePresetGroup(created!.id)
-    expect(store.getState().presetGroups.some((group) => group.name === 'Campaign 2 copy')).toBe(true)
-    store.getState().deletePresetGroup(created!.id)
-    expect(store.getState().presetGroups.some((group) => group.id === created!.id)).toBe(false)
-  })
 
-  it('moves a preset group to a new position', () => {
-    const store = createCompositeV2Store()
-    store.getState().createPresetGroup('Second')
-    store.getState().createPresetGroup('Third')
-    const [first, second, third] = store.getState().presetGroups
+    store.getState().duplicatePreset(created!.id)
+    expect(store.getState().presets.some((preset) => preset.name === 'Campaign 副本')).toBe(true)
 
-    store.getState().movePresetGroup(third!.id, 0)
-
-    expect(store.getState().presetGroups.map((group) => group.id)).toEqual([third!.id, first!.id, second!.id])
+    store.getState().deletePreset(created!.id)
+    expect(store.getState().presets.some((preset) => preset.id === created!.id)).toBe(false)
   })
 
   it('updates the global fit mode', () => {
