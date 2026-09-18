@@ -1555,6 +1555,41 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  /**
+   * 按「前缀 + 保留份数」清理某个目录下的备份文件，返回删除数量。
+   *
+   * 为什么需要它：ZIP 自动备份落在库根 `backups/`，而渲染进程没有「列目录」能力
+   * （只有 `fs:list-backups` 的前缀模式，语义是某个 JSON 状态文件的快照）。
+   * 与其把目录遍历能力暴露给渲染进程，不如由主进程一次完成「列 → 排序 → 删旧」。
+   */
+  handleChecked(
+    'fs:prune-library-backups',
+    async (_event, { dir, prefix, keep }: { dir: string; prefix: string; keep: number }) => {
+      try {
+        const safeDir = assertAllowedPath(dir)
+        if (!existsSync(safeDir)) return 0
+        const candidates = readdirSync(safeDir)
+          .filter((name) => name.startsWith(prefix))
+          .map((name) => ({ name, fullPath: path.join(safeDir, name) }))
+          .filter((entry) => {
+            try {
+              return statSync(entry.fullPath).isFile()
+            } catch {
+              return false
+            }
+          })
+          .sort((a, b) => statSync(b.fullPath).mtimeMs - statSync(a.fullPath).mtimeMs)
+          .map((entry) => entry.fullPath)
+        const removed = candidates.length - Math.max(0, keep)
+        pruneBackupFiles(candidates, keep)
+        return removed > 0 ? removed : 0
+      } catch (err) {
+        console.error('清理自动备份失败:', err)
+        return 0
+      }
+    },
+  )
+
   handleChecked(
     'fs:save-zip-buffer',
     async (_event, { filePath, buffer }: { filePath: string; buffer: ArrayBuffer }) => {

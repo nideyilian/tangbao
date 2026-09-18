@@ -9,6 +9,8 @@ import {
   isElectron as isElectronEnv,
   getDesktopPath,
   getBackupList,
+  getLibraryBackupsPath,
+  pruneLibraryBackupsInDir,
   restoreFromBackupFile,
   checkBackupHasData,
 } from './lib/localSave'
@@ -24,6 +26,15 @@ import ErrorBoundary from './components/ErrorBoundary'
 import WorkspaceTabBar from './components/WorkspaceTabBar'
 import AppPageRail from './components/AppPageRail'
 import RequirementQueueRunner from './features/requirementPrototype/QueueRunner'
+
+/**
+ * 自动备份的文件名前缀与保留份数。
+ * 前缀必须与手动导出的命名规则一致（`tangbao-backup_`），这样清理逻辑按前缀匹配即可，
+ * 不会误删用户自己手动导出后放回该目录的文件之外的东西。
+ */
+const AUTO_BACKUP_FILE_PREFIX = 'tangbao-backup_'
+const AUTO_BACKUP_KEEP = 10
+
 const AgentWorkspace = React.lazy(() => import('./components/AgentWorkspace'))
 const CompositeWorkspace = React.lazy(() => import('./features/composite/CompositeWorkspace'))
 // 策略（strategy）与下单（ordering）模块已屏蔽：不再懒加载对应工作区，历史 appMode 值兜底渲染素材库
@@ -369,38 +380,47 @@ export default function App() {
           })
         }
 
-        // 每周自动备份
+        // 每周自动备份（并入导出流程：复用同一条 exportDataToPath 管线，不再另开一套）
         if (isElectronEnv()) {
           const lastBackup = state.lastAutoBackupAt
           const oneWeek = 7 * 24 * 60 * 60 * 1000
           if (Date.now() - lastBackup >= oneWeek) {
-            getDesktopPath().then((desktop) => {
-              if (!desktop) return
+            void (async () => {
+              const store = useStore.getState()
+              // ⚠️ 落到**库根 backups/**：此前写桌面，而设置页「备份列表」读的是库根/状态目录，
+              //    导致自动备份产生的文件从不出现在列表里 —— 这是「自动备份不生效」的首因。
+              const backupsDir = await getLibraryBackupsPath()
+              if (!backupsDir) {
+                store.setLastAutoBackupError('未找到库根备份目录，自动备份未执行')
+                return
+              }
               const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-              const fileName = `tangbao_backup_${ts}.zip`
-              const filePath = desktop.replace(/\\/g, '/') + '/' + fileName
-              exportDataToPath(
-                filePath,
-                { exportConfig: true, exportTasks: true, exportImages: false, exportAssets: true },
-                { showErrorToast: false },
-              )
-                .then((result) => {
-                  if (result.success) {
-                    useStore.getState().setLastAutoBackupAt(Date.now())
-                    useStore
-                      .getState()
-                      .showToast(
-                        result.omittedCount > 0
-                          ? `每周自动备份已保存到桌面（跳过 ${result.omittedCount} 张缺失图片）`
-                          : '每周自动备份已保存到桌面',
-                        'success',
-                      )
-                  }
-                })
-                .catch((error) => {
-                  console.warn('每周自动备份失败:', error)
-                })
-            })
+              const filePath = `${backupsDir.replace(/\\/g, '/')}/${AUTO_BACKUP_FILE_PREFIX}${ts}.zip`
+              try {
+                const result = await exportDataToPath(
+                  filePath,
+                  { exportConfig: true, exportTasks: true, exportImages: false, exportAssets: true },
+                  { showErrorToast: false },
+                )
+                if (!result.success) throw new Error('导出未成功')
+                store.setLastAutoBackupAt(Date.now())
+                store.setLastAutoBackupError(null)
+                // 保留最近 N 份：此前不清理，目录里会无限堆积
+                void pruneLibraryBackupsInDir(backupsDir, AUTO_BACKUP_FILE_PREFIX, AUTO_BACKUP_KEEP)
+                store.showToast(
+                  result.omittedCount > 0
+                    ? `自动备份已保存（跳过 ${result.omittedCount} 张缺失原图）`
+                    : '自动备份已保存',
+                  'success',
+                )
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                // 失败必须可见：过去只 console.warn，用户「以为有备份、其实一次都没成功」
+                store.setLastAutoBackupError(message)
+                store.showToast(`自动备份失败：${message}`, 'error')
+                console.error('每周自动备份失败:', error)
+              }
+            })()
           }
         }
       })

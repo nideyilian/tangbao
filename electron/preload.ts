@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restoreFromBackup: (backupPath: string, targetPath: string) =>
     ipcRenderer.invoke('fs:restore-from-backup', { backupPath, targetPath }),
   deleteBackup: (backupPath: string) => ipcRenderer.invoke('fs:delete-backup', { backupPath }),
+  pruneLibraryBackups: (dir: string, prefix: string, keep: number) =>
+    ipcRenderer.invoke('fs:prune-library-backups', { dir, prefix, keep }),
   saveZipBuffer: (filePath: string, buffer: ArrayBuffer) =>
     ipcRenderer.invoke('fs:save-zip-buffer', { filePath, buffer }),
   selectZipSavePath: (defaultName: string) => ipcRenderer.invoke('fs:select-zip-save-path', { defaultName }),

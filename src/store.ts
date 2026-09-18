@@ -259,6 +259,8 @@ import {
   writeThumbnailToDisk,
   deleteThumbnailsFromDisk,
   fileExistsOnDisk,
+  getLibraryBackupsPath,
+  pruneLibraryBackupsInDir,
 } from './lib/localSave'
 import { migrateLegacyImages } from './lib/imageStorageMigration'
 import {
@@ -2629,6 +2631,13 @@ interface AppState {
   // 自动备份
   lastAutoBackupAt: number
   setLastAutoBackupAt: (t: number) => void
+  /**
+   * 上次自动备份的失败原因（瞬态，不持久化）。
+   * 之所以要落到 store：自动备份过去只在 console.warn 里报错，
+   * 用户「以为有备份、实际一次都没成功」—— 必须让它可见。
+   */
+  lastAutoBackupError: string | null
+  setLastAutoBackupError: (message: string | null) => void
   firstBackupReminderShown: boolean
   setFirstBackupReminderShown: (v: boolean) => void
   backupReminderCount: number
@@ -4229,6 +4238,8 @@ export const useStore = create<AppState>()(
       // 自动备份
       lastAutoBackupAt: 0,
       setLastAutoBackupAt: (t) => set({ lastAutoBackupAt: t }),
+      lastAutoBackupError: null,
+      setLastAutoBackupError: (lastAutoBackupError) => set({ lastAutoBackupError }),
       firstBackupReminderShown: false,
       setFirstBackupReminderShown: (v) => set({ firstBackupReminderShown: v }),
       backupReminderCount: 0,
@@ -11564,9 +11575,8 @@ export async function exportData(
         }
       }
     }
-    if (options.exportImages && missingOriginalImageIds.size > 0) {
-      throw new Error(`原始图片无法完整导出：${[...missingOriginalImageIds].join('、')}`)
-    }
+    // 原图缺失不再让整包导出失败（与 Electron 侧一致）：跳过并在完成提示里报数。
+    const omittedOriginalImageCount = missingOriginalImageIds.size
 
     const manifest: ExportData = {
       version: 7,
@@ -11612,7 +11622,12 @@ export async function exportData(
     manifestEntry.push(strToU8(JSON.stringify(manifest, null, 2)), true)
     zip.end()
     await zipSink.complete()
-    useStore.getState().showToast('数据已导出', 'success')
+    useStore
+      .getState()
+      .showToast(
+        omittedOriginalImageCount > 0 ? `数据已导出（跳过 ${omittedOriginalImageCount} 张缺失原图）` : '数据已导出',
+        'success',
+      )
   } catch (e) {
     useStore.getState().showToast(`导出失败：${e instanceof Error ? e.message : String(e)}`, 'error')
   }
@@ -11653,9 +11668,8 @@ export async function exportDataToPath(
     const imagePlan = options.exportImages
       ? await buildElectronImageExportEntries(ids, getImage)
       : { entries: [], omittedCount: 0, omittedImageIds: [] }
-    if (imagePlan.omittedImageIds.length > 0) {
-      throw new Error(`原始图片无法完整导出：${imagePlan.omittedImageIds.join('、')}`)
-    }
+    // 原图缺失**不再让整包导出失败**：跳过缺失项，由 `omittedCount` 在完成提示里报数。
+    // 用户要的是一次能用的备份，而不是因为一张图丢了什么都导不出（这是「导出经常失败」的首因）。
     const { entries, omittedCount } = imagePlan
     const imageFiles: ExportData['imageFiles'] = {}
     const thumbnailFiles: NonNullable<ExportData['thumbnailFiles']> = {}
@@ -11949,6 +11963,8 @@ export async function importDataFromPath(
         ? reconcileBackupWorkspaceImages(parsedData, state.availableImageIds)
         : { data: parsedData, omittedImageCount: 0 }
     const data = reconciledBackup.data
+    // 写库阶段没有事务回滚：先落一份「导入前快照」作为安全网（尽力而为，失败不阻断导入）
+    await createPreImportSafetySnapshot()
     await importBackupTail(data, state, replaceWorkspace, options)
     const missingImageCount = Object.keys(data.imageRefs ?? data.imageFiles ?? {}).filter(
       (id) => !state.availableImageIds.has(id),
@@ -12055,6 +12071,8 @@ export async function importData(
         ? reconcileBackupWorkspaceImages(parsedData, state.availableImageIds)
         : { data: parsedData, omittedImageCount: 0 }
     const data = reconciledBackup.data
+    // 写库阶段没有事务回滚：先落一份「导入前快照」作为安全网（尽力而为，失败不阻断导入）
+    await createPreImportSafetySnapshot()
     await importBackupTail(data, state, replaceWorkspace, options)
     const missingImageCount = Object.keys(data.imageRefs ?? data.imageFiles ?? {}).filter(
       (id) => !state.availableImageIds.has(id),
@@ -12067,8 +12085,42 @@ export async function importData(
   }
 }
 
+/** 导入前安全网快照的文件名前缀与保留份数 */
+const PRE_IMPORT_SNAPSHOT_PREFIX = 'tangbao-preimport_'
+const PRE_IMPORT_SNAPSHOT_KEEP = 5
+
 /**
- * 备份导入尾段：任务 / Agent 会话 / 素材库 / 配置与词条库合并。
+ * 导入前安全网：把**当前配置状态**导出一份到库根 `backups/`。
+ *
+ * 为什么需要它：导入的写库阶段（`importBackupTail`）**没有事务回滚** ——
+ * 中途失败（磁盘满 / 配额 / 用户强退）会让数据停在半途状态，比导入前更糟。
+ * 预检（`validateBackupArchive`）只能拦住"包本身有问题"，拦不住这类运行时失败。
+ * 有了这份快照，用户至少能退回导入前。
+ *
+ * 只导配置（不含任务与原图），所以体积小、耗时可忽略；**失败不阻断导入**。
+ */
+async function createPreImportSafetySnapshot(): Promise<void> {
+  if (!isElectronEnv()) return
+  try {
+    const backupsDir = await getLibraryBackupsPath()
+    if (!backupsDir) return
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const filePath = `${backupsDir.replace(/\\/g, '/')}/${PRE_IMPORT_SNAPSHOT_PREFIX}${ts}.zip`
+    const result = await exportDataToPath(
+      filePath,
+      { exportConfig: true, exportTasks: false, exportImages: false, exportAssets: false },
+      { showErrorToast: false },
+    )
+    if (result.success) {
+      void pruneLibraryBackupsInDir(backupsDir, PRE_IMPORT_SNAPSHOT_PREFIX, PRE_IMPORT_SNAPSHOT_KEEP)
+    }
+  } catch {
+    // 尽力而为：安全网本身失败不应阻断导入
+  }
+}
+
+/**
+ * 备份导入尾段：任务 / Agent 会话 / 素材库 / 配置合并。
  * 浏览器与 Electron 流式导入共用；state 为提取阶段累积的图片/缩略图/合成资源。
  */
 async function importBackupTail(

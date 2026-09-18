@@ -98,6 +98,8 @@ type ElectronAPI = {
   checkBackupHasData: (backupPath: string) => Promise<boolean>
   restoreFromBackup: (backupPath: string, targetPath: string) => Promise<boolean>
   deleteBackup: (backupPath: string) => Promise<boolean>
+  /** 按「前缀 + 保留份数」清理目录下的备份文件（主进程完成列目录与删旧） */
+  pruneLibraryBackups?: (dir: string, prefix: string, keep: number) => Promise<number>
   saveZipBuffer: (filePath: string, buffer: ArrayBuffer) => Promise<boolean>
   selectZipSavePath?: (defaultName: string) => Promise<string | null>
   exportZipToPath?: (request: ElectronZipExportRequest) => Promise<{ success: boolean; error?: string }>
@@ -1200,6 +1202,22 @@ export async function getLibraryBackupsPath(): Promise<string | null> {
     return await api.getLibraryBackupsPath()
   } catch {
     return null
+  }
+}
+
+/**
+ * 按「前缀 + 保留份数」清理某个备份目录，返回实际删除数量。
+ *
+ * 保留策略是**尽力而为**：主进程不支持、路径未授权或删除失败都只返回 0，
+ * 绝不能因为它而让备份本身失败。
+ */
+export async function pruneLibraryBackupsInDir(dir: string, prefix: string, keep: number): Promise<number> {
+  const api = getAPI()
+  if (!api?.pruneLibraryBackups) return 0
+  try {
+    return await api.pruneLibraryBackups(dir, prefix, keep)
+  } catch {
+    return 0
   }
 }
 
