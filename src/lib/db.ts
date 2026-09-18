@@ -29,6 +29,7 @@ import type { MigrationJournal } from './migrations/registry'
 import { computeContentHash, computeContentHashFromBytes } from './imageFingerprint'
 import { blobToDataUrl, dataUrlToBlob } from './blobDataUrl'
 import { canvasToWebpDataUrl, createImageThumbnailDataUrl } from './canvasImage'
+import { decodeSopBatchSnapshotRecord } from './sopBatchSnapshotRecord'
 
 const DB_NAME = 'tangbao'
 const DB_VERSION = 15
@@ -559,15 +560,31 @@ export function clearTasks(): Promise<undefined> {
 // ===== SOP batch snapshots =====
 
 export function getSopBatchSnapshot(id: string): Promise<SopBatchSnapshot | undefined> {
-  const electron = readElectronRecord<SopBatchSnapshot>(STORE_SOP_BATCH_SNAPSHOTS, id)
-  if (electron) return electron
-  return dbTransaction(STORE_SOP_BATCH_SNAPSHOTS, 'readonly', (store) => store.get(id))
+  const electron = readElectronRecord<unknown>(STORE_SOP_BATCH_SNAPSHOTS, id)
+  if (electron) {
+    return electron.then((value) => decodeSopBatchSnapshotRecord(value) ?? undefined)
+  }
+  return dbTransaction<unknown>(STORE_SOP_BATCH_SNAPSHOTS, 'readonly', (store) => store.get(id)).then(
+    (value) => decodeSopBatchSnapshotRecord(value) ?? undefined,
+  )
 }
 
 export function getAllSopBatchSnapshots(): Promise<SopBatchSnapshot[]> {
-  const electron = readAllElectronRecords<SopBatchSnapshot>(STORE_SOP_BATCH_SNAPSHOTS)
-  if (electron) return electron
-  return dbTransaction(STORE_SOP_BATCH_SNAPSHOTS, 'readonly', (store) => store.getAll())
+  const electron = readAllElectronRecords<unknown>(STORE_SOP_BATCH_SNAPSHOTS)
+  if (electron) return electron.then(decodeSopBatchSnapshotRecords)
+  return dbTransaction<unknown[]>(STORE_SOP_BATCH_SNAPSHOTS, 'readonly', (store) => store.getAll()).then(
+    decodeSopBatchSnapshotRecords,
+  )
+}
+
+/** 逐条解码并丢弃认不出来的记录：一条坏数据不该让整个提示词集列表打不开。 */
+function decodeSopBatchSnapshotRecords(values: unknown[]): SopBatchSnapshot[] {
+  const result: SopBatchSnapshot[] = []
+  for (const value of values) {
+    const snapshot = decodeSopBatchSnapshotRecord(value)
+    if (snapshot) result.push(snapshot)
+  }
+  return result
 }
 
 export function putSopBatchSnapshot(snapshot: SopBatchSnapshot): Promise<IDBValidKey> {
