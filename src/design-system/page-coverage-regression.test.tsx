@@ -33,10 +33,7 @@ import DesignSystemPreview from './DesignSystemPreview'
 const WORKSPACE_ENTRY_MODULES: Record<string, string> = {
   gallery: 'src/App.tsx',
   agent: 'src/components/AgentWorkspace.tsx',
-  strategy: 'src/features/strategy/adapters/RequirementStrategyWorkspace.tsx',
-  ordering: 'src/features/ordering/adapters/RequirementOrderingWorkspace.tsx',
   postprocess: 'src/features/composite/CompositeWorkspace.tsx',
-  'requirement-prototype': 'src/features/requirementPrototype/AppShell.tsx',
 }
 
 /** 所有必须有 pageCoverage 登记的顶层工作区 ID */

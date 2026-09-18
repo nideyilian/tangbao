@@ -1004,24 +1004,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['SplitPane', 'Panel', 'Toolbar'],
   },
   {
-    module: 'src/features/ordering/adapters/RequirementOrderingWorkspace.tsx',
-    responsibility: '下单工作区页面适配器',
-    decision: 'retain',
-    targets: ['PageHeader', 'Tabs', 'Container'],
-  },
-  {
-    module: 'src/features/ordering/OrderingCreate.tsx',
-    responsibility: '下单创建表单和素材选择',
-    decision: 'retain',
-    targets: ['PageHeader', 'Card', 'Fieldset', 'SegmentedControl', 'Thumbnail'],
-  },
-  {
-    module: 'src/features/ordering/OrderingHistory.tsx',
-    responsibility: '下单历史与详情',
-    decision: 'retain',
-    targets: ['PageHeader', 'Table', 'StatusIndicator', 'Drawer', 'EmptyState'],
-  },
-  {
     module: 'src/features/postprocess/PostprocessDistributionFields.tsx',
     responsibility: '分发配置表单（后处理面板与项目树节点参数弹窗共用同一份字段与措辞）',
     decision: 'compose',
@@ -1056,12 +1038,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     ],
   },
   {
-    module: 'src/features/requirementPrototype/AppShell.tsx',
-    responsibility: '需求中心登录、导航和管理页壳',
-    decision: 'retain',
-    targets: ['Container', 'PageHeader', 'NavList', 'Card', 'Table'],
-  },
-  {
     module: 'src/features/requirementPrototype/QueueRunner.tsx',
     responsibility: '需求中心队列协调器',
     decision: 'retain',
@@ -1078,18 +1054,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     responsibility: '画廊 SOP 管理中心适配器',
     decision: 'retain',
     targets: ['PageHeader', 'SplitPane', 'Panel'],
-  },
-  {
-    module: 'src/features/strategy/adapters/RequirementStrategyWorkspace.tsx',
-    responsibility: '需求策略工作区适配器',
-    decision: 'retain',
-    targets: ['PageHeader', 'SplitPane', 'Panel'],
-  },
-  {
-    module: 'src/features/strategy/adapters/StoreStrategyImage.tsx',
-    responsibility: '策略图片存储适配',
-    decision: 'retain',
-    targets: ['Thumbnail', 'AspectRatio'],
   },
   {
     module: 'src/features/strategy/SopManagementCenter.tsx',
@@ -1164,34 +1128,10 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Toolbar', 'TextArea', 'StatusIndicator'],
   },
   {
-    module: 'src/features/strategy/SopPresetPickerModal.tsx',
-    responsibility: 'SOP 预设选择弹窗',
-    decision: 'compose',
-    targets: ['Dialog', 'SearchField', 'ListRow', 'EmptyState'],
-  },
-  {
     module: 'src/features/strategy/SopTextEditor.tsx',
     responsibility: 'SOP 正文格式化与查找编辑器',
     decision: 'compose',
     targets: ['Toolbar', 'TextArea', 'SearchField', 'StatusIndicator'],
-  },
-  {
-    module: 'src/features/strategy/StrategyEditor.tsx',
-    responsibility: '策略配置编辑器',
-    decision: 'retain',
-    targets: ['Fieldset', 'TextField', 'TextArea', 'Switch', 'Disclosure'],
-  },
-  {
-    module: 'src/features/strategy/StrategyGrid.tsx',
-    responsibility: '策略卡片网格',
-    decision: 'compose',
-    targets: ['Grid', 'Card', 'StatusIndicator', 'EmptyState'],
-  },
-  {
-    module: 'src/features/strategy/StrategyTree.tsx',
-    responsibility: '策略树、内联重命名和层级操作',
-    decision: 'retain',
-    targets: ['NavList', 'ListRow', 'TextField', 'Menu'],
   },
 ]
 
@@ -1304,32 +1244,11 @@ export const pageCoverage: PageCoverage[] = [
     document: 'design-system/tangbao/pages/agent.md',
   },
   {
-    id: 'strategy',
-    workspace: '策略工作台',
-    entry: "appMode==='strategy'（壳内复用）",
-    differences: ['全宽三栏', '专属 Ctrl+C/V 复制粘贴策略'],
-    document: 'design-system/tangbao/pages/strategy.md',
-  },
-  {
-    id: 'ordering',
-    workspace: '下单工作台',
-    entry: "appMode==='ordering'（壳内复用）",
-    differences: ['max-w-[1600px] 双视图', '强角色权限', '无快捷键/画布'],
-    document: 'design-system/tangbao/pages/ordering.md',
-  },
-  {
     id: 'postprocess',
     workspace: '水印预设工作区',
     entry: "appMode==='postprocess'（顶栏第三个 tab，与素材库 / Agent 同级）",
     differences: ['与素材库/Agent 同级 tab', '图层拖拽编辑', 'Ctrl+Z 撤销'],
     document: 'design-system/tangbao/pages/postprocess.md',
-  },
-  {
-    id: 'requirement-prototype',
-    workspace: '需求中心壳',
-    entry: '应用外层始终挂载',
-    differences: ['独立登录/角色导航', '与 legacy SegmentedControl 双导航并存'],
-    document: 'design-system/tangbao/pages/requirement-prototype.md',
   },
 ]
 
