@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'fs'
 import { ipcMain } from 'electron'
 import os from 'os'
 import path from 'path'
@@ -84,6 +94,53 @@ describe('ipc composite background filesystem helpers', () => {
 
     expect(existsSync(backupPaths[29])).toBe(true)
     expect(existsSync(backupPaths[30])).toBe(false)
+  })
+
+  it('prunes backups in a directory by prefix and keeps the newest ones', async () => {
+    const mod = await import('./ipc-handlers')
+    const pruneBackupFilesInDir = (
+      mod as {
+        pruneBackupFilesInDir?: (dir: string, prefix: string, keep: number) => number
+      }
+    ).pruneBackupFilesInDir
+    expect(pruneBackupFilesInDir).toBeTypeOf('function')
+
+    const dir = path.join(fixtureDir, 'library-backups')
+    mkdirSync(dir, { recursive: true })
+    // 显式设置 mtime，避免同一秒内创建导致排序不稳定
+    const make = (name: string, secondsAgo: number) => {
+      const full = path.join(dir, name)
+      writeFixtureFile(full)
+      const stamp = new Date(Date.now() - secondsAgo * 1000)
+      utimesSync(full, stamp, stamp)
+      return full
+    }
+    const newest = make('tangbao-backup_2026-09-04.zip', 1)
+    const middle = make('tangbao-backup_2026-09-03.zip', 2)
+    const oldest = make('tangbao-backup_2026-09-02.zip', 3)
+    // 不匹配前缀的文件必须保留（用户手动放进来的导出包不能被清掉）
+    const unrelated = make('manual-sharing.zip', 4)
+    // 导入前安全网是另一个前缀，不能被自动备份的清理逻辑误删
+    const preImport = make('tangbao-preimport_2026-09-01.zip', 5)
+
+    expect(pruneBackupFilesInDir!(dir, 'tangbao-backup_', 2)).toBe(1)
+
+    expect(existsSync(newest)).toBe(true)
+    expect(existsSync(middle)).toBe(true)
+    expect(existsSync(oldest)).toBe(false)
+    expect(existsSync(unrelated)).toBe(true)
+    expect(existsSync(preImport)).toBe(true)
+  })
+
+  it('returns 0 when pruning a directory that does not exist', async () => {
+    const mod = await import('./ipc-handlers')
+    const pruneBackupFilesInDir = (
+      mod as {
+        pruneBackupFilesInDir?: (dir: string, prefix: string, keep: number) => number
+      }
+    ).pruneBackupFilesInDir
+
+    expect(pruneBackupFilesInDir!(path.join(fixtureDir, 'missing-dir'), 'tangbao-backup_', 10)).toBe(0)
   })
 
   it('recognizes current metadata-only state backups as usable', async () => {

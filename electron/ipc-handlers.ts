@@ -117,6 +117,31 @@ export function pruneBackupFiles(pathsByNewestFirst: string[], keep: number): vo
   }
 }
 
+/**
+ * 按「前缀 + 保留份数」清理某个目录下的备份文件，返回实际删除数量。
+ *
+ * 抽成独立导出函数（而非内联在 IPC handler 里）是为了可单测 —— 排序、前缀过滤、
+ * 保留边界这些正是最容易写错的地方，而 handler 里夹着路径授权校验，不便直接测。
+ */
+export function pruneBackupFilesInDir(dir: string, prefix: string, keep: number): number {
+  if (!existsSync(dir)) return 0
+  const candidates = readdirSync(dir)
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => ({ name, fullPath: path.join(dir, name) }))
+    .filter((entry) => {
+      try {
+        return statSync(entry.fullPath).isFile()
+      } catch {
+        return false
+      }
+    })
+    .sort((a, b) => statSync(b.fullPath).mtimeMs - statSync(a.fullPath).mtimeMs)
+    .map((entry) => entry.fullPath)
+  const removed = candidates.length - Math.max(0, keep)
+  pruneBackupFiles(candidates, keep)
+  return removed > 0 ? removed : 0
+}
+
 export function backupJsonHasData(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const root = value as Record<string, unknown>
@@ -1566,23 +1591,7 @@ export function registerIpcHandlers(): void {
     'fs:prune-library-backups',
     async (_event, { dir, prefix, keep }: { dir: string; prefix: string; keep: number }) => {
       try {
-        const safeDir = assertAllowedPath(dir)
-        if (!existsSync(safeDir)) return 0
-        const candidates = readdirSync(safeDir)
-          .filter((name) => name.startsWith(prefix))
-          .map((name) => ({ name, fullPath: path.join(safeDir, name) }))
-          .filter((entry) => {
-            try {
-              return statSync(entry.fullPath).isFile()
-            } catch {
-              return false
-            }
-          })
-          .sort((a, b) => statSync(b.fullPath).mtimeMs - statSync(a.fullPath).mtimeMs)
-          .map((entry) => entry.fullPath)
-        const removed = candidates.length - Math.max(0, keep)
-        pruneBackupFiles(candidates, keep)
-        return removed > 0 ? removed : 0
+        return pruneBackupFilesInDir(assertAllowedPath(dir), prefix, keep)
       } catch (err) {
         console.error('清理自动备份失败:', err)
         return 0
