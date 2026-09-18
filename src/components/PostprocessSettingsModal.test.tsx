@@ -270,6 +270,51 @@ describe('PostprocessSettingsModal', () => {
       expect(onClose).toHaveBeenCalled()
     })
   })
+
+  describe('80% 双栏布局与参数入口', () => {
+    /** 当前打开的所有弹窗标题（父子弹窗会同时在 portal 里，用标题区分） */
+    function dialogTitles(): string[] {
+      return Array.from(document.querySelectorAll('.ds-dialog__title')).map((node) => node.textContent ?? '')
+    }
+
+    it('外壳是 80% 工作区：左栏为 sidebar 树，右栏为内容区', () => {
+      render()
+      const dialog = document.body.querySelector('[role="dialog"]')!
+      // 80vw × 80dvh 的骨架类（见 design-system/styles.css 的 .ds-dialog--postprocess）
+      expect(dialog.classList.contains('ds-dialog--postprocess')).toBe(true)
+      // 两栏由 DialogWorkspace--split 提供，左栏必须是 aside + sidebar 语义
+      expect(dialog.querySelector('.ds-dialog-workspace--split')).toBeTruthy()
+      const sidebar = dialog.querySelector('aside.ds-dialog-pane--sidebar')
+      expect(sidebar).toBeTruthy()
+      // 项目树落在左栏里，而不是继续挤在右栏正文
+      expect(sidebar!.textContent).toContain('启用范围')
+      expect(sidebar!.textContent).toContain('智能客服')
+    })
+
+    it('左栏每个节点带「参数」入口，点开该节点的参数弹窗', () => {
+      render()
+      const button = document.querySelector<HTMLButtonElement>('button[aria-label="设置 智能客服 的后处理参数"]')
+      expect(button).toBeTruthy()
+      act(() => {
+        button!.click()
+      })
+      // 单节点参数弹窗的标题带节点名，且带「参与自动后处理」开关
+      expect(dialogTitles()).toContain('参数 · 智能客服')
+      expect(document.body.textContent).toContain('参与自动后处理')
+    })
+
+    it('「参数表格」按钮打开项目树工作台（整棵树的参数总表）', () => {
+      render()
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="postprocess-open-tree-table"]')
+      expect(button).toBeTruthy()
+      act(() => {
+        button!.click()
+      })
+      expect(dialogTitles()).toContain('项目树')
+      // 「后处理参数」这一列只有总表才有（逐节点标出参数是本级设的、还是继承自谁）
+      expect(document.body.textContent).toContain('后处理参数')
+    })
+  })
 })
 
 describe('启用范围的继承态', () => {
