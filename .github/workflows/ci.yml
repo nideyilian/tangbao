@@ -32,6 +32,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # 死符号棘轮：存量允许，新增拦截。防止「删了调用点却没删 import」这类
+      # 「声称改了但没落地」的改动混过门禁（见 docs/pm-upgrade-plan.md P2-1）。
+      - name: Unused symbols ratchet
+        run: node scripts/check-unused-symbols.mjs
+
       - name: Format check
         run: npm run format:check
 

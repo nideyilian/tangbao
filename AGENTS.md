@@ -12,6 +12,39 @@
 - 设计规范：`design-system/tangbao/MASTER.md`（全局视觉/交互）、`COMPONENTS.md`（组件规范）；
   可执行规范数据在 `src/design-system/catalog.ts`。
 
+## 项目管理（开工前必读）
+
+单一真相源：**一个事实只有一个家，其它地方只放指针**。
+
+| 回答什么问题                      | 文件                          |
+| --------------------------------- | ----------------------------- |
+| 现在要交付什么、什么算做完        | `docs/ROADMAP.md`             |
+| 现在在做什么、卡在哪              | `docs/BACKLOG.md`             |
+| 为什么不那么做                    | `docs/adr/`                   |
+| 哪些坑不能踩（R/P/Q 分级 + 缓解） | `docs/RISK.md`                |
+| 具体操作配方                      | `docs/tangbao-ops-runbook.md` |
+| 哪份文档还算数                    | `docs/README.md`              |
+
+**开工前**
+
+1. 在 `docs/BACKLOG.md` 找到（或新建）`TB-###`，**验收标准要写得能测**，不能是形容词。
+2. 确认**没有别的写线在跑**：`netstat -ano | grep 41731`；`git status` 看有无他人未提交改动。
+   本仓库的 dev（41731 固定端口 + 单实例锁 + leveldb 独占）是**排他资源**，
+   并行必须用 `git worktree` 隔离，见 `docs/work-protocol.md`。**同一仓库默认单写线。**
+3. 涉及持久化 / 数据库 → 先备份（`backup-before-*`）。
+
+**收工前**
+
+`npm run verify` 全绿 → `npx prettier --write` → 更新 `BACKLOG.md` 状态与**验收证据** →
+新坑登记 `docs/RISK.md`（配方写进 runbook）→ 架构级决策补一条 `docs/adr/` →
+**提交并推送**（不留未提交改动过夜）。
+
+**不要**
+
+- 同一仓库并行开两条写线；反复重启 dev 去「救」窗口（只会和对面互相顶掉）。
+- 提交时 `git add -A`（工作区常有另一条线的未提交改动，只 add 本轮文件）。
+- 擅自扩大需求范围、擅自改本文件、替用户改全局配置（启用范围 / 用户数据 / 版本号 → 一律由杰哥拍板）。
+
 ## 常用命令
 
 | 操作                        | 命令                                                                                                 |
