@@ -123,6 +123,19 @@ export default defineConfig(({ command }) => {
       host: '127.0.0.1',
       port: 41731,
       strictPort: true,
+      /**
+       * 别监听生成物。
+       *
+       * `npm run test:coverage` 会往项目根写 coverage/（实测 39MB、上千个 HTML），而 vite 默认把
+       * 项目根下的一切都纳入监听 → **每写一个文件就发一次整页刷新**。dev 日志里一次覆盖跑下来
+       * 刷了几千次，正好命中那条铁律「HMR 整页刷新会打断进行中的生成/保存」。
+       * `dist/` 是 `vite build` 的产物，dev 用不到，同理。
+       *
+       * ⚠️ 不要把 `dist-electron/` 加进来 —— vite-plugin-electron 靠它重启主进程。
+       */
+      watch: {
+        ignored: ['**/coverage/**', '**/dist/**'],
+      },
       proxy: devProxyConfig?.enabled
         ? {
             [devProxyConfig.prefix]: {

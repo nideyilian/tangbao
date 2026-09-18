@@ -133,3 +133,30 @@ prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步�
 （「选了尺寸比例没生效」就是这个，`RISK.md` R-13）。
 
 比例改写逻辑 = `src/lib/aspectRatioPrompt.ts`。
+
+## 九、素材命名与排序（两条链路，别只改一条）
+
+- **生成命名的唯一实现 = `src/lib/generatedImageFilename.ts`**，格式 `{YYYYMMDD}-{标签}-{批次}-{序号}`
+  （如 `20260918-网赚-401-1`）。**两个出口的序号来源不同，这是刻意的**：
+  - 落盘（`store.ts` 的 `saveTaskImagesToLocalFSNow`）→ `buildGeneratedImageFileNameBase`，
+    序号 = **目录续号**（要扫目录才知道下一个号）。
+  - 下载 / 导出 / 排序 → **`resolveGeneratedAssetNameBase`**，序号 = **槽位号 + 1**。
+    同一张图必须永远同名，不能取决于磁盘当时状态。
+- ⚠️ **`TaskRecord.generatedFileNameBase` 与 `GeneratedAssetOrigin.generatedFileNameBase` 全仓没有生产者**
+  （类型注释写着"供素材来源快照与导出命名使用"，但从没被赋值过）。
+  `getAssetFileName` 曾只读它 → 每次都退回 `asset.imageId`，即 **64 位 sha256** 文件名。
+  **别再把新逻辑挂在"等它被写入"上**；有显式值才优先用。
+- ⚠️ **`outputSlot` 是 0 起的**：不要用 `toPositiveInt`（它把 0 钳成 1），
+  否则序号集体错位一位（第一张变 `-2`）。0 起下标用 `toNonNegativeInt`。
+- **`AssetSortKey` 加键必须同时改两条链路**，只改前者会让**第一页顺序错乱**（首屏 120 条由 SQL 给）：
+  1. 渲染进程内存：`src/features/assetLibrary/query.ts` 的 `compareAssets`；
+  2. 桌面端 SQL 分页：`electron/asset-catalog.ts` 的 `SORT_EXPRESSIONS`（用 `Record<AssetSortKey, string>`，
+     漏配即编译错误）+ 分页游标。
+- **目录库的命名排序列是冗余列** `assets.file_name` / `assets.filename_batch`
+  （`ensureAssetSortColumns` 幂等 ALTER + 两个索引 + `catalog_meta` 标记的一次性回填）。
+  不这么做的两种错误做法：在 SQL 里按 `origins` JSON 现算（要格式化时间戳，做不出来）、
+  或按 `json_extract(origins, '$[0]…')` 取（**主来源不是第 0 个**的多来源素材会取错）。
+- ⚠️ **分页游标值可以是字符串**（`name` 排序的 `sort_value` 是 TEXT）。
+  写游标时**不能用 `Number(sort_value)`** —— 文本会变 `NaN`，**第二页就断**。
+- `cache-images/<sha256>.png` 的**物理文件名不改**：库完整性校验就是拿文件名当预期哈希重算比对，
+  改名等于把校验与内容寻址去重一起打掉。命名只作用于用户可见的下载 / 导出 / 排序。

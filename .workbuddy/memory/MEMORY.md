@@ -52,6 +52,8 @@
   `fetch('tangbao://…')` 被 CSP 拦是**刻意的**，别加 `connect-src`。
 - **后处理/项目树**：一棵树（`collections`）四模块共用，不另建树；`undefined` = 继承、空值 = 显式覆盖；
   勾选 = 启用范围，产出目标 = 图片归属方向；`byMedia` 只开 `outputDir` 与 `watermarkPresetIds`。
+- **素材命名/排序**：命名唯一实现 = `lib/generatedImageFilename.ts`；排序键加一项必须**同时改内存
+  `compareAssets` 与桌面端 SQL 分页**（只改前者会让第一页顺序错乱）→ §9。
 - **持久化**：`createDesktopJsonStorage(ns)` 是全仓唯一落盘入口；
   **新增 store 忘配白名单 = 完全存不住而 UI 不报**；读失败 → 降级态拒绝写盘。
 - **任务数量不一致** = 落盘不完整（`tasks` vs `assets`），**别去查加载链**。
