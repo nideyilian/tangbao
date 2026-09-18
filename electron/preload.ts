@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveJson: (filePath: string, data: unknown) => ipcRenderer.invoke('fs:save-json', { filePath, data }),
   saveText: (filePath: string, content: string) => ipcRenderer.invoke('fs:save-text', { filePath, content }),
   ensureDir: (dirPath: string) => ipcRenderer.invoke('fs:ensure-dir', { dirPath }),
+  // 分发 `move` 模式搬空源目录后清理残留的空文件夹（非空目录返回 false，不报错）
+  removeEmptyDir: (dirPath: string) => ipcRenderer.invoke('fs:remove-empty-dir', { dirPath }),
   pathJoin: (...paths: string[]) => ipcRenderer.invoke('fs:path-join', { paths }),
   checkExists: (filePath: string) => ipcRenderer.invoke('fs:check-exists', { filePath }),
   readDir: (dirPath: string) => ipcRenderer.invoke('fs:read-dir', { dirPath }),

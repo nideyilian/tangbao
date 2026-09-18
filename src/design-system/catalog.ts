@@ -637,14 +637,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/components/PostprocessSettingsModal.tsx',
-    responsibility: '后处理编排面板：项目 × 媒体 × 尺寸的批量产出配置、命名模板与产出预览',
+    responsibility: '后处理编排面板：项目 × 媒体 × 尺寸 × 水印预设的批量产出配置、命名模板与产出预览',
     decision: 'compose',
     targets: [
       'Dialog',
       'SectionHeader',
       'Checkbox',
       'SegmentedControl',
-      'SelectField',
       'TextField',
       'Switch',
       'Button',
@@ -1088,6 +1087,12 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['PageHeader', 'Table', 'StatusIndicator', 'Drawer', 'EmptyState'],
   },
   {
+    module: 'src/features/postprocess/PostprocessDistributionFields.tsx',
+    responsibility: '分发配置表单（后处理面板与项目树节点参数弹窗共用同一份字段与措辞）',
+    decision: 'compose',
+    targets: ['Switch', 'TextField', 'SegmentedControl', 'Button', 'Alert'],
+  },
+  {
     module: 'src/features/projectTree/ProjectTreeWorkbench.tsx',
     responsibility: '统一项目树工作台（产品线→产品→方向 的增删改查与参数入口）',
     decision: 'compose',
@@ -1109,7 +1114,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
       'Checkbox',
       'SectionHeader',
       'SegmentedControl',
-      'SelectField',
       'Surface',
       'Switch',
       'TextField',

@@ -13,6 +13,8 @@
  *   （源系统的 `?? media[0]` 会导致「选错媒体却照样出图」）。
  */
 
+import type { PostprocessDistributionConfig } from './postprocessDistribution'
+
 /** 后处理媒体下的单个尺寸规格。 */
 export interface PostprocessMediaSize {
   id: string
@@ -142,6 +144,12 @@ export interface PostprocessProjectTarget {
   direction: string
 }
 
+/** 产出用的水印预设引用：只带 id 与展示名，让 lib 层不依赖 composite 的类型。 */
+export interface PostprocessWatermarkRef {
+  id: string
+  name: string
+}
+
 /** 一个待产出的后处理变体（笛卡尔积的一格）。 */
 export interface PostprocessOutputUnit {
   mediaId: string
@@ -156,6 +164,12 @@ export interface PostprocessOutputUnit {
   direction: OutputDirection
   /** 归属项目；未启用项目维度时**不存在**该字段（不是 undefined） */
   project?: PostprocessProjectTarget
+  /**
+   * 该单元叠加的水印预设；纯净版与「未选任何预设」时**不存在**该字段。
+   *
+   * 预设是**单元维度**而不是配置维度：同一方向可配多个预设，每个预设各出一套完整尺寸规格。
+   */
+  watermark?: PostprocessWatermarkRef
 }
 
 /** 产出计划：`skippedMediaIds` 是需要向用户提示的「找不到的媒体」。 */
@@ -184,10 +198,17 @@ export interface PostprocessMediaConfig {
   namePattern: string
   /** 创作者，供 `{creator}` token 取值 */
   creator: string
-  /** 引用的水印预设 id（`CompositeV2Preset.id`，见 `features/composite/storeV2`）；null = 不加水印 */
-  watermarkPresetId: string | null
+  /**
+   * 引用的水印预设（`CompositeV2Preset.id`，见 `features/composite/storeV2`）；**空数组 = 不加水印**。
+   *
+   * 配多个预设 → 每个渠道尺寸各出一套（产出量与文件数按预设数倍增）。
+   * 数组顺序即产出顺序，保证同样的配置每次跑出同样的结果。
+   */
+  watermarkPresetIds: string[]
   /** 纯净版自动伴随：勾了任一渠道媒体时，额外多产一份无水印原图 */
   autoCompanionClean: boolean
+  /** 产出后的按天分发（默认关闭）；见 `src/lib/postprocessDistribution.ts` */
+  distribution: PostprocessDistributionConfig
 }
 
 /**
@@ -198,7 +219,7 @@ export interface PostprocessMediaConfig {
  * 由图片归属推导，两者都**不该**被节点覆盖。
  *
  * 未出现的字段（`undefined`）表示「不表态」，沿继承链向上取值：方向 → 产品 → 产品线 → 全局默认。
- * 要显式表达「这个方向就是不带水印」，用 `watermarkPresetId: null`——`undefined` 才是继承。
+ * 要显式表达「这个方向就是不带水印」，用 `watermarkPresetIds: []`——`undefined` 才是继承。
  */
 export interface PostprocessNodeOverride {
   /** 该方向启用的媒体 id（含 `clean`）；undefined = 继承 */
@@ -209,9 +230,11 @@ export interface PostprocessNodeOverride {
   outputDir?: string
   namePattern?: string
   creator?: string
-  /** 水印预设 id；`null` = 该方向不加水印 */
-  watermarkPresetId?: string | null
+  /** 水印预设 id 列表；`[]` = 该方向不加水印（显式覆盖），`undefined` = 继承 */
+  watermarkPresetIds?: string[]
   autoCompanionClean?: boolean
+  /** 分发配置；`undefined` = 继承。**整份替换**而非字段合并，要单独关掉写 `{ enabled: false }` */
+  distribution?: PostprocessDistributionConfig
   /** 该方向是否参与自动后处理；false = 归属此方向的图片不产出变体 */
   enabled?: boolean
 }
@@ -234,8 +257,10 @@ export function applyPostprocessOverride(
     outputDir: override.outputDir ?? base.outputDir,
     namePattern: override.namePattern ?? base.namePattern,
     creator: override.creator ?? base.creator,
-    watermarkPresetId: override.watermarkPresetId === undefined ? base.watermarkPresetId : override.watermarkPresetId,
+    watermarkPresetIds: override.watermarkPresetIds ?? base.watermarkPresetIds,
     autoCompanionClean: override.autoCompanionClean ?? base.autoCompanionClean,
+    // 分发是整份配置对象：只读使用，不做深拷贝
+    distribution: override.distribution ?? base.distribution,
   }
 }
 
@@ -253,6 +278,25 @@ export interface BuildPostprocessOutputsInput {
    * 非空时按「项目 × 媒体 × 尺寸」展开，项目顺序即产出顺序。
    */
   projects?: PostprocessProjectTarget[]
+  /**
+   * 水印预设维度；缺省或空数组 → 每个尺寸只出 1 个不叠水印的单元。
+   * 非空时再乘一层：同一尺寸按预设各出一份，顺序即产出顺序。
+   */
+  watermarks?: PostprocessWatermarkRef[]
+}
+
+/** 按 id 去重（保序），丢掉空 id 的条目。 */
+function dedupeWatermarks(watermarks: PostprocessWatermarkRef[] | undefined): PostprocessWatermarkRef[] {
+  if (!watermarks?.length) return []
+  const seen = new Set<string>()
+  const result: PostprocessWatermarkRef[] = []
+  for (const item of watermarks) {
+    const id = typeof item?.id === 'string' ? item.id.trim() : ''
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    result.push({ id, name: typeof item.name === 'string' ? item.name.trim() : '' })
+  }
+  return result
 }
 
 function dedupeMediaIds(mediaIds: string[]): string[] {
@@ -267,10 +311,12 @@ function dedupeMediaIds(mediaIds: string[]): string[] {
 }
 
 /**
- * 组合出全部后处理变体：`勾选的项目 × 勾选的媒体 × 该媒体同方向的启用尺寸`。
+ * 组合出全部后处理变体：`勾选的项目 × 勾选的媒体 × 该媒体同方向的启用尺寸 × 水印预设`。
  *
  * 纯函数，无副作用；幂等输入必得幂等输出（顺序稳定）。选择「先定方向、再筛尺寸」而不是反过来。
  * 项目维度缺省时不展开（单元里不带 `project`），保持「只按媒体产出」的旧行为。
+ * 水印预设与媒体、项目同为**维度**：配了 N 个预设，每个渠道尺寸就出 N 份。
+ * 纯净版是原图本身，**不随预设倍增**（同一张原图存 N 份毫无意义）。
  */
 export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): PostprocessOutputPlan {
   const media = input.media ?? DEFAULT_POSTPROCESS_MEDIA
@@ -282,6 +328,7 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
   const sourceDirection = resolveOutputDirection(input.sourceWidth, input.sourceHeight)
   const direction = input.direction ?? (sizeValid ? sourceDirection : 'landscape')
   const mediaIds = dedupeMediaIds(input.mediaIds)
+  const watermarks = dedupeWatermarks(input.watermarks)
   // 项目维度缺省用单个 null 占位，让下面的循环只有一份实现
   const projects: (PostprocessProjectTarget | null)[] = input.projects?.length ? input.projects : [null]
 
@@ -320,7 +367,7 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
         continue
       }
       for (const size of matchMediaSizes(target, direction)) {
-        units.push({
+        const unit: PostprocessOutputUnit = {
           mediaId: target.id,
           mediaName: target.name,
           sizeId: size.id,
@@ -330,7 +377,13 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
           clean: false,
           direction: resolveOutputDirection(size.width, size.height),
           ...projectField,
-        })
+        }
+        // 没配预设 → 该尺寸只出一份不叠水印的；配了 → 每个预设各出一份
+        if (watermarks.length === 0) {
+          units.push(unit)
+          continue
+        }
+        for (const watermark of watermarks) units.push({ ...unit, watermark })
       }
     }
   }

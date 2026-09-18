@@ -190,3 +190,56 @@ describe('buildSourceVariantPlans', () => {
     expect(plans.map((plan) => plan.sourceIndex)).toEqual([3, 3])
   })
 })
+
+describe('多水印预设的子目录分层', () => {
+  const watermarks = [
+    { id: 'wm-a', name: '客户甲' },
+    { id: 'wm-b', name: '客户乙' },
+  ]
+
+  it('resolvePostprocessSubFolders 只在要求时追加预设层，无预设的单元不受影响', () => {
+    const project = { collectionId: 'c1', line: 'L', product: 'P', direction: 'D' }
+    expect(resolvePostprocessSubFolders(makeUnit({ project }))).toEqual(['L', 'P', 'D'])
+    expect(resolvePostprocessSubFolders(makeUnit({ project, watermark: watermarks[0] }))).toEqual(['L', 'P', 'D'])
+    expect(
+      resolvePostprocessSubFolders(makeUnit({ project, watermark: watermarks[0] }), { includePresetFolder: true }),
+    ).toEqual(['L', 'P', 'D', '客户甲'])
+  })
+
+  it('单预设不额外分层，保持既有目录结构', () => {
+    const { plans } = buildSourceVariantPlans({
+      source,
+      config: shortPattern,
+      startSequence: 1,
+      units: [makeUnit({ watermark: watermarks[0] })],
+    })
+
+    expect(plans[0].subFolders).toEqual([])
+  })
+
+  it('多预设时按预设名分子目录，不再靠后缀兜底区分', () => {
+    const { plans } = buildSourceVariantPlans({
+      source,
+      config: shortPattern,
+      startSequence: 1,
+      units: [makeUnit({ watermark: watermarks[0] }), makeUnit({ watermark: watermarks[1] })],
+    })
+
+    expect(plans.map((plan) => plan.subFolders)).toEqual([['客户甲'], ['客户乙']])
+  })
+
+  it('纯净版混在多预设里时仍不进预设子目录', () => {
+    const { plans } = buildSourceVariantPlans({
+      source,
+      config: shortPattern,
+      startSequence: 1,
+      units: [
+        makeUnit({ clean: true, maxSizeKb: 0 }),
+        makeUnit({ watermark: watermarks[0] }),
+        makeUnit({ watermark: watermarks[1] }),
+      ],
+    })
+
+    expect(plans.map((plan) => plan.subFolders)).toEqual([[], ['客户甲'], ['客户乙']])
+  })
+})

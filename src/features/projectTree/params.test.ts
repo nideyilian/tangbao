@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_POSTPROCESS_DISTRIBUTION } from '../../lib/postprocessDistribution'
 import type { PostprocessMediaConfig } from '../../lib/postprocessMedia'
 import type { AssetCollection } from '../../types'
 import {
   buildProjectNodeParams,
   mergePostprocessNodeOverride,
+  normalizePostprocessNodeOverride,
   normalizeProjectNodeParamsMap,
   pickDeepestCollectionId,
   resolveProjectNodeKind,
@@ -38,8 +40,9 @@ function baseConfig(): PostprocessMediaConfig {
     outputDir: '',
     namePattern: '{line}-{product}-{direction}-{seq}',
     creator: '',
-    watermarkPresetId: null,
+    watermarkPresetIds: [],
     autoCompanionClean: true,
+    distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
   }
 }
 
@@ -85,10 +88,10 @@ describe('resolveProjectPostprocessSlice —— 逐级继承', () => {
 
   it('产品线上配一次，整条线下的方向都继承到', () => {
     const params: ProjectNodeParamsMap = {
-      [LINE]: { postprocess: { watermarkPresetId: 'preset-line', creator: '设计组' } },
+      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'], creator: '设计组' } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig())
-    expect(slice.config.watermarkPresetId).toBe('preset-line')
+    expect(slice.config.watermarkPresetIds).toEqual(['preset-line'])
     expect(slice.config.creator).toBe('设计组')
     expect(slice.sourcedFrom).toBe(LINE)
     expect(slice.sourcedDepth).toBe(0)
@@ -96,42 +99,42 @@ describe('resolveProjectPostprocessSlice —— 逐级继承', () => {
 
   it('中间层只覆盖自己声明的字段，其余仍继承自上层', () => {
     const params: ProjectNodeParamsMap = {
-      [LINE]: { postprocess: { watermarkPresetId: 'preset-line', creator: '设计组' } },
+      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'], creator: '设计组' } },
       [PRODUCT]: { postprocess: { namePattern: '{product}-{seq}' } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig())
     expect(slice.config.namePattern).toBe('{product}-{seq}')
-    expect(slice.config.watermarkPresetId).toBe('preset-line')
+    expect(slice.config.watermarkPresetIds).toEqual(['preset-line'])
     expect(slice.config.creator).toBe('设计组')
     expect(slice.sourcedFrom).toBe(PRODUCT)
   })
 
   it('方向层优先级最高', () => {
     const params: ProjectNodeParamsMap = {
-      [LINE]: { postprocess: { watermarkPresetId: 'preset-line' } },
-      [DIRECTION]: { postprocess: { watermarkPresetId: 'preset-direction' } },
+      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'] } },
+      [DIRECTION]: { postprocess: { watermarkPresetIds: ['preset-direction'] } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig())
-    expect(slice.config.watermarkPresetId).toBe('preset-direction')
+    expect(slice.config.watermarkPresetIds).toEqual(['preset-direction'])
     expect(slice.sourcedDepth).toBe(2)
   })
 
-  it('watermarkPresetId: null 是「显式不带水印」，能压掉上层的非空值；undefined 才是继承', () => {
+  it('watermarkPresetIds: [] 是「显式不带水印」，能压掉上层的非空值；undefined 才是继承', () => {
     const params: ProjectNodeParamsMap = {
-      [LINE]: { postprocess: { watermarkPresetId: 'preset-line' } },
-      [DIRECTION]: { postprocess: { watermarkPresetId: null } },
+      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'] } },
+      [DIRECTION]: { postprocess: { watermarkPresetIds: [] } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig())
-    expect(slice.config.watermarkPresetId).toBeNull()
+    expect(slice.config.watermarkPresetIds).toEqual([])
 
     // 对照：同一位置给 undefined（等价于不写该字段）应当继续继承
     const inherit = resolveProjectPostprocessSlice(
       COLLECTIONS,
-      { [LINE]: { postprocess: { watermarkPresetId: 'preset-line' } }, [DIRECTION]: { postprocess: {} } },
+      { [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'] } }, [DIRECTION]: { postprocess: {} } },
       DIRECTION,
       baseConfig(),
     )
-    expect(inherit.config.watermarkPresetId).toBe('preset-line')
+    expect(inherit.config.watermarkPresetIds).toEqual(['preset-line'])
   })
 
   it('enabled 取链上最深一次显式声明，而不是「任一父级关掉就全关」', () => {
@@ -209,9 +212,9 @@ describe('normalizeProjectNodeParamsMap', () => {
 
   it('保留 null 语义（不带水印）与 false 语义', () => {
     const result = normalizeProjectNodeParamsMap({
-      node: { postprocess: { watermarkPresetId: null, autoCompanionClean: false } },
+      node: { postprocess: { watermarkPresetIds: [], autoCompanionClean: false } },
     })
-    expect(result.node.postprocess).toEqual({ watermarkPresetId: null, autoCompanionClean: false })
+    expect(result.node.postprocess).toEqual({ watermarkPresetIds: [], autoCompanionClean: false })
   })
 
   it('去除 selectedMediaIds 里的空串与重复项', () => {
@@ -224,11 +227,14 @@ describe('normalizeProjectNodeParamsMap', () => {
 
 describe('mergePostprocessNodeOverride', () => {
   it('undefined 的字段表示恢复继承（从记录里删除），null 是有效值', () => {
-    const merged = mergePostprocessNodeOverride({ creator: '设计组', watermarkPresetId: 'p1' }, { creator: undefined })
-    expect(merged).toEqual({ watermarkPresetId: 'p1' })
+    const merged = mergePostprocessNodeOverride(
+      { creator: '设计组', watermarkPresetIds: ['p1'] },
+      { creator: undefined },
+    )
+    expect(merged).toEqual({ watermarkPresetIds: ['p1'] })
 
-    const kept = mergePostprocessNodeOverride({ watermarkPresetId: 'p1' }, { watermarkPresetId: null })
-    expect(kept).toEqual({ watermarkPresetId: null })
+    const kept = mergePostprocessNodeOverride({ watermarkPresetIds: ['p1'] }, { watermarkPresetIds: [] })
+    expect(kept).toEqual({ watermarkPresetIds: [] })
   })
 
   it('字段被全部清空时返回 undefined', () => {
@@ -244,5 +250,77 @@ describe('buildProjectNodeParams', () => {
 
   it('覆盖被清空时返回 null，由调用方删除该键（避免留下「已配置」的空壳）', () => {
     expect(buildProjectNodeParams({ postprocess: { creator: '设计组' } }, { creator: undefined })).toBeNull()
+  })
+})
+
+describe('normalizePostprocessNodeOverride —— 水印预设多值与旧字段迁移', () => {
+  it('数组照收：空数组是「显式不加水印」，与「没表态」区分开', () => {
+    expect(normalizePostprocessNodeOverride({ watermarkPresetIds: ['a', 'b'] })?.watermarkPresetIds).toEqual(['a', 'b'])
+    expect(normalizePostprocessNodeOverride({ watermarkPresetIds: [] })?.watermarkPresetIds).toEqual([])
+  })
+
+  it('旧版单值字段迁移：字符串 → 单元素数组，null → 空数组', () => {
+    expect(normalizePostprocessNodeOverride({ watermarkPresetId: 'a' })?.watermarkPresetIds).toEqual(['a'])
+    expect(normalizePostprocessNodeOverride({ watermarkPresetId: null })?.watermarkPresetIds).toEqual([])
+  })
+
+  it('去重并丢掉空白项', () => {
+    const normalized = normalizePostprocessNodeOverride({ watermarkPresetIds: ['a', ' a ', '  ', 'b'] })
+    expect(normalized?.watermarkPresetIds).toEqual(['a', 'b'])
+  })
+
+  it('新旧字段都没有时该键不出现（保持「缺省 = 继承」）', () => {
+    expect(normalizePostprocessNodeOverride({ creator: '设计组' })?.watermarkPresetIds).toBeUndefined()
+  })
+})
+
+describe('节点分发配置 —— 整份替换而非逐字段继承', () => {
+  it('归一化补齐缺失字段并挡住非法枚举值', () => {
+    const normalized = normalizePostprocessNodeOverride({
+      distribution: { enabled: true, startDate: '20260901', days: 7, mode: 'delete', renameMode: 'uuid' },
+    })
+    expect(normalized?.distribution?.mode).toBe('copy')
+    expect(normalized?.distribution?.renameMode).toBe('date')
+    expect(normalized?.distribution?.skipWeekends).toBe(false)
+  })
+
+  it('方向级整份替换上层，不把两者的字段混起来', () => {
+    const chain: ProjectNodeParamsMap = {
+      [LINE]: {
+        postprocess: {
+          distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, startDate: '20260901', days: 30 },
+        },
+      },
+      [DIRECTION]: {
+        postprocess: {
+          distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, startDate: '20261201', days: 3 },
+        },
+      },
+    }
+
+    const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
+
+    // 天数取的是方向级的 3 而不是产品线的 30：排期由两者共同决定，混着继承会拼出推理不出的组合
+    expect(slice.config.distribution.startDate).toBe('20261201')
+    expect(slice.config.distribution.days).toBe(3)
+  })
+
+  it('没写 distribution 的节点沿用上层值', () => {
+    const chain: ProjectNodeParamsMap = {
+      [LINE]: {
+        postprocess: { distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, startDate: '20260901' } },
+      },
+      [DIRECTION]: { postprocess: { creator: '设计组' } },
+    }
+
+    const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
+    expect(slice.config.distribution.startDate).toBe('20260901')
+  })
+
+  it('传 undefined 可把本级分发摘掉，恢复继承', () => {
+    const current = {
+      postprocess: { distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, days: 5 } },
+    }
+    expect(mergePostprocessNodeOverride(current.postprocess, { distribution: undefined })).toBeUndefined()
   })
 })

@@ -31,7 +31,7 @@ import { COLOR_LABEL_OPTIONS } from './colorLabels'
 import { pinnedFilterKey, pinnedFilterLabel } from './pinnedFilters'
 import FilterControlStrip from './FilterControlStrip'
 import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
-import { useStore } from '../../store'
+import { runManualPostprocess, useStore } from '../../store'
 
 export interface AssetLibraryToolbarProps {
   scopeLabel: string
@@ -187,6 +187,8 @@ function AssetLibraryToolbar({
       {isCollectionScope && <IncludeSubcollectionsSwitch />}
 
       <ProjectTreeEntryButton />
+
+      <ManualPostprocessButton />
 
       {similarLabel && onClearSimilar && (
         <Badge tone="info">
@@ -824,6 +826,48 @@ function ProjectTreeEntryButton() {
       </Button>
       {open && <ProjectTreeWorkbench onClose={() => setOpen(false)} />}
     </>
+  )
+}
+
+/**
+ * 「跑后处理」：对选中的**已有素材**补跑一次后处理。
+ *
+ * 自动触发只发生在生成完成那一刻，历史素材与当时还没启用后处理的老图再也拿不到变体，
+ * 这里补的就是这条路径（旧「后期处理工作区」的批量导出覆盖的场景）。
+ *
+ * 只在有选中时出现：空选中时点它无从判断该处理什么。
+ */
+function ManualPostprocessButton() {
+  const selectedAssetIds = useAssetLibraryStore((s) => s.selectedAssetIds)
+  const assetsById = useAssetLibraryStore((s) => s.assetsById)
+  const showToast = useStore((state) => state.showToast)
+
+  if (selectedAssetIds.length === 0) return null
+
+  const handleClick = () => {
+    // 选中的是素材记录，后处理要的是图片 id；素材已被清理的（imageId 缺失）单独提示，
+    // 不能默默少跑几张——用户看到的是「选了 5 张，产出 3 张」这种对不上的结果。
+    const imageIds: string[] = []
+    let missing = 0
+    for (const assetId of selectedAssetIds) {
+      const asset = assetsById[assetId]
+      if (asset?.imageId) imageIds.push(asset.imageId)
+      else missing += 1
+    }
+    if (missing > 0) showToast(`${missing} 张素材的图片数据已不存在，已跳过`, 'error')
+    void runManualPostprocess(imageIds)
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      data-testid="asset-manual-postprocess"
+      title="对选中素材跑一次后处理：参数与输出目录按每张图所属方向自动取值"
+      onClick={handleClick}
+    >
+      跑后处理 ({selectedAssetIds.length})
+    </Button>
   )
 }
 

@@ -25,7 +25,7 @@ describe('默认配置', () => {
     expect(state.selectedCollectionIds).toEqual([])
     expect(state.direction).toBeNull()
     expect(state.namePattern).toBe(DEFAULT_POSTPROCESS_NAME_PATTERN)
-    expect(state.watermarkPresetId).toBeNull()
+    expect(state.watermarkPresetIds).toEqual([])
     expect(state.autoCompanionClean).toBe(true)
     expect(state.media).toHaveLength(4)
   })
@@ -200,10 +200,10 @@ describe('选择与开关', () => {
     usePostprocessMediaStore.getState().setCreator('杰哥')
     expect(usePostprocessMediaStore.getState().creator).toBe('杰哥')
 
-    usePostprocessMediaStore.getState().setWatermarkPresetId('  ')
-    expect(usePostprocessMediaStore.getState().watermarkPresetId).toBeNull()
-    usePostprocessMediaStore.getState().setWatermarkPresetId('preset-1')
-    expect(usePostprocessMediaStore.getState().watermarkPresetId).toBe('preset-1')
+    usePostprocessMediaStore.getState().setWatermarkPresetIds(['  '])
+    expect(usePostprocessMediaStore.getState().watermarkPresetIds).toEqual([])
+    usePostprocessMediaStore.getState().setWatermarkPresetIds(['preset-1', 'preset-2'])
+    expect(usePostprocessMediaStore.getState().watermarkPresetIds).toEqual(['preset-1', 'preset-2'])
 
     usePostprocessMediaStore.getState().setAutoCompanionClean(false)
     expect(usePostprocessMediaStore.getState().autoCompanionClean).toBe(false)
@@ -250,6 +250,21 @@ describe('归一化（持久化与备份恢复共用）', () => {
     expect(normalizePostprocessMediaConfig({ direction: 'diagonal' }).direction).toBeNull()
     expect(normalizePostprocessMediaConfig({ selectedCollectionIds: 'x' }).selectedCollectionIds).toEqual([])
     expect(normalizePostprocessMediaConfig({ selectedMediaIds: 'x' }).selectedMediaIds).toEqual([PURE_MEDIA_ID])
+  })
+
+  it('旧版单值 watermarkPresetId 迁移成数组（升级后不丢用户已配的水印）', () => {
+    expect(normalizePostprocessMediaConfig({ watermarkPresetId: 'preset-a' }).watermarkPresetIds).toEqual(['preset-a'])
+    expect(normalizePostprocessMediaConfig({ watermarkPresetId: null }).watermarkPresetIds).toEqual([])
+    // 新字段存在时以新字段为准，不再看旧字段
+    expect(
+      normalizePostprocessMediaConfig({ watermarkPresetIds: ['preset-b'], watermarkPresetId: 'preset-a' })
+        .watermarkPresetIds,
+    ).toEqual(['preset-b'])
+    // 去重与空值清理
+    expect(normalizePostprocessMediaConfig({ watermarkPresetIds: ['a', 'a', '  ', 'b'] }).watermarkPresetIds).toEqual([
+      'a',
+      'b',
+    ])
   })
 
   it('备份恢复走归一化，缺字段不抛错', () => {
@@ -367,5 +382,37 @@ describe('产出计划的项目维度', () => {
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })
     expect(plan.units.map((unit) => unit.mediaId)).toEqual(['clean', 'gdt'])
     expect('project' in plan.units[0]).toBe(false)
+  })
+})
+
+describe('分发配置', () => {
+  it('默认关闭，且快照里带着这一份配置', () => {
+    expect(usePostprocessMediaStore.getState().distribution.enabled).toBe(false)
+    expect(getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()).distribution.enabled).toBe(false)
+  })
+
+  it('patchDistribution 只改传入的字段，其余保持', () => {
+    usePostprocessMediaStore.getState().patchDistribution({ enabled: true, startDate: '20260901', days: 7 })
+    usePostprocessMediaStore.getState().patchDistribution({ days: 14 })
+
+    const config = usePostprocessMediaStore.getState().distribution
+    expect(config.enabled).toBe(true)
+    expect(config.startDate).toBe('20260901')
+    expect(config.days).toBe(14)
+  })
+
+  it('patchDistribution 走归一化，挡住非法枚举与 0 天', () => {
+    usePostprocessMediaStore.getState().patchDistribution({ days: 0, mode: 'delete' } as never)
+
+    const config = usePostprocessMediaStore.getState().distribution
+    expect(config.days).toBe(1)
+    expect(config.mode).toBe('copy')
+  })
+
+  it('归一化持久化数据时把分发补成完整结构', () => {
+    const config = normalizePostprocessMediaConfig({ distribution: { enabled: true, startDate: '20260901' } })
+    expect(config.distribution.enabled).toBe(true)
+    expect(config.distribution.days).toBe(1)
+    expect(config.distribution.mode).toBe('copy')
   })
 })

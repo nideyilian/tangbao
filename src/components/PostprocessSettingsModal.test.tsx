@@ -174,15 +174,15 @@ describe('PostprocessSettingsModal', () => {
     expect(body).toContain('缺少 {seq}')
   })
 
-  it('水印预设下拉列出可用预设', () => {
+  it('水印预设是多选，文案讲清「一个都不勾 = 不叠水印」', () => {
     const body = render()
     expect(body).toContain('水印预设')
-    expect(body).toContain('不加水印')
+    expect(body).toContain('一个都不勾 = 不叠水印')
   })
 
-  it('引用了不存在的水印预设时提示将跳过叠加', () => {
+  it('引用了不存在的水印预设时提示会整批跳过', () => {
     act(() => {
-      usePostprocessMediaStore.getState().setWatermarkPresetId('preset-ghost')
+      usePostprocessMediaStore.getState().setWatermarkPresetIds(['preset-ghost'])
     })
     const body = render()
     expect(body).toContain('引用的水印预设已不存在')
@@ -285,5 +285,32 @@ describe('启用范围的继承态', () => {
     expect(checkboxFor('智能客服').disabled).toBe(false)
     expect(checkboxFor('机器人').checked).toBe(false)
     expect(checkboxFor('机器人').disabled).toBe(false)
+  })
+})
+
+describe('分发配置区', () => {
+  it('默认关闭时只留开关，不展开具体字段', () => {
+    const body = render()
+    expect(body).toContain('启用分发')
+    expect(body).not.toContain('分配天数')
+  })
+
+  it('开启后展开排期相关字段', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().patchDistribution({ enabled: true })
+    })
+    const body = render()
+    expect(body).toContain('起始日期')
+    expect(body).toContain('分配天数')
+    expect(body).toContain('搬运方式')
+    expect(body).toContain('重命名方式')
+  })
+
+  it('开了开关但日期不合法时给出原因，而不是静默什么都不做', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().patchDistribution({ enabled: true })
+    })
+    const body = render()
+    expect(body).toContain('起始日期需填满 8 位数字')
   })
 })

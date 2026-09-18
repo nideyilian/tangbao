@@ -1032,12 +1032,14 @@ function assertNoSymlinkInPath(targetPath: string): void {
   }
 }
 
-export async function distributeCompositeFile(payload: unknown): Promise<{ success: boolean }> {
-  if (!payload || typeof payload !== 'object') return { success: false }
+export async function distributeCompositeFile(payload: unknown): Promise<{ success: boolean; error?: string }> {
+  if (!payload || typeof payload !== 'object') return { success: false, error: '参数无效' }
   const input = payload as { sourcePath: string; targetPath: string; mode: 'copy' | 'move'; appendRandomByte?: boolean }
   try {
     const sourceSafe = assertAllowedRealPath(input.sourcePath)
-    if (!existsSync(sourceSafe)) return { success: false }
+    // 带回原因：渲染进程侧只能拿到这里返回的字符串，不返回的话用户看到的全是「未知错误」，
+    // 而分发失败最常见的原因（目标未授权、源文件已被搬走）恰恰都是可解释、可自助修复的。
+    if (!existsSync(sourceSafe)) return { success: false, error: '源文件不存在' }
 
     // 目标目录必须已在允许根内（来源目录扫描时已授权，分发目标是其子目录）。
     // 不再自动加根：防止渲染进程借该通道把任意目录加入白名单。
@@ -1069,7 +1071,7 @@ export async function distributeCompositeFile(payload: unknown): Promise<{ succe
     return { success: true }
   } catch (error) {
     console.error('distributeCompositeFile error', error)
-    return { success: false }
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
 

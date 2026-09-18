@@ -4,6 +4,7 @@ import {
   findDuplicatedPostprocessNameTokens,
   findMissingPostprocessNameTokens,
   findUnknownPostprocessNameTokens,
+  buildPostprocessOutputName,
   formatPostprocessSizeToken,
   listPostprocessNameTokens,
   renderPostprocessNamePattern,
@@ -112,6 +113,29 @@ describe('renderPostprocessNamePattern', () => {
     }
     expect(renderPostprocessNamePattern(DEFAULT_POSTPROCESS_NAME_PATTERN, context)).toBe(
       renderPostprocessNamePattern(DEFAULT_POSTPROCESS_NAME_PATTERN, context),
+    )
+  })
+})
+
+describe('{preset} token（多套水印时区分同名产物）', () => {
+  it('取水印预设名；没有水印时整段删除', () => {
+    expect(renderPostprocessNamePattern('{product}-{preset}-{seq}', { product: 'A', preset: '客户甲', seq: 3 })).toBe(
+      'A-客户甲-3',
+    )
+    expect(renderPostprocessNamePattern('{product}-{preset}-{seq}', { product: 'A', seq: 3 })).toBe('A-3')
+  })
+
+  it('已登记进 token 表（UI 的快捷插入才不会漏掉它）', () => {
+    expect(listPostprocessNameTokens('{preset}')).toEqual(['preset'])
+    expect(findUnknownPostprocessNameTokens('{preset}')).toEqual([])
+  })
+
+  it('buildPostprocessOutputName 从单元的 watermark 取预设名', () => {
+    const config = { namePattern: '{media}-{preset}-{seq}', creator: '' }
+    const unit = { mediaName: '广点通', width: 1280, height: 720, direction: 'landscape' as const }
+    expect(buildPostprocessOutputName(config, unit, {}, 1)).toBe('广点通-1')
+    expect(buildPostprocessOutputName(config, { ...unit, watermark: { name: '客户甲' } }, {}, 2)).toBe(
+      '广点通-客户甲-2',
     )
   })
 })

@@ -263,3 +263,86 @@ describe('buildPostprocessOutputs 的项目维度', () => {
     expect(plan.units.map((unit) => unit.project?.collectionId)).toEqual(['p1', 'p2'])
   })
 })
+
+describe('多水印预设展开', () => {
+  const watermarks = [
+    { id: 'wm-a', name: '客户甲' },
+    { id: 'wm-b', name: '客户乙' },
+  ]
+
+  it('配 N 个预设 → 每个渠道尺寸各出 N 份，单元各自带自己的预设', () => {
+    const plan = buildPostprocessOutputs({
+      mediaIds: ['gdt'],
+      sourceWidth: 1280,
+      sourceHeight: 720,
+      watermarks,
+    })
+
+    // gdt 在横版下只有 1280x720 一个尺寸，所以 1 尺寸 × 2 预设 = 2 份
+    expect(plan.units).toHaveLength(2)
+    expect(plan.units.map((unit) => unit.watermark?.id)).toEqual(['wm-a', 'wm-b'])
+    expect(plan.units.map((unit) => unit.watermark?.name)).toEqual(['客户甲', '客户乙'])
+    expect(plan.units.every((unit) => unit.sizeId === 'gdt-1280x720')).toBe(true)
+  })
+
+  it('纯净版不随预设倍增：同一张原图只出一份', () => {
+    const plan = buildPostprocessOutputs({
+      mediaIds: [PURE_MEDIA_ID],
+      sourceWidth: 1024,
+      sourceHeight: 1024,
+      watermarks,
+    })
+
+    expect(plan.units).toHaveLength(1)
+    expect(plan.units[0].clean).toBe(true)
+    expect('watermark' in plan.units[0]).toBe(false)
+  })
+
+  it('不传预设时每个尺寸只出一份，且单元不含 watermark 字段', () => {
+    for (const input of [
+      { mediaIds: ['gdt'], sourceWidth: 1280, sourceHeight: 720 },
+      { mediaIds: ['gdt'], sourceWidth: 1280, sourceHeight: 720, watermarks: [] },
+    ]) {
+      const plan = buildPostprocessOutputs(input)
+      expect(plan.units).toHaveLength(1)
+      expect('watermark' in plan.units[0]).toBe(false)
+    }
+  })
+
+  it('预设按 id 去重、丢掉空 id，顺序即产出顺序', () => {
+    const plan = buildPostprocessOutputs({
+      mediaIds: ['gdt'],
+      sourceWidth: 1280,
+      sourceHeight: 720,
+      watermarks: [
+        { id: 'wm-b', name: '乙' },
+        { id: 'wm-a', name: '甲' },
+        { id: 'wm-b', name: '乙（重复）' },
+        { id: '  ', name: '空 id' },
+      ],
+    })
+
+    expect(plan.units.map((unit) => unit.watermark?.id)).toEqual(['wm-b', 'wm-a'])
+  })
+
+  it('预设与项目两个维度相乘：项目 × 尺寸 × 预设', () => {
+    const plan = buildPostprocessOutputs({
+      mediaIds: ['gdt'],
+      sourceWidth: 1280,
+      sourceHeight: 720,
+      projects: [
+        { collectionId: 'p1', line: 'L', product: 'P', direction: 'D1' },
+        { collectionId: 'p2', line: 'L', product: 'P', direction: 'D2' },
+      ],
+      watermarks,
+    })
+
+    expect(plan.units).toHaveLength(4)
+    expect(plan.units.map((unit) => `${unit.project?.collectionId}:${unit.watermark?.id}`)).toEqual([
+      'p1:wm-a',
+      'p1:wm-b',
+      'p2:wm-a',
+      'p2:wm-b',
+    ])
+  })
+})

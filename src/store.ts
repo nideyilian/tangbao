@@ -13,7 +13,7 @@ import {
 // 只引类型：执行体在 `scheduleTaskPostprocess` 里动态 import。
 // 静态 import 会把 features/postprocess → features/composite 整条链拉进 store.ts 的模块图，
 // 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
-import type { TaskPostprocessSource } from './features/postprocess/taskPostprocess'
+import type { TaskPostprocessResult, TaskPostprocessSource } from './features/postprocess/taskPostprocess'
 import type {
   AgentConversation,
   AgentMessage,
@@ -810,7 +810,6 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
   if (imageIds.length === 0) return
 
   const config = usePostprocessMediaStore.getState()
-  const projectParams = useProjectTreeParamsStore.getState().params
   // 勾选项 = 后处理的**启用范围**（不是产出目标——产出目标由图片归属决定）。
   // 一个都没勾就是不启用：不看树上有多少参数，否则「没勾却照跑」会与输入栏的「未启用」自相矛盾。
   if (config.selectedCollectionIds.length === 0) return
@@ -823,13 +822,61 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
   // 先占位再执行：本函数是 fire-and-forget，防同一批图被两次触发重复产出
   targets.forEach((imageId) => postprocessedSourceKeys.add(`${taskId}:${imageId}`))
 
-  const ownership = await resolveImageOwnership(targets, {
+  const result = await executePostprocessImageIds(targets, {
     // 批次任务会自动归档到项目文件夹，归属能决定参数、输出目录和 `{line}/{product}/{direction}` 命名段，
     // 所以即使树上还没配参数也要等一下（`resolveImageOwnership` 一拿到归属就提前退出，不是干等 2s）。
     waitForOwnership: Boolean(task.sopBatch),
+    alreadyProducedImageIds: [...produced],
+    createdAt: task.createdAt,
+    taskId,
   })
+  if (!result) return
+
+  if (result.outputs.length > 0) {
+    const latest = useStore.getState().tasks.find((item) => item.id === taskId)
+    updateTaskInStore(taskId, {
+      postprocessOutputs: [...(latest?.postprocessOutputs ?? []), ...result.outputs],
+      rawImageId: latest?.rawImageId ?? result.outputs[0].rawImageId,
+    })
+  }
+  reportPostprocessResult(result)
+}
+
+/** 把执行结果翻成用户提示：产出数、被跳过媒体的原因，以及最多 3 条 warning。 */
+function reportPostprocessResult(result: TaskPostprocessResult, successPrefix = '后处理完成'): void {
+  const showToast = useStore.getState().showToast
+  if (result.outputs.length > 0) showToast(`${successPrefix}：产出 ${result.outputs.length} 个文件`, 'success')
+  if (result.skippedMediaIds.length > 0) {
+    showToast(`后处理跳过 ${result.skippedMediaIds.length} 个媒体：渠道已被删除`, 'error')
+  }
+  for (const warning of result.warnings.slice(0, 3)) showToast(warning, 'error')
+}
+
+/**
+ * 执行后处理并回报结果（自动触发与手动批量**共用**）。
+ *
+ * 抽出来是因为两个触发点只差「处理哪些图」与「结果记到哪」，其余（归属解析、源图读取、
+ * 参数继承、warning 上报）完全一样。各写一份必然出现「自动跑有归属、手动跑没归属」这类偏差。
+ *
+ * 不碰任务记录：自动触发要写回 `postprocessOutputs`，手动触发没有任务可写，
+ * 把写回塞进来会让两边的幂等语义互相污染。返回 null = 后处理没启用（调用方据此提示）。
+ */
+async function executePostprocessImageIds(
+  imageIds: string[],
+  options: {
+    waitForOwnership: boolean
+    alreadyProducedImageIds?: string[]
+    createdAt?: number
+    taskId?: string
+  },
+): Promise<TaskPostprocessResult | null> {
+  // 启用范围为空 = 没启用。与输入栏的「未启用」显示保持一致，不看树上有多少参数。
+  if (usePostprocessMediaStore.getState().selectedCollectionIds.length === 0) return null
+
+  const ownership = await resolveImageOwnership(imageIds, { waitForOwnership: options.waitForOwnership })
   // 等待期间归档可能新建了项目文件夹，这里取最新的树
   const collections = useAssetLibraryStore.getState().collections
+  const projectParams = useProjectTreeParamsStore.getState().params
 
   const readSource = async (imageId: string, index: number): Promise<TaskPostprocessSource | null> => {
     const rec = await getImage(imageId)
@@ -853,35 +900,59 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
 
   try {
     const { runTaskPostprocess } = await import('./features/postprocess/taskPostprocess')
-    const result = await runTaskPostprocess({
-      taskId,
-      imageIds: targets,
+    return await runTaskPostprocess({
+      // 手动触发没有任务，给一个占位 id：执行体只用它做日志与幂等键，不查任务表
+      taskId: options.taskId ?? 'manual-postprocess',
+      imageIds,
       collections,
       projectParams,
       // 图片来源 → 所在方向：取素材归属里最深的一条，后处理据此自动取参数与输出目录
       resolveImageCollectionId: (imageId) => ownership.get(imageId) ?? null,
-      alreadyProducedImageIds: [...produced],
-      createdAt: task.createdAt,
+      alreadyProducedImageIds: options.alreadyProducedImageIds ?? [],
+      createdAt: options.createdAt,
       readSource,
     })
-
-    if (result.outputs.length > 0) {
-      const latest = useStore.getState().tasks.find((item) => item.id === taskId)
-      updateTaskInStore(taskId, {
-        postprocessOutputs: [...(latest?.postprocessOutputs ?? []), ...result.outputs],
-        rawImageId: latest?.rawImageId ?? result.outputs[0].rawImageId,
-      })
-      useStore.getState().showToast(`后处理完成：产出 ${result.outputs.length} 个文件`, 'success')
-    }
-    if (result.skippedMediaIds.length > 0) {
-      useStore.getState().showToast(`后处理跳过 ${result.skippedMediaIds.length} 个媒体：渠道已被删除`, 'error')
-    }
-    for (const warning of result.warnings.slice(0, 3)) {
-      useStore.getState().showToast(warning, 'error')
-    }
   } catch (error) {
     console.error('后处理产出失败', error)
     useStore.getState().showToast('后处理产出失败', 'error')
+    return null
+  }
+}
+
+/** 手动后处理的重入标记（内存态）。 */
+const manualPostprocessInFlight = new Set<string>()
+
+/**
+ * 手动对一批已有素材跑后处理。
+ *
+ * 存在的意义：自动触发只发生在「任务完成」那一刻，历史素材、以及当时尚未启用后处理的老图
+ * 再也拿不到变体。旧「后期处理工作区」的批量导出正是覆盖这条路径，退役它之前必须先补上。
+ *
+ * 与自动触发的两点不同：
+ * - **不**剔除已产出的图：手动就是「再跑一次」的意思，重名由写盘的 `-2` 后缀兜底，不静默跳过；
+ * - **不**等待归属：素材早已归档完毕，归属是即时可读的（等待窗口只为批次任务的异步归档存在）。
+ */
+export async function runManualPostprocess(imageIds: string[]): Promise<void> {
+  const ids = [...new Set(imageIds.filter((id) => typeof id === 'string' && id.trim()))]
+  if (ids.length === 0) {
+    useStore.getState().showToast('请先选择要跑后处理的素材', 'error')
+    return
+  }
+
+  // 防重入：幂等闸只挡「同一任务的重复触发」，手动重跑是刻意允许的，所以单独用一套在飞标记
+  const pending = ids.filter((id) => !manualPostprocessInFlight.has(id))
+  if (pending.length === 0) return
+  pending.forEach((id) => manualPostprocessInFlight.add(id))
+
+  try {
+    const result = await executePostprocessImageIds(pending, { waitForOwnership: false })
+    if (!result) {
+      useStore.getState().showToast('后处理未启用：请先在项目树里勾选启用范围', 'error')
+      return
+    }
+    reportPostprocessResult(result, '手动后处理完成')
+  } finally {
+    pending.forEach((id) => manualPostprocessInFlight.delete(id))
   }
 }
 

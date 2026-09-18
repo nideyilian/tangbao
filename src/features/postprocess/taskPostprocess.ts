@@ -19,6 +19,11 @@ import {
   saveCompositeImage,
 } from '../../lib/localSave'
 import { isCollectionWithinSelection, resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
+import {
+  runPostprocessDistribution,
+  type PostprocessDistributionConfig,
+  type PostprocessDistributionItem,
+} from '../../lib/postprocessDistribution'
 import { buildSourceVariantPlans, type PostprocessVariantPlan } from '../../lib/postprocessRunner'
 import {
   getPostprocessMediaConfigSnapshot,
@@ -27,7 +32,7 @@ import {
 } from '../../storePostprocessMedia'
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
 import type { ProjectNodeParamsMap } from '../projectTree/types'
-import { renderWithMaxKb } from '../composite/lib/compositeExportRuntime'
+import { renderWithMaxKb } from './renderVariant'
 import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
@@ -150,6 +155,17 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   const produced = new Set(input.alreadyProducedImageIds ?? [])
   let sequence = 1
 
+  /**
+   * 待分发的产出，按**生效分发配置**分组。
+   *
+   * 不同方向可以配不同排期（A 方向 7 天、B 方向 30 天），分组后各组分独立平均分配。
+   * 混在一起排会让「每组内部均匀」这个前提失效——组小时分到的天数未必落在自己要的区间里。
+   */
+  const distributionGroups = new Map<
+    string,
+    { config: PostprocessDistributionConfig; items: PostprocessDistributionItem[] }
+  >()
+
   for (let index = 0; index < input.imageIds.length; index += 1) {
     const imageId = input.imageIds[index]
     if (produced.has(imageId)) continue
@@ -185,9 +201,19 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       continue
     }
 
-    const preset = slice.config.watermarkPresetId ? resolveWatermarkPreset(slice.config.watermarkPresetId) : null
-    if (slice.config.watermarkPresetId && !preset) {
-      // 预设被删掉了。刻意**不**静默降级成无水印——那等于给用户交付了错误的投放素材。
+    // 逐个解析本方向引用的预设（一个方向可以挂多套水印）。
+    // 任何一个不存在就整张跳过——刻意**不**静默降级成无水印，那等于给用户交付了错误的投放素材。
+    const presetById = new Map<string, CompositeV2Preset>()
+    let missingPresetId: string | null = null
+    for (const presetId of slice.config.watermarkPresetIds) {
+      const preset = resolveWatermarkPreset(presetId)
+      if (!preset) {
+        missingPresetId = presetId
+        break
+      }
+      presetById.set(presetId, preset)
+    }
+    if (missingPresetId) {
       warnOnce('部分源图已跳过：引用的水印预设不存在')
       continue
     }
@@ -199,7 +225,16 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     }
     await api.authorizeCompositeOutputDirectory?.(outputRoot)
 
-    const selected = selectPostprocessOutputPlan(slice.config, { width: source.width, height: source.height }, projects)
+    // 预设 id → 展示名：产出的文件名与预设子目录要靠它区分多套水印
+    const presetNames: Record<string, string> = {}
+    for (const [presetId, preset] of presetById) presetNames[presetId] = preset.name
+
+    const selected = selectPostprocessOutputPlan(
+      slice.config,
+      { width: source.width, height: source.height },
+      projects,
+      presetNames,
+    )
     for (const mediaId of selected.skippedMediaIds) {
       if (!result.skippedMediaIds.includes(mediaId)) result.skippedMediaIds.push(mediaId)
     }
@@ -214,7 +249,9 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     sequence = nextSequence
 
     for (const plan of plans) {
-      const path = await writeVariant(api, outputRoot, plan, source.dataUrl, preset, result)
+      // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
+      const planPreset = plan.unit.watermark ? (presetById.get(plan.unit.watermark.id) ?? null) : null
+      const path = await writeVariant(api, outputRoot, plan, source.dataUrl, planPreset, result)
       if (!path) continue
       result.outputs.push({
         rawImageId: imageId,
@@ -228,10 +265,56 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         ...(plan.unit.project ? { collectionId: plan.unit.project.collectionId } : {}),
         createdAt: Date.now(),
       })
+
+      // 分发在整批产出之后统一做（要按天平均分配，逐张搬没法均分）。
+      // 这里只登记，`outputRoot` 带上是为了「换目录分发」时保留项目/方向/预设的子目录层级。
+      // 只判 `enabled`：配置不完整（没填日期）交给分发内部报错，静默跳过等于什么都没发生。
+      const distribution = slice.config.distribution
+      if (distribution.enabled) {
+        const key = JSON.stringify(distribution)
+        const group = distributionGroups.get(key)
+        const entry = { path, outputRoot }
+        if (group) group.items.push(entry)
+        else distributionGroups.set(key, { config: distribution, items: [entry] })
+      }
     }
   }
 
+  await distributeOutputs(api, distributionGroups, result)
+
   return result
+}
+
+/**
+ * 执行分发并回写路径。
+ *
+ * 分发失败**不**回滚已产出的文件：产物本身是好的，只是没排到日期目录里，
+ * 报出来让用户自己决定要不要重跑，比删掉已产出的东西更安全。
+ */
+async function distributeOutputs(
+  api: NonNullable<Window['electronAPI']>,
+  groups: Map<string, { config: PostprocessDistributionConfig; items: PostprocessDistributionItem[] }>,
+  result: TaskPostprocessResult,
+): Promise<void> {
+  if (groups.size === 0) return
+  const movedPaths = new Map<string, string>()
+  for (const { config, items } of groups.values()) {
+    try {
+      const outcome = await runPostprocessDistribution(items, config, api)
+      for (const item of outcome.moved) movedPaths.set(item.originalPath, item.targetPath)
+      for (const error of outcome.errors) result.warnings.push(`分发：${error}`)
+      if (outcome.canceled) result.warnings.push('分发已取消：部分产出未排期')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      result.warnings.push(`分发异常：${message}`)
+    }
+  }
+  if (movedPaths.size === 0) return
+  // 产出记录跟着搬。留旧路径会让「已产出」清单指向不存在的文件，重跑判定与打开文件都会失效。
+  for (const output of result.outputs) {
+    const moved = movedPaths.get(output.path)
+    if (moved) output.path = moved
+  }
 }
 
 function isUsableSize(width: number, height: number): boolean {

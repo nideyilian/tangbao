@@ -16,7 +16,6 @@ import {
   Dialog,
   SectionHeader,
   SegmentedControl,
-  SelectField,
   Surface,
   Switch,
   TextField,
@@ -29,6 +28,7 @@ import {
 } from '../../lib/postprocessMedia'
 import { isCollectionWithinSelection } from '../../lib/postprocessProjectTree'
 import { useStore } from '../../store'
+import PostprocessDistributionFields from '../postprocess/PostprocessDistributionFields'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useCompositeV2Store } from '../composite/storeV2'
@@ -55,7 +55,10 @@ const DIRECTION_OPTIONS: Array<{ value: DirectionValue; label: string }> = [
   { value: 'square', label: '方形' },
 ]
 
-const NO_WATERMARK = ''
+/** 勾选/取消一个水印预设 id：追加保序，取消时保持其余顺序。 */
+function togglePresetId(current: string[], presetId: string): string[] {
+  return current.includes(presetId) ? current.filter((id) => id !== presetId) : [...current, presetId]
+}
 
 /** 字段外壳：标题 + 来源标记 + 恢复继承。 */
 function FieldRow({
@@ -111,8 +114,9 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   const globalOutputDir = usePostprocessMediaStore((state) => state.outputDir)
   const globalNamePattern = usePostprocessMediaStore((state) => state.namePattern)
   const globalCreator = usePostprocessMediaStore((state) => state.creator)
-  const globalWatermarkPresetId = usePostprocessMediaStore((state) => state.watermarkPresetId)
+  const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
   const globalAutoCompanionClean = usePostprocessMediaStore((state) => state.autoCompanionClean)
+  const globalDistribution = usePostprocessMediaStore((state) => state.distribution)
   const presets = useCompositeV2Store((state) => state.presets)
 
   const globalConfig = useMemo<PostprocessMediaConfig>(
@@ -124,8 +128,9 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
       outputDir: globalOutputDir,
       namePattern: globalNamePattern,
       creator: globalCreator,
-      watermarkPresetId: globalWatermarkPresetId,
+      watermarkPresetIds: globalWatermarkPresetIds,
       autoCompanionClean: globalAutoCompanionClean,
+      distribution: globalDistribution,
     }),
     [
       media,
@@ -135,8 +140,9 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
       globalOutputDir,
       globalNamePattern,
       globalCreator,
-      globalWatermarkPresetId,
+      globalWatermarkPresetIds,
       globalAutoCompanionClean,
+      globalDistribution,
     ],
   )
 
@@ -171,11 +177,6 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
       showToast('选择输出目录失败，请重试', 'error')
     }
   }
-
-  const watermarkOptions = [
-    { value: NO_WATERMARK, label: '不使用水印' },
-    ...presets.map((preset) => ({ value: preset.id, label: preset.name })),
-  ]
 
   const hasAnyOverride = Boolean(override && Object.keys(override).length > 0)
 
@@ -291,16 +292,26 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
 
           <FieldRow
             label="水印预设"
-            overridden={overridden('watermarkPresetId')}
+            overridden={overridden('watermarkPresetIds')}
             sourceHint={sourceName}
-            onReset={() => reset('watermarkPresetId')}
+            onReset={() => reset('watermarkPresetIds')}
           >
-            <SelectField
-              label=""
-              value={effective.watermarkPresetId ?? NO_WATERMARK}
-              options={watermarkOptions}
-              onChange={(event) => apply({ watermarkPresetId: event.target.value || null })}
-            />
+            {presets.length === 0 ? (
+              <span className="text-xs text-ds-muted dark:text-ds-muted">还没有水印预设可勾选。</span>
+            ) : (
+              <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                {presets.map((preset) => (
+                  <Checkbox
+                    key={preset.id}
+                    checked={effective.watermarkPresetIds.includes(preset.id)}
+                    onChange={() =>
+                      apply({ watermarkPresetIds: togglePresetId(effective.watermarkPresetIds, preset.id) })
+                    }
+                    label={preset.name}
+                  />
+                ))}
+              </div>
+            )}
           </FieldRow>
 
           <FieldRow
@@ -360,6 +371,25 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
               onCheckedChange={(checked) => apply({ autoCompanionClean: checked })}
               label="勾了任一渠道时额外产一份无水印原图"
             />
+          </FieldRow>
+
+          <FieldRow
+            label="分发"
+            overridden={overridden('distribution')}
+            sourceHint={sourceName}
+            onReset={() => reset('distribution')}
+          >
+            <div className="space-y-2">
+              <p className="text-xs text-ds-muted dark:text-ds-muted">
+                分发是「整份」配置：一旦在本级改动，所有分发字段都会固化在这里，以后改上层不再影响这个节点。
+                排期由起始日期与天数共同决定，拆开继承会拼出界面上推理不出来的组合。
+              </p>
+              <PostprocessDistributionFields
+                config={effective.distribution}
+                onChange={(patch) => apply({ distribution: { ...effective.distribution, ...patch } })}
+                onPickError={() => showToast('选择分发目录失败，请重试', 'error')}
+              />
+            </div>
           </FieldRow>
         </section>
       </div>

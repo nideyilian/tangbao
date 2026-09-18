@@ -360,8 +360,10 @@ import {
   GRID_THUMBNAIL_VARIANT,
   resolveImageDisplaySrc,
   purgeGeneratedAssets,
+  runManualPostprocess,
   useStore,
 } from './store'
+import { usePostprocessMediaStore } from './storePostprocessMedia'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -5570,5 +5572,26 @@ describe('migratePersistedState 的版本分派', () => {
       settings: Record<string, unknown>
     }
     expect(migrated.settings.skinId).toBe('dark')
+  })
+})
+
+describe('手动后处理入口', () => {
+  it('没选中素材时只提示，不进入执行', async () => {
+    const showToast = vi.fn()
+    useStore.setState({ showToast })
+
+    await runManualPostprocess([])
+
+    expect(showToast).toHaveBeenCalledWith('请先选择要跑后处理的素材', 'error')
+  })
+
+  it('后处理未启用时不产出，并说明去哪里启用', async () => {
+    const showToast = vi.fn()
+    useStore.setState({ showToast })
+    usePostprocessMediaStore.setState({ selectedCollectionIds: [] })
+
+    await runManualPostprocess(['image-a'])
+
+    expect(showToast).toHaveBeenCalledWith('后处理未启用：请先在项目树里勾选启用范围', 'error')
   })
 })

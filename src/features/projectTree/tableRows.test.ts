@@ -73,8 +73,8 @@ describe('buildProjectTreeTableRows', () => {
 
   it('参数来源按「自身优先，否则最近祖先」标记，用于区分自配与继承', () => {
     const params: ProjectNodeParamsMap = {
-      [LINE_A]: { postprocess: { watermarkPresetId: 'p-line' } },
-      [DIRECTION_A1Y]: { postprocess: { watermarkPresetId: 'p-direction' } },
+      [LINE_A]: { postprocess: { watermarkPresetIds: ['p-line'] } },
+      [DIRECTION_A1Y]: { postprocess: { watermarkPresetIds: ['p-direction'] } },
     }
     const rows = buildProjectTreeTableRows(COLLECTIONS, params)
     const byId = new Map(rows.map((row) => [row.id, row]))

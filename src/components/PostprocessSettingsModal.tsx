@@ -21,13 +21,13 @@ import {
   IconButton,
   SectionHeader,
   SegmentedControl,
-  SelectField,
   Surface,
   Switch,
   TextField,
 } from '../design-system'
 import { useAssetLibraryStore } from '../features/assetLibrary/store'
 import { useCompositeV2Store } from '../features/composite/storeV2'
+import PostprocessDistributionFields from '../features/postprocess/PostprocessDistributionFields'
 import {
   DEFAULT_POSTPROCESS_NAME_PATTERN,
   POSTPROCESS_NAME_TOKENS,
@@ -93,8 +93,9 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   const outputDir = usePostprocessMediaStore((state) => state.outputDir)
   const namePattern = usePostprocessMediaStore((state) => state.namePattern)
   const creator = usePostprocessMediaStore((state) => state.creator)
-  const watermarkPresetId = usePostprocessMediaStore((state) => state.watermarkPresetId)
+  const watermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
   const autoCompanionClean = usePostprocessMediaStore((state) => state.autoCompanionClean)
+  const distribution = usePostprocessMediaStore((state) => state.distribution)
 
   const toggleSelectedMedia = usePostprocessMediaStore((state) => state.toggleSelectedMedia)
   const setSelectedMediaIds = usePostprocessMediaStore((state) => state.setSelectedMediaIds)
@@ -103,8 +104,9 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   const setOutputDir = usePostprocessMediaStore((state) => state.setOutputDir)
   const setNamePattern = usePostprocessMediaStore((state) => state.setNamePattern)
   const setCreator = usePostprocessMediaStore((state) => state.setCreator)
-  const setWatermarkPresetId = usePostprocessMediaStore((state) => state.setWatermarkPresetId)
+  const toggleWatermarkPreset = usePostprocessMediaStore((state) => state.toggleWatermarkPreset)
   const setAutoCompanionClean = usePostprocessMediaStore((state) => state.setAutoCompanionClean)
+  const patchDistribution = usePostprocessMediaStore((state) => state.patchDistribution)
 
   const showToast = useStore((state) => state.showToast)
   const collections = useAssetLibraryStore((state) => state.collections)
@@ -119,8 +121,9 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
       outputDir,
       namePattern,
       creator,
-      watermarkPresetId,
+      watermarkPresetIds,
       autoCompanionClean,
+      distribution,
     }),
     [
       media,
@@ -130,8 +133,9 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
       outputDir,
       namePattern,
       creator,
-      watermarkPresetId,
+      watermarkPresetIds,
       autoCompanionClean,
+      distribution,
     ],
   )
 
@@ -148,9 +152,16 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   const parsedSource = useMemo(() => parseSourceSize(sourceSize), [sourceSize])
   const previewSource = parsedSource ?? FALLBACK_PREVIEW_SIZE
 
+  /** 预设 id → 展示名：产出预览要按它展开「项目 × 媒体 × 尺寸 × 预设」的完整单元数。 */
+  const presetNames = useMemo(() => {
+    const names: Record<string, string> = {}
+    for (const preset of presets) names[preset.id] = preset.name
+    return names
+  }, [presets])
+
   const plan = useMemo(
-    () => selectPostprocessOutputPlan(config, previewSource, projectTargets),
-    [config, previewSource, projectTargets],
+    () => selectPostprocessOutputPlan(config, previewSource, projectTargets, presetNames),
+    [config, previewSource, projectTargets, presetNames],
   )
 
   const nameIssues = useMemo(() => {
@@ -422,24 +433,34 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <TextField
-                label="创作者"
-                containerClassName="min-w-0"
-                value={creator}
-                onChange={(event) => setCreator(event.target.value)}
-                placeholder="供 {creator} 使用"
-              />
-              <SelectField
-                label="水印预设"
-                containerClassName="min-w-0"
-                value={watermarkPresetId ?? ''}
-                onChange={(event) => setWatermarkPresetId(event.target.value ? event.target.value : null)}
-                options={[
-                  { value: '', label: '不加水印' },
-                  ...presets.map((preset) => ({ value: preset.id, label: preset.name })),
-                ]}
-              />
+            <TextField
+              label="创作者"
+              value={creator}
+              onChange={(event) => setCreator(event.target.value)}
+              placeholder="供 {creator} 使用"
+            />
+
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium text-ds-text dark:text-ds-text">水印预设</span>
+              <p className="text-xs text-ds-muted dark:text-ds-muted">
+                可多选：每个渠道尺寸各出一套，产物自动按预设名分子目录；一个都不勾 = 不叠水印。
+              </p>
+              {presets.length === 0 ? (
+                <p className="text-xs text-ds-muted dark:text-ds-muted">
+                  还没有水印预设，可在「后期处理 → 预设管理」里新建。
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+                  {presets.map((preset) => (
+                    <Checkbox
+                      key={preset.id}
+                      checked={watermarkPresetIds.includes(preset.id)}
+                      onChange={() => toggleWatermarkPreset(preset.id)}
+                      label={preset.name}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
 
             <Switch
@@ -449,9 +470,22 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
               onCheckedChange={setAutoCompanionClean}
             />
 
-            {watermarkPresetId && !presets.some((preset) => preset.id === watermarkPresetId) && (
-              <Alert tone="warning">引用的水印预设已不存在，产出时会跳过水印叠加。</Alert>
+            {watermarkPresetIds.some((presetId) => !presets.some((preset) => preset.id === presetId)) && (
+              <Alert tone="warning">
+                引用的水印预设已不存在，归属此方向的图片会整批跳过——不静默降级成无水印，避免交付错的投放素材。
+              </Alert>
             )}
+          </div>
+        </section>
+
+        <section>
+          <SectionHeader title="分发" description="产物写盘后的排期：按天平均分配到日期文件夹，供投放使用。" />
+          <div className="mt-2">
+            <PostprocessDistributionFields
+              config={distribution}
+              onChange={patchDistribution}
+              onPickError={() => showToast('选择分发目录失败，请重试', 'error')}
+            />
           </div>
         </section>
 

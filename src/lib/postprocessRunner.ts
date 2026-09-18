@@ -53,11 +53,23 @@ export function shouldCompressPostprocessUnit(unit: Pick<PostprocessOutputUnit, 
  * 单元 → 输出子目录（项目三级树逐级建目录）。
  *
  * 让同一项目的各渠道变体聚合在一个文件夹里；空段直接跳过，用户只勾到二级时不会留下空目录。
+ *
+ * `includePresetFolder`：同一方向配了多套水印时，产物按预设名再分一层。不加这一层的话，
+ * 同尺寸同渠道的两份产物只能靠 `-2`/`-3` 后缀兜底，用户无法从文件名看出哪份是哪套水印。
  */
-export function resolvePostprocessSubFolders(unit: PostprocessOutputUnit): string[] {
+export function resolvePostprocessSubFolders(
+  unit: PostprocessOutputUnit,
+  options?: { includePresetFolder?: boolean },
+): string[] {
   const project = unit.project
-  if (!project) return []
-  return [project.line, project.product, project.direction].map((part) => (part ?? '').trim()).filter(Boolean)
+  const folders = project
+    ? [project.line, project.product, project.direction].map((part) => (part ?? '').trim()).filter(Boolean)
+    : []
+  if (options?.includePresetFolder && unit.watermark) {
+    const presetName = unit.watermark.name.trim()
+    if (presetName) folders.push(presetName)
+  }
+  return folders
 }
 
 export interface BuildSourceVariantPlansInput {
@@ -80,10 +92,17 @@ export interface BuildSourceVariantPlansResult {
  * 构建单张源图的全部产出清单。
  *
  * 序号只在**成功入清单**的单元上递增，保证同批次内 `{seq}` 连续且不重号。
+ * 同一方向配了多套水印（预设 > 1）时，产物按预设名分子目录；单预设不额外分层，保持既有目录结构。
  */
 export function buildSourceVariantPlans(input: BuildSourceVariantPlansInput): BuildSourceVariantPlansResult {
   const plans: PostprocessVariantPlan[] = []
   let sequence = Number.isFinite(input.startSequence) ? Math.max(1, Math.trunc(input.startSequence)) : 1
+
+  const presetIds = new Set<string>()
+  for (const unit of input.units) {
+    if (unit.watermark) presetIds.add(unit.watermark.id)
+  }
+  const includePresetFolder = presetIds.size > 1
 
   for (const unit of input.units) {
     const project = unit.project
@@ -99,7 +118,7 @@ export function buildSourceVariantPlans(input: BuildSourceVariantPlansInput): Bu
       sourceIndex: input.source.index,
       unit,
       fileName: `${baseName}.${POSTPROCESS_OUTPUT_EXTENSION}`,
-      subFolders: resolvePostprocessSubFolders(unit),
+      subFolders: resolvePostprocessSubFolders(unit, { includePresetFolder }),
       compress: shouldCompressPostprocessUnit(unit),
     })
     sequence += 1

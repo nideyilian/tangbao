@@ -7,6 +7,7 @@
  */
 
 import type { AssetCollection } from '../../types'
+import { normalizePostprocessDistributionConfig } from '../../lib/postprocessDistribution'
 import {
   applyPostprocessOverride,
   type PostprocessMediaConfig,
@@ -156,11 +157,29 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
   if (typeof input.outputDir === 'string') result.outputDir = input.outputDir
   if (typeof input.namePattern === 'string' && input.namePattern.trim()) result.namePattern = input.namePattern.trim()
   if (typeof input.creator === 'string') result.creator = input.creator
-  if (input.watermarkPresetId === null) result.watermarkPresetId = null
-  else if (typeof input.watermarkPresetId === 'string' && input.watermarkPresetId.trim()) {
-    result.watermarkPresetId = input.watermarkPresetId.trim()
+  // 空数组是**显式**「这个方向不加水印」，必须与「没表态」（undefined）区分，所以数组照收不误。
+  // 旧版单值字段（`watermarkPresetId`）一并迁移，否则升级后用户已配的水印会消失。
+  if (Array.isArray(input.watermarkPresetIds)) {
+    const presetIds: string[] = []
+    for (const item of input.watermarkPresetIds) {
+      if (typeof item !== 'string') continue
+      const trimmed = item.trim()
+      if (!trimmed || presetIds.includes(trimmed)) continue
+      presetIds.push(trimmed)
+    }
+    result.watermarkPresetIds = presetIds
+  } else if (typeof input.watermarkPresetId === 'string' && input.watermarkPresetId.trim()) {
+    result.watermarkPresetIds = [input.watermarkPresetId.trim()]
+  } else if (input.watermarkPresetId === null) {
+    result.watermarkPresetIds = []
   }
   if (typeof input.autoCompanionClean === 'boolean') result.autoCompanionClean = input.autoCompanionClean
+  // 分发是**整份**配置：缺字段按默认值补齐，不做「部分继承」。
+  // 排期由「起始日期 + 天数」共同决定，混着继承会拼出「天数取全局 7、起始日期是新填的」这类
+  // 无法从界面上推理出来的组合。要改就整套写在同一个节点上。
+  if (input.distribution && typeof input.distribution === 'object') {
+    result.distribution = normalizePostprocessDistributionConfig(input.distribution)
+  }
   if (typeof input.enabled === 'boolean') result.enabled = input.enabled
 
   return Object.keys(result).length > 0 ? result : undefined

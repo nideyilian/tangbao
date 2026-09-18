@@ -25,6 +25,7 @@ export const POSTPROCESS_NAME_TOKENS = [
   'media',
   'size',
   'seq',
+  'preset',
 ] as const
 
 export type PostprocessNameToken = (typeof POSTPROCESS_NAME_TOKENS)[number]
@@ -45,6 +46,7 @@ export const POSTPROCESS_NAME_TOKEN_LABELS: Record<PostprocessNameToken, string>
   media: '媒体（渠道名）',
   size: '尺寸（1280x720）',
   seq: '序号',
+  preset: '水印预设名',
 }
 
 const TOKEN_PATTERN = /\{([A-Za-z][A-Za-z0-9_]*)\}/g
@@ -57,6 +59,8 @@ export interface PostprocessNameContext {
   direction?: string
   creator?: string
   media?: string
+  /** 水印预设名；同一方向配了多套水印时用来区分文件名 */
+  preset?: string
   /** 尺寸，优先取 width/height；也可直接给已格式化的字符串 */
   size?: { width: number; height: number } | string
   seq?: number
@@ -127,6 +131,8 @@ function resolveTokenValue(token: string, context: PostprocessNameContext): stri
       return context.creator ?? null
     case 'media':
       return context.media ?? null
+    case 'preset':
+      return context.preset ?? null
     case 'size':
       return formatPostprocessSizeToken(context.size) || null
     case 'seq': {
@@ -170,6 +176,8 @@ export interface PostprocessNameTarget {
   width: number
   height: number
   direction: OutputDirection
+  /** 该单元叠加的水印预设；不叠水印时缺省。`{preset}` token 取它的展示名。 */
+  watermark?: { name: string }
 }
 
 /**
@@ -192,6 +200,7 @@ export function buildPostprocessOutputName(
     direction: names.direction ?? getOutputDirectionLabel(unit.direction),
     creator: config.creator,
     media: unit.mediaName,
+    preset: unit.watermark?.name,
     size: { width: unit.width, height: unit.height },
     seq: sequence,
   })

@@ -26,6 +26,11 @@ import {
   type PostprocessOutputPlan,
   type PostprocessProjectTarget,
 } from './lib/postprocessMedia'
+import {
+  DEFAULT_POSTPROCESS_DISTRIBUTION,
+  normalizePostprocessDistributionConfig,
+  type PostprocessDistributionConfig,
+} from './lib/postprocessDistribution'
 
 export type { PostprocessMediaConfig }
 
@@ -49,8 +54,11 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   setOutputDir: (outputDir: string) => void
   setNamePattern: (namePattern: string) => void
   setCreator: (creator: string) => void
-  setWatermarkPresetId: (presetId: string | null) => void
+  setWatermarkPresetIds: (presetIds: string[]) => void
+  toggleWatermarkPreset: (presetId: string) => void
   setAutoCompanionClean: (enabled: boolean) => void
+  /** 局部更新分发配置（只传要改的字段，其余保持） */
+  patchDistribution: (patch: Partial<PostprocessDistributionConfig>) => void
 }
 
 /** 内置媒体表的深拷贝（常量是共享对象，直接引用会被 action 改坏）。 */
@@ -70,8 +78,9 @@ export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
     outputDir: '',
     namePattern: DEFAULT_POSTPROCESS_NAME_PATTERN,
     creator: '',
-    watermarkPresetId: null,
+    watermarkPresetIds: [],
     autoCompanionClean: true,
+    distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
   }
 }
 
@@ -85,6 +94,18 @@ function normalizeStringList(value: unknown): string[] | null {
     result.push(trimmed)
   }
   return result
+}
+
+/**
+ * 水印预设 id 列表归一化。
+ *
+ * 兼容旧版本的**单值**字段 `watermarkPresetId`：那是上一版的落盘格式，
+ * 不迁移的话升级后用户已配好的水印会凭空消失。
+ */
+function normalizeWatermarkPresetIds(input: Record<string, unknown>): string[] {
+  if (Array.isArray(input.watermarkPresetIds)) return normalizeStringList(input.watermarkPresetIds) ?? []
+  const legacy = input.watermarkPresetId
+  return typeof legacy === 'string' && legacy.trim() ? [legacy.trim()] : []
 }
 
 function normalizeSize(raw: unknown): PostprocessMediaSize | null {
@@ -151,11 +172,6 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
       ? input.namePattern.trim()
       : DEFAULT_POSTPROCESS_NAME_PATTERN
 
-  const watermarkPresetId =
-    typeof input.watermarkPresetId === 'string' && input.watermarkPresetId.trim()
-      ? input.watermarkPresetId.trim()
-      : null
-
   return {
     media,
     selectedMediaIds: normalizeStringList(input.selectedMediaIds) ?? defaults.selectedMediaIds,
@@ -164,8 +180,9 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
     outputDir: typeof input.outputDir === 'string' ? input.outputDir : defaults.outputDir,
     namePattern,
     creator: typeof input.creator === 'string' ? input.creator : defaults.creator,
-    watermarkPresetId,
+    watermarkPresetIds: normalizeWatermarkPresetIds(input),
     autoCompanionClean: input.autoCompanionClean !== false,
+    distribution: normalizePostprocessDistributionConfig(input.distribution),
   }
 }
 
@@ -355,16 +372,31 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
 
       setCreator: (creator) => set({ creator: typeof creator === 'string' ? creator : '' }),
 
-      setWatermarkPresetId: (presetId) =>
-        set({ watermarkPresetId: typeof presetId === 'string' && presetId.trim() ? presetId.trim() : null }),
+      setWatermarkPresetIds: (presetIds) => set({ watermarkPresetIds: normalizeStringList(presetIds) ?? [] }),
+
+      toggleWatermarkPreset: (presetId) =>
+        set((state) => {
+          const trimmed = presetId.trim()
+          if (!trimmed) return state
+          const has = state.watermarkPresetIds.includes(trimmed)
+          return {
+            watermarkPresetIds: has
+              ? state.watermarkPresetIds.filter((id) => id !== trimmed)
+              : [...state.watermarkPresetIds, trimmed],
+          }
+        }),
 
       setAutoCompanionClean: (enabled) => set({ autoCompanionClean: enabled === true }),
+
+      patchDistribution: (patch) =>
+        set((state) => ({ distribution: normalizePostprocessDistributionConfig({ ...state.distribution, ...patch }) })),
     }),
     {
       name: 'tangbao-postprocess-media',
-      version: 1,
-      // 无 legacy 适配器：这是新 store，不存在需要从 localStorage 迁移的历史数据
-      // （对比 `assetLibraryUi` / `compositeWorkspace` 那两个有迁移诉求的 ns）。
+      // v2：水印预设由单值 `watermarkPresetId` 改为多值 `watermarkPresetIds`。
+      // 必须 bump —— 版本号不变时 zustand 不会触发 `migrate`，旧字段会被静默丢弃，
+      // 用户上一版配好的水印在升级后凭空消失。
+      version: 2,
       storage: createDesktopJsonStorage('postprocessMedia'),
       partialize: (state) => ({
         media: state.media,
@@ -374,8 +406,9 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         outputDir: state.outputDir,
         namePattern: state.namePattern,
         creator: state.creator,
-        watermarkPresetId: state.watermarkPresetId,
+        watermarkPresetIds: state.watermarkPresetIds,
         autoCompanionClean: state.autoCompanionClean,
+        distribution: state.distribution,
       }),
       migrate: (persisted) => normalizePostprocessMediaConfig(persisted),
     },
@@ -392,8 +425,9 @@ export function getPostprocessMediaConfigSnapshot(state: PostprocessMediaStore):
     outputDir: state.outputDir,
     namePattern: state.namePattern,
     creator: state.creator,
-    watermarkPresetId: state.watermarkPresetId,
+    watermarkPresetIds: [...state.watermarkPresetIds],
     autoCompanionClean: state.autoCompanionClean,
+    distribution: { ...state.distribution },
   }
 }
 
@@ -405,18 +439,23 @@ export function restorePostprocessMediaConfig(raw: unknown): void {
 export type PostprocessOutputSource = { width: number; height: number }
 
 /**
- * 产出计划：`勾选的项目 × 勾选的媒体 × 尺寸`。
+ * 产出计划：`勾选的项目 × 勾选的媒体 × 尺寸 × 水印预设`。
  *
  * 纯净版自动伴随在这里补：只要勾了任一渠道媒体且开关开着，就确保 `clean` 在列；
  * 用户主动取消勾选 `clean` 且未勾任何渠道时不强加（避免空生成）。
  *
  * `projects` 由调用方从项目树解析后传入（store 不依赖 assetLibrary，避免循环/耦合）；
  * 不传则不展开项目维度，单元里也不带 `project` 字段。
+ * `presetNames` 是水印预设 id → 展示名的映射（store 不依赖 composite，同样由调用方注入）。
  */
 export function selectPostprocessOutputPlan(
-  config: Pick<PostprocessMediaConfig, 'media' | 'selectedMediaIds' | 'direction' | 'autoCompanionClean'>,
+  config: Pick<
+    PostprocessMediaConfig,
+    'media' | 'selectedMediaIds' | 'direction' | 'autoCompanionClean' | 'watermarkPresetIds'
+  >,
   source: PostprocessOutputSource,
   projects: PostprocessProjectTarget[] = [],
+  presetNames: Record<string, string> = {},
 ): PostprocessOutputPlan {
   const hasChannel = config.selectedMediaIds.some((id) => id !== PURE_MEDIA_ID)
   const includeClean = config.selectedMediaIds.includes(PURE_MEDIA_ID) || (config.autoCompanionClean && hasChannel)
@@ -431,6 +470,8 @@ export function selectPostprocessOutputPlan(
     sourceHeight: source.height,
     direction: config.direction,
     projects,
+    // id → 展示名；调用方查不到名字时退回 id，宁可在文件名里看见 id 也不要出现空段
+    watermarks: config.watermarkPresetIds.map((id) => ({ id, name: presetNames[id] ?? id })),
   })
 }
 
@@ -444,11 +485,12 @@ export function isPostprocessReady(
   config: PostprocessMediaConfig,
   source?: PostprocessOutputSource,
   projects: PostprocessProjectTarget[] = [],
+  presetNames: Record<string, string> = {},
 ): boolean {
   if (config.selectedCollectionIds.length === 0) return false
   if (config.selectedMediaIds.length === 0) return false
   if (!source) return true
-  return selectPostprocessOutputPlan(config, source, projects).units.length > 0
+  return selectPostprocessOutputPlan(config, source, projects, presetNames).units.length > 0
 }
 
 /**
