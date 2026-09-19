@@ -19,6 +19,12 @@ type RuntimeStore = {
   taskProgress: Record<string, LiveTaskProgress>
   setTaskProgress(taskId: string, progress: LiveTaskProgress): void
   clearTaskProgress(taskId: string): void
+  // 后处理在飞计数。后处理是「点了之后几十秒内没有任何界面变化」的典型场景，
+  // 计数 > 0 时素材库的「跑后处理」按钮显示加载态——用户据此判断「点了到底有没有生效」。
+  // 用计数而不是布尔：自动产出（任务完成触发）与手动补跑可能同时发生。
+  postprocessRunning: number
+  beginPostprocess(): void
+  endPostprocess(): void
 }
 
 export const useRuntimeStore = create<RuntimeStore>()((set) => ({
@@ -93,4 +99,8 @@ export const useRuntimeStore = create<RuntimeStore>()((set) => ({
       delete taskProgress[taskId]
       return { taskProgress }
     }),
+  postprocessRunning: 0,
+  beginPostprocess: () => set((state) => ({ postprocessRunning: state.postprocessRunning + 1 })),
+  // 计数减到 0 为止：异常路径里多调一次 endPostprocess 也不该让计数变负（否则按钮永久转圈）
+  endPostprocess: () => set((state) => ({ postprocessRunning: Math.max(0, state.postprocessRunning - 1) })),
 }))

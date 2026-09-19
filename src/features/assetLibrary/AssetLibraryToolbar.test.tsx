@@ -2,6 +2,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer'
 import { afterEach, describe, expect, it } from 'vitest'
 import AssetLibraryToolbar from './AssetLibraryToolbar'
 import { useAssetLibraryStore } from './store'
+import { useRuntimeStore } from '../../stores/runtimeStore'
 
 function findToggle(root: ReactTestInstance, index: number) {
   // 排除筛选控件条「+」按钮（它也是 aria-expanded 切换按钮，但属于控件条而非筛选/排序弹层）
@@ -143,5 +144,27 @@ describe('AssetLibraryToolbar', () => {
     const pin = root.findByProps({ 'data-testid': 'asset-filter-pin-provider:' })
     expect(pin.props.disabled).toBe(true)
     useAssetLibraryStore.setState({ filters: {} })
+  })
+
+  it('shows a loading state on 跑后处理 while a run is in flight', () => {
+    useAssetLibraryStore.setState({ selectedAssetIds: ['asset-a'] })
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<AssetLibraryToolbar scopeLabel="全部" totalCount={7} />)
+    })
+    const button = () => renderer!.root.findByProps({ 'data-testid': 'asset-manual-postprocess' })
+    expect(button().props.loading).toBe(false)
+
+    // 在飞期间：按钮转圈 + 禁用，用户能看出「点了已经生效」
+    act(() => {
+      useRuntimeStore.setState({ postprocessRunning: 1 })
+    })
+    expect(button().props.loading).toBe(true)
+    expect(button().findByType('button').props.disabled).toBe(true)
+
+    act(() => {
+      useRuntimeStore.setState({ postprocessRunning: 0 })
+    })
+    expect(button().props.loading).toBe(false)
   })
 })

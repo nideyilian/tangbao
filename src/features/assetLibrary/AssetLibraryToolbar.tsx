@@ -32,6 +32,7 @@ import { pinnedFilterKey, pinnedFilterLabel } from './pinnedFilters'
 import FilterControlStrip from './FilterControlStrip'
 import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
 import { runManualPostprocess, useStore } from '../../store'
+import { useRuntimeStore } from '../../stores/runtimeStore'
 
 export interface AssetLibraryToolbarProps {
   scopeLabel: string
@@ -840,11 +841,15 @@ function ProjectTreeEntryButton() {
  * 这里补的就是这条路径（旧「后期处理工作区」的批量导出覆盖的场景）。
  *
  * 只在有选中时出现：空选中时点它无从判断该处理什么。
+ *
+ * 必须显示加载态：一次后处理要读图、逐渠道渲染并做体积二分压缩，几十秒内界面不会有任何
+ * 其他变化——没有加载态时，「正在跑」与「按钮没生效」在用户眼里完全一样。
  */
 function ManualPostprocessButton() {
   const selectedAssetIds = useAssetLibraryStore((s) => s.selectedAssetIds)
   const assetsById = useAssetLibraryStore((s) => s.assetsById)
   const showToast = useStore((state) => state.showToast)
+  const running = useRuntimeStore((s) => s.postprocessRunning > 0)
 
   if (selectedAssetIds.length === 0) return null
 
@@ -866,11 +871,12 @@ function ManualPostprocessButton() {
     <Button
       variant="ghost"
       size="sm"
+      loading={running}
       data-testid="asset-manual-postprocess"
       title="对选中素材跑一次后处理：参数与输出目录按每张图所属方向自动取值"
       onClick={handleClick}
     >
-      跑后处理 ({selectedAssetIds.length})
+      {running ? '后处理中…' : `跑后处理 (${selectedAssetIds.length})`}
     </Button>
   )
 }

@@ -741,8 +741,12 @@ async function saveTaskToLocalFSNow(taskId: string) {
   }
   // 完成/恢复路径兜底：补存尚未写入工作区目录的输出命名副本（幂等，已存过的跳过）
   await saveTaskImagesToLocalFSNow(taskId, task.outputImages ?? [], 0)
-  // 后处理产出（额外产出一份各渠道变体）：未启用配置时直接返回，失败只提示不回滚生成结果
-  void scheduleTaskPostprocess(taskId)
+  // 后处理产出（额外产出一份各渠道变体）：未启用配置时直接返回，失败只提示不回滚生成结果。
+  // fire-and-forget，所以必须自己兜住异常——漏出去的 rejection 不会变成任何界面提示。
+  void scheduleTaskPostprocess(taskId).catch((error) => {
+    console.error('自动后处理触发失败', error)
+    useStore.getState().showToast('自动后处理失败，可在素材库选中素材手动补跑', 'error')
+  })
 }
 
 /** 已产出过后处理的源图键（`${taskId}:${imageId}`）：流式追加与恢复重跑都只处理一次 */
@@ -836,14 +840,40 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
   reportPostprocessResult(result)
 }
 
-/** 把执行结果翻成用户提示：产出数、被跳过媒体的原因，以及最多 3 条 warning。 */
+/**
+ * 把执行结果翻成用户提示：产出数、没产出时的原因。
+ *
+ * **只发一条**：`showToast` 是单槽（`set({ toast })` + 3s 自动清），连发多条会互相顶掉——
+ * 之前「产出 3 个文件」后面紧跟一条 warning，用户只看到 warning，成功那次反而像什么都没发生。
+ * 所以产出数与首条原因合并进同一条。
+ *
+ * 没产出时**也必须**给结论。曾经的写法是「三项皆空就不提示」，而「媒体尺寸全被禁用」这类情况
+ * 恰好三项皆空 → 点了按钮界面毫无变化，与「按钮坏了」无法区分。
+ */
 function reportPostprocessResult(result: TaskPostprocessResult, successPrefix = '后处理完成'): void {
   const showToast = useStore.getState().showToast
-  if (result.outputs.length > 0) showToast(`${successPrefix}：产出 ${result.outputs.length} 个文件`, 'success')
-  if (result.skippedMediaIds.length > 0) {
-    showToast(`后处理跳过 ${result.skippedMediaIds.length} 个媒体：渠道已被删除`, 'error')
+  const produced = result.outputs.length
+  const reason = result.warnings[0]
+
+  if (produced > 0) {
+    // 有原因时降级成 info：结果本身是成功的，但要让用户知道有东西被跳过
+    const message = reason
+      ? `${successPrefix}：产出 ${produced} 个文件；${reason}`
+      : `${successPrefix}：产出 ${produced} 个文件`
+    showToast(message, reason ? 'info' : 'success')
+    return
   }
-  for (const warning of result.warnings.slice(0, 3)) showToast(warning, 'error')
+
+  // 原因放最前：error 型 toast 超过 80 字会被截成「操作失败，请查看详情」，原因就丢了
+  if (reason) {
+    showToast(`没有产出文件：${reason}`, 'error')
+    return
+  }
+  if (result.skippedMediaIds.length > 0) {
+    showToast(`没有产出文件：选中的 ${result.skippedMediaIds.length} 个媒体已被删除`, 'error')
+    return
+  }
+  showToast('没有产出文件：请检查启用范围的方向、媒体与源图归属', 'error')
 }
 
 /**
@@ -867,32 +897,34 @@ async function executePostprocessImageIds(
   // 启用范围为空 = 没启用。与输入栏的「未启用」显示保持一致，不看树上有多少参数。
   if (usePostprocessMediaStore.getState().selectedCollectionIds.length === 0) return null
 
-  const ownership = await resolveImageOwnership(imageIds, { waitForOwnership: options.waitForOwnership })
-  // 等待期间归档可能新建了项目文件夹，这里取最新的树
-  const collections = useAssetLibraryStore.getState().collections
-  const projectParams = useProjectTreeParamsStore.getState().params
-
-  const readSource = async (imageId: string, index: number): Promise<TaskPostprocessSource | null> => {
-    const rec = await getImage(imageId)
-    const dataUrl = rec?.dataUrl || (await ensureImageCached(imageId))
-    if (!dataUrl) return null
-    let width = rec?.width ?? 0
-    let height = rec?.height ?? 0
-    if (!width || !height) {
-      // 后处理要靠源图尺寸判方向、筛尺寸；记录里缺尺寸时从像素解一次
-      try {
-        const image = await loadImageOriented(dataUrl)
-        width = getSourceWidth(image)
-        height = getSourceHeight(image)
-      } catch (error) {
-        console.error('后处理源图尺寸解析失败', index, error)
-        return null
-      }
-    }
-    return { imageId, dataUrl, width, height }
-  }
-
+  const runtime = useRuntimeStore.getState()
+  runtime.beginPostprocess()
   try {
+    const ownership = await resolveImageOwnership(imageIds, { waitForOwnership: options.waitForOwnership })
+    // 等待期间归档可能新建了项目文件夹，这里取最新的树
+    const collections = useAssetLibraryStore.getState().collections
+    const projectParams = useProjectTreeParamsStore.getState().params
+
+    const readSource = async (imageId: string, index: number): Promise<TaskPostprocessSource | null> => {
+      const rec = await getImage(imageId)
+      const dataUrl = rec?.dataUrl || (await ensureImageCached(imageId))
+      if (!dataUrl) return null
+      let width = rec?.width ?? 0
+      let height = rec?.height ?? 0
+      if (!width || !height) {
+        // 后处理要靠源图尺寸判方向、筛尺寸；记录里缺尺寸时从像素解一次
+        try {
+          const image = await loadImageOriented(dataUrl)
+          width = getSourceWidth(image)
+          height = getSourceHeight(image)
+        } catch (error) {
+          console.error('后处理源图尺寸解析失败', index, error)
+          return null
+        }
+      }
+      return { imageId, dataUrl, width, height }
+    }
+
     const { runTaskPostprocess } = await import('./features/postprocess/taskPostprocess')
     return await runTaskPostprocess({
       // 手动触发没有任务，给一个占位 id：执行体只用它做日志与幂等键，不查任务表
@@ -907,9 +939,13 @@ async function executePostprocessImageIds(
       readSource,
     })
   } catch (error) {
+    // 异常必须走「可上报结果」而不是抛出去：调用方是 `void x()`（fire-and-forget），
+    // 抛出去只会变成一条没人看见的未处理 rejection —— 这正是「点了没反应」的来源之一。
     console.error('后处理产出失败', error)
-    useStore.getState().showToast('后处理产出失败', 'error')
-    return null
+    const message = error instanceof Error ? error.message : String(error)
+    return { outputs: [], skippedMediaIds: [], warnings: [`后处理失败：${message}`] }
+  } finally {
+    runtime.endPostprocess()
   }
 }
 
@@ -935,8 +971,16 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
 
   // 防重入：幂等闸只挡「同一任务的重复触发」，手动重跑是刻意允许的，所以单独用一套在飞标记
   const pending = ids.filter((id) => !manualPostprocessInFlight.has(id))
-  if (pending.length === 0) return
+  if (pending.length === 0) {
+    // 静默 return 会让用户以为按钮坏了：明确告诉他在飞，而不是什么都不发生
+    useStore.getState().showToast('后处理正在运行中，请等这批跑完再试', 'info')
+    return
+  }
   pending.forEach((id) => manualPostprocessInFlight.add(id))
+
+  // 开跑立刻给一条提示：后处理（读图 + 逐渠道渲染 + 体积压缩）可能持续几十秒，
+  // 期间按钮会转圈，这条 toast 是「点击已生效」的第二重确认。
+  useStore.getState().showToast(`开始跑后处理：${pending.length} 张素材`, 'info')
 
   try {
     const result = await executePostprocessImageIds(pending, { waitForOwnership: false })
@@ -945,6 +989,11 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
       return
     }
     reportPostprocessResult(result, '手动后处理完成')
+  } catch (error) {
+    // 兜底：任何逃出执行体的异常都要变成用户能看见的提示（调用方是 `void`，抛出去等于没发生）
+    console.error('手动后处理失败', error)
+    const message = error instanceof Error ? error.message : String(error)
+    useStore.getState().showToast(`手动后处理失败：${message}`, 'error')
   } finally {
     pending.forEach((id) => manualPostprocessInFlight.delete(id))
   }

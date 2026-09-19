@@ -5203,4 +5203,113 @@ describe('手动后处理入口', () => {
 
     expect(showToast).toHaveBeenCalledWith('后处理未启用：请先在项目树里勾选启用范围', 'error')
   })
+
+  /**
+   * 「点按钮后没有任何反应」的复现组。
+   *
+   * 契约：**只要点了，就一定有反馈**——开跑时给加载态，结束时无论产出多少都要给结论。
+   * 下面三条覆盖三种曾经完全静默的情形。
+   */
+  const stubElectronApi = (overrides: Record<string, unknown> = {}) => {
+    const electronAPI = {
+      isElectron: true,
+      getLocalSavePath: vi.fn(async () => 'D:\\LocalSaves'),
+      pathJoin: vi.fn(async (base: string, name: string) => `${base}\\${name}`),
+      ensureDir: vi.fn(async () => true),
+      checkExists: vi.fn(async () => false),
+      authorizeCompositeOutputDirectory: vi.fn(async () => true),
+      saveCompositeImage: vi.fn(async () => true),
+      ...overrides,
+    }
+    vi.stubGlobal('window', { electronAPI })
+    return electronAPI
+  }
+
+  /** 一个可用的方向节点：`selectedCollectionIds` 里有它，才不会走「找不到项目目标」。 */
+  const directionFixture = (id = 'direction-a'): AssetCollection => ({
+    id,
+    name: '方向A',
+    normalizedName: '方向a',
+    parentId: null,
+    order: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    pinned: false,
+  })
+
+  it('媒体尺寸全部禁用时零产出，也必须给出「没有产出」的结论', async () => {
+    const showToast = vi.fn()
+    useStore.setState({ showToast })
+    stubElectronApi()
+    useAssetLibraryStore.setState({ collections: [directionFixture()], assetsById: {} })
+    usePostprocessMediaStore.setState({
+      media: [
+        {
+          id: 'gdt',
+          name: '广点通',
+          enabled: true,
+          sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
+        },
+      ],
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: ['direction-a'],
+      autoCompanionClean: false,
+      outputDir: '',
+    })
+    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+
+    await runManualPostprocess(['image-a'])
+
+    const messages = showToast.mock.calls.map(([message]) => String(message))
+    expect(messages.some((message) => message.includes('没有产出'))).toBe(true)
+  })
+
+  it('同一批图还在跑时再次点击，必须提示「正在运行」而不是静默丢弃', async () => {
+    const showToast = vi.fn()
+    useStore.setState({ showToast })
+    stubElectronApi({
+      // 首次运行卡在目录创建，制造「在飞」窗口
+      ensureDir: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        return true
+      }),
+    })
+    useAssetLibraryStore.setState({ collections: [directionFixture()], assetsById: {} })
+    usePostprocessMediaStore.setState({
+      media: [
+        {
+          id: 'gdt',
+          name: '广点通',
+          enabled: true,
+          sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
+        },
+      ],
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: ['direction-a'],
+      autoCompanionClean: false,
+      outputDir: '',
+    })
+    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+
+    const first = runManualPostprocess(['image-a'])
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    showToast.mockClear()
+    await runManualPostprocess(['image-a'])
+    const messages = showToast.mock.calls.map(([message]) => String(message))
+    expect(messages.some((message) => message.includes('正在运行'))).toBe(true)
+    await first
+  })
+
+  it('执行前段抛错也必须反馈，且不向外抛未处理的 rejection', async () => {
+    const showToast = vi.fn()
+    useStore.setState({ showToast })
+    usePostprocessMediaStore.setState({ selectedCollectionIds: ['direction-a'] })
+    const spy = vi.spyOn(useAssetLibraryStore, 'getState').mockImplementation(() => {
+      throw new Error('素材库读取失败')
+    })
+
+    await expect(runManualPostprocess(['image-a'])).resolves.toBeUndefined()
+    expect(showToast).toHaveBeenCalled()
+    spy.mockRestore()
+  })
 })

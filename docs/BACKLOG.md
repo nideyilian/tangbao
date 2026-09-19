@@ -435,6 +435,74 @@
 
 ---
 
+### TB-040 水印预设导出 / 导入（含树状归属）
+
+- **来源**：杰哥原话「支持将当前水印预设配置导出为文件保存，并支持从文件导入恢复预设，
+  方便我分享或导入别人的水印，记得要带树状归属的信息」（2026-09-19）
+- **状态**：DOING · 写线：主写线
+- **验收标准**（可测）
+  1. 导出：库里勾选 → 只导勾选的；未勾选 → 导全部；文件内容含 `presets` + `bindings`
+     （路径名数组 + 可选渠道名）+ `identifier`；图片资产内嵌为 dataUrl
+  2. 归属只收**显式声明**（`params[节点].watermarkPresetIds` / `byMedia[渠道].*`），
+     继承来的不导；节点已删除的不导
+  3. 导入：路径逐层匹配成功才写绑定；匹配不上进 `unmatched`，**不自动建节点**
+  4. 导入同 id 覆盖且**保留原位**，新 id 追加末尾；本机无标识符时才采用文件里的
+  5. 非本功能导出的 JSON / 更高版本 / 空 presets → 明确拒绝，不猜着导入
+  6. 单测覆盖收集、解析、路径匹配、导入计划；`npm run verify` 全绿
+- **影响面**：新增 `lib/compositePresetTransfer.ts`、`lib/compositeIdentifier.ts`；
+  `storeV2`（v5→v6 + `mergeImportedPresets`）、`PresetManagementTab`（导入/导出按钮）
+- **已知坑**：导出保存目录受主进程白名单限制（桌面/文档/下载/图片/userData），
+  选到别处会写失败 → 已给明确提示；见 RISK R-31
+- **回滚点**：本轮改动仅 4 个新文件 + 3 个改动文件，可整包 revert
+
+### TB-041 水印标识符附加（全局一份 · 即时生效）
+
+- **来源**：杰哥原话「提供一个专门的标识符输入位置……有文字的水印按设置在文案开头/结尾/两侧
+  附加；没有文字水印的自动在左下角添加；位置可设置且对所有相关水印即时生效」（2026-09-19）
+- **状态**：DOING · 写线：主写线
+- **验收标准**（可测）
+  1. 全局一份配置（`storeV2.identifier`），无单预设例外（已与杰哥确认）
+  2. 有可出字的文字层 → 按 `prefix` / `suffix` / `both` 附加；**多行只贴整段首尾**
+  3. 无文字水印 → 生成左下角（`anchor: bottom-left`）标识符层，字号按短边比例
+  4. 改文本或位置后，画布预览与后处理产出**立即**变化（overlay 缓存键含标识符签名）
+  5. 纯空格标识符 = 不启用；标识符**不写回预设**（导出预设不夹带署名写死）
+  6. 持久化 v5→v6 补默认值，升级后旧水印渲染结果不变
+- **影响面**：`lib/compositeIdentifier.ts`、`compositeRendererV2.ts`（drawLayer + 缓存键）、
+  `storeV2`、`PresetCanvasEditor`（effect 依赖加 identifier）、`PresetManagementTab`（输入区）
+- **已知坑**：**overlay 缓存键必须含标识符签名**，否则「改了不生效」；见 RISK R-32
+- **回滚点**：同上
+
+---
+
+### TB-043 「跑后处理」点了没反应：三条静默路径 + 加载态
+
+- **来源**：杰哥反馈「点击『跑后处理』按钮后没有任何反应，页面也没有任何反馈或提示」（2026-09-19）
+- **状态**：DONE · 写线：主写线
+- **根因（已用测试复现，非推测）**：按钮事件绑定没问题（store.test.ts「手动后处理入口」全绿），
+  问题在**执行链路上有三条完全静默的路径**，且全程没有加载态：
+  1. **零产出静默**：`reportPostprocessResult` 只在「有产出 / 有被删媒体 / 有 warning」时提示。
+     媒体尺寸全部被禁用时三者皆空（`matchMediaSizes` 返回空 → `units` 为空，且不记 warning）
+     → 点了按钮界面毫无变化。
+  2. **防重入静默丢弃**：`runManualPostprocess` 命中在飞标记时直接 `return`（无提示）→
+     一批还在跑时再点，必然「没反应」。
+  3. **异常变未处理 rejection**：`resolveImageOwnership` 在 try 之外，调用方又是 `void x()`
+     → 该段任何异常都只进控制台，界面零反馈（自动触发同理）。
+  4. **单槽 toast 互相顶掉**：一次结果最多连发 5 条 toast，`showToast` 只保留最后一条（3s），
+     成功那条会被后面的 warning 顶掉。
+- **验收标准**（可测）
+  1. 点击后**立即**出现「开始跑后处理：N 张素材」提示，按钮进入 `loading`（转圈 + 禁用）
+  2. 结束后**任何**结果都有且只有一条结论 toast：有产出报数量（附首条原因），
+     零产出报「没有产出文件：<原因>」
+  3. 在飞期间再点 → 提示「后处理正在运行中」，不再静默 return
+  4. 执行前段抛错 → toast「手动后处理失败：…」，不产生未处理 rejection
+  5. 错误类文案 ≤80 字且原因在前（`getErrorToastMessage` 超长会截成「操作失败，请查看详情」）
+  6. `npm run verify` 全绿
+- **影响面**：`src/store.ts`（`executePostprocessImageIds` / `runManualPostprocess` /
+  `reportPostprocessResult` / 自动触发兜底）、`stores/runtimeStore.ts`（`postprocessRunning` 计数）、
+  `features/assetLibrary/AssetLibraryToolbar.tsx`（按钮 `loading`）
+- **已知坑**：fire-and-forget 调用一律要有 catch，见 RISK R-33
+- **回滚点**：本轮改动集中在 5 个文件，可整包 revert
+
 ## 记录模板（新需求照抄）
 
 ```markdown
