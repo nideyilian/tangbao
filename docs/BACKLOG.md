@@ -503,6 +503,38 @@
 - **已知坑**：fire-and-forget 调用一律要有 catch，见 RISK R-33
 - **回滚点**：本轮改动集中在 5 个文件，可整包 revert
 
+### TB-044 导出位置按渠道分别配置（单渠道可双写）+ 命名模板变量中文化 / 光标插入
+
+- **来源**：杰哥原话「当前导出位置只能设置一个全局总路径，无法满足我的需求…命名模板的变量目前仍以英文显示…支持在光标位置直接插入变量」（2026-09-19）
+- **状态**：DONE · 写线：主写线
+- **改了什么**
+  1. **全局渠道级导出位置**：`PostprocessMediaConfig` 新增 `mediaOutputDirs: Record<渠道 id, string[]>`
+     （每渠道 1~2 个，上限 `MAX_POSTPROCESS_OUTPUT_DIRS = 2`）。后处理设置「输出与命名」新增
+     「按渠道设置导出位置」区块（`features/postprocess/ChannelOutputDirs.tsx`）。
+  2. **双写**：某渠道配 2 个位置时，同一份产物两处各写一份、**文件名相同**；渲染只做一次
+     （体积压缩是逐档试编码，按位置重渲染会让耗时整倍翻）；产出记录只登记主位置，
+     分发（按天排期）两份都排。
+  3. **保留默认位置**：原来的「输出目录」改名「默认输出目录」，仍是兜底；渠道配置只是覆盖。
+  4. **命名模板变量中文化**：按钮显示中文名（`POSTPROCESS_NAME_TOKEN_SHORT_LABELS`），
+     插入的仍是 `{token}`（落盘格式不能改），占位符本身进 tooltip。
+  5. **光标处插入**：`insertPostprocessNameToken(pattern, token, selection)` 取代原来的
+     `setNamePattern(pattern + '{' + token + '}')`；光标位置记在 ref（点按钮时 input 已失焦，
+     现读 `selectionStart` 会被浏览器归零）。设置面板与项目节点参数共用 `NamePatternField`。
+- **生效顺序（逐渠道）**：节点渠道 → 节点通用 → 全局渠道 → 全局默认 → 本地保存目录 `postprocess`
+- **验收标准**（可测）
+  1. 某渠道配两个位置 → 产出后两个目录各有同名文件；配一个 → 只写一个；都不配 → 走默认输出位置
+  2. 配了位置但一个都建不出来 → **跳过并提示**，不悄悄写到本地（`outputRoots.test.ts` 有断言）
+  3. 旧数据（节点 `byMedia[m].outputDir` 单值，已导入 80 处）行为不变，且能与新的 `outputDirs` 共存
+  4. 变量按钮显示中文且 tooltip 带 `{date}`；模板为 `{seq}` 时光标在 0 处点「日期」得 `{date}{seq}`
+  5. `npm run verify` 全绿
+- **影响面**：`lib/postprocessMedia.ts`（模型 + `resolvePostprocessOutputDirs`）、
+  `lib/postprocessNaming.ts`（短标签 + 插入函数）、`storePostprocessMedia.ts`（两个 action + 落盘切片）、
+  `features/projectTree/params.ts`（归一化 `outputDirs`）、`features/postprocess/outputRoots.ts`（新增，写盘位置策略）、
+  `features/postprocess/taskPostprocess.ts`（双写）、两个 UI（`ChannelOutputDirs` / `NamePatternField`）
+- **已知坑**：「节点通用输出目录」比「全局渠道表」优先——节点写了通用值，旗下所有渠道都用它，
+  渠道表被盖住；见 RISK R-34
+- **回滚点**：本轮 16 个文件可整包 revert（无 schema / 无落盘格式变更，`mediaOutputDirs` 缺失即默认空）
+
 ## 记录模板（新需求照抄）
 
 ```markdown

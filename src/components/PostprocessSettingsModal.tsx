@@ -37,6 +37,8 @@ import {
 } from '../design-system'
 import { useAssetLibraryStore } from '../features/assetLibrary/store'
 import { useCompositeV2Store } from '../features/composite/storeV2'
+import ChannelOutputDirs from '../features/postprocess/ChannelOutputDirs'
+import NamePatternField from '../features/postprocess/NamePatternField'
 import PostprocessDistributionFields from '../features/postprocess/PostprocessDistributionFields'
 import ProjectNodeParamsDialog from '../features/projectTree/ProjectNodeParamsDialog'
 import ProjectTreeWorkbench from '../features/projectTree/ProjectTreeWorkbench'
@@ -44,8 +46,6 @@ import { resolveNodeWatermarkBinding } from '../features/projectTree/params'
 import { useProjectTreeParamsStore } from '../features/projectTree/storeProjectTreeParams'
 import {
   DEFAULT_POSTPROCESS_NAME_PATTERN,
-  POSTPROCESS_NAME_TOKENS,
-  POSTPROCESS_NAME_TOKEN_LABELS,
   findDuplicatedPostprocessNameTokens,
   findMissingPostprocessNameTokens,
   findUnknownPostprocessNameTokens,
@@ -108,6 +108,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   const selectedCollectionIds = usePostprocessMediaStore((state) => state.selectedCollectionIds)
   const direction = usePostprocessMediaStore((state) => state.direction)
   const outputDir = usePostprocessMediaStore((state) => state.outputDir)
+  const mediaOutputDirs = usePostprocessMediaStore((state) => state.mediaOutputDirs)
   const namePattern = usePostprocessMediaStore((state) => state.namePattern)
   const creator = usePostprocessMediaStore((state) => state.creator)
   const watermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
@@ -119,6 +120,8 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   const toggleSelectedCollection = usePostprocessMediaStore((state) => state.toggleSelectedCollection)
   const setDirection = usePostprocessMediaStore((state) => state.setDirection)
   const setOutputDir = usePostprocessMediaStore((state) => state.setOutputDir)
+  const setMediaOutputDir = usePostprocessMediaStore((state) => state.setMediaOutputDir)
+  const clearMediaOutputDirs = usePostprocessMediaStore((state) => state.clearMediaOutputDirs)
   const setNamePattern = usePostprocessMediaStore((state) => state.setNamePattern)
   const setCreator = usePostprocessMediaStore((state) => state.setCreator)
   const setAutoCompanionClean = usePostprocessMediaStore((state) => state.setAutoCompanionClean)
@@ -137,6 +140,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
       selectedCollectionIds,
       direction,
       outputDir,
+      mediaOutputDirs,
       namePattern,
       creator,
       watermarkPresetIds,
@@ -149,6 +153,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
       selectedCollectionIds,
       direction,
       outputDir,
+      mediaOutputDirs,
       namePattern,
       creator,
       watermarkPresetIds,
@@ -482,12 +487,12 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
             <section>
               <SectionHeader
                 title="输出与命名"
-                description="只作用于后处理产物。水印预设只提供图层，不参与输出位置与命名。"
+                description="只作用于后处理产物。水印预设只提供图层，不参与输出位置与命名。位置与模板都可以逐渠道单独设，项目方向还能再覆盖一层。"
               />
               <div className="mt-2 space-y-3">
                 <div className="flex items-end gap-2">
                   <TextField
-                    label="输出目录"
+                    label="默认输出目录"
                     containerClassName="min-w-0 flex-1"
                     value={outputDir}
                     onChange={(event) => setOutputDir(event.target.value)}
@@ -502,32 +507,28 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
                   </Button>
                 </div>
 
+                <div className="mt-1">
+                  <ChannelOutputDirs
+                    media={media}
+                    resolveDirs={(mediaId) => mediaOutputDirs[mediaId] ?? []}
+                    resolveInheritedHint={() => outputDir.trim()}
+                    onChangeDir={setMediaOutputDir}
+                    onClearDirs={clearMediaOutputDirs}
+                    onPickError={() => showToast('选择导出位置失败，请重试', 'error')}
+                  />
+                </div>
+
                 <div>
-                  <div className="flex items-end gap-2">
-                    <TextField
-                      label="命名模板"
-                      containerClassName="min-w-0 flex-1"
-                      value={namePattern}
-                      onChange={(event) => setNamePattern(event.target.value)}
-                      placeholder={DEFAULT_POSTPROCESS_NAME_PATTERN}
-                    />
-                    <Button variant="secondary" onClick={() => setNamePattern(DEFAULT_POSTPROCESS_NAME_PATTERN)}>
-                      恢复默认
-                    </Button>
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap justify-center gap-1">
-                    {POSTPROCESS_NAME_TOKENS.map((token) => (
-                      <Button
-                        key={token}
-                        variant="ghost"
-                        size="sm"
-                        title={`插入 ${POSTPROCESS_NAME_TOKEN_LABELS[token]}`}
-                        onClick={() => setNamePattern(`${namePattern}{${token}}`)}
-                      >
-                        {`{${token}}`}
+                  <NamePatternField
+                    value={namePattern}
+                    onChange={setNamePattern}
+                    placeholder={DEFAULT_POSTPROCESS_NAME_PATTERN}
+                    trailing={
+                      <Button variant="secondary" onClick={() => setNamePattern(DEFAULT_POSTPROCESS_NAME_PATTERN)}>
+                        恢复默认
                       </Button>
-                    ))}
-                  </div>
+                    }
+                  />
                   {nameIssues.unknown.length > 0 && (
                     <Alert tone="warning" className="mt-1.5">
                       未知占位符：{nameIssues.unknown.map((token) => `{${token}}`).join('、')}（会原样保留在文件名里）

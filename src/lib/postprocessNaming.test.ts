@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_POSTPROCESS_NAME_PATTERN,
+  POSTPROCESS_NAME_TOKENS,
+  POSTPROCESS_NAME_TOKEN_LABELS,
+  POSTPROCESS_NAME_TOKEN_SHORT_LABELS,
   findDuplicatedPostprocessNameTokens,
   findMissingPostprocessNameTokens,
   findUnknownPostprocessNameTokens,
   buildPostprocessOutputName,
   formatPostprocessSizeToken,
+  insertPostprocessNameToken,
   listPostprocessNameTokens,
   renderPostprocessNamePattern,
 } from './postprocessNaming'
@@ -137,5 +141,61 @@ describe('{preset} token（多套水印时区分同名产物）', () => {
     expect(buildPostprocessOutputName(config, { ...unit, watermark: { name: '客户甲' } }, {}, 2)).toBe(
       '广点通-客户甲-2',
     )
+  })
+})
+
+describe('insertPostprocessNameToken（在光标处插入变量）', () => {
+  it('有光标时插在光标处，而不是追加到末尾', () => {
+    const result = insertPostprocessNameToken('{seq}', 'date' as const, { start: 0, end: 0 })
+    expect(result.pattern).toBe('{date}{seq}')
+  })
+
+  it('把光标后应落的位置算出来（紧跟在插入的占位符之后）', () => {
+    const result = insertPostprocessNameToken('AB', 'line' as const, { start: 1, end: 1 })
+    expect(result.pattern).toBe('A{line}B')
+    expect(result.caret).toBe(1 + '{line}'.length)
+    expect(result.pattern.slice(0, result.caret)).toBe('A{line}')
+  })
+
+  it('有选区时替换选区', () => {
+    // '{date}-{seq}'：`{seq}` 占 7..11，选了它就整段换掉
+    expect(insertPostprocessNameToken('{date}-{seq}', 'media' as const, { start: 7, end: 12 }).pattern).toBe(
+      '{date}-{media}',
+    )
+  })
+
+  it('不给光标时追加到末尾（保留旧的「点一下就加在最后」行为）', () => {
+    expect(insertPostprocessNameToken('{date}', 'seq' as const).pattern).toBe('{date}{seq}')
+    expect(insertPostprocessNameToken('', 'date' as const).pattern).toBe('{date}')
+  })
+
+  it('越界或过期的选区一律夹回合法范围，不抛错', () => {
+    expect(insertPostprocessNameToken('{seq}', 'date' as const, { start: 99, end: 99 }).pattern).toBe('{seq}{date}')
+    expect(insertPostprocessNameToken('{seq}', 'date' as const, { start: -3, end: -1 }).pattern).toBe('{date}{seq}')
+    // start > end（反选）按「从 start 起插」处理
+    expect(insertPostprocessNameToken('{seq}', 'date' as const, { start: 0, end: -5 }).pattern).toBe('{date}{seq}')
+    // 位置本身不可用（NaN）= 「没有光标」，按追加处理，与不传选区一致
+    expect(insertPostprocessNameToken('{seq}', 'date' as const, { start: Number.NaN, end: Number.NaN }).pattern).toBe(
+      '{seq}{date}',
+    )
+  })
+
+  it('插入结果能被模板解析器认出来（不会插进去一个未知占位符）', () => {
+    const result = insertPostprocessNameToken('', 'preset' as const)
+    expect(findUnknownPostprocessNameTokens(result.pattern)).toEqual([])
+    expect(listPostprocessNameTokens(result.pattern)).toEqual(['preset'])
+  })
+})
+
+describe('变量按钮的中文名', () => {
+  it('每个 token 都有短中文名，且不出现英文占位符', () => {
+    for (const token of POSTPROCESS_NAME_TOKENS) {
+      const short = POSTPROCESS_NAME_TOKEN_SHORT_LABELS[token]
+      expect(short).toBeTruthy()
+      expect(short).not.toContain('{')
+      expect(short).not.toContain(token)
+      // 短名是详细标签去括号后的前缀，两者不能各说各的
+      expect(POSTPROCESS_NAME_TOKEN_LABELS[token].startsWith(short)).toBe(true)
+    }
   })
 })

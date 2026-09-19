@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_POSTPROCESS_DISTRIBUTION } from '../../lib/postprocessDistribution'
-import type { PostprocessMediaConfig } from '../../lib/postprocessMedia'
+import { resolvePostprocessOutputDirs, type PostprocessMediaConfig } from '../../lib/postprocessMedia'
 import type { AssetCollection } from '../../types'
 import {
   buildProjectNodeParams,
@@ -41,6 +41,7 @@ function baseConfig(): PostprocessMediaConfig {
     selectedCollectionIds: [],
     direction: null,
     outputDir: '',
+    mediaOutputDirs: {},
     namePattern: '{line}-{product}-{direction}-{seq}',
     creator: '',
     watermarkPresetIds: [],
@@ -585,5 +586,78 @@ describe('byMedia 的合并 —— 逐渠道，不是整份替换', () => {
   it('byMedia: undefined 表示把「按渠道覆盖」整份恢复继承，其余字段不动', () => {
     const current = { byMedia: { baidu: { outputDir: '百度' } }, creator: '设计组' }
     expect(mergePostprocessNodeOverride(current, { byMedia: undefined })).toEqual({ creator: '设计组' })
+  })
+})
+
+describe('byMedia 的两个导出位置（双写）', () => {
+  it('节点渠道配两个位置：整条链解析后两个都在，且优先于节点通用值与全局渠道表', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: {
+        postprocess: {
+          outputDir: '通用目录',
+          byMedia: { baidu: { outputDirs: ['D:/百度一', 'D:/百度二'] } },
+        },
+      },
+    }
+    const global: PostprocessMediaConfig = {
+      ...baseConfig(),
+      outputDir: '全局默认目录',
+      mediaOutputDirs: { baidu: ['D:/全局百度'] },
+    }
+    const slice = resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, global, 'baidu')
+    expect(resolvePostprocessOutputDirs(slice.config, 'baidu')).toEqual(['D:/百度一', 'D:/百度二'])
+    // 层级：节点渠道 → 节点通用 → 全局渠道 → 全局默认。节点写了通用目录，其余渠道就用它
+    expect(resolvePostprocessOutputDirs(slice.config, 'toutiao')).toEqual(['通用目录'])
+
+    // 层级：节点渠道 → 节点通用 → 全局渠道 → 全局默认。节点写了通用目录，其余渠道就用它
+    expect(resolvePostprocessOutputDirs(slice.config, 'toutiao')).toEqual(['通用目录'])
+
+    const noGeneralParams: ProjectNodeParamsMap = {
+      [DIRECTION]: { postprocess: { byMedia: { baidu: { outputDirs: ['D:/百度一'] } } } },
+    }
+    const noGeneralFor = (mediaId: string) =>
+      resolveProjectPostprocessSlice(COLLECTIONS, noGeneralParams, DIRECTION, global, mediaId)
+    // 节点没写通用值时：命中的渠道用节点值，未命中的才轮到全局渠道表 → 再不行是全局默认目录
+    expect(resolvePostprocessOutputDirs(noGeneralFor('baidu').config, 'baidu')).toEqual(['D:/百度一'])
+    expect(resolvePostprocessOutputDirs(noGeneralFor('toutiao').config, 'toutiao')).toEqual(['全局默认目录'])
+  })
+
+  it('只有全局渠道表配了两个位置时，节点没表态的渠道照样双写', () => {
+    const global: PostprocessMediaConfig = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/一', 'D:/二'] } }
+    const slice = resolveProjectPostprocessSlice(
+      COLLECTIONS,
+      { [LINE]: { postprocess: { creator: '某某' } } },
+      LINE,
+      global,
+      'baidu',
+    )
+    expect(resolvePostprocessOutputDirs(slice.config, 'baidu')).toEqual(['D:/一', 'D:/二'])
+  })
+
+  it('归一化保留 outputDirs（含旧单值字段并存）并截到两个', () => {
+    const normalized = normalizePostprocessNodeOverride({
+      byMedia: {
+        baidu: { outputDir: '旧单值', outputDirs: ['D:/一', 'D:/二', 'D:/三'] },
+        toutiao: { outputDirs: ['  ', '  '] },
+      },
+    })
+    expect(normalized?.byMedia?.baidu).toEqual({ outputDir: '旧单值', outputDirs: ['D:/一', 'D:/二'] })
+    // 全是空串 → 归一化成空数组，语义是**显式**「用默认输出位置」（区别于「没表态」的键缺失）
+    expect(normalized?.byMedia?.toutiao).toEqual({ outputDirs: [] })
+  })
+
+  it('合并时写入第二个位置不会清掉第一个（逐槽更新）', () => {
+    const first = buildProjectNodeParams(undefined, { byMedia: { baidu: { outputDirs: ['D:/一'] } } })
+    const second = buildProjectNodeParams(first ?? undefined, {
+      byMedia: { baidu: { outputDirs: ['D:/一', 'D:/二'] } },
+    })
+    expect(second?.postprocess?.byMedia?.baidu).toEqual({ outputDirs: ['D:/一', 'D:/二'] })
+  })
+
+  it('参数表整份归一化后两个位置仍能读出', () => {
+    const map = normalizeProjectNodeParamsMap({
+      [DIRECTION]: { postprocess: { byMedia: { baidu: { outputDirs: ['D:/一', 'D:/二'] } } } },
+    })
+    expect(map[DIRECTION]?.postprocess?.byMedia?.baidu?.outputDirs).toEqual(['D:/一', 'D:/二'])
   })
 })

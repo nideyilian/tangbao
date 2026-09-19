@@ -39,6 +39,34 @@ export const PURE_MEDIA_ID = 'clean'
 /** 「纯净版」的展示名。 */
 export const PURE_MEDIA_NAME = '纯净版'
 
+/**
+ * 单个渠道最多几个导出位置。
+ *
+ * 两个用于「本地留档 + 共享盘交付」这类**双写**：同一份产物在两个位置各存一份，文件名相同。
+ * 上限刻意收成常量而不是放开——导出位置是**写盘放大**（文件数 × 位置数），
+ * 放开后一次误配就能把磁盘写满。
+ */
+export const MAX_POSTPROCESS_OUTPUT_DIRS = 2
+
+/**
+ * 归一化导出位置列表：去首尾空白、丢空串、去重、保序，最多 `MAX_POSTPROCESS_OUTPUT_DIRS` 个。
+ *
+ * 空数组是**有效值**，含义是「用默认输出位置」，与 `undefined`（没表态，继续往上继承）是两件事，
+ * 所以这里和调用方都不能用 `length` 去判「有没有配」。
+ */
+export function normalizeOutputDirList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const result: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (!trimmed || result.includes(trimmed)) continue
+    result.push(trimmed)
+    if (result.length >= MAX_POSTPROCESS_OUTPUT_DIRS) break
+  }
+  return result
+}
+
 /** 内置媒体表（4 媒体 / 15 尺寸）。用户可在后处理设置里增删改。 */
 export const DEFAULT_POSTPROCESS_MEDIA: PostprocessMedia[] = [
   {
@@ -209,6 +237,17 @@ export interface PostprocessMediaConfig {
   direction: OutputDirection | null
   /** 输出目录（绝对路径）；空串 = 沿用既有默认输出位置 */
   outputDir: string
+  /**
+   * 按渠道（`PostprocessMedia.id`）单独指定的导出位置，每个渠道 1~2 个；命中时优先于 `outputDir`。
+   *
+   * - 缺键或空数组 = 该渠道用 `outputDir`（**默认输出位置始终保留**，渠道配置只是覆盖）。
+   * - 配 2 个位置 = 该渠道双写：同一份产物两处各写一份，文件名相同。
+   * - 纯净版没有渠道，因此不在这张表里，固定沿用 `outputDir`。
+   *
+   * 这是「全局渠道层」，与项目树节点上的同名覆盖（`PostprocessNodeOverride.byMedia`）是同一件事的
+   * 两个层级，生效顺序见 `applyPostprocessOverride`。
+   */
+  mediaOutputDirs: Record<string, string[]>
   /** 命名模板，见 `src/lib/postprocessNaming.ts` */
   namePattern: string
   /** 创作者，供 `{creator}` token 取值 */
@@ -230,8 +269,8 @@ export interface PostprocessMediaConfig {
  * 按媒体（渠道）细分的覆盖。
  *
  * 只开放「同一个方向在不同渠道上确实不一样」的两项：
- * - `outputDir`：同一方向各渠道交付到不同目录（实测《输出位置明细》里 25/61 个方向如此，
- *   且三段目录连层级顺序都不同，没法用公共前缀或目录变量塞进一个值）；
+ * - `outputDir` / `outputDirs`：同一方向各渠道交付到不同目录（实测《输出位置明细》里 25/61 个方向如此，
+ *   且三段目录连层级顺序都不同，没法用公共前缀或目录变量塞进一个值）；`outputDirs` 支持 1~2 个位置（双写）。
  * - `watermarkPresetIds`：同一方向各渠道的合规水印不同（56/61 个方向如此）。
  *
  * 刻意**不**开放 `namePattern` / `selectedMediaIds` / `distribution` / `direction`：它们要么是
@@ -239,10 +278,45 @@ export interface PostprocessMediaConfig {
  * 类型上保持窄，比事后靠约定约束可靠。
  */
 export interface PostprocessMediaOverride {
-  /** 输出目录（绝对路径）；空串 = 用默认输出位置 */
+  /**
+   * 该渠道的导出位置（1~2 个）；`[]` = 该渠道用默认输出位置。
+   *
+   * 与下面的 `outputDir` 二选一时**本字段优先**——双写需要两个位置，单值字段表达不了。
+   */
+  outputDirs?: string[]
+  /** 输出目录（绝对路径）；空串 = 用默认输出位置。**旧写法**，保留是为了兼容已导入的数据 */
   outputDir?: string
   /** 水印预设 id 列表；`[]` = 该渠道不加水印（显式覆盖），`undefined` = 回退通用值 */
   watermarkPresetIds?: string[]
+}
+
+/**
+ * 把「按渠道覆盖」折成导出位置列表；`undefined` = 没表态（继续继承），`[]` = 显式「用默认输出位置」。
+ *
+ * 单值字段 `outputDir` 只是旧数据的写法，折成 `[]`（空串）而不是 `['']`，
+ * 否则空串会被当成一个真实目录传下去。
+ */
+export function foldMediaOutputDirs(override: PostprocessMediaOverride | undefined): string[] | undefined {
+  if (!override) return undefined
+  if (override.outputDirs !== undefined) return normalizeOutputDirList(override.outputDirs)
+  if (override.outputDir !== undefined) return normalizeOutputDirList([override.outputDir])
+  return undefined
+}
+
+/**
+ * 某个渠道最终生效的导出位置列表（0 = 用默认输出位置，1 = 单写，2 = 双写）。
+ *
+ * 只读**已合并**的配置：全局渠道层与节点覆盖都由 `applyPostprocessOverride` 折进了
+ * `mediaOutputDirs[mediaId]`，所以这里不需要知道继承链。列表为空时回退到 `outputDir` ——
+ * 「原有的全局默认位置」永远是兜底，不会被渠道配置弄丢。
+ */
+export function resolvePostprocessOutputDirs(
+  config: Pick<PostprocessMediaConfig, 'outputDir' | 'mediaOutputDirs'>,
+  mediaId: string,
+): string[] {
+  const perMedia = normalizeOutputDirList(config.mediaOutputDirs?.[mediaId])
+  if (perMedia.length > 0) return perMedia
+  return normalizeOutputDirList([config.outputDir])
 }
 
 /**
@@ -299,6 +373,22 @@ export function applyPostprocessOverride(
 ): PostprocessMediaConfig {
   if (!override) return base
   const perMedia = mediaId ? override.byMedia?.[mediaId] : undefined
+  // 导出位置要按渠道合并到**一个**字段上：写盘侧（`resolvePostprocessOutputDirs`）只认
+  // `mediaOutputDirs[mediaId]`，否则「节点里写的两个位置」和「全局渠道表」得在写盘处再拼一次继承链。
+  // 顺序：节点渠道（含旧单值写法）→ 节点通用 → 全局渠道 → 全局默认（= 这里的 `outputDir`）。
+  const mediaOutputDirs = { ...base.mediaOutputDirs }
+  if (mediaId) {
+    const nodeDirs = override.outputDir === undefined ? undefined : normalizeOutputDirList([override.outputDir])
+    const declared = foldMediaOutputDirs(perMedia) ?? nodeDirs
+    if (declared === undefined) {
+      // 本节点没表态：基线上该渠道的值照原样留着（正常就是全局渠道表那条）
+    } else if (declared.length > 0) {
+      mediaOutputDirs[mediaId] = declared
+    } else {
+      // 显式「用默认输出位置」：连全局渠道配置一起让位，最终落到 `outputDir`
+      delete mediaOutputDirs[mediaId]
+    }
+  }
   return {
     media: base.media,
     selectedMediaIds: override.selectedMediaIds ?? base.selectedMediaIds,
@@ -306,6 +396,7 @@ export function applyPostprocessOverride(
     direction: override.direction === undefined ? base.direction : override.direction,
     // 用 `??` 而不是 `||`：空串是「用默认输出位置」、空数组是「这个渠道不加水印」，都是有效值
     outputDir: perMedia?.outputDir ?? override.outputDir ?? base.outputDir,
+    mediaOutputDirs,
     namePattern: override.namePattern ?? base.namePattern,
     creator: override.creator ?? base.creator,
     watermarkPresetIds: perMedia?.watermarkPresetIds ?? override.watermarkPresetIds ?? base.watermarkPresetIds,

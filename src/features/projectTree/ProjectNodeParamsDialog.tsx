@@ -12,7 +12,7 @@
  * 「未表态 = 继承 / 空数组 = 明确不加水印」这套语义，最经不起两处打架。
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
   Alert,
   Button,
@@ -26,13 +26,16 @@ import {
 } from '../../design-system'
 import {
   PURE_MEDIA_ID,
+  normalizeOutputDirList,
+  resolvePostprocessOutputDirs,
   type OutputDirection,
   type PostprocessMediaConfig,
-  type PostprocessMediaOverride,
   type PostprocessNodeOverride,
 } from '../../lib/postprocessMedia'
-import { isCollectionWithinSelection } from '../../lib/postprocessProjectTree'
+import { isCollectionWithinSelection, resolveCollectionPath } from '../../lib/postprocessProjectTree'
 import { useStore } from '../../store'
+import ChannelOutputDirs from '../postprocess/ChannelOutputDirs'
+import NamePatternField from '../postprocess/NamePatternField'
 import PostprocessDistributionFields from '../postprocess/PostprocessDistributionFields'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../assetLibrary/store'
@@ -111,6 +114,7 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   const globalSelectedCollectionIds = usePostprocessMediaStore((state) => state.selectedCollectionIds)
   const globalDirection = usePostprocessMediaStore((state) => state.direction)
   const globalOutputDir = usePostprocessMediaStore((state) => state.outputDir)
+  const globalMediaOutputDirs = usePostprocessMediaStore((state) => state.mediaOutputDirs)
   const globalNamePattern = usePostprocessMediaStore((state) => state.namePattern)
   const globalCreator = usePostprocessMediaStore((state) => state.creator)
   const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
@@ -124,6 +128,7 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
       selectedCollectionIds: globalSelectedCollectionIds,
       direction: globalDirection,
       outputDir: globalOutputDir,
+      mediaOutputDirs: globalMediaOutputDirs,
       namePattern: globalNamePattern,
       creator: globalCreator,
       watermarkPresetIds: globalWatermarkPresetIds,
@@ -136,6 +141,7 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
       globalSelectedCollectionIds,
       globalDirection,
       globalOutputDir,
+      globalMediaOutputDirs,
       globalNamePattern,
       globalCreator,
       globalWatermarkPresetIds,
@@ -152,21 +158,59 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   const effective = slice.config
 
   /**
-   * 每个渠道各自解析一次生效配置。
+   * 某渠道**本级已配**的导出位置（1~2 个）；空数组 = 本级没配、继承上级。
    *
-   * 渠道覆盖（`byMedia`）现在只剩输出目录一项（水印归属已归水印工作区），但界面上要回答的
-   * **不是**「本级写没写」，而是「这个渠道现在到底输出到哪个目录」——没单独设过时得看得见它继承到了什么。
+   * 兼容旧的单值字段 `outputDir`：已导入的 80 处按渠道目录写在那上面，
+   * 不读它就等于用户升级后看到「按渠道配的目录全没了」。
    */
-  const perMediaEffective = useMemo(() => {
-    const map: Record<string, PostprocessMediaConfig> = {}
+  const resolveNodeDirs = (mediaId: string): string[] => {
+    const entry = override?.byMedia?.[mediaId]
+    return normalizeOutputDirList(entry?.outputDirs ?? (entry?.outputDir ? [entry.outputDir] : []))
+  }
+
+  /**
+   * 写某渠道第 `index` 个导出位置。
+   *
+   * 同时写 `outputDirs` 并把旧的单值 `outputDir` 摘掉：两个字段并存时以 `outputDirs` 为准
+   * （见 `foldMediaOutputDirs`），留着旧值只会让「界面上显示的」和「实际生效的」不一致。
+   * 归一化后一个位置都不剩 = 用户把输入框清空了 = **恢复继承**（而不是固化一个空值），
+   * 这与行内「留空 = 继承上级」的提示一致。
+   */
+  const setNodeDir = (mediaId: string, index: number, outputDir: string) => {
+    const slots = [...resolveNodeDirs(mediaId)]
+    while (slots.length <= index) slots.push('')
+    slots[index] = outputDir
+    const next = normalizeOutputDirList(slots)
+    apply({
+      byMedia: {
+        [mediaId]:
+          next.length > 0
+            ? { outputDirs: next, outputDir: undefined }
+            : { outputDirs: undefined, outputDir: undefined },
+      },
+    })
+  }
+
+  const clearNodeDirs = (mediaId: string) => {
+    apply({ byMedia: { [mediaId]: { outputDirs: undefined, outputDir: undefined } } })
+  }
+
+  /**
+   * 本渠道**去掉本级覆盖后**会落到哪个位置：拿父节点那条链单独解析一次。
+   *
+   * 不能拿「本级生效值」当占位提示——用户填完第一个位置后，占位符会变成他刚填的那个值，
+   * 看着像继承了一个并不存在的目录。
+   */
+  const inheritedDirsByMedia = useMemo(() => {
+    const path = resolveCollectionPath(collections, collectionId)
+    const parentId = path.length >= 2 ? path[path.length - 2].id : null
+    const map: Record<string, string> = {}
     for (const item of media) {
-      map[item.id] = resolveProjectPostprocessSlice(collections, params, collectionId, globalConfig, item.id).config
+      const sliceUp = resolveProjectPostprocessSlice(collections, params, parentId, globalConfig, item.id)
+      map[item.id] = resolvePostprocessOutputDirs(sliceUp.config, item.id).join('、')
     }
     return map
-  }, [media, collections, params, collectionId, globalConfig])
-
-  /** 「输出目录按渠道分别设置」的展开态。默认收起：多数方向各渠道共用一个目录。 */
-  const [outputDirByMediaOpen, setOutputDirByMediaOpen] = useState(false)
+  }, [collections, params, collectionId, media, globalConfig])
 
   // 节点本身可能已被删除（弹窗开着时另一处删掉了它）——此时 title 与路径都退化为占位文案，不抛错
   const self = useMemo(() => collections.find((item) => item.id === collectionId), [collections, collectionId])
@@ -183,49 +227,6 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
   const overridden = (key: keyof PostprocessNodeOverride) => override?.[key] !== undefined
   const apply = (patch: PostprocessNodeOverride) => setPostprocessOverride(collectionId, patch)
   const reset = (key: keyof PostprocessNodeOverride) => apply({ [key]: undefined })
-
-  /** 某渠道的某个字段在本级是否写了覆盖。 */
-  const mediaOverridden = (mediaId: string, key: keyof PostprocessMediaOverride) =>
-    override?.byMedia?.[mediaId]?.[key] !== undefined
-
-  /**
-   * 「输出目录按渠道分别设置」区块。
-   *
-   * 只给输出目录保留入口——这是 `byMedia` 里仅剩的一项：同一个方向的厂商 / 百度 / 头条
-   * 会交付到完全不同的共享盘目录，而三段目录连层级顺序都不同，塞不进一个值。
-   *
-   * 默认收起并在收起时用一句话交代「哪几个渠道已单独设置」——多数方向各渠道共用一个目录，
-   * 一上来就把每个渠道铺开只会把简单情况显得很复杂。
-   */
-  const outputDirByMediaBlock = (renderRow: (mediaId: string) => React.ReactNode) => {
-    const overriddenNames = media.filter((item) => mediaOverridden(item.id, 'outputDir')).map((item) => item.name)
-    return (
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setOutputDirByMediaOpen((open) => !open)}>
-            {outputDirByMediaOpen ? '收起按渠道设置' : '按渠道分别设置'}
-          </Button>
-          {!outputDirByMediaOpen && overriddenNames.length > 0 && (
-            <span className="text-xs text-ds-accent dark:text-ds-accent">{overriddenNames.join('、')} 已单独设置</span>
-          )}
-        </div>
-        {outputDirByMediaOpen && (
-          <div className="space-y-1.5">
-            <p className="text-xs text-ds-muted dark:text-ds-muted">
-              留空 = 用上面的通用值。只有同一方向各渠道不一样时才需要在这里单独填。
-            </p>
-            {media.length === 0 && <Alert tone="warning">媒体表为空，没有可单独设置的渠道。</Alert>}
-            {media.map((item) => (
-              <div key={item.id} className="flex items-start gap-2">
-                <span className="w-14 shrink-0 pt-1.5 text-xs text-ds-text dark:text-ds-text">{item.name}</span>
-                <div className="flex min-w-0 flex-1 items-center gap-2">{renderRow(item.id)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
 
   const pickDirectory = async () => {
     try {
@@ -354,11 +355,7 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
             sourceHint={sourceName}
             onReset={() => reset('namePattern')}
           >
-            <TextField
-              label=""
-              value={effective.namePattern}
-              onChange={(event) => apply({ namePattern: event.target.value })}
-            />
+            <NamePatternField value={effective.namePattern} onChange={(next) => apply({ namePattern: next })} />
           </FieldRow>
 
           <FieldRow
@@ -386,34 +383,28 @@ export default function ProjectNodeParamsDialog({ collectionId, onClose }: Props
                   label=""
                   className="flex-1"
                   value={effective.outputDir}
-                  placeholder="留空则用默认输出位置"
-                  onChange={(event) => apply({ outputDir: event.target.value })}
+                  placeholder="留空则继承上级；没有上级时用默认输出位置"
+                  // 清空 = 恢复继承（`undefined`），不写空串。写空串是一条**显式**「用默认输出位置」的
+                  // 声明，会把上级（含全局面板里那个默认输出目录）一起挡掉，界面上却看不出区别。
+                  onChange={(event) => {
+                    const next = event.target.value
+                    apply({ outputDir: next.trim() ? next : undefined })
+                  }}
                 />
                 <Button variant="secondary" onClick={() => void pickDirectory()}>
                   选择…
                 </Button>
               </div>
-              {outputDirByMediaBlock((mediaId) => (
-                <>
-                  <TextField
-                    label=""
-                    className="flex-1"
-                    value={override?.byMedia?.[mediaId]?.outputDir ?? ''}
-                    // 占位符显示的是**该渠道继承到的**目录：留空不代表没配置，而是正在用这个
-                    placeholder={perMediaEffective[mediaId]?.outputDir.trim() || '留空则用默认输出位置'}
-                    onChange={(event) => apply({ byMedia: { [mediaId]: { outputDir: event.target.value } } })}
-                  />
-                  {mediaOverridden(mediaId, 'outputDir') && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => apply({ byMedia: { [mediaId]: { outputDir: undefined } } })}
-                    >
-                      恢复继承
-                    </Button>
-                  )}
-                </>
-              ))}
+              <ChannelOutputDirs
+                media={media}
+                resolveDirs={resolveNodeDirs}
+                resolveInheritedHint={(mediaId) => inheritedDirsByMedia[mediaId] ?? ''}
+                onChangeDir={setNodeDir}
+                onClearDirs={clearNodeDirs}
+                onPickError={() => showToast('选择导出位置失败，请重试', 'error')}
+                collapsible
+                clearLabel="恢复继承"
+              />
             </div>
           </FieldRow>
 

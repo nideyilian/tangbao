@@ -332,6 +332,69 @@ describe('PostprocessSettingsModal', () => {
   })
 })
 
+describe('命名模板变量与渠道导出位置', () => {
+  /** 受控 input 的写入要过原生 setter，否则 React 的 value 追踪器认为没变、不触发 onChange */
+  function typeInto(selector: string, value: string) {
+    const input = document.querySelector<HTMLInputElement>(selector)
+    if (!input) throw new Error(`未找到输入框：${selector}`)
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    act(() => {
+      setter?.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  it('变量按钮显示中文名，而不是英文占位符', () => {
+    render()
+    const labels = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid^="name-token-"]')).map(
+      (node) => (node.textContent ?? '').trim(),
+    )
+    expect(labels).toContain('日期')
+    expect(labels).toContain('序号')
+    expect(labels).toContain('水印预设')
+    // 按钮上不再出现 `{date}` 这种英文占位符（占位符本身只在 tooltip 里交代）
+    expect(labels.some((label) => label.includes('{'))).toBe(false)
+    expect(document.querySelector('[data-testid="name-token-date"]')!.getAttribute('title')).toContain('{date}')
+  })
+
+  it('变量插在光标所在处，而不是默认追加到末尾', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().setNamePattern('{seq}')
+    })
+    render()
+    const input = document.querySelector<HTMLInputElement>('[data-testid="name-pattern-input"]')!
+    expect(input.value).toBe('{seq}')
+    // 把光标放到开头（真实交互里由点击/键盘移动，这里直接设并触发一次 keyup 让组件记住位置）
+    input.setSelectionRange(0, 0)
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
+    })
+    act(() => {
+      findButton('日期').click()
+    })
+    expect(usePostprocessMediaStore.getState().namePattern).toBe('{date}{seq}')
+  })
+
+  it('渠道行可以加第二个位置（双写），两个路径都写进配置', () => {
+    render()
+    typeInto('[data-testid="channel-output-dir-baidu-0"]', 'D:/百度一')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一'])
+
+    // 只有第一个位置填了才给「再加一个」（避免出现「位置 2 有值、位置 1 空着」）
+    const add = document.querySelector<HTMLButtonElement>('[data-testid="channel-output-add-baidu"]')!
+    expect(add).toBeTruthy()
+    act(() => add.click())
+
+    typeInto('[data-testid="channel-output-dir-baidu-1"]', 'D:/百度二')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一', 'D:/百度二'])
+  })
+
+  it('没填位置的渠道不进配置（留空 = 用默认输出位置）', () => {
+    render()
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs).toEqual({})
+  })
+})
+
 describe('启用范围的继承态', () => {
   function checkboxFor(label: string): HTMLInputElement {
     const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))

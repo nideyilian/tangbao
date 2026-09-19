@@ -34,6 +34,7 @@ import {
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
 import type { ProjectNodeParamsMap } from '../projectTree/types'
 import { renderWithMaxKb } from './renderVariant'
+import { resolveBucketOutputRoots } from './outputRoots'
 import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
@@ -214,6 +215,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     }
 
     for (const bucketConfig of buckets) {
+      const bucketMediaId = bucketConfig.selectedMediaIds[0] ?? PURE_MEDIA_ID
       // 逐个解析本渠道引用的预设（一个渠道可以挂多套水印）。
       // 任何一个不存在就跳过这一桶——刻意**不**静默降级成无水印，那等于给用户交付了错误的投放素材。
       const bucketPresets = new Map<string, CompositeV2Preset>()
@@ -231,12 +233,9 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         continue
       }
 
-      const outputRoot = await resolveOutputRootCached(bucketConfig.outputDir)
-      if (!outputRoot) {
-        warnOnce('部分源图已跳过：无法创建输出目录')
-        continue
-      }
-      await api.authorizeCompositeOutputDirectory?.(outputRoot)
+      const outputRoots = await resolveBucketOutputRoots(bucketConfig, bucketMediaId, resolveOutputRootCached, warnOnce)
+      if (outputRoots.length === 0) continue
+      for (const root of outputRoots) await api.authorizeCompositeOutputDirectory?.(root)
 
       // 预设 id → 展示名：产出的文件名与预设子目录要靠它区分多套水印
       const presetNames: Record<string, string> = {}
@@ -264,11 +263,13 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       for (const plan of plans) {
         // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
         const planPreset = plan.unit.watermark ? (bucketPresets.get(plan.unit.watermark.id) ?? null) : null
-        const path = await writeVariant(api, outputRoot, plan, source.dataUrl, planPreset, result)
-        if (!path) continue
+        const written = await writeVariant(api, outputRoots, plan, source.dataUrl, planPreset, result)
+        if (written.length === 0) continue
+        // 产出记录只登记**第一个**位置：清单是「产出了哪些变体」，双写的第二份是同一张图，
+        // 登记进去只会让「产出 N 个文件」翻倍，而用户关心的是变体数。
         result.outputs.push({
           rawImageId: imageId,
-          path,
+          path: written[0].path,
           mediaId: plan.unit.mediaId,
           mediaName: plan.unit.mediaName,
           sizeId: plan.unit.sizeId,
@@ -280,15 +281,16 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         })
 
         // 分发在整批产出之后统一做（要按天平均分配，逐张搬没法均分）。
-        // 这里只登记，`outputRoot` 带上是为了「换目录分发」时保留项目/方向/预设的子目录层级。
+        // 这里只登记，`root` 带上是为了「换目录分发」时保留项目/方向/预设的子目录层级。
+        // 双写时两个位置的副本都要排期，否则第二个位置会漏下没排的文件。
         // 只判 `enabled`：配置不完整（没填日期）交给分发内部报错，静默跳过等于什么都没发生。
         const distribution = bucketConfig.distribution
         if (distribution.enabled) {
           const key = JSON.stringify(distribution)
+          const entries = written.map((item) => ({ path: item.path, outputRoot: item.root }))
           const group = distributionGroups.get(key)
-          const entry = { path, outputRoot }
-          if (group) group.items.push(entry)
-          else distributionGroups.set(key, { config: distribution, items: [entry] })
+          if (group) group.items.push(...entries)
+          else distributionGroups.set(key, { config: distribution, items: entries })
         }
       }
     }
@@ -350,33 +352,60 @@ async function resolveOutputRoot(configured: string): Promise<string | null> {
   return await getExplicitImageSaveDirectory(await api.pathJoin(base, 'postprocess'))
 }
 
-/** 渲染 + 写盘一个变体；返回最终文件路径，失败时把原因写进 `result.warnings` 并返回 null。 */
+/** 写到某个位置的结果：`root` 用于分发时还原子目录层级。 */
+interface WrittenVariant {
+  path: string
+  root: string
+}
+
+/**
+ * 渲染 + 写盘一个变体（可以写多个位置）；返回实际写成的那些位置，全失败时把原因写进
+ * `result.warnings` 并返回空数组。
+ *
+ * 渲染只做**一次**：双写时若按位置各渲染一遍，体积压缩（逐档试编码）会整份翻倍，
+ * 而两个位置要的本来就是同一张图。
+ */
 async function writeVariant(
   api: NonNullable<Window['electronAPI']>,
-  outputRoot: string,
+  roots: string[],
   plan: PostprocessVariantPlan,
   sourceDataUrl: string,
   preset: CompositeV2Preset | null,
   result: TaskPostprocessResult,
-): Promise<string | null> {
+): Promise<WrittenVariant[]> {
+  const written: WrittenVariant[] = []
   try {
-    const directory = await ensureDirectoryChain(api, outputRoot, plan.subFolders)
-    if (!directory) throw new Error('输出子目录创建失败')
-    const filePath = await resolveUniquePath(api, directory, plan.fileName)
-    if (!filePath) throw new Error('同名文件过多，无法分配文件名')
-
     const rendered = await renderVariant(sourceDataUrl, plan, preset)
     if (rendered.warning) result.warnings.push(`${plan.fileName}：${rendered.warning}`)
 
-    const saved = await saveCompositeImage(api, filePath, rendered.dataUrl)
-    if (!saved) throw new Error('图片写入失败')
-    return filePath
+    // 第一个位置定下的文件名（含撞名后缀）给后面几个位置沿用，双写的两份看起来才是同一个东西
+    let fileName = plan.fileName
+    for (const root of roots) {
+      const directory = await ensureDirectoryChain(api, root, plan.subFolders)
+      if (!directory) {
+        result.warnings.push(`${plan.fileName}：输出子目录创建失败`)
+        continue
+      }
+      const filePath = await resolveUniquePath(api, directory, fileName)
+      if (!filePath) {
+        result.warnings.push(`${plan.fileName}：同名文件过多，无法分配文件名`)
+        continue
+      }
+      const saved = await saveCompositeImage(api, filePath, rendered.dataUrl)
+      if (!saved) {
+        result.warnings.push(`${plan.fileName}：图片写入失败`)
+        continue
+      }
+      fileName = filePath.split(/[\\/]/).pop() ?? fileName
+      written.push({ path: filePath, root })
+    }
+    if (written.length === 0) throw new Error('全部导出位置写入失败')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     result.warnings.push(`${plan.fileName}：${message}`)
     console.error('后处理产出失败', plan.fileName, error)
-    return null
   }
+  return written
 }
 
 /**

@@ -49,6 +49,55 @@ export const POSTPROCESS_NAME_TOKEN_LABELS: Record<PostprocessNameToken, string>
   preset: '水印预设名',
 }
 
+/**
+ * token → 变量按钮上的**短中文名**（去掉括号里的取值示例）。
+ *
+ * 按钮显示中文、插入的仍然是 `{token}`：模板本身是落盘格式（改了会让所有人已配好的模板失效），
+ * 但 `{date}` 这种英文占位符对用户只是一串看不懂的符号，所以按钮上给中文名，
+ * 占位符本身放进 tooltip。
+ */
+export const POSTPROCESS_NAME_TOKEN_SHORT_LABELS: Record<PostprocessNameToken, string> = {
+  date: '日期',
+  line: '产品线',
+  product: '产品',
+  direction: '方向',
+  creator: '创作者',
+  media: '媒体',
+  size: '尺寸',
+  seq: '序号',
+  preset: '水印预设',
+}
+
+/** 在模板里插入一个 token 的结果：新模板 + 插入后光标应落的位置。 */
+export interface PostprocessNameInsertResult {
+  pattern: string
+  caret: number
+}
+
+/**
+ * 在**指定位置**插入一个 token 占位符；不给位置时追加到末尾。
+ *
+ * `selection` 来自 DOM，光标落在输入框外（点变量按钮时）会读到过期甚至归零的值，
+ * 所以这里一律把区间夹到 `[0, length]` 而不是抛错——插入位置错一位的代价远小于报错。
+ * 有选区时替换选区，没有选区时就是「插在光标处」。
+ */
+export function insertPostprocessNameToken(
+  pattern: string,
+  token: PostprocessNameToken,
+  selection?: { start: number; end: number },
+): PostprocessNameInsertResult {
+  const text = typeof pattern === 'string' ? pattern : ''
+  const length = text.length
+  const clamp = (value: number | undefined, fallback: number): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+    return Math.min(Math.max(Math.trunc(value), 0), length)
+  }
+  const start = clamp(selection?.start, length)
+  const end = Math.max(start, clamp(selection?.end, start))
+  const placeholder = `{${token}}`
+  return { pattern: `${text.slice(0, start)}${placeholder}${text.slice(end)}`, caret: start + placeholder.length }
+}
+
 const TOKEN_PATTERN = /\{([A-Za-z][A-Za-z0-9_]*)\}/g
 
 export interface PostprocessNameContext {

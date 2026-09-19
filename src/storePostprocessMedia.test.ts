@@ -11,7 +11,7 @@ import {
   selectPostprocessOutputPlan,
   usePostprocessMediaStore,
 } from './storePostprocessMedia'
-import { DEFAULT_POSTPROCESS_MEDIA, PURE_MEDIA_ID } from './lib/postprocessMedia'
+import { DEFAULT_POSTPROCESS_MEDIA, PURE_MEDIA_ID, resolvePostprocessOutputDirs } from './lib/postprocessMedia'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from './lib/postprocessNaming'
 
 beforeEach(() => {
@@ -416,3 +416,94 @@ describe('分发配置', () => {
     expect(config.distribution.mode).toBe('copy')
   })
 })
+
+describe('渠道导出位置（双写）', () => {
+  it('默认一个渠道都不单独指定（全部走默认输出目录）', () => {
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs).toEqual({})
+  })
+
+  it('逐槽写入：第二个位置可以单独写，不影响第一个', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('baidu', 0, 'D:/百度一')
+    store.setMediaOutputDir('baidu', 1, 'D:/百度二')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一', 'D:/百度二'])
+    // 其它渠道不受影响
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.gdt).toBeUndefined()
+  })
+
+  it('清掉第一个位置后第二个顶上（不留空洞），全空则整键删除', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('baidu', 0, 'D:/百度一')
+    store.setMediaOutputDir('baidu', 1, 'D:/百度二')
+    store.setMediaOutputDir('baidu', 0, '')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度二'])
+    store.setMediaOutputDir('baidu', 0, '')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toBeUndefined()
+  })
+
+  it('去重：两个位置填同一个目录只留一个（双写同目录没有意义）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('gdt', 0, 'D:/同一个')
+    store.setMediaOutputDir('gdt', 1, 'D:/同一个')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.gdt).toEqual(['D:/同一个'])
+  })
+
+  it('越界下标与空渠道 id 一律忽略，不抛错', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('', 0, 'D:/x')
+    store.setMediaOutputDir('gdt', -1, 'D:/x')
+    store.setMediaOutputDir('gdt', 2, 'D:/x')
+    store.setMediaOutputDir('gdt', 1.5, 'D:/x')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs).toEqual({})
+  })
+
+  it('clearMediaOutputDirs 把某个渠道整体恢复到默认位置', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('toutiao', 0, 'D:/头条一')
+    store.setMediaOutputDir('toutiao', 1, 'D:/头条二')
+    store.clearMediaOutputDirs('toutiao')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.toutiao).toBeUndefined()
+  })
+
+  it('删除渠道时连带删掉它的导出位置（不留悬空键）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('gdt', 0, 'D:/广点通')
+    store.deleteMedia('gdt')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.gdt).toBeUndefined()
+  })
+
+  it('进落盘快照且在归一化（读盘/恢复备份）后原样保留', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('baidu', 0, 'D:/百度一')
+    store.setMediaOutputDir('baidu', 1, 'D:/百度二')
+    store.setOutputDir('D:/默认目录')
+
+    const snapshot = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
+    expect(snapshot.mediaOutputDirs).toEqual({ baidu: ['D:/百度一', 'D:/百度二'] })
+
+    const restored = normalizePostprocessMediaConfig(snapshot)
+    expect(restored.mediaOutputDirs).toEqual({ baidu: ['D:/百度一', 'D:/百度二'] })
+    expect(restored.outputDir).toBe('D:/默认目录')
+  })
+
+  it('坏数据（数组、非字符串项、空串、超过两个）在归一化时被清掉', () => {
+    expect(normalizePostprocessMediaConfig({ mediaOutputDirs: ['D:/x'] }).mediaOutputDirs).toEqual({})
+    expect(normalizePostprocessMediaConfig({ mediaOutputDirs: { baidu: 'D:/x' } }).mediaOutputDirs).toEqual({})
+    expect(normalizePostprocessMediaConfig({ mediaOutputDirs: { baidu: ['', '  '] } }).mediaOutputDirs).toEqual({})
+    expect(
+      normalizePostprocessMediaConfig({ mediaOutputDirs: { baidu: [1, 'D:/a'], gdt: ['D:/b', 'D:/c', 42] } })
+        .mediaOutputDirs,
+    ).toEqual({ baidu: ['D:/a'], gdt: ['D:/b', 'D:/c'] })
+  })
+
+  it('恢复备份时渠道导出位置一起回来', () => {
+    restorePostprocessMediaConfig({ mediaOutputDirs: { baidu: ['D:/备份'] }, outputDir: 'D:/备份默认' })
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs).toEqual({ baidu: ['D:/备份'] })
+    expect(resolveSub(usePostprocessMediaStore.getState())).toEqual(['D:/备份'])
+  })
+})
+
+/** 取某渠道最终生效的导出位置列表（`resolvePostprocessOutputDirs` 的薄封装，避免测试里重复拼参） */
+function resolveSub(config: Parameters<typeof getPostprocessMediaConfigSnapshot>[0], mediaId = 'baidu') {
+  return resolvePostprocessOutputDirs(getPostprocessMediaConfigSnapshot(config), mediaId)
+}

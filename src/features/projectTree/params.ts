@@ -10,6 +10,7 @@ import type { AssetCollection } from '../../types'
 import { normalizePostprocessDistributionConfig } from '../../lib/postprocessDistribution'
 import {
   applyPostprocessOverride,
+  normalizeOutputDirList,
   type PostprocessMediaConfig,
   type PostprocessMediaOverride,
   type PostprocessNodeOverride,
@@ -273,6 +274,8 @@ function normalizeByMediaOverride(raw: unknown): Record<string, PostprocessMedia
     if (!mediaId || !rawValue || typeof rawValue !== 'object') continue
     const entry = rawValue as Record<string, unknown>
     const override: PostprocessMediaOverride = {}
+    // 多位置写法优先保留；单值 `outputDir` 一起读进来（旧数据），合并时由 `foldMediaOutputDirs` 决定谁生效
+    if (Array.isArray(entry.outputDirs)) override.outputDirs = normalizeOutputDirList(entry.outputDirs)
     if (typeof entry.outputDir === 'string') override.outputDir = entry.outputDir
     if (Array.isArray(entry.watermarkPresetIds)) {
       override.watermarkPresetIds = normalizePresetIdList(entry.watermarkPresetIds)

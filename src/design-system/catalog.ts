@@ -960,6 +960,18 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Switch', 'TextField', 'SegmentedControl', 'Button', 'Alert'],
   },
   {
+    module: 'src/features/postprocess/ChannelOutputDirs.tsx',
+    responsibility: '按渠道设置导出位置（全局渠道表与项目节点参数共用，单渠道支持 1~2 个位置/双写）',
+    decision: 'compose',
+    targets: ['TextField', 'Button', 'IconButton'],
+  },
+  {
+    module: 'src/features/postprocess/NamePatternField.tsx',
+    responsibility: '命名模板输入 + 变量按钮（中文名显示、按光标位置插入 token）',
+    decision: 'compose',
+    targets: ['TextField', 'Button'],
+  },
+  {
     module: 'src/features/projectTree/ProjectTreeWorkbench.tsx',
     responsibility: '统一项目树工作台（产品线→产品→方向 的增删改查与参数入口）',
     decision: 'compose',

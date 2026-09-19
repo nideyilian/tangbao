@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_POSTPROCESS_DISTRIBUTION } from './postprocessDistribution'
 import {
   DEFAULT_POSTPROCESS_MEDIA,
+  MAX_POSTPROCESS_OUTPUT_DIRS,
   PURE_MEDIA_ID,
   applyPostprocessOverride,
   buildPostprocessOutputs,
   findPostprocessMedia,
   getOutputDirectionLabel,
   matchMediaSizes,
+  normalizeOutputDirList,
   resolveOutputDirection,
+  resolvePostprocessOutputDirs,
   type PostprocessMedia,
   type PostprocessMediaConfig,
   type PostprocessNodeOverride,
@@ -359,6 +362,7 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
       selectedCollectionIds: [],
       direction: null,
       outputDir: '基线目录',
+      mediaOutputDirs: {},
       namePattern: '{seq}',
       creator: '基线',
       watermarkPresetIds: ['基线水印'],
@@ -430,5 +434,113 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
   it('override 为空时原样返回基线对象', () => {
     const config = baseConfig()
     expect(applyPostprocessOverride(config, undefined, 'baidu')).toBe(config)
+  })
+})
+
+describe('导出位置：全局渠道表 + 双写', () => {
+  function baseConfig(): PostprocessMediaConfig {
+    return {
+      media: DEFAULT_POSTPROCESS_MEDIA,
+      selectedMediaIds: ['clean'],
+      selectedCollectionIds: [],
+      direction: null,
+      outputDir: '全局默认目录',
+      mediaOutputDirs: {},
+      namePattern: '{seq}',
+      creator: '',
+      watermarkPresetIds: [],
+      autoCompanionClean: true,
+      distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
+    }
+  }
+
+  it('归一化：去空白、丢空串、去重、保序，最多两个', () => {
+    expect(normalizeOutputDirList([' D:/a ', '', 'D:/a', 'D:/b'])).toEqual(['D:/a', 'D:/b'])
+    expect(normalizeOutputDirList(['D:/a', 'D:/b', 'D:/c'])).toEqual(['D:/a', 'D:/b'])
+    expect(normalizeOutputDirList(['  ', ''])).toEqual([])
+    expect(normalizeOutputDirList(undefined)).toEqual([])
+    expect(normalizeOutputDirList('D:/a')).toEqual([])
+    expect(MAX_POSTPROCESS_OUTPUT_DIRS).toBe(2)
+  })
+
+  it('渠道命中时用渠道位置（含双写），否则回退全局默认位置', () => {
+    const config = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/b1', 'D:/b2'] } }
+    expect(resolvePostprocessOutputDirs(config, 'baidu')).toEqual(['D:/b1', 'D:/b2'])
+    expect(resolvePostprocessOutputDirs(config, 'toutiao')).toEqual(['全局默认目录'])
+    // 纯净版没有渠道，固定沿用默认位置
+    expect(resolvePostprocessOutputDirs(config, PURE_MEDIA_ID)).toEqual(['全局默认目录'])
+  })
+
+  it('渠道表为空/空串时仍然回退全局默认位置（默认位置不会被弄丢）', () => {
+    const config = { ...baseConfig(), mediaOutputDirs: { baidu: [] } }
+    expect(resolvePostprocessOutputDirs(config, 'baidu')).toEqual(['全局默认目录'])
+    expect(resolvePostprocessOutputDirs(baseConfig(), 'baidu')).toEqual(['全局默认目录'])
+  })
+
+  it('一个位置都没配时返回空列表（调用方据此落到本地默认目录）', () => {
+    expect(resolvePostprocessOutputDirs({ ...baseConfig(), outputDir: '' }, 'baidu')).toEqual([])
+  })
+
+  it('节点通用目录覆盖全局渠道表（层级：节点 > 全局渠道 > 全局默认）', () => {
+    const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/b'] } }
+    const merged = applyPostprocessOverride(base, { outputDir: '节点目录' }, 'baidu')
+    expect(resolvePostprocessOutputDirs(merged, 'baidu')).toEqual(['节点目录'])
+  })
+
+  it('节点按渠道的两个位置优先于节点通用值，且双写被完整保留', () => {
+    const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
+    const override: PostprocessNodeOverride = {
+      outputDir: '节点通用',
+      byMedia: { baidu: { outputDirs: ['D:/节点百度一', 'D:/节点百度二'] } },
+    }
+    const merged = applyPostprocessOverride(base, override, 'baidu')
+    expect(resolvePostprocessOutputDirs(merged, 'baidu')).toEqual(['D:/节点百度一', 'D:/节点百度二'])
+    // 未命中的渠道仍走节点通用值
+    expect(resolvePostprocessOutputDirs(applyPostprocessOverride(base, override, 'toutiao'), 'toutiao')).toEqual([
+      '节点通用',
+    ])
+  })
+
+  it('兼容旧的单值 outputDir（已导入的按渠道目录写在这个字段上）', () => {
+    const merged = applyPostprocessOverride(baseConfig(), { byMedia: { baidu: { outputDir: 'D:/旧百度' } } }, 'baidu')
+    expect(resolvePostprocessOutputDirs(merged, 'baidu')).toEqual(['D:/旧百度'])
+  })
+
+  it('outputDirs 优先于同一条里的旧单值 outputDir', () => {
+    const merged = applyPostprocessOverride(
+      baseConfig(),
+      { byMedia: { baidu: { outputDir: 'D:/旧', outputDirs: ['D:/新一', 'D:/新二'] } } },
+      'baidu',
+    )
+    expect(resolvePostprocessOutputDirs(merged, 'baidu')).toEqual(['D:/新一', 'D:/新二'])
+  })
+
+  it('节点显式清空 = 用默认位置，连全局渠道表一起让位', () => {
+    const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
+    // 渠道行被清空（`outputDirs: []`）→ 落回全局面板里配的「默认输出目录」
+    const byEmptyList = applyPostprocessOverride(base, { byMedia: { baidu: { outputDirs: [] } } }, 'baidu')
+    expect(resolvePostprocessOutputDirs(byEmptyList, 'baidu')).toEqual(['全局默认目录'])
+    // 旧数据的「节点通用字段写空串」：旧口径就是直接落本地默认目录，这里原样保留
+    const byEmptyString = applyPostprocessOverride(base, { outputDir: '' }, 'baidu')
+    expect(resolvePostprocessOutputDirs(byEmptyString, 'baidu')).toEqual([])
+    expect(byEmptyString.outputDir).toBe('')
+  })
+
+  it('节点只清掉旧的单值字段时，全局渠道表随之生效', () => {
+    const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
+    const merged = applyPostprocessOverride(base, { byMedia: { baidu: { outputDirs: undefined } } }, 'baidu')
+    expect(resolvePostprocessOutputDirs(merged, 'baidu')).toEqual(['D:/全局百度'])
+  })
+
+  it('节点没表态时全局渠道表照旧生效', () => {
+    const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
+    const merged = applyPostprocessOverride(base, { creator: '某某' }, 'baidu')
+    expect(resolvePostprocessOutputDirs(merged, 'baidu')).toEqual(['D:/全局百度'])
+  })
+
+  it('不原地修改基线的渠道表（纯函数）', () => {
+    const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
+    applyPostprocessOverride(base, { byMedia: { baidu: { outputDirs: ['D:/节点'] } } }, 'baidu')
+    expect(base.mediaOutputDirs.baidu).toEqual(['D:/全局百度'])
   })
 })

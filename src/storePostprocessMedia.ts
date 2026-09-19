@@ -16,8 +16,10 @@ import { createDesktopJsonStorage } from './lib/desktopJsonStorage'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from './lib/postprocessNaming'
 import {
   DEFAULT_POSTPROCESS_MEDIA,
+  MAX_POSTPROCESS_OUTPUT_DIRS,
   PURE_MEDIA_ID,
   buildPostprocessOutputs,
+  normalizeOutputDirList,
   resolveOutputDirection,
   type OutputDirection,
   type PostprocessMedia,
@@ -52,6 +54,15 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   toggleSelectedCollection: (collectionId: string) => void
   setDirection: (direction: OutputDirection | null) => void
   setOutputDir: (outputDir: string) => void
+  /**
+   * 写某个渠道第 `index` 个导出位置（0 起）。传空串 = 清掉该位置，后面的位置前移。
+   *
+   * 逐槽下标而不是整份数组：界面上一次只改一个输入框，整份替换会把另一个位置连同
+   * 正在输入的内容一起顶掉（受控输入尤其明显）。
+   */
+  setMediaOutputDir: (mediaId: string, index: number, outputDir: string) => void
+  /** 清掉某个渠道的全部导出位置（回到 `outputDir` 那个默认位置） */
+  clearMediaOutputDirs: (mediaId: string) => void
   setNamePattern: (namePattern: string) => void
   setCreator: (creator: string) => void
   setWatermarkPresetIds: (presetIds: string[]) => void
@@ -76,12 +87,32 @@ export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
     selectedCollectionIds: [],
     direction: null,
     outputDir: '',
+    // 默认一个渠道都不单独指定：全部走 `outputDir`（空串 = 本地保存目录下的 postprocess）
+    mediaOutputDirs: {},
     namePattern: DEFAULT_POSTPROCESS_NAME_PATTERN,
     creator: '',
     watermarkPresetIds: [],
     autoCompanionClean: true,
     distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
   }
+}
+
+/**
+ * 归一化「全局渠道导出位置」表：丢掉空列表与坏键，键与值都过一遍归一化。
+ *
+ * 键指向的渠道**允许不存在**（媒体可以被删后再加回来），所以不在这里按 `media` 剪枝；
+ * 真正会用到它的写盘侧是按渠道查表，查不到就是没用上，不会出错。
+ */
+function normalizeMediaOutputDirs(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const result: Record<string, string[]> = {}
+  for (const [rawMediaId, rawDirs] of Object.entries(raw as Record<string, unknown>)) {
+    const mediaId = typeof rawMediaId === 'string' ? rawMediaId.trim() : ''
+    if (!mediaId) continue
+    const dirs = normalizeOutputDirList(rawDirs)
+    if (dirs.length > 0) result[mediaId] = dirs
+  }
+  return result
 }
 
 function normalizeStringList(value: unknown): string[] | null {
@@ -178,6 +209,7 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
     selectedCollectionIds: normalizeStringList(input.selectedCollectionIds) ?? defaults.selectedCollectionIds,
     direction,
     outputDir: typeof input.outputDir === 'string' ? input.outputDir : defaults.outputDir,
+    mediaOutputDirs: normalizeMediaOutputDirs(input.mediaOutputDirs),
     namePattern,
     creator: typeof input.creator === 'string' ? input.creator : defaults.creator,
     watermarkPresetIds: normalizeWatermarkPresetIds(input),
@@ -253,9 +285,12 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
       deleteMedia: (mediaId) =>
         set((state) => {
           if (!state.media.some((item) => item.id === mediaId)) return state
+          const mediaOutputDirs = { ...state.mediaOutputDirs }
+          delete mediaOutputDirs[mediaId]
           return {
             media: state.media.filter((item) => item.id !== mediaId),
             selectedMediaIds: state.selectedMediaIds.filter((id) => id !== mediaId),
+            mediaOutputDirs,
           }
         }),
 
@@ -362,6 +397,32 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
 
       setOutputDir: (outputDir) => set({ outputDir: typeof outputDir === 'string' ? outputDir : '' }),
 
+      setMediaOutputDir: (mediaId, index, outputDir) =>
+        set((state) => {
+          const id = typeof mediaId === 'string' ? mediaId.trim() : ''
+          if (!id || !Number.isInteger(index) || index < 0 || index >= MAX_POSTPROCESS_OUTPUT_DIRS) return state
+          const current = normalizeOutputDirList(state.mediaOutputDirs[id])
+          const slots = [...current]
+          while (slots.length <= index) slots.push('')
+          // 归一化会丢掉空槽：`['', 'D:\B']` 塌成 `['D:\B']`（位置 2 顶到位置 1）。
+          // 这种「位置 1 空着但位置 2 有值」的组合由 UI 挡掉——第二个位置只在第一个填了之后才加得出来。
+          slots[index] = typeof outputDir === 'string' ? outputDir : ''
+          const next = normalizeOutputDirList(slots)
+          const mediaOutputDirs = { ...state.mediaOutputDirs }
+          if (next.length > 0) mediaOutputDirs[id] = next
+          else delete mediaOutputDirs[id]
+          return { mediaOutputDirs }
+        }),
+
+      clearMediaOutputDirs: (mediaId) =>
+        set((state) => {
+          const id = typeof mediaId === 'string' ? mediaId.trim() : ''
+          if (!id || !(id in state.mediaOutputDirs)) return state
+          const mediaOutputDirs = { ...state.mediaOutputDirs }
+          delete mediaOutputDirs[id]
+          return { mediaOutputDirs }
+        }),
+
       setNamePattern: (namePattern) =>
         set({
           namePattern:
@@ -404,6 +465,7 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         selectedCollectionIds: state.selectedCollectionIds,
         direction: state.direction,
         outputDir: state.outputDir,
+        mediaOutputDirs: state.mediaOutputDirs,
         namePattern: state.namePattern,
         creator: state.creator,
         watermarkPresetIds: state.watermarkPresetIds,
@@ -423,6 +485,9 @@ export function getPostprocessMediaConfigSnapshot(state: PostprocessMediaStore):
     selectedCollectionIds: [...state.selectedCollectionIds],
     direction: state.direction,
     outputDir: state.outputDir,
+    mediaOutputDirs: Object.fromEntries(
+      Object.entries(state.mediaOutputDirs).map(([mediaId, dirs]) => [mediaId, [...dirs]]),
+    ),
     namePattern: state.namePattern,
     creator: state.creator,
     watermarkPresetIds: [...state.watermarkPresetIds],
