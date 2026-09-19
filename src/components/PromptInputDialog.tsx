@@ -75,7 +75,7 @@ export default function PromptInputDialog() {
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={promptInputDialog.placeholder}
-            className="w-full px-4 py-2.5 rounded-ds-lg border border-ds-border/60 dark:border-ds-border bg-ds-surface/50 dark:bg-ds-surface text-sm text-ds-text dark:text-ds-text-subtle placeholder:text-ds-muted outline-none focus:ring-1 focus:ring-ds-focus/40 dark:focus:ring-ds-focus/30 transition"
+            className="w-full px-4 py-2.5 rounded-ds-lg border border-ds-border bg-ds-surface-subtle text-sm text-ds-text placeholder:text-ds-muted outline-none focus:ring-1 focus:ring-ds-focus/50 transition"
           />
         </label>
         <div className="flex gap-2">

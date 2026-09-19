@@ -137,16 +137,14 @@ it('adds a schedule item and clamps count to at least one', () => {
   useStore.setState({
     schedule: { rows: createDefaultScheduleRows(), items: [], activeWeekStart: '2026-06-15', modalOpen: false },
   })
-  const id = useStore
-    .getState()
-    .addScheduleItem({
-      taskId: 'task-a',
-      collectionId: 'collection-a',
-      date: '2026-06-18',
-      rowId: 'row-1',
-      count: 0,
-      time: null,
-    })
+  const id = useStore.getState().addScheduleItem({
+    taskId: 'task-a',
+    collectionId: 'collection-a',
+    date: '2026-06-18',
+    rowId: 'row-1',
+    count: 0,
+    time: null,
+  })
   expect(useStore.getState().schedule.items.find((item) => item.id === id)).toMatchObject({ count: 1, order: 0 })
 })
 ```

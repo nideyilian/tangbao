@@ -19,7 +19,7 @@ import type {
   ImageSaveLayout,
 } from '../types'
 import type { AssistantActionPreferences } from '../features/assistantActions/types'
-import { normalizeThemeMode, normalizeSkinId } from './theme'
+import { normalizeThemeMode } from '../theme/appearance'
 import {
   DEFAULT_AGENT_MAX_TOOL_ROUNDS,
   DEFAULT_STREAM_PARTIAL_IMAGES,
@@ -768,8 +768,8 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
 
   return {
     themeMode: normalizeThemeMode(record.themeMode),
-    // skinId 为正式字段；旧字段 colorScheme 仅在导入/迁移边界兼容
-    skinId: normalizeSkinId(record.skinId ?? record.colorScheme),
+    // 皮肤字段已废弃（docs/adr/0008）：仅在导入边界透传旧值，运行时不再产生任何视觉影响。
+    skinId: typeof record.skinId === 'string' ? record.skinId : undefined,
     baseUrl: active.baseUrl,
     apiKey: active.apiKey,
     model: active.model,
@@ -1177,7 +1177,6 @@ export function mergeImportedSettings(
 
 export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   themeMode: 'light',
-  skinId: 'default',
   baseUrl: DEFAULT_BASE_URL,
   apiKey: '',
   model: DEFAULT_IMAGES_MODEL,

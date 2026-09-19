@@ -1139,7 +1139,7 @@ export default function AgentWorkspace() {
       <aside
         aria-hidden={desktopSidebarCollapsed && sidebarCollapsed}
         inert={desktopSidebarCollapsed && sidebarCollapsed}
-        className={`fixed bottom-0 left-0 top-[var(--app-header-offset)] z-overlay flex w-4/5 max-w-[320px] flex-col border-r border-ds-border bg-ds-surface/95 shadow-2xl backdrop-blur transition-transform duration-300 dark:border-ds-border dark:bg-ds-scrim/95 lg:w-[280px] lg:max-w-none lg:shadow-none ${sidebarCollapsed ? '-translate-x-full' : 'translate-x-0'} ${desktopSidebarCollapsed ? 'lg:-translate-x-full' : 'lg:translate-x-0'}`}
+        className={`fixed bottom-0 left-0 top-[var(--app-header-offset)] z-overlay flex w-4/5 max-w-[320px] flex-col border-r border-ds-border bg-ds-surface shadow-ds-md transition-transform duration-300 dark:border-ds-border lg:w-[280px] lg:max-w-none lg:shadow-none ${sidebarCollapsed ? '-translate-x-full' : 'translate-x-0'} ${desktopSidebarCollapsed ? 'lg:-translate-x-full' : 'lg:translate-x-0'}`}
       >
         <div className="flex h-full min-h-0 w-full flex-col pl-[max(0.75rem,env(safe-area-inset-left))]">
           <div className="shrink-0 border-b border-ds-border/80 px-3 py-3 dark:border-ds-border">
@@ -1306,7 +1306,7 @@ export default function AgentWorkspace() {
         <button
           type="button"
           onClick={() => setDesktopSidebarCollapsed(false)}
-          className="fixed left-0 top-[calc(var(--app-header-offset)+1rem)] z-30 hidden h-ds-control-lg w-8 items-center justify-center rounded-r-xl border border-l-0 border-ds-border bg-ds-surface/90 text-ds-muted shadow-lg backdrop-blur transition-colors hover:text-ds-primary dark:border-ds-border dark:bg-ds-scrim/90 lg:flex"
+          className="fixed left-0 top-[calc(var(--app-header-offset)+1rem)] z-overlay hidden h-ds-control-lg w-8 items-center justify-center rounded-r-xl border border-l-0 border-ds-border bg-ds-surface text-ds-muted shadow-ds-md transition-colors hover:text-ds-primary lg:flex"
           title="展开对话列表"
           aria-label="展开对话列表"
         >
@@ -1321,7 +1321,7 @@ export default function AgentWorkspace() {
           className={`sticky top-0 z-20 lg:hidden overflow-hidden transition duration-300 ease-in-out ${mobileTopBarVisible ? 'max-h-16 opacity-100 mb-2' : 'max-h-0 opacity-0 mb-0 pointer-events-none'}`}
         >
           <div
-            className="flex h-ds-14 items-center justify-between border-b border-ds-border bg-ds-surface/80 px-2 backdrop-blur dark:border-ds-border dark:bg-ds-scrim/80"
+            className="flex h-ds-14 items-center justify-between border-b border-ds-border bg-ds-surface px-2 dark:border-ds-border"
             onTouchStart={handleHeaderTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
@@ -1457,9 +1457,9 @@ export default function AgentWorkspace() {
 
                         {isImageReplyCollapsed ? (
                           <div>
-                            <div className="rounded-ds-lg border border-ds-border/80 bg-ds-surface/80 px-3 py-2.5 dark:border-ds-border dark:bg-ds-surface/15">
+                            <div className="rounded-ds-lg border border-ds-border bg-ds-surface-subtle px-3 py-2.5">
                               <div className="mb-1 text-xs font-medium text-ds-muted dark:text-ds-muted">提示词</div>
-                              <div className="line-clamp-2 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-ds-text dark:text-ds-text-subtle">
+                              <div className="line-clamp-2 whitespace-pre-wrap break-words text-ds-lg leading-relaxed text-ds-text dark:text-ds-text-subtle">
                                 {round?.prompt || '未记录提示词'}
                               </div>
                             </div>
@@ -1507,7 +1507,9 @@ export default function AgentWorkspace() {
                                     </div>
                                   </div>
                                   {hints.length > 0 && (
-                                    <div className="pl-[26px] mt-1.5 whitespace-pre-wrap text-ds-sm leading-relaxed text-ds-muted dark:text-ds-muted break-words opacity-90">
+                                    // 缩进 = 图标宽(18px) + 父级 gap-2(8px)，与上一行的错误图标文字对齐。
+                                    // 写成 calc 而不是写死 26px：改图标尺寸时缩进自动跟随。
+                                    <div className="pl-[calc(1.125rem+0.5rem)] mt-1.5 whitespace-pre-wrap text-ds-sm leading-relaxed text-ds-muted dark:text-ds-muted break-words opacity-90">
                                       <span className="font-medium">提示：</span>
                                       {hints.join('\n提示：')}
                                     </div>
@@ -1519,7 +1521,7 @@ export default function AgentWorkspace() {
                         ) : (
                           <div
                             data-selectable-text
-                            className={`text-[15px] leading-relaxed text-ds-text dark:text-ds-text-subtle ${!isAssistant ? 'select-text' : ''}`}
+                            className={`text-ds-lg leading-relaxed text-ds-text dark:text-ds-text-subtle ${!isAssistant ? 'select-text' : ''}`}
                           >
                             {isAssistant ? (
                               <>
@@ -1800,7 +1802,7 @@ export default function AgentWorkspace() {
                     const runningTasks = getRoundTasks(round, tasks).filter((task): task is TaskRecord => task !== null)
                     return (
                       <div key={`running-${round.id}`} className="flex w-full justify-start mb-6">
-                        <article className="flex min-w-[16rem] max-w-[95%] flex-col rounded-ds-xl rounded-tl-sm border border-ds-border bg-ds-surface/70 p-4 dark:border-ds-border dark:bg-ds-surface md:max-w-[85%] lg:max-w-[75%]">
+                        <article className="flex min-w-[16rem] max-w-[95%] flex-col rounded-ds-xl rounded-tl-sm border border-ds-border bg-ds-surface p-4 dark:border-ds-border md:max-w-[85%] lg:max-w-[75%]">
                           <div className="mb-2 text-sm text-ds-muted dark:text-ds-muted">
                             <span className="text-ds-primary dark:text-ds-primary font-semibold">Agent</span>{' '}
                             <span className="ml-1 font-normal opacity-60">· 第 {round.index} 轮</span>
@@ -1819,7 +1821,7 @@ export default function AgentWorkspace() {
 
         <button
           onClick={scrollToAgentBottom}
-          className={`fixed bottom-[calc(var(--input-bar-clearance,12rem)+1.5rem)] left-1/2 -translate-x-1/2 z-30 flex h-ds-control-lg w-ds-control-lg items-center justify-center rounded-full bg-ds-surface/90 backdrop-blur shadow-[0_2px_12px_rgba(0,0,0,0.1)] border border-ds-border/50 text-ds-muted transition duration-300 hover:bg-ds-subtle hover:text-ds-text dark:border-ds-border dark:bg-ds-subtle/90 dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-text ${
+          className={`fixed bottom-[calc(var(--input-bar-clearance,12rem)+1.5rem)] left-1/2 -translate-x-1/2 z-overlay flex h-ds-control-lg w-ds-control-lg items-center justify-center rounded-full bg-ds-surface border border-ds-border text-ds-muted shadow-ds-md transition duration-300 hover:bg-ds-surface-subtle hover:text-ds-text ${
             !isScrolledToBottom && activeMessages.length > 0
               ? 'translate-y-0 opacity-100'
               : 'translate-y-4 opacity-0 pointer-events-none'

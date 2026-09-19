@@ -331,7 +331,7 @@ function PromptOutputImage({
       type="button"
       onClick={onClick}
       aria-label={`查看第 ${index + 1} 条提示词的生成图片 1`}
-      className="relative shrink-0 overflow-hidden rounded-lg border border-ds-border bg-ds-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-primary"
+      className="relative shrink-0 overflow-hidden rounded-lg border border-ds-border bg-ds-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-focus/70"
       style={boxStyle}
     >
       {thumbnailSrc ? (
@@ -2616,7 +2616,7 @@ export default function GallerySopBatchModal({
           }}
           disabled={running}
           aria-label={`查看提示词集 ${getPromptRunTitle(run)}`}
-          className="flex min-w-0 items-center gap-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed"
+          className="flex min-w-0 items-center gap-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed"
         >
           <BookOpenCheck size={14} className={`shrink-0 ${selected ? 'text-ds-primary' : 'text-ds-muted'}`} />
           <span className="min-w-0 flex-1">
@@ -2640,7 +2640,7 @@ export default function GallerySopBatchModal({
           disabled={running}
           aria-label={run.pinned ? `取消收藏 ${getPromptRunTitle(run)}` : `收藏 ${getPromptRunTitle(run)}`}
           aria-pressed={Boolean(run.pinned)}
-          className={`flex h-ds-control-sm w-ds-control-sm items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40 ${run.pinned ? 'text-ds-warning' : 'text-ds-muted opacity-50 hover:bg-ds-subtle hover:text-ds-text group-hover/run:opacity-100'}`}
+          className={`flex h-ds-control-sm w-ds-control-sm items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40 ${run.pinned ? 'text-ds-warning' : 'text-ds-muted opacity-50 hover:bg-ds-subtle hover:text-ds-text group-hover/run:opacity-100'}`}
         >
           <Bookmark size={13} fill={run.pinned ? 'currentColor' : 'none'} />
         </button>
@@ -3013,7 +3013,7 @@ export default function GallerySopBatchModal({
             onClick={() => void createPromptCollection()}
             disabled={running}
             aria-label="新建提示词集"
-            className="sop-prompt-run-create flex h-ds-control-sm items-center gap-1.5 rounded-lg bg-ds-primary px-2.5 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+            className="sop-prompt-run-create flex h-ds-control-sm items-center gap-1.5 rounded-lg bg-ds-primary px-2.5 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Plus size={13} />
             新建提示词集
@@ -3248,7 +3248,7 @@ export default function GallerySopBatchModal({
                 onClick={() => void generatePromptList()}
                 disabled={running}
                 aria-label={`生成 ${targetCount} 条 SOP 提示词`}
-                className="flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40"
+                className="flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40"
               >
                 <Sparkles size={14} />
                 从当前 SOP 生成
@@ -3323,7 +3323,7 @@ export default function GallerySopBatchModal({
                     ? '关闭后将在后台继续生成'
                     : '关闭 SOP 提示词列表'
               }
-              className="flex h-ds-control-lg w-ds-control-lg items-center justify-center rounded-ds-lg text-ds-muted transition-colors hover:bg-ds-subtle hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary"
+              className="flex h-ds-control-lg w-ds-control-lg items-center justify-center rounded-ds-lg text-ds-muted transition-colors hover:bg-ds-subtle hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70"
             >
               <X size={18} />
             </button>
@@ -3492,7 +3492,7 @@ export default function GallerySopBatchModal({
                         onClick={() => void generatePromptList(true)}
                         disabled={running}
                         aria-label={`重新生成全部 ${targetCount} 条 SOP 提示词`}
-                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg border border-ds-border bg-ds-surface px-2.5 text-xs font-medium text-ds-text transition-colors hover:border-ds-primary/30 hover:bg-ds-subtle hover:text-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg border border-ds-border bg-ds-surface px-2.5 text-xs font-medium text-ds-text transition-colors hover:border-ds-primary/30 hover:bg-ds-subtle hover:text-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <RefreshCw size={13} />
                         重新生成全部
@@ -3502,7 +3502,7 @@ export default function GallerySopBatchModal({
                         onClick={supplementMissingPromptsAndGenerateImages}
                         disabled={running}
                         aria-label={`补充缺口 ${missingCount} 条提示词并生成 ${missingCount * targetImagesPerPrompt} 张图片`}
-                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg bg-ds-primary px-3 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg bg-ds-primary px-3 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Sparkles size={13} />
                         补充缺口 {missingCount} 条
@@ -3517,7 +3517,7 @@ export default function GallerySopBatchModal({
                         disabled={running}
                         aria-label={`再次生成 ${targetCount} 条 SOP 提示词`}
                         title="按当前 SOP 与参考图重新生成全部提示词，旧列表保留在提示词集中"
-                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg border border-ds-border bg-ds-surface px-2.5 text-xs font-medium text-ds-text transition-colors hover:border-ds-primary/30 hover:bg-ds-subtle hover:text-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg border border-ds-border bg-ds-surface px-2.5 text-xs font-medium text-ds-text transition-colors hover:border-ds-primary/30 hover:bg-ds-subtle hover:text-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <RefreshCw size={13} />
                         再次生成提示词
@@ -3531,7 +3531,7 @@ export default function GallerySopBatchModal({
                         }
                         onClick={() => void submitPromptList()}
                         disabled={running || activeRunSubmittedRef.current}
-                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg bg-ds-primary px-3 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:bg-ds-subtle disabled:text-ds-muted"
+                        className="flex h-ds-control-sm items-center gap-1.5 whitespace-nowrap rounded-lg bg-ds-primary px-3 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:bg-ds-subtle disabled:text-ds-muted"
                       >
                         <Send size={13} />
                         {activeRunSubmittedRef.current
@@ -3569,13 +3569,13 @@ export default function GallerySopBatchModal({
                       onClick={() => void createPromptCollection()}
                       disabled={running}
                       aria-label="新建提示词集"
-                      className="flex h-ds-control-sm items-center gap-1.5 rounded-lg bg-ds-primary px-2.5 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex h-ds-control-sm items-center gap-1.5 rounded-lg bg-ds-primary px-2.5 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <Plus size={13} />
                       新建
                     </button>
                   </div>
-                  <label className="mt-3 flex h-ds-control-md items-center gap-2 rounded-lg border border-ds-border bg-ds-surface px-2.5 focus-within:border-ds-primary focus-within:ring-2 focus-within:ring-ds-primary/20">
+                  <label className="mt-3 flex h-ds-control-md items-center gap-2 rounded-lg border border-ds-border bg-ds-surface px-2.5 focus-within:border-ds-primary focus-within:ring-2 focus-within:ring-ds-focus/50">
                     <Search size={14} className="shrink-0 text-ds-muted" />
                     <input
                       value={librarySearch}
@@ -3590,7 +3590,7 @@ export default function GallerySopBatchModal({
                       type="button"
                       onClick={() => setFavoritesOnly((current) => !current)}
                       aria-pressed={favoritesOnly}
-                      className={`flex h-ds-control-sm items-center gap-1.5 rounded-lg px-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary ${favoritesOnly ? 'bg-ds-warning/10 text-ds-warning' : 'text-ds-muted hover:bg-ds-surface hover:text-ds-text'}`}
+                      className={`flex h-ds-control-sm items-center gap-1.5 rounded-lg px-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${favoritesOnly ? 'bg-ds-warning/10 text-ds-warning' : 'text-ds-muted hover:bg-ds-surface hover:text-ds-text'}`}
                     >
                       <Bookmark size={12} fill={favoritesOnly ? 'currentColor' : 'none'} />
                       收藏
@@ -3608,7 +3608,7 @@ export default function GallerySopBatchModal({
                         type="button"
                         onClick={selectAllFilteredRuns}
                         disabled={running}
-                        className="flex h-ds-control-sm items-center rounded-lg px-2 text-xs text-ds-muted transition-colors hover:bg-ds-surface hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40"
+                        className="flex h-ds-control-sm items-center rounded-lg px-2 text-xs text-ds-muted transition-colors hover:bg-ds-surface hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40"
                       >
                         全选
                       </button>
@@ -3616,7 +3616,7 @@ export default function GallerySopBatchModal({
                         type="button"
                         onClick={invertRunSelection}
                         disabled={running}
-                        className="flex h-ds-control-sm items-center rounded-lg px-2 text-xs text-ds-muted transition-colors hover:bg-ds-surface hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40"
+                        className="flex h-ds-control-sm items-center rounded-lg px-2 text-xs text-ds-muted transition-colors hover:bg-ds-surface hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40"
                       >
                         反选
                       </button>
@@ -3633,7 +3633,7 @@ export default function GallerySopBatchModal({
                       <button
                         type="button"
                         onClick={clearRunSelection}
-                        className="ml-auto flex h-ds-control-sm items-center gap-1 rounded-lg px-2 text-xs text-ds-muted transition-colors hover:bg-ds-surface hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary"
+                        className="ml-auto flex h-ds-control-sm items-center gap-1 rounded-lg px-2 text-xs text-ds-muted transition-colors hover:bg-ds-surface hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70"
                       >
                         <X size={12} />
                         取消选择
@@ -3712,7 +3712,7 @@ export default function GallerySopBatchModal({
                             aria-label={activeRun?.pinned ? '取消收藏当前提示词集' : '收藏当前提示词集'}
                             aria-pressed={Boolean(activeRun?.pinned)}
                             title={activeRun?.pinned ? '取消收藏' : '收藏'}
-                            className={`flex h-ds-control-md w-ds-control-md items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40 ${activeRun?.pinned ? 'bg-ds-warning/10 text-ds-warning' : 'text-ds-muted hover:bg-ds-subtle hover:text-ds-text'}`}
+                            className={`flex h-ds-control-md w-ds-control-md items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40 ${activeRun?.pinned ? 'bg-ds-warning/10 text-ds-warning' : 'text-ds-muted hover:bg-ds-subtle hover:text-ds-text'}`}
                           >
                             <Bookmark size={15} fill={activeRun?.pinned ? 'currentColor' : 'none'} />
                           </button>
@@ -3722,7 +3722,7 @@ export default function GallerySopBatchModal({
                             disabled={running || visiblePrompts.length === 0}
                             aria-label="复制全部提示词"
                             title="复制全部"
-                            className="flex h-ds-control-md w-ds-control-md items-center justify-center rounded-lg text-ds-muted transition-colors hover:bg-ds-subtle hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-30"
+                            className="flex h-ds-control-md w-ds-control-md items-center justify-center rounded-lg text-ds-muted transition-colors hover:bg-ds-subtle hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-30"
                           >
                             <Copy size={15} />
                           </button>
@@ -3732,7 +3732,7 @@ export default function GallerySopBatchModal({
                             disabled={running}
                             aria-label="更多提示词集操作"
                             title="更多操作"
-                            className="flex h-ds-control-md w-ds-control-md items-center justify-center rounded-lg text-ds-muted transition-colors hover:bg-ds-subtle hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-30"
+                            className="flex h-ds-control-md w-ds-control-md items-center justify-center rounded-lg text-ds-muted transition-colors hover:bg-ds-subtle hover:text-ds-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-30"
                           >
                             <MoreHorizontal size={15} />
                           </button>
@@ -3741,7 +3741,7 @@ export default function GallerySopBatchModal({
                       <details className="group mt-3 rounded-lg bg-ds-subtle">
                         <summary
                           aria-label="展开提示词集信息"
-                          className="flex h-ds-control-md cursor-pointer list-none items-center gap-2 px-3 text-xs text-ds-muted outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-primary [&::-webkit-details-marker]:hidden"
+                          className="flex h-ds-control-md cursor-pointer list-none items-center gap-2 px-3 text-xs text-ds-muted outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-focus/70 [&::-webkit-details-marker]:hidden"
                         >
                           <span className="font-medium text-ds-text">提示词集信息</span>
                           <span className="min-w-0 flex-1 truncate text-xs">
@@ -3760,7 +3760,7 @@ export default function GallerySopBatchModal({
                               rows={2}
                               aria-label="提示词集说明"
                               placeholder="记录用途、风格或限制"
-                              className="min-h-ds-control-md w-full resize-y rounded-lg border border-ds-border bg-ds-surface px-3 py-2 text-xs leading-5 outline-none focus:border-ds-primary focus:ring-2 focus:ring-ds-primary/20 disabled:opacity-60"
+                              className="min-h-ds-control-md w-full resize-y rounded-lg border border-ds-border bg-ds-surface px-3 py-2 text-xs leading-5 outline-none focus:border-ds-primary focus:ring-2 focus:ring-ds-focus/50 disabled:opacity-60"
                             />
                           </label>
                         </div>
@@ -3810,7 +3810,7 @@ export default function GallerySopBatchModal({
                                     onClick={() => void generateForSources(sourceRun.source.id, false, true)}
                                     disabled={running}
                                     aria-label={`为「${sourceRun.source.label}」补充 ${sourceSupplementCount} 条提示词并生成 ${sourceSupplementCount * targetImagesPerPrompt} 张图片`}
-                                    className="flex h-ds-control-sm items-center gap-1.5 rounded-lg border border-ds-primary/30 bg-ds-surface px-2.5 text-xs font-medium text-ds-primary transition-colors hover:bg-ds-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+                                    className="flex h-ds-control-sm items-center gap-1.5 rounded-lg border border-ds-primary/30 bg-ds-surface px-2.5 text-xs font-medium text-ds-primary transition-colors hover:bg-ds-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
                                   >
                                     <Sparkles size={13} />
                                     补齐 {sourceSupplementCount} 条并生成{' '}
@@ -3821,7 +3821,7 @@ export default function GallerySopBatchModal({
                                   type="button"
                                   onClick={() => addManualPrompt(sourceRun.source.id)}
                                   disabled={running}
-                                  className="flex h-ds-control-sm items-center gap-1.5 rounded-lg border border-ds-border bg-ds-surface px-2.5 text-xs font-medium text-ds-text transition-colors hover:bg-ds-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="flex h-ds-control-sm items-center gap-1.5 rounded-lg border border-ds-border bg-ds-surface px-2.5 text-xs font-medium text-ds-text transition-colors hover:bg-ds-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   <Plus size={13} />
                                   新增提示词
@@ -3889,7 +3889,7 @@ export default function GallerySopBatchModal({
                                                 })
                                               }
                                               aria-label={`查看第 ${index + 1} 条提示词的生成图片 ${extraIndex + 2}`}
-                                              className="h-ds-control-sm w-ds-control-sm shrink-0 overflow-hidden rounded-md border border-ds-border bg-ds-subtle transition-colors hover:border-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary"
+                                              className="h-ds-control-sm w-ds-control-sm shrink-0 overflow-hidden rounded-md border border-ds-border bg-ds-subtle transition-colors hover:border-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70"
                                             >
                                               <OutputImageThumb
                                                 imageId={outputLink.imageId}
@@ -3905,7 +3905,7 @@ export default function GallerySopBatchModal({
                                         data-slot="input-group"
                                         role="group"
                                         aria-label={`第 ${index + 1} 条提示词编辑器`}
-                                        className="flex h-full flex-col overflow-hidden rounded-lg border border-ds-border bg-ds-subtle transition-colors focus-within:border-ds-primary focus-within:bg-ds-surface focus-within:ring-2 focus-within:ring-ds-primary/20"
+                                        className="flex h-full flex-col overflow-hidden rounded-lg border border-ds-border bg-ds-subtle transition-colors focus-within:border-ds-primary focus-within:bg-ds-surface focus-within:ring-2 focus-within:ring-ds-focus/50"
                                       >
                                         <div
                                           data-slot="input-group-header"
@@ -3962,7 +3962,7 @@ export default function GallerySopBatchModal({
                                                       onClick={() => setPreviewSource(referenceSource)}
                                                       aria-label={`查看第 ${index + 1} 条提示词的参考图 ${referenceIndex + 1} 大图`}
                                                       title={`${referenceSource.label} · 点击查看大图`}
-                                                      className="h-6 w-6 shrink-0 overflow-hidden rounded-md border border-ds-border bg-ds-surface transition-colors hover:border-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary"
+                                                      className="h-6 w-6 shrink-0 overflow-hidden rounded-md border border-ds-border bg-ds-surface transition-colors hover:border-ds-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70"
                                                     >
                                                       <SourceThumb source={referenceSource} />
                                                     </button>
@@ -3983,7 +3983,7 @@ export default function GallerySopBatchModal({
                                               disabled={!item.promptText.trim()}
                                               aria-label={`复制第 ${index + 1} 条提示词`}
                                               title="复制提示词"
-                                              className="flex h-ds-control-sm items-center justify-center gap-1.5 px-2.5 text-xs font-medium text-ds-muted transition-colors hover:bg-ds-primary/10 hover:text-ds-primary focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-30"
+                                              className="flex h-ds-control-sm items-center justify-center gap-1.5 px-2.5 text-xs font-medium text-ds-muted transition-colors hover:bg-ds-primary/10 hover:text-ds-primary focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-30"
                                             >
                                               <Copy size={12} />
                                               复制
@@ -3995,7 +3995,7 @@ export default function GallerySopBatchModal({
                                                 disabled={running}
                                                 aria-label={`重新生成第 ${index + 1} 条提示词`}
                                                 title="重新生成"
-                                                className="flex h-ds-control-sm w-ds-control-sm items-center justify-center text-ds-muted transition-colors hover:bg-ds-primary/10 hover:text-ds-primary focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-40"
+                                                className="flex h-ds-control-sm w-ds-control-sm items-center justify-center text-ds-muted transition-colors hover:bg-ds-primary/10 hover:text-ds-primary focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-40"
                                               >
                                                 <RefreshCw size={13} />
                                               </button>
@@ -4025,7 +4025,7 @@ export default function GallerySopBatchModal({
                                 )
                               })}
                               {!sourcePrompts.length && (
-                                <p className="rounded-lg border border-dashed border-ds-border p-4 text-center text-xs text-ds-muted">
+                                <p className="rounded-ds-lg border border-dashed border-ds-border p-4 text-center text-xs text-ds-muted">
                                   当前没有提示词，可点击“新增提示词”手动添加。
                                 </p>
                               )}
@@ -4047,7 +4047,7 @@ export default function GallerySopBatchModal({
                                 onClick={() => void generatePromptList()}
                                 disabled={running}
                                 aria-label={`生成 ${targetCount} 条 SOP 提示词`}
-                                className="flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-ds-subtle disabled:text-ds-muted"
+                                className="flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-ds-subtle disabled:text-ds-muted"
                               >
                                 <Sparkles size={14} />
                                 从当前 SOP 生成
@@ -4057,7 +4057,7 @@ export default function GallerySopBatchModal({
                                 type="button"
                                 onClick={() => void createPromptCollection()}
                                 disabled={running}
-                                className="flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40"
+                                className="flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40"
                               >
                                 <Plus size={14} />
                                 新建提示词集
@@ -4085,7 +4085,7 @@ export default function GallerySopBatchModal({
                         onClick={() => void generatePromptList()}
                         disabled={running}
                         aria-label={`生成 ${targetCount} 条 SOP 提示词`}
-                        className="mt-4 flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40"
+                        className="mt-4 flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40"
                       >
                         <Sparkles size={14} />
                         从当前 SOP 生成
@@ -4095,7 +4095,7 @@ export default function GallerySopBatchModal({
                         type="button"
                         onClick={() => void createPromptCollection()}
                         disabled={running}
-                        className="mt-4 flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:opacity-40"
+                        className="mt-4 flex h-ds-control-md items-center gap-2 rounded-lg bg-ds-primary px-4 text-xs font-medium text-ds-text-inverse transition-colors hover:bg-ds-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:opacity-40"
                       >
                         <Plus size={14} />
                         新建提示词集
@@ -4112,7 +4112,7 @@ export default function GallerySopBatchModal({
             (() => {
               const contextRun = recentRuns.find((run) => run.id === libraryContextMenu.run.id)
               const menuItemClass =
-                'flex h-ds-control-sm w-full items-center justify-between gap-4 rounded-md px-2.5 text-left text-xs text-ds-text transition-colors hover:bg-ds-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-primary disabled:cursor-not-allowed disabled:opacity-35'
+                'flex h-ds-control-sm w-full items-center justify-between gap-4 rounded-md px-2.5 text-left text-xs text-ds-text transition-colors hover:bg-ds-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 disabled:cursor-not-allowed disabled:opacity-35'
               return (
                 <div
                   role="menu"
@@ -4174,7 +4174,7 @@ export default function GallerySopBatchModal({
         </div>
         {previewSource && (
           <div
-            className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 p-4"
+            className="absolute inset-0 z-modal flex items-center justify-center bg-ds-scrim/80 p-4"
             onMouseDown={(event) => {
               if (isModalBackdropEvent(event)) setPreviewSource(null)
             }}
@@ -4184,7 +4184,7 @@ export default function GallerySopBatchModal({
               role="dialog"
               aria-modal="true"
               aria-labelledby="gallery-sop-reference-preview-title"
-              className="flex h-[min(82vh,860px)] w-[min(92vw,1200px)] max-w-full flex-col overflow-hidden rounded-ds-xl bg-ds-scrim shadow-2xl"
+              className="flex h-[min(82vh,860px)] w-[min(92vw,1200px)] max-w-full flex-col overflow-hidden rounded-ds-xl bg-ds-scrim shadow-ds-lg"
             >
               <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 text-white">
                 <div className="min-w-0">

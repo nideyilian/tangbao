@@ -652,7 +652,7 @@ export function FavoriteCollectionsView({
       <div
         data-favorite-collections-root
         data-no-drag-select
-        className="mb-4 rounded-ds-lg border border-ds-border bg-ds-surface/80 p-2 shadow-sm dark:border-ds-border dark:bg-ds-scrim/80"
+        className="mb-4 rounded-ds-lg border border-ds-border bg-ds-surface p-2 shadow-sm dark:border-ds-border"
       >
         <div className="flex gap-2 overflow-x-auto hide-scrollbar">
           {cards.map((card) => {
@@ -1146,7 +1146,7 @@ export function FavoriteCollectionPickerModal() {
                       {editingId === collection.id ? (
                         <input
                           type="text"
-                          className="h-6 min-w-0 flex-1 rounded border border-ds-primary/50 bg-ds-surface px-1.5 py-0 text-[15px] leading-6 text-ds-text shadow-sm outline-none focus:border-ds-primary dark:border-ds-border dark:bg-ds-surface dark:text-ds-text dark:focus:border-ds-border"
+                          className="h-6 min-w-0 flex-1 rounded border border-ds-primary/50 bg-ds-surface px-1.5 py-0 text-ds-md leading-6 text-ds-text shadow-sm outline-none focus:border-ds-primary dark:border-ds-border dark:bg-ds-surface dark:text-ds-text dark:focus:border-ds-border"
                           value={editingName}
                           onChange={(e) => setEditingName(e.target.value)}
                           onKeyDown={handleRenameKeyDown}
@@ -1156,7 +1156,7 @@ export function FavoriteCollectionPickerModal() {
                         />
                       ) : (
                         <span
-                          className="min-w-0 flex-1 truncate text-[15px] font-medium text-ds-text dark:text-ds-text-subtle"
+                          className="min-w-0 flex-1 truncate text-ds-md font-medium text-ds-text dark:text-ds-text-subtle"
                           title={collection.name}
                         >
                           {collection.name}
@@ -1622,7 +1622,7 @@ export function ManageCollectionsModal() {
                     {editingId === collection.id ? (
                       <input
                         type="text"
-                        className="h-6 min-w-0 flex-1 rounded border border-ds-primary/50 bg-ds-surface px-1.5 py-0 text-[15px] leading-6 text-ds-text shadow-sm outline-none focus:border-ds-primary dark:border-ds-border dark:bg-ds-surface dark:text-ds-text dark:focus:border-ds-border"
+                        className="h-6 min-w-0 flex-1 rounded border border-ds-primary/50 bg-ds-surface px-1.5 py-0 text-ds-md leading-6 text-ds-text shadow-sm outline-none focus:border-ds-primary dark:border-ds-border dark:bg-ds-surface dark:text-ds-text dark:focus:border-ds-border"
                         value={editingName}
                         onChange={(e) => setEditingName(e.target.value)}
                         onKeyDown={handleRenameKeyDown}
@@ -1632,7 +1632,7 @@ export function ManageCollectionsModal() {
                       />
                     ) : (
                       <span
-                        className="min-w-0 flex-1 truncate text-[15px] font-medium text-ds-text dark:text-ds-text-subtle"
+                        className="min-w-0 flex-1 truncate text-ds-md font-medium text-ds-text dark:text-ds-text-subtle"
                         title={collection.name}
                       >
                         {collection.name}

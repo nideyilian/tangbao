@@ -4,12 +4,11 @@ import App from './App'
 import 'streamdown/styles.css'
 import './index.css'
 import './design-system/styles.css'
-import './theme/styles/skins.css'
 import { installMobileViewportGuards } from './lib/viewport'
 import { installChunkLoadRecovery } from './lib/chunkRecovery'
 import { bootstrapAppearance } from './theme/appearance'
 
-// 在 React 渲染之前同步应用上次外观快照，消除首屏皮肤闪烁
+// 在 React 渲染之前同步应用上次外观快照，消除首屏主题闪烁
 bootstrapAppearance()
 
 installMobileViewportGuards()

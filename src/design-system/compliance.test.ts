@@ -33,6 +33,19 @@ function hasHexExemptMarker(src: string): boolean {
   return HEX_EXEMPT_MARKER.test(src)
 }
 
+/**
+ * 剥离注释后再做样式类匹配。
+ *
+ * 必要性：源码注释里为了解释「过去是什么、为什么改」经常会**引用被禁的类名**
+ * （例如注释写「原 `shadow-2xl` 已收口到 shadow-ds-md」）。直接对原文匹配会把这类
+ * 说明性文字误判为违规，逼着后来者不敢写注释 —— 那是更糟的结果。
+ */
+function stripComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '') // 块注释
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1') // 行注释（避开 http:// 这类）
+}
+
 describe('UI 合规回归', () => {
   it('不使用 transition-all（MASTER 6.1：只声明实际变化的属性）', () => {
     const violations = entries
@@ -52,6 +65,75 @@ describe('UI 合规回归', () => {
     const violations = entries
       .filter(([, src]) => /text-\[(?:8|9|10|11)px\]/.test(src))
       .map(([path]) => normalizeKey(path))
+    expect(violations).toEqual([])
+  })
+
+  it('禁止体系外任意字号 text-[Npx]（MASTER 4.3：统一走 text-ds-* / text-xs..2xl）', () => {
+    // 2026-09-19 收口：历史上散落 text-[15px] / text-[13px] / text-[17px] 等体系外字号，
+    // 与 Token 字号并存会让同一层级文字出现 1–2px 的不可解释差异。
+    const violations = entries
+      .filter(([, src]) => /text-\[[0-9]+px\]/.test(stripComments(src)))
+      .map(([path]) => normalizeKey(path))
+    expect(violations).toEqual([])
+  })
+
+  it('禁止体系外阴影：shadow-xl/2xl 与临时 shadow-[...]（MASTER 4.5：只允许 shadow-ds-*）', () => {
+    // 允许两类 token 系写法：
+    //   ① `shadow-ds-*`（Tailwind 映射到 --ds-shadow-*）
+    //   ② `shadow-[var(--ds-shadow-*)]`（显式引 Token）
+    // 禁止写死数值的临时阴影；也不允许 Tailwind 自带的 xl/2xl 档（不在 Token 体系内、
+    // 深浅色不单独校准）。唯一豁免：`shadow-[inset_...]` 这类**非阴影语义**的描边/指示条。
+    const internalShadow = /shadow-\[(?!var\(|inset_)/
+    const violations = entries
+      .filter(([, src]) => {
+        const code = stripComments(src)
+        return /\bshadow-(?:xl|2xl)\b/.test(code) || internalShadow.test(code)
+      })
+      .map(([path]) => normalizeKey(path))
+    expect(violations).toEqual([])
+  })
+
+  it('区块标题 h4 字重统一为 600+（MASTER 4.3：标题使用 600–700，标签使用 500）', () => {
+    // 背景：SettingsModal 的 14 个区块标题用 font-bold(700)，而 HelpModal / LegacyDataImportModal
+    // 等 8 个文件里**同一角色**用 font-semibold(600) 或 font-medium(500)，
+    // 甚至「导入旧版数据」这个同名标题在两个文件里字重不同。同层级标题必须同一字重。
+    //
+    // 只检查 `<h4>`：它在本仓约定里就是「弹窗/面板内的区块标题」。
+    // `<h3>` 被复用作卡片主文本（truncate/line-clamp 的提示词预览），不属此列。
+    // 豁免：`uppercase tracking-wide` 的微标签式标题（语义是标签，不是标题）。
+    const violations: string[] = []
+    for (const [path, src] of entries) {
+      const code = stripComments(src)
+      for (const m of code.matchAll(/<h4\b[^>]*>/g)) {
+        const tag = m[0]
+        if (!/font-(?:thin|extralight|light|normal|medium)\b/.test(tag)) continue
+        if (/uppercase/.test(tag)) continue
+        violations.push(`${normalizeKey(path)}: ${tag.slice(0, 90)}`)
+      }
+    }
+    expect(violations).toEqual([])
+  })
+
+  it('焦点环统一：只用 ring-ds-focus/70 与 /50 两档（MASTER 4.2：焦点色唯一）', () => {
+    // 背景：2026-09-19 审计发现业务代码手搓了 7 档不透明度（/10 /20 /40 /50 /60 /70 + 无修饰），
+    // 同一个「键盘焦点」在不同控件上明暗不一。收敛为两档：
+    //   /70 = 标准控件；/50 = 轻量（大面积容器、次级动作）
+    // 同时禁止把品牌色 ring-ds-primary 用作焦点环 —— 它是选中态/装饰环，语义不同。
+    const violations: string[] = []
+    for (const [path, src] of entries) {
+      const code = stripComments(src)
+      for (const m of code.matchAll(/focus(?:-visible)?:ring-ds-focus\/(\d+)/g)) {
+        if (m[1] !== '70' && m[1] !== '50') {
+          violations.push(`${normalizeKey(path)}: focus 环用了 /${m[1]}，只允许 /70 或 /50`)
+        }
+      }
+      const primaryRingCount = [...code.matchAll(/focus(?:-visible)?:ring-ds-primary\b/g)].length
+      if (primaryRingCount > 0) {
+        violations.push(
+          `${normalizeKey(path)}: 焦点环不可用品牌色 ring-ds-primary（${primaryRingCount} 处），应用 ring-ds-focus`,
+        )
+      }
+    }
     expect(violations).toEqual([])
   })
 
@@ -91,6 +173,12 @@ const LEGACY_PATTERNS: Record<string, RegExp> = {
     /\b(?:bg-emerald-\d+|text-emerald-\d+|bg-amber-\d+|text-amber-\d+|bg-red-\d+|text-red-\d+|bg-rose-\d+|text-rose-\d+)\b/g,
   rounded: /\brounded-(?:xl|2xl|3xl)\b/g,
   hex: /#[0-9a-fA-F]{3,8}\b/g,
+  // 2026-09-19 新增：裸 rounded-lg 与 Token 圆角是**两套并行的命名**，「值相同 ≠ 语义相同」。
+  // 现状 177 处存量不适一次清零（回归面太大、收益低），改为棘轮：只许减少、新增即失败。
+  // 语义对照：rounded-sm=2px(无 token) / rounded-md=6px(≡ds-sm) / rounded-lg=8px(≡ds-md)
+  //          / rounded-xl=12px(≡ds-lg) / rounded-2xl=16px(≡ds-xl)。
+  // 卡片与面板应使用 rounded-ds-lg（12px，MASTER 4.5）。
+  bareRounded: /\brounded-(?:sm|md|lg)\b/g,
 }
 
 const LEGACY_SNAPSHOT: Record<string, number> = {
@@ -115,6 +203,63 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'features/composite/storeV2.ts|hex': 4,
   'features/requirementPrototype/manifests.ts|hex': 4,
   'lib/imagePostprocess.ts|hex': 1,
+
+  // ===== bareRounded 基线（2026-09-19 建立，只减不增）=====
+  // 裸 rounded-sm/md/lg 与 ds Token 并行存在，值为 2/6/8px。卡片与面板应走 rounded-ds-lg(12px)。
+  // 此处为存量棘轮起点，迁移时把数字调小，不改基线不动它。
+  'features/strategy/adapters/GallerySopBatchModal.tsx|bareRounded': 49,
+  'components/SettingsModal.tsx|bareRounded': 37,
+  'components/AgentBatchPlannerModal.tsx|bareRounded': 35,
+  'components/HelpModal.tsx|bareRounded': 23,
+  'components/AgentWorkspace.tsx|bareRounded': 20,
+  'components/DetailModal.tsx|bareRounded': 20,
+  'features/assetLibrary/AssetDetailPanel.tsx|bareRounded': 19,
+  'components/ScheduleModal.tsx|bareRounded': 16,
+  'components/FavoriteCollections.tsx|bareRounded': 15,
+  'components/InputBar.tsx|bareRounded': 12,
+  'components/SopBatchDetailModal.tsx|bareRounded': 10,
+  'components/MaskEditorModal.tsx|bareRounded': 9,
+  'features/assetLibrary/AssetLibrarySidebar.tsx|bareRounded': 9,
+  'features/composite/components/PresetManagementTab.tsx|bareRounded': 8,
+  'components/WorkspaceTabManagerModal.tsx|bareRounded': 7,
+  'features/composite/components/FloatingLogoLibrary.tsx|bareRounded': 7,
+  'features/composite/components/PresetLayerPanel.tsx|bareRounded': 7,
+  'features/assetLibrary/AssetViewer.tsx|bareRounded': 6,
+  'components/LegacyDataImportModal.tsx|bareRounded': 5,
+  'components/TaskCard.tsx|bareRounded': 5,
+  'features/assetLibrary/AssetBatchView.tsx|bareRounded': 5,
+  'components/SizePickerModal.tsx|bareRounded': 3,
+  'features/assetLibrary/AssetDuplicateModal.tsx|bareRounded': 3,
+  'features/assetLibrary/AssetLibraryWorkspace.tsx|bareRounded': 3,
+  'features/assetLibrary/AssetPickerModal.tsx|bareRounded': 3,
+  'features/assetLibrary/AssetPurgeModal.tsx|bareRounded': 3,
+  'features/composite/components/PresetCanvasEditor.tsx|bareRounded': 3,
+  'features/strategy/SopGenerateTab.tsx|bareRounded': 3,
+  'components/AgentImageGrid.tsx|bareRounded': 2,
+  'components/Lightbox.tsx|bareRounded': 2,
+  'components/PromptInputDialog.tsx|bareRounded': 2,
+  'features/assetLibrary/AssetListView.tsx|bareRounded': 2,
+  'features/assetLibrary/FilterControlStrip.tsx|bareRounded': 2,
+  'features/composite/components/PresetProjectTree.tsx|bareRounded': 2,
+  'components/DerivePolicyModal.tsx|bareRounded': 1,
+  'components/ErrorBoundary.tsx|bareRounded': 1,
+  'components/GalleryImageTile.tsx|bareRounded': 1,
+  'components/Header.tsx|bareRounded': 1,
+  'components/HoverImagePreview.tsx|bareRounded': 1,
+  'components/LargeModalToggle.tsx|bareRounded': 1,
+  'components/TaskParamSummary.tsx|bareRounded': 1,
+  'features/assetLibrary/AssetCardMenu.tsx|bareRounded': 1,
+  'features/assetLibrary/AssetFilterTabBar.tsx|bareRounded': 1,
+  'features/assetLibrary/AssetGrid.tsx|bareRounded': 1,
+  'features/assetLibrary/AssetLibraryToolbar.tsx|bareRounded': 1,
+  'features/assetLibrary/AssetParamBreakdown.tsx|bareRounded': 1,
+  'features/assetLibrary/AssetQuickPreview.tsx|bareRounded': 1,
+  'features/assetLibrary/AssetTile.tsx|bareRounded': 1,
+  'features/composite/components/FloatingLayerToolbar.tsx|bareRounded': 1,
+  'features/strategy/SopCoverPickerDialog.tsx|bareRounded': 1,
+  'features/strategy/SopImageStack.tsx|bareRounded': 1,
+  'features/strategy/SopPromptRunsDialog.tsx|bareRounded': 1,
+  'features/strategy/SopVersionHistoryDialog.tsx|bareRounded': 1,
 }
 
 describe('UI 合规治理（存量旧工具类只减不增）', () => {

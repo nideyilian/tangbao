@@ -522,19 +522,19 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
               value={draftName}
               onChange={(event) => setDraftName(event.target.value)}
               aria-label="草稿名称"
-              className="w-48 rounded-lg border border-ds-border bg-ds-surface px-2.5 py-1.5 text-xs text-ds-text outline-none transition focus:border-ds-primary focus:ring-2 focus:ring-ds-focus dark:border-ds-border dark:bg-ds-surface dark:text-white dark:focus:ring-ds-focus/20"
+              className="w-48 rounded-lg border border-ds-border bg-ds-surface px-2.5 py-1.5 text-xs text-ds-text outline-none transition focus:border-ds-primary focus:ring-2 focus:ring-ds-focus dark:border-ds-border dark:bg-ds-surface dark:text-white dark:focus:ring-ds-focus/50"
             />
             <button
               type="button"
               onClick={saveDraft}
-              className="rounded-lg border border-ds-primary/35 px-3 py-1.5 text-xs font-medium text-ds-primary transition hover:bg-ds-primary-subtle focus:outline-none focus:ring-2 focus:ring-ds-focus/30 dark:border-ds-primary/30 dark:text-ds-primary dark:hover:bg-ds-primary/10"
+              className="rounded-lg border border-ds-primary/35 px-3 py-1.5 text-xs font-medium text-ds-primary transition hover:bg-ds-primary-subtle focus:outline-none focus:ring-2 focus:ring-ds-focus/50 dark:border-ds-primary/30 dark:text-ds-primary dark:hover:bg-ds-primary/10"
             >
               保存草稿
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-xs text-ds-muted transition hover:bg-ds-subtle focus:outline-none focus:ring-2 focus:ring-slate-300 dark:hover:bg-ds-surface"
+              className="rounded-lg px-3 py-1.5 text-xs text-ds-muted transition hover:bg-ds-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 dark:hover:bg-ds-surface"
             >
               关闭
             </button>
@@ -543,7 +543,7 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
 
         <nav
           aria-label="批量任务流程"
-          className="grid shrink-0 grid-cols-4 border-b border-ds-border bg-ds-surface/80 px-5 dark:border-ds-border dark:bg-ds-surface"
+          className="grid shrink-0 grid-cols-4 border-b border-ds-border bg-ds-surface-subtle px-5"
         >
           {[
             ['1', '导入数据', rows.length > 0 ? `${rows.length} 行` : 'CSV / JSON'],
@@ -594,7 +594,7 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
         </nav>
 
         <div id="batch-workbench-main" className="min-h-0 flex-1 overflow-y-auto p-4">
-          <section className="grid gap-2 rounded-ds-lg border border-ds-border bg-ds-surface/50 p-3 md:grid-cols-12 dark:border-ds-border dark:bg-ds-surface">
+          <section className="grid gap-2 rounded-ds-lg border border-ds-border bg-ds-surface-subtle p-3 md:grid-cols-12">
             <label className="md:col-span-12">
               <span className="sr-only">任务文件</span>
               <div className="flex gap-2">
@@ -608,7 +608,7 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
                 <button
                   type="button"
                   onClick={() => void handleImport()}
-                  className="rounded-lg bg-ds-primary px-4 py-1.5 text-xs font-semibold text-ds-text-inverse transition hover:bg-ds-primary-hover focus:outline-none focus:ring-2 focus:ring-ds-focus/40"
+                  className="rounded-lg bg-ds-primary px-4 py-1.5 text-xs font-semibold text-ds-text-inverse transition hover:bg-ds-primary-hover focus:outline-none focus:ring-2 focus:ring-ds-focus/50"
                 >
                   导入任务
                 </button>
@@ -909,7 +909,9 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
 
               <div className="max-h-[42vh] overflow-auto rounded-ds-lg border border-ds-border bg-ds-surface dark:border-ds-border dark:bg-ds-scrim">
                 <table className="min-w-[1180px] w-full table-fixed border-collapse text-left text-xs">
-                  <thead className="sticky top-0 z-10 bg-ds-surface text-ds-muted shadow-[0_1px_0_0_rgb(226_232_240)] dark:bg-ds-subtle dark:text-ds-muted">
+                  {/* 表头吸顶只需一条 1px 下边界：原临时阴影写死了浅色 hex（226 232 240），
+                      深色主题下会成为一条刺眼亮线。改用语义描边 + md 档（4.5：静态卡片优先边框）。 */}
+                  <thead className="sticky top-0 z-10 border-b border-ds-border bg-ds-surface text-ds-muted dark:bg-ds-subtle dark:text-ds-muted">
                     <tr>
                       <th className="w-8 border-b border-ds-border px-2 py-2 dark:border-ds-border">
                         <input

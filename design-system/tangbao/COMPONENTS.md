@@ -18,7 +18,7 @@
 
 当前覆盖：
 
-- 共享组件规范（含 2 个配色皮肤组件 `ColorSchemeSwitcher`、`ColorPresetGrid`）。
+- 共享组件规范（含主题切换组件 `ThemeSwitcher`）。
 - 正式 UI 模块逐一登记。
 - 7 个类别：基础、布局、表单、导航、数据展示、反馈、浮层。
 - 具体数量以 `src/design-system/catalog.ts` 和 `catalog.test.ts` 自动覆盖结果为准。
@@ -48,20 +48,19 @@
 
 ### 2.3 表单
 
-| 组件                  | 用途                             | 变体                                 | 强制规则                                            |
-| --------------------- | -------------------------------- | ------------------------------------ | --------------------------------------------------- |
-| `TextField`           | 单行名称、路径和参数             | helper / error / required / readOnly | 可见 label；错误与输入框语义关联                    |
-| `TextArea`            | 提示词、说明和模板               | helper / error / required            | 不用 placeholder 代替 label；允许调整高度           |
-| `Checkbox`            | 独立布尔项或多选                 | primary / danger / indeterminate     | 使用原生 checkbox；标签扩大点击区域                 |
-| `Switch`              | 立即生效的开关                   | label start / end                    | 需要提交的表单项应使用 Checkbox                     |
-| `RadioGroup`          | 2–5 个互斥选项                   | vertical / horizontal                | 使用 fieldset/legend 和同名 radio                   |
-| `SegmentedControl`    | 2–4 个紧凑模式                   | sm / md                              | 只用于短标签和当前视图，不作为顶层导航              |
-| `SelectField`         | 普通单选列表                     | helper / error / disabled            | 优先原生 select；复杂动作继续使用高级 Select        |
-| `SearchField`         | 过滤当前集合                     | clearable                            | 使用 `type=search` 和完整可访问名称                 |
-| `Fieldset`            | 相关设置组                       | description / actions                | 多字段共同描述一个设置时使用                        |
-| `Stepper`             | 小范围数字微调                   | min / max / step                     | 增减按钮必须有完整名称和边界状态                    |
-| `ColorSchemeSwitcher` | 在皮肤（配色方案）间切换整体视觉 | sm / md                              | 顶栏/设置选择 默认/Apple/小米；仅切配色而非深浅主题 |
-| `ColorPresetGrid`     | 以卡片网格选择配色预设           | columns 2/3/4                        | 设置页「主题」区块展示渐变预览与选中态              |
+| 组件               | 用途                    | 变体                                 | 强制规则                                     |
+| ------------------ | ----------------------- | ------------------------------------ | -------------------------------------------- |
+| `TextField`        | 单行名称、路径和参数    | helper / error / required / readOnly | 可见 label；错误与输入框语义关联             |
+| `TextArea`         | 提示词、说明和模板      | helper / error / required            | 不用 placeholder 代替 label；允许调整高度    |
+| `Checkbox`         | 独立布尔项或多选        | primary / danger / indeterminate     | 使用原生 checkbox；标签扩大点击区域          |
+| `Switch`           | 立即生效的开关          | label start / end                    | 需要提交的表单项应使用 Checkbox              |
+| `RadioGroup`       | 2–5 个互斥选项          | vertical / horizontal                | 使用 fieldset/legend 和同名 radio            |
+| `SegmentedControl` | 2–4 个紧凑模式          | sm / md                              | 只用于短标签和当前视图，不作为顶层导航       |
+| `SelectField`      | 普通单选列表            | helper / error / disabled            | 优先原生 select；复杂动作继续使用高级 Select |
+| `SearchField`      | 过滤当前集合            | clearable                            | 使用 `type=search` 和完整可访问名称          |
+| `Fieldset`         | 相关设置组              | description / actions                | 多字段共同描述一个设置时使用                 |
+| `Stepper`          | 小范围数字微调          | min / max / step                     | 增减按钮必须有完整名称和边界状态             |
+| `ThemeSwitcher`    | 在浅色 / 深色主题间切换 | sm / md                              | 顶栏与设置页共用；只切明暗，不再有独立配色层 |
 
 ### 2.4 反馈
 

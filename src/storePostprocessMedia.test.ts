@@ -200,11 +200,6 @@ describe('选择与开关', () => {
     usePostprocessMediaStore.getState().setCreator('杰哥')
     expect(usePostprocessMediaStore.getState().creator).toBe('杰哥')
 
-    usePostprocessMediaStore.getState().setWatermarkPresetIds(['  '])
-    expect(usePostprocessMediaStore.getState().watermarkPresetIds).toEqual([])
-    usePostprocessMediaStore.getState().setWatermarkPresetIds(['preset-1', 'preset-2'])
-    expect(usePostprocessMediaStore.getState().watermarkPresetIds).toEqual(['preset-1', 'preset-2'])
-
     usePostprocessMediaStore.getState().setAutoCompanionClean(false)
     expect(usePostprocessMediaStore.getState().autoCompanionClean).toBe(false)
   })

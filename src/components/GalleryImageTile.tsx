@@ -169,7 +169,7 @@ function GalleryImageTile({
       tabIndex={0}
       aria-label={`任务图片 ${item.imageIndex + 1}，单击选择所属任务，双击或按 Enter 查看详情`}
       aria-pressed={selected}
-      className={`task-card-wrapper group ${style ? 'absolute' : 'relative aspect-square'} min-w-0 cursor-default overflow-hidden rounded-ds-lg border bg-ds-subtle outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ds-primary focus-visible:ring-offset-2 ${selected ? 'border-ds-selection-border bg-ds-selection ring-1 ring-inset ring-ds-selection-border' : 'border-ds-border hover:border-ds-selection-border'}`}
+      className={`task-card-wrapper group ${style ? 'absolute' : 'relative aspect-square'} min-w-0 cursor-default overflow-hidden rounded-ds-lg border bg-ds-subtle outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ds-focus/70 focus-visible:ring-offset-2 ${selected ? 'border-ds-selection-border bg-ds-selection ring-1 ring-inset ring-ds-selection-border' : 'border-ds-border hover:border-ds-selection-border'}`}
       data-task-id={item.task.id}
       onClick={selectFromMouse}
       onDoubleClick={(event) => {

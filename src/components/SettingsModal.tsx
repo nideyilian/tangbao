@@ -72,13 +72,13 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import {
   useDialogFocusTrap,
-  ColorPresetGrid,
   SectionHeader,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  ThemeSwitcher,
 } from '../design-system'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
 import { fetchAvailableModels, type AvailableModel, type ModelType } from '../lib/modelCatalog'
@@ -187,7 +187,7 @@ export function ApiConnectionPanel({
             ? 'border-ds-danger/35 bg-ds-danger-subtle/70 dark:border-ds-danger/20 dark:bg-ds-danger/[0.06]'
             : tone === 'blue'
               ? 'border-ds-primary/35 bg-ds-primary-subtle/70 dark:border-ds-primary/20 dark:bg-ds-primary/[0.06]'
-              : 'border-ds-border/80 bg-ds-surface/70 dark:border-ds-border dark:bg-ds-surface'
+              : 'border-ds-border bg-ds-surface-subtle'
       }`}
       aria-live="polite"
     >
@@ -229,7 +229,7 @@ export function ApiConnectionPanel({
                   className={`flex max-w-full items-center gap-1 rounded-md px-2 py-1 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus ${
                     selected
                       ? 'bg-ds-primary text-ds-text-inverse shadow-sm hover:bg-ds-primary-hover dark:bg-ds-primary dark:hover:bg-ds-primary-hover'
-                      : 'bg-ds-surface/80 text-ds-text hover:bg-ds-surface hover:text-ds-primary dark:bg-ds-surface dark:text-ds-text-subtle dark:hover:bg-ds-surface dark:hover:text-ds-primary'
+                      : 'bg-ds-surface-subtle text-ds-text hover:bg-ds-surface hover:text-ds-primary'
                   }`}
                 >
                   <span
@@ -305,7 +305,7 @@ interface ApiProfileTableProps {
 }
 
 const TABLE_CELL_INPUT_CLASS =
-  'w-full min-w-0 rounded-lg border border-ds-border/70 bg-ds-surface/60 px-2 py-1.5 text-xs text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50'
+  'w-full min-w-0 rounded-lg border border-ds-border bg-ds-surface-subtle px-2 py-1.5 text-xs text-ds-text outline-none transition focus:border-ds-primary/60 focus:bg-ds-surface'
 
 function ApiProfileTable({
   profiles,
@@ -2449,7 +2449,7 @@ export default function SettingsModal() {
 
         <div className="flex flex-1 min-h-0 flex-col sm:flex-row">
           {/* Sidebar */}
-          <div className="w-full sm:w-48 shrink-0 flex flex-col border-b sm:border-b-0 sm:border-r border-ds-border dark:border-ds-border bg-ds-surface/50 dark:bg-ds-surface">
+          <div className="w-full sm:w-48 shrink-0 flex flex-col border-b sm:border-b-0 sm:border-r border-ds-border bg-ds-surface-subtle">
             <nav
               role="tablist"
               aria-label="设置分类"
@@ -2541,15 +2541,14 @@ export default function SettingsModal() {
                 <div className="space-y-4">
                   <div className="block">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <span className="block text-sm text-ds-muted dark:text-ds-muted">视觉皮肤</span>
+                      <span className="block text-sm text-ds-muted dark:text-ds-muted">主题</span>
                     </div>
-                    <ColorPresetGrid
-                      value={draft.skinId}
-                      onChange={(val) => commitSettings({ ...draft, skinId: val })}
-                      columns={4}
+                    <ThemeSwitcher
+                      value={draft.themeMode}
+                      onChange={(val) => commitSettings({ ...draft, themeMode: val })}
                     />
                     <div data-selectable-text className="mt-2 text-xs text-ds-muted dark:text-ds-muted">
-                      切换颜色、字体、圆角、阴影与表面质感；不改变功能和页面布局。
+                      浅色与深色使用同一套设计令牌，切换只改变明暗取值，不影响功能与布局。
                     </div>
                   </div>
                   <div className="hidden sm:block">
@@ -2808,7 +2807,7 @@ export default function SettingsModal() {
               {activeTab === 'api' && (
                 <section
                   aria-labelledby="image-api-settings-title"
-                  className="order-1 space-y-4 rounded-ds-xl border border-ds-border/70 bg-ds-surface/70 p-4 shadow-sm dark:border-ds-border dark:bg-ds-surface"
+                  className="order-1 space-y-4 rounded-ds-xl border border-ds-border/70 bg-ds-surface-subtle p-4 shadow-sm dark:border-ds-border"
                 >
                   <SectionHeader
                     id="image-api-settings-title"
@@ -2901,7 +2900,7 @@ export default function SettingsModal() {
               {activeTab === 'api' && (
                 <section
                   aria-labelledby="agent-api-settings-title"
-                  className="order-2 mt-5 space-y-4 rounded-ds-xl border border-ds-border/70 bg-ds-surface/70 p-4 shadow-sm dark:border-ds-border dark:bg-ds-surface"
+                  className="order-2 mt-5 space-y-4 rounded-ds-xl border border-ds-border/70 bg-ds-surface-subtle p-4 shadow-sm dark:border-ds-border"
                 >
                   <SectionHeader
                     id="agent-api-settings-title"
@@ -2944,7 +2943,7 @@ export default function SettingsModal() {
                           : []),
                         { label: '独立 Agent 服务', value: 'independent' },
                       ]}
-                      className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                      className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                     />
                     <p className="mt-1.5 text-xs leading-relaxed text-ds-muted dark:text-ds-muted">
                       {draft.agentShareApiParameters
@@ -3022,7 +3021,7 @@ export default function SettingsModal() {
                             value: model.id,
                           }))}
                           ariaLabel="选择 Agent 模型"
-                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                         />
                       ) : (
                         <input
@@ -3040,7 +3039,7 @@ export default function SettingsModal() {
                           type="text"
                           placeholder={DEFAULT_RESPONSES_MODEL}
                           aria-label="手动输入 Agent 模型"
-                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                         />
                       )}
                     </div>
@@ -3079,7 +3078,7 @@ export default function SettingsModal() {
                           { label: '原生 Responses 工具', value: 'native' },
                           { label: '混合模式', value: 'hybrid' },
                         ]}
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                     </div>
                     <div>
@@ -3094,7 +3093,7 @@ export default function SettingsModal() {
                           { label: 'Responses API', value: 'responses' },
                           { label: 'Chat Completions', value: 'chat-completions' },
                         ]}
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 disabled:cursor-not-allowed disabled:opacity-55 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 disabled:cursor-not-allowed disabled:opacity-55 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                     </div>
                   </div>
@@ -3108,7 +3107,7 @@ export default function SettingsModal() {
                       type="number"
                       min={1}
                       max={50}
-                      className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                      className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                     />
                     <p className="mt-1.5 text-xs text-ds-muted dark:text-ds-muted">限制连续工具调用，默认 15 轮。</p>
                   </label>
@@ -3174,7 +3173,7 @@ export default function SettingsModal() {
                         }}
                         type="number"
                         min={1}
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                     </label>
                   )}
@@ -3184,7 +3183,7 @@ export default function SettingsModal() {
               {activeTab === 'api' && (
                 <section
                   aria-labelledby="api-runtime-settings-title"
-                  className="order-3 mt-5 space-y-4 rounded-ds-xl border border-ds-border/70 bg-ds-surface/70 p-4 shadow-sm dark:border-ds-border dark:bg-ds-surface"
+                  className="order-3 mt-5 space-y-4 rounded-ds-xl border border-ds-border/70 bg-ds-surface-subtle p-4 shadow-sm dark:border-ds-border"
                 >
                   <SectionHeader
                     id="api-runtime-settings-title"
@@ -3256,7 +3255,7 @@ export default function SettingsModal() {
                             if (!showProfileMenu) updateProfileMenuMaxHeight()
                             setShowProfileMenu(!showProfileMenu)
                           }}
-                          className="flex w-full min-w-0 items-center justify-between gap-2 rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2 text-sm text-ds-text outline-none transition hover:bg-ds-subtle dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:hover:bg-ds-surface"
+                          className="flex w-full min-w-0 items-center justify-between gap-2 rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2 text-sm text-ds-text outline-none transition hover:bg-ds-subtle dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:hover:bg-ds-surface"
                           title={activeProfile.name}
                         >
                           <span className="flex min-w-0 items-center gap-2">
@@ -3273,7 +3272,7 @@ export default function SettingsModal() {
                         {showProfileMenu && (
                           <>
                             <div
-                              className="absolute right-0 top-full z-50 mt-1.5 w-full overflow-hidden overflow-y-auto rounded-ds-lg border border-ds-border/60 bg-ds-surface/95 py-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl animate-dropdown-down dark:border-ds-border dark:bg-ds-scrim/95 dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] dark:ring-white/10 custom-scrollbar"
+                              className="absolute right-0 top-full z-dropdown mt-1.5 w-full overflow-hidden overflow-y-auto rounded-ds-lg border border-ds-border bg-ds-surface py-1 shadow-ds-md animate-dropdown-down dark:border-ds-border dark:bg-ds-surface custom-scrollbar"
                               style={{ maxHeight: profileMenuMaxHeight }}
                             >
                               <button
@@ -3389,7 +3388,7 @@ export default function SettingsModal() {
                         onChange={(e) => updateActiveProfile({ name: e.target.value })}
                         onBlur={(e) => commitActiveProfilePatch({ name: e.target.value })}
                         type="text"
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                     </label>
 
@@ -3401,7 +3400,7 @@ export default function SettingsModal() {
                         onChange={handleProviderTypeChange}
                         onReorder={handleProviderReorder}
                         options={providerOptions}
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                     </div>
 
@@ -3420,7 +3419,7 @@ export default function SettingsModal() {
                           placeholder={
                             activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl
                           }
-                          className={`w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                         />
                         <div
                           data-selectable-text
@@ -3490,7 +3489,7 @@ export default function SettingsModal() {
                           onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
                           type={showApiKey ? 'text' : 'password'}
                           placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
-                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 pr-10 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 pr-10 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                         />
                         <button
                           type="button"
@@ -3568,7 +3567,7 @@ export default function SettingsModal() {
                           { label: 'Images API (/v1/images)', value: 'images' },
                           { label: 'Responses API (/v1/responses)', value: 'responses' },
                         ]}
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                       <div data-selectable-text className="mt-1.5 text-xs text-ds-muted dark:text-ds-muted">
                         支持通过查询参数覆盖：
@@ -3625,7 +3624,7 @@ export default function SettingsModal() {
                           { label: '自动（推荐）', value: 'auto' },
                           { label: '浏览器直连（故障排查）', value: 'renderer' },
                         ]}
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                       <div
                         data-selectable-text
@@ -3671,7 +3670,7 @@ export default function SettingsModal() {
                           ? DEFAULT_FAL_MODEL
                           : getDefaultModelForMode(activeProfile.apiMode ?? DEFAULT_SETTINGS.apiMode)
                       }
-                      className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                      className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                     />
                     <datalist id="active-api-model-options">
                       {apiModels.map((model) => (
@@ -3769,7 +3768,7 @@ export default function SettingsModal() {
                             { label: '2 张', value: 2 },
                             { label: '3 张', value: 3 },
                           ]}
-                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                         />
                         <div data-selectable-text className="mt-1.5 text-xs text-ds-muted dark:text-ds-muted">
                           对应{' '}
@@ -3796,7 +3795,7 @@ export default function SettingsModal() {
                             const val = e.target.value === '' ? 1 : Math.max(1, Math.min(999, Number(e.target.value)))
                             updateActiveProfile({ maxConcurrent: normalizeMaxConcurrent(val) }, true)
                           }}
-                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                         />
                         <div data-selectable-text className="mt-1.5 text-xs text-ds-muted dark:text-ds-muted">
                           批量生成图片时的最大并发请求数（1-999）。使用中转站或低速率限制的 API 时建议设为
@@ -3815,7 +3814,7 @@ export default function SettingsModal() {
                             { label: `3 次（默认）`, value: 3 },
                             { label: '5 次', value: 5 },
                           ]}
-                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                          className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                         />
                         <div data-selectable-text className="mt-1.5 text-xs text-ds-muted dark:text-ds-muted">
                           遇到 429 速率限制、5xx 服务器错误或网络超时时自动重试，使用指数退避策略（1s → 2s → 4s →
@@ -3894,7 +3893,7 @@ export default function SettingsModal() {
                         type="number"
                         min={10}
                         max={600}
-                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
+                        className="w-full rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50"
                       />
                     </label>
                   )}
@@ -3925,7 +3924,7 @@ export default function SettingsModal() {
                   <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-3 shadow-sm">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">导入旧版数据</h4>
+                        <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">导入旧版数据</h4>
                         <p className="mt-1 text-xs leading-relaxed text-ds-muted dark:text-ds-muted">
                           从旧版本数据目录（糖包 / tangbao / 糖包 V2 等）恢复标签工作区、生图任务、词条库与素材库；
                           支持跨开发/安装模式迁移数据文件。只复制不覆盖，可随时重复执行。
@@ -3945,7 +3944,7 @@ export default function SettingsModal() {
                     <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-3 shadow-sm">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">素材内核接口</h4>
+                          <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">素材内核接口</h4>
                           <p className="mt-1 text-xs leading-relaxed text-ds-muted dark:text-ds-muted">
                             本地 REST 默认关闭且仅监听 127.0.0.1；MCP 使用 <code>--asset-mcp</code> 启动参数。
                           </p>
@@ -4033,7 +4032,7 @@ export default function SettingsModal() {
 
                   <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-3 shadow-sm">
                     <div className="flex items-center justify-between gap-3">
-                      <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">存储概览</h4>
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">存储概览</h4>
                       <button
                         type="button"
                         onClick={() => void refreshStorageOverview()}
@@ -4096,7 +4095,7 @@ export default function SettingsModal() {
                           d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
                         />
                       </svg>
-                      <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">素材库维护</h4>
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">素材库维护</h4>
                     </div>
                     <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                       <button
@@ -4137,7 +4136,7 @@ export default function SettingsModal() {
                       语义，不改变素材库）；内置的项目结构（产品线-产品-方向）只在首次启动写入一次，此后的删除与调整不会被自动覆盖，「补齐内置项目结构」只补回当前缺失的文件夹。
                     </p>
                     {integrityReport && (
-                      <div className="rounded-lg border border-ds-border bg-ds-surface/70 p-3 text-xs text-ds-muted dark:border-ds-border dark:bg-ds-surface space-y-1.5">
+                      <div className="rounded-ds-lg border border-ds-border bg-ds-surface-subtle p-3 text-xs text-ds-muted space-y-1.5">
                         {!integrityReport.available ? (
                           <div>{integrityReport.unavailableReason ?? '当前环境不支持完整性校验'}</div>
                         ) : (
@@ -4212,7 +4211,7 @@ export default function SettingsModal() {
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h10M4 18h7" />
                       </svg>
-                      <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">图片文件名</h4>
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">图片文件名</h4>
                     </div>
                     <div className="flex flex-wrap gap-x-6 gap-y-3">
                       <Checkbox
@@ -4234,7 +4233,7 @@ export default function SettingsModal() {
                   <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-1">
                       <ExportIcon className="w-4 h-4 text-ds-text dark:text-ds-muted" />
-                      <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">导出数据</h4>
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">导出数据</h4>
                     </div>
                     <div className="flex flex-wrap gap-x-6 gap-y-3">
                       <Checkbox checked={exportConfig} onChange={setExportConfig} label="包含配置和词条库" />
@@ -4317,7 +4316,7 @@ export default function SettingsModal() {
                   <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-1">
                       <ImportIcon className="w-4 h-4 text-ds-text dark:text-ds-muted" />
-                      <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">导入数据</h4>
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">导入数据</h4>
                     </div>
                     <div className="flex flex-wrap gap-x-6 gap-y-3">
                       <Checkbox checked={importConfig} onChange={setImportConfig} label="包含配置和词条库" />
@@ -4359,7 +4358,7 @@ export default function SettingsModal() {
                   <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-1">
                       <TrashIcon className="w-4 h-4 text-ds-text dark:text-ds-muted" />
-                      <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">清理工具</h4>
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">清理工具</h4>
                     </div>
                     <div className="text-ds-sm leading-relaxed text-ds-muted dark:text-ds-muted">
                       应用可能会遗留一些没有被任何任务或历史对话引用的“孤立图片”，导致存储占用过大。您可以通过一键清理来释放磁盘空间。
@@ -4397,7 +4396,7 @@ export default function SettingsModal() {
                   <div className="rounded-ds-xl border border-ds-danger/35 bg-ds-danger-subtle/30 p-4 dark:border-ds-danger/10 dark:bg-ds-danger/5 space-y-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-1">
                       <TrashIcon className="w-4 h-4 text-ds-danger dark:text-ds-danger" />
-                      <h4 className="text-sm font-bold text-ds-danger dark:text-ds-danger">清除数据</h4>
+                      <h4 className="text-sm font-semibold text-ds-danger dark:text-ds-danger">清除数据</h4>
                     </div>
                     <div className="flex flex-wrap gap-x-6 gap-y-3">
                       <Checkbox checked={clearConfig} onChange={setClearConfig} label="包含配置" tone="danger" />
@@ -4433,7 +4432,7 @@ export default function SettingsModal() {
                           d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
                         />
                       </svg>
-                      <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">本地保存</h4>
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">本地保存</h4>
                     </div>
                     {isElectronEnv() ? (
                       <>
@@ -4472,7 +4471,7 @@ export default function SettingsModal() {
                             )}
                           </div>
                         </div>
-                        <div className="rounded-lg border border-ds-border bg-ds-surface/70 p-3 text-xs text-ds-muted dark:border-ds-border dark:bg-ds-surface">
+                        <div className="rounded-ds-lg border border-ds-border bg-ds-surface-subtle p-3 text-xs text-ds-muted">
                           任务输出不再自动复制到本地（每张图只在 <code>cache-images/</code>{' '}
                           保留一份原图）；需要按命名规则、按项目目录组织的文件时，请使用「导出到文件夹」或「按项目树导出原图副本」。
                         </div>
@@ -4549,7 +4548,7 @@ export default function SettingsModal() {
                               d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
                             />
                           </svg>
-                          <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">备份间隔</h4>
+                          <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">备份间隔</h4>
                         </div>
                         <div className="flex items-center gap-3">
                           <input
@@ -4596,7 +4595,9 @@ export default function SettingsModal() {
                                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                               />
                             </svg>
-                            <h4 className="text-sm font-bold text-ds-text dark:text-ds-text-subtle">自动备份列表</h4>
+                            <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">
+                              自动备份列表
+                            </h4>
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="text-xs text-ds-muted dark:text-ds-muted">共 {backups.length} 个备份</span>
@@ -4873,10 +4874,10 @@ export default function SettingsModal() {
                     rel="noopener noreferrer"
                     className="group flex flex-col items-center outline-none"
                   >
-                    <div className="mb-5 flex h-[88px] w-[88px] items-center justify-center rounded-full border border-ds-border/80 bg-ds-surface/50 text-ds-text transition-colors group-hover:bg-ds-subtle dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:group-hover:bg-ds-surface">
+                    <div className="mb-5 flex h-[88px] w-[88px] items-center justify-center rounded-full border border-ds-border bg-ds-surface-subtle text-ds-text transition-colors">
                       <GithubIcon className="h-ds-control-lg w-ds-control-lg" />
                     </div>
-                    <h4 className="text-[17px] font-bold text-ds-text dark:text-ds-text-subtle">
+                    <h4 className="text-ds-lg font-bold text-ds-text dark:text-ds-text-subtle">
                       糖包 GPT Image Playground
                     </h4>
                     <p className="mt-1.5 text-ds-sm text-ds-muted transition-colors group-hover:text-ds-text dark:text-ds-muted dark:group-hover:text-ds-text">
@@ -4990,7 +4991,7 @@ export default function SettingsModal() {
                         <p className="text-xs font-medium uppercase tracking-wide text-ds-primary dark:text-ds-primary">
                           最新版更新
                         </p>
-                        <h4 className="mt-1 text-sm font-bold text-ds-text dark:text-ds-text-subtle">
+                        <h4 className="mt-1 text-sm font-semibold text-ds-text dark:text-ds-text-subtle">
                           {aboutReleaseVersion.replace(/^v?/, 'v')} 更新内容
                         </h4>
                       </div>
@@ -5076,7 +5077,7 @@ export default function SettingsModal() {
                         event.preventDefault()
                         setZipDownloadRouteEnabled(option.route, !isChecked)
                       }}
-                      className={`cursor-pointer rounded-ds-xl border p-3.5 transition-colors focus:outline-none focus:ring-2 focus:ring-ds-focus/20 ${isChecked ? 'border-ds-primary/30 bg-ds-primary-subtle/50 dark:border-ds-primary/30 dark:bg-ds-primary/[0.05]' : 'border-ds-border bg-ds-surface/70 hover:bg-ds-subtle/70 dark:border-ds-border dark:bg-ds-surface dark:hover:bg-ds-surface'}`}
+                      className={`cursor-pointer rounded-ds-xl border p-3.5 transition-colors focus:outline-none focus:ring-2 focus:ring-ds-focus/50 ${isChecked ? 'border-ds-primary/30 bg-ds-primary-subtle/50 dark:border-ds-primary/30 dark:bg-ds-primary/[0.05]' : 'border-ds-border bg-ds-surface/70 hover:bg-ds-subtle/70 dark:border-ds-border dark:bg-ds-surface dark:hover:bg-ds-surface'}`}
                     >
                       <div onClick={(event) => event.stopPropagation()}>
                         <Checkbox
@@ -5236,7 +5237,7 @@ export default function SettingsModal() {
                       value={customProviderForm.json}
                       onChange={(e) => updateCustomProviderForm({ json: e.target.value })}
                       spellCheck={false}
-                      className="flex-1 min-h-[150px] w-full resize-none rounded-ds-lg border border-ds-border/70 bg-ds-surface/60 px-3 py-2 font-mono text-xs leading-relaxed text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50 custom-scrollbar"
+                      className="flex-1 min-h-[150px] w-full resize-none rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-3 py-2 font-mono text-xs leading-relaxed text-ds-text outline-none transition focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50 custom-scrollbar"
                     />
                   </label>
                 </div>
@@ -5276,7 +5277,7 @@ export default function SettingsModal() {
       {profileTouchDragPreview &&
         createPortal(
           <div
-            className="fixed pointer-events-none z-[var(--ds-z-tooltip)] flex items-center justify-between gap-2 rounded-ds-lg bg-ds-surface/95 px-3 py-2 text-xs text-ds-text shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:bg-ds-scrim/95 dark:text-ds-muted dark:ring-white/10"
+            className="fixed pointer-events-none z-[var(--ds-z-tooltip)] flex items-center justify-between gap-2 rounded-ds-lg border border-ds-border bg-ds-surface px-3 py-2 text-xs text-ds-text shadow-ds-md"
             style={{
               left: profileTouchDragPreview.x - profileTouchDragPreview.offsetX,
               top: profileTouchDragPreview.y - profileTouchDragPreview.offsetY,

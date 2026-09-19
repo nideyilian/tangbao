@@ -139,19 +139,18 @@ export default function WordLibrarySidebar() {
   useEffect(() => {
     const root = document.documentElement
     // 变量名沿用历史，CSS 侧（design-system）仍在读它们。
-    root.style.setProperty(
-      '--word-library-left-width',
-      !compactViewport && docked === 'left' ? `${size.width}px` : '0px',
-    )
-    root.style.setProperty(
-      '--word-library-right-width',
-      !compactViewport && docked === 'right' ? `${size.width}px` : '0px',
-    )
+    // 2026-09-19 修正：必须用 `visible` 而不是 `docked` 判定。此前只要 docked === 'right'
+    // 就写死 340px，但下方 `if (!detailAvailable) return null` 会让面板**不渲染**却没卸载，
+    // useEffect 的 cleanup 也就永不触发 —— 于是右侧 340px 被永久占位，露出 body 的画布底色，
+    // 表现为「界面右边莫名多一条灰边」（浅色主题下尤其明显）。占位必须跟随可见性。
+    const visible = detailAvailable && !compactViewport
+    root.style.setProperty('--word-library-left-width', visible && docked === 'left' ? `${size.width}px` : '0px')
+    root.style.setProperty('--word-library-right-width', visible && docked === 'right' ? `${size.width}px` : '0px')
     return () => {
       root.style.setProperty('--word-library-left-width', '0px')
       root.style.setProperty('--word-library-right-width', '0px')
     }
-  }, [compactViewport, docked, size.width])
+  }, [detailAvailable, compactViewport, docked, size.width])
 
   useEffect(() => {
     const move = (event: MouseEvent) => {

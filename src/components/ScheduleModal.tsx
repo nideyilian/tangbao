@@ -386,7 +386,7 @@ export default function ScheduleModal() {
                       onDragOver={(event) => handleDragOverCell(event, dateKey, row.id)}
                       onDragLeave={handleDragLeaveCell}
                       onDrop={(event) => handleDrop(event, dateKey, row.id)}
-                      className={`min-h-[88px] border-r border-ds-border p-1.5 last:border-r-0 ${dragOverCell === cellKey ? 'bg-ds-primary/10 ring-1 ring-inset ring-ds-focus/40' : 'bg-ds-canvas'}`}
+                      className={`min-h-[88px] border-r border-ds-border p-1.5 last:border-r-0 ${dragOverCell === cellKey ? 'bg-ds-primary/10 ring-1 ring-inset ring-ds-focus/50' : 'bg-ds-canvas'}`}
                     >
                       <div className="space-y-1.5">
                         {items.map((item) => (
@@ -501,7 +501,7 @@ export default function ScheduleModal() {
                         onBlur={(event) => void handleValidateOutputPath(event.target.value)}
                         onDoubleClick={(event) => event.stopPropagation()}
                         placeholder="输出地址，留空按收藏夹"
-                        className="min-w-0 flex-1 rounded-md border border-ds-border bg-ds-canvas px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ds-focus/40"
+                        className="min-w-0 flex-1 rounded-md border border-ds-border bg-ds-canvas px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ds-focus/50"
                       />
                       <button
                         type="button"
@@ -518,7 +518,7 @@ export default function ScheduleModal() {
               )
             })}
             {filteredTasks.length === 0 && (
-              <div className="col-span-full rounded-lg border border-dashed border-ds-border p-4 text-center text-xs text-ds-muted">
+              <div className="col-span-full rounded-ds-lg border border-dashed border-ds-border p-4 text-center text-xs text-ds-muted">
                 {'\u6682\u65e0\u6536\u85cf\u4efb\u52a1'}
               </div>
             )}
@@ -631,7 +631,7 @@ function ScheduleTaskPreview({ task }: { task: TaskRecord }) {
         hoverPoint &&
         createPortal(
           <div
-            className="pointer-events-none fixed z-[var(--ds-z-tooltip)] overflow-hidden rounded-lg border border-white/30 bg-ds-canvas p-1 shadow-2xl ring-1 ring-black/10"
+            className="pointer-events-none fixed z-[var(--ds-z-tooltip)] overflow-hidden rounded-lg border border-white/30 bg-ds-canvas p-1 shadow-ds-md ring-1 ring-black/10"
             style={{ left: previewLeft, top: previewTop, width: previewSize, height: previewSize }}
           >
             <img src={thumbSrc} alt="" className="h-full w-full rounded-md object-contain" />

@@ -31,7 +31,7 @@ export default function SopVersionHistoryDialog({
         ) : (
           <ScrollArea maxHeight="60vh" className="space-y-3 pr-2">
             {versions.map((version) => (
-              <div key={version.id} className="space-y-2 rounded-lg border border-ds-border p-3">
+              <div key={version.id} className="space-y-2 rounded-ds-lg border border-ds-border p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <h4 className="truncate text-sm font-semibold">{version.name || '未命名 SOP'}</h4>

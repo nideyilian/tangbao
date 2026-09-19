@@ -39,17 +39,3 @@ export interface ProjectNodeParams {
 
 /** 参数覆盖表：键为 `AssetCollection.id`。 */
 export type ProjectNodeParamsMap = Record<string, ProjectNodeParams>
-
-/** 解析后的生效参数，供表格展示与后处理执行读取。 */
-export interface ResolvedProjectParams {
-  /** 归属节点 id；null 表示图片没有归属（用全局默认） */
-  collectionId: string | null
-  /** 结构路径名，供 `{line}` / `{product}` / `{direction}` token */
-  path: { line: string; product: string; direction: string }
-  /** 该方向是否参与自动后处理 */
-  enabled: boolean
-  /** 真正提供了参数的节点 id；null = 全部来自全局默认 */
-  sourcedFrom: string | null
-  /** 提供参数的节点在各层级里的深度（0 产品线 / 1 产品 / 2 方向）；sourcedFrom 为 null 时是 -1 */
-  sourcedDepth: number
-}

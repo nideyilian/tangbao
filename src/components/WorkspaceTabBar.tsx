@@ -811,7 +811,7 @@ export default function WorkspaceTabBar() {
       {/* ===== Context menu ===== */}
       {contextMenu && (
         <div
-          className="fixed z-50 min-w-[160px] rounded-lg border border-ds-border bg-ds-subtle shadow-xl py-1"
+          className="fixed z-dropdown min-w-[160px] rounded-ds-lg border border-ds-border bg-ds-surface shadow-ds-md py-1"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >

@@ -1,35 +1,61 @@
+/* ============================================================================
+ * 设计 Token —— 唯一真相源（2026-09-19 统一重构，见 docs/adr/0008）
+ * ----------------------------------------------------------------------------
+ * 全仓只有这一套颜色 Token 体系：`--ds-color-*`（HSL 通道，便于 Tailwind 加 alpha）。
+ * 旧的 `--background` / `--foreground` / `--muted` / `--sidebar` 等桥接变量已删除
+ * （实测 0 消费）；多皮肤（data-skin）机制已移除，只保留 light / dark 两态。
+ *
+ * 配色以模板 00009（xAI-inspired）的克制制度为基底：
+ *   - 层级只靠 1px 描边表达，不用阴影堆浮起感；
+ *   - 近黑 / 近白画布 + 中性灰阶，彩色只用于语义（primary / success / warning / danger / info）。
+ * 但模板本身是深色专属，故浅色态按明亮桌面工具重新设计，品牌蓝保留为 primary 色相。
+ * 所有文字/表面组合均通过 WCAG AA（对比度 ≥ 4.5:1，边框等非文字 ≥ 3:1 之外的低层元素除外）。
+ * ========================================================================= */
 :root {
   color-scheme: light;
 
-  /* Color primitives are expressed as HSL channels so Tailwind can apply alpha. */
-  --ds-color-canvas: 210 20% 98%;
+  /* — 表面层级：canvas（灰蓝底） < surface-subtle（灰） < surface / raised（纯白面板） —
+     2026-09-19 二次调整：首版 canvas 取 220 20% 98% 与旧值 210 20% 98% 换算后同为 #f9fafb，
+     属于「等效值」，界面看不出任何变化。本次把亮度差拉开到肉眼可辨的程度：
+     canvas #f1f3f7 ↔ surface #ffffff，明度差 4 个色阶，面板能明确「浮」出来。 */
+  --ds-color-canvas: 218 24% 96%;
   --ds-color-surface: 0 0% 100%;
-  --ds-color-surface-subtle: 220 14% 96%;
+  --ds-color-surface-subtle: 218 20% 94%;
   --ds-color-surface-raised: 0 0% 100%;
-  --ds-color-text: 220 15% 16%;
-  --ds-color-text-muted: 222 8% 42%;
-  --ds-color-text-subtle: 220 7% 54%;
+
+  /* — 文字层级：text（正文） > text-muted（次要） > text-subtle（弱化，仍 ≥4.5:1） — */
+  --ds-color-text: 222 22% 13%;
+  --ds-color-text-muted: 220 12% 38%;
+  --ds-color-text-subtle: 220 10% 45%;
   --ds-color-text-inverse: 0 0% 100%;
-  --ds-color-border: 220 11% 89%;
-  --ds-color-border-strong: 220 10% 76%;
-  --ds-color-primary: 218 42% 46%;
-  --ds-color-primary-hover: 218 45% 39%;
-  --ds-color-primary-subtle: 218 28% 95%;
-  --ds-color-success: 145 38% 36%;
-  --ds-color-success-subtle: 145 22% 95%;
-  --ds-color-warning: 37 55% 38%;
-  --ds-color-warning-hover: 37 56% 31%;
-  --ds-color-warning-subtle: 38 32% 95%;
-  --ds-color-danger: 0 48% 50%;
-  --ds-color-danger-hover: 0 50% 43%;
-  --ds-color-danger-subtle: 0 30% 96%;
-  --ds-color-info: 199 45% 40%;
-  --ds-color-info-subtle: 199 26% 95%;
-  --ds-color-focus: 218 48% 48%;
-  --ds-color-selection-surface: 210 15% 95%;
-  --ds-color-selection-border: 220 10% 76%;
-  --ds-color-selection-text: 222 13% 19%;
-  --ds-color-scrim: 220 12% 8%;
+
+  /* — 描边：仅两级。浅色下画布变灰后描边要同步加深，否则层级会糊在一起 — */
+  --ds-color-border: 219 18% 85%;
+  --ds-color-border-strong: 219 16% 70%;
+
+  /* — 主色：品牌蓝（深色态改用高明度同色相，保证反白文字可读） — */
+  --ds-color-primary: 221 62% 45%;
+  --ds-color-primary-hover: 221 64% 36%;
+  --ds-color-primary-subtle: 221 58% 95%;
+
+  /* — 语义色：每色三态（基准 / hover / subtle 底） — */
+  --ds-color-success: 152 52% 32%;
+  --ds-color-success-subtle: 152 40% 94%;
+  --ds-color-warning: 32 70% 36%;
+  --ds-color-warning-hover: 32 72% 29%;
+  --ds-color-warning-subtle: 36 60% 94%;
+  --ds-color-danger: 356 62% 46%;
+  --ds-color-danger-hover: 356 64% 39%;
+  --ds-color-danger-subtle: 356 60% 95%;
+  --ds-color-info: 199 62% 34%;
+  --ds-color-info-subtle: 199 50% 94%;
+
+  /* — 交互态 — */
+  --ds-color-focus: 221 62% 48%;
+  --ds-color-selection-surface: 218 22% 92%;
+  --ds-color-selection-border: 219 16% 70%;
+  --ds-color-selection-text: 222 20% 16%;
+  --ds-color-scrim: 222 22% 10%;
 
   --ds-font-sans: var(--font-ui-sans);
   --ds-font-mono: var(--font-mono);
@@ -68,6 +94,9 @@
   --ds-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
   --ds-shadow-md: 0 8px 24px rgb(15 23 42 / 0.08);
   --ds-shadow-lg: 0 18px 48px rgb(15 23 42 / 0.14);
+  /* 内凹阴影：只用于「画布内嵌预览区」（MaskEditor 画笔区、PresetCanvasEditor 画布预览），
+     表达内容被嵌进框里。它语义上不是「浮起」，与 sm/md/lg 不同层，故单独出 token。 */
+  --ds-shadow-inner: inset 0 2px 6px rgb(15 23 42 / 0.1);
   --ds-shadow-focus: 0 0 0 3px hsl(var(--ds-color-focus) / 0.22);
 
   --ds-control-sm: 2rem;
@@ -95,46 +124,62 @@
   --ds-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
+/* 深色态：近黑画布做底，层级**只靠 1px 描边**表达，不用阴影堆浮起感。
+   canvas 比 surface 更暗 → 面板「浮」在画布上方，而不是靠投影。
+   彩色（primary / success / warning / danger / info）统一改用高明度同色相，
+   与浅色态共享同一套色相，保证「同一语义在任何主题下都认得出」。 */
 .dark {
   color-scheme: dark;
-  --ds-color-canvas: 225 9% 9%;
-  --ds-color-surface: 220 9% 13%;
-  --ds-color-surface-subtle: 220 7% 17%;
-  --ds-color-surface-raised: 220 8% 15%;
-  --ds-color-text: 220 10% 94%;
-  --ds-color-text-muted: 218 7% 70%;
-  --ds-color-text-subtle: 220 6% 58%;
-  --ds-color-text-inverse: 220 15% 12%;
-  --ds-color-border: 218 7% 24%;
-  --ds-color-border-strong: 220 7% 38%;
-  --ds-color-primary: 216 48% 72%;
-  --ds-color-primary-hover: 216 50% 78%;
-  --ds-color-primary-subtle: 216 22% 24%;
-  --ds-color-success: 145 40% 67%;
-  --ds-color-success-subtle: 145 20% 23%;
-  --ds-color-warning: 38 55% 68%;
-  --ds-color-warning-hover: 38 56% 74%;
-  --ds-color-warning-subtle: 38 23% 23%;
-  --ds-color-danger: 0 52% 72%;
-  --ds-color-danger-hover: 0 54% 79%;
-  --ds-color-danger-subtle: 0 24% 24%;
-  --ds-color-info: 199 46% 70%;
-  --ds-color-info-subtle: 199 22% 24%;
-  --ds-color-focus: 216 48% 72%;
-  --ds-color-selection-surface: 223 7% 19%;
-  --ds-color-selection-border: 219 7% 38%;
-  --ds-color-selection-text: 225 10% 92%;
+
+  /* 2026-09-19 二次调整：首版 canvas 6% / surface 10% 只差 4 个色阶，
+     在深色下几乎看不出左右栏与主区的分界。本次拉开到 canvas #0b0c0f ↔ surface #191b1f。 */
+  --ds-color-canvas: 220 14% 5%;
+  --ds-color-surface: 220 12% 11%;
+  /* surface-subtle 在弹窗里承担「下沉分组卡」角色（弹窗底是 raised #1f2228）。
+     16% 时与 raised 仅 1.068:1，低于 1.10 可辨阈值；提到 18% → 1.137:1，
+     与浅色侧（surface-subtle vs raised = 1.151:1）量级对齐。 */
+  --ds-color-surface-subtle: 220 12% 18%;
+  --ds-color-surface-raised: 220 12% 14%;
+
+  --ds-color-text: 220 16% 95%;
+  --ds-color-text-muted: 220 10% 74%;
+  --ds-color-text-subtle: 220 9% 62%;
+  --ds-color-text-inverse: 222 20% 11%;
+
+  /* 描边在近黑底上必须更亮才可见（浅色 85% ↔ 深色 32%） */
+  --ds-color-border: 220 9% 32%;
+  --ds-color-border-strong: 220 9% 48%;
+
+  --ds-color-primary: 221 72% 73%;
+  --ds-color-primary-hover: 221 74% 80%;
+  --ds-color-primary-subtle: 221 32% 24%;
+
+  --ds-color-success: 152 48% 67%;
+  --ds-color-success-subtle: 152 26% 23%;
+  --ds-color-warning: 36 70% 69%;
+  --ds-color-warning-hover: 36 72% 76%;
+  --ds-color-warning-subtle: 36 30% 23%;
+  --ds-color-danger: 356 70% 73%;
+  --ds-color-danger-hover: 356 72% 80%;
+  --ds-color-danger-subtle: 356 30% 25%;
+  --ds-color-info: 199 60% 71%;
+  --ds-color-info-subtle: 199 28% 24%;
+
+  --ds-color-focus: 221 72% 73%;
+  --ds-color-selection-surface: 220 10% 21%;
+  --ds-color-selection-border: 220 9% 48%;
+  --ds-color-selection-text: 220 16% 93%;
+  --ds-color-scrim: 220 14% 7%;
+
   --ds-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
   --ds-shadow-md: 0 10px 28px rgb(0 0 0 / 0.3);
   --ds-shadow-lg: 0 20px 56px rgb(0 0 0 / 0.42);
+  --ds-shadow-inner: inset 0 2px 8px rgb(0 0 0 / 0.5);
 }
 
-/* ===== 配色方案（皮肤）=====
-   设计系统组件库的颜色 Token 单一来源 = 全局皮肤注册表
-   （src/theme/registry.ts + src/theme/styles/skins.css，通过 :root[data-skin] 提供）。
-   本文件只定义组件结构与中性基础 Token（下方 :root / .dark），
-   不再重复定义具体皮肤预设。切换皮肤请设置 document 根节点的 data-skin 属性，
-   由真实皮肤的 CSS 覆盖对应 --ds-color-* Token。 */
+/* 皮肤（配色方案）机制已于 2026-09-19 移除，见 docs/adr/0008。
+   颜色 Token 的单一来源就是本文件的 :root / .dark 两段，不再有 data-skin 覆盖层。
+   需要新增配色时，应重新设计为「变量集模式」而不是再引入一层 CSS 覆盖。 */
 
 .ds-button,
 .ds-icon-button {

@@ -62,7 +62,7 @@ export function DerivePolicyModal({
       role="dialog"
       aria-modal="true"
       aria-label="衍生设置"
-      className="fixed inset-0 z-overlay flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-overlay flex items-center justify-center bg-ds-scrim/45 p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
@@ -90,7 +90,10 @@ export function DerivePolicyModal({
         <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-4">
           <div className="space-y-2.5">
             {/* 文案处理模式 */}
-            <div className="rounded-ds-lg border border-ds-border/70 bg-ds-surface/50 p-2.5 dark:border-ds-border">
+            {/* 分组卡片：弹窗底色已是 surface-raised（不透明），此处必须用**下沉**色
+                surface-subtle 才能把分组框出来。原 `bg-ds-surface/50` 是白叠白（看不见），
+                且半透明会让弹窗外的遮罩透进来 —— 2026-09-19 表面层级收敛。 */}
+            <div className="rounded-ds-lg border border-ds-border bg-ds-surface-subtle p-2.5">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-sm font-medium text-ds-text dark:text-ds-text-subtle">文案处理</span>
                 <span className="text-xs text-ds-muted">
@@ -120,10 +123,7 @@ export function DerivePolicyModal({
             </div>
 
             {DERIVE_DIMENSIONS.map((dimension) => (
-              <div
-                key={dimension}
-                className="rounded-ds-lg border border-ds-border/70 bg-ds-surface/50 p-2.5 dark:border-ds-border"
-              >
+              <div key={dimension} className="rounded-ds-lg border border-ds-border bg-ds-surface-subtle p-2.5">
                 <div className="mb-1.5 flex items-center justify-between">
                   <span className="text-sm font-medium text-ds-text dark:text-ds-text-subtle">{dimension}</span>
                   <span className="text-xs text-ds-muted">

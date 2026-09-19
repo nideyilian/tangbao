@@ -5159,28 +5159,33 @@ describe('本地写盘队列的失败语义', () => {
 })
 
 // O-14：migrate 第二参 version 之前被丢弃，v4 迁移对任何版本都无条件执行。
-// 现在按版本分派 —— v3 存档才做 colorScheme -> skinId；v4+ 跳过（字段本就该是 skinId）。
-describe('migratePersistedState 的版本分派', () => {
-  it('v3 存档执行 colorScheme -> skinId 迁移', () => {
-    const migrated = migratePersistedState({ settings: { colorScheme: 'dark' } }, 3) as {
+// 2026-09-19（ADR-0008）：皮肤机制移除，v4 的 colorScheme -> skinId 迁移已作废，
+// 改为 v5 的「丢弃皮肤字段」。以下用例锁定新行为（迁移不再依赖 version 分派）。
+describe('migratePersistedState 丢弃已废弃的皮肤字段', () => {
+  it('旧存档的 colorScheme 字段被丢弃', () => {
+    const migrated = migratePersistedState({ settings: { colorScheme: 'dark', themeMode: 'dark' } }) as {
       settings: Record<string, unknown>
     }
-    expect(migrated.settings.skinId).toBe('dark')
+    expect(migrated.settings.colorScheme).toBeUndefined()
+    expect(migrated.settings.skinId).toBeUndefined()
+    // 主题字段必须原样保留
+    expect(migrated.settings.themeMode).toBe('dark')
   })
 
-  it('v4+ 存档跳过 v4 迁移，字段原样保留（兜底交给 normalizeSettings）', () => {
-    const migrated = migratePersistedState({ settings: { colorScheme: 'dark' } }, 4) as {
+  it('旧存档的 skinId 字段被丢弃', () => {
+    const migrated = migratePersistedState({ settings: { skinId: 'glass', themeMode: 'light' } }) as {
       settings: Record<string, unknown>
     }
     expect(migrated.settings.skinId).toBeUndefined()
-    expect(migrated.settings.colorScheme).toBe('dark')
+    expect(migrated.settings.themeMode).toBe('light')
   })
 
-  it('缺省 version 保持旧行为：全量执行（直接调用方与测试的兼容面）', () => {
-    const migrated = migratePersistedState({ settings: { colorScheme: 'dark' } }) as {
+  it('无皮肤字段时 settings 不被改写', () => {
+    const migrated = migratePersistedState({ settings: { themeMode: 'dark' } }) as {
       settings: Record<string, unknown>
     }
-    expect(migrated.settings.skinId).toBe('dark')
+    expect(migrated.settings.skinId).toBeUndefined()
+    expect(migrated.settings.themeMode).toBe('dark')
   })
 })
 

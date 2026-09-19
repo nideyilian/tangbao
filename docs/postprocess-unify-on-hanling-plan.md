@@ -361,20 +361,20 @@
 
 ### 模块地图
 
-| 文件                                                         | 职责                                                                                               |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `src/lib/postprocessMedia.ts`                                | 媒体（渠道）表 + 尺寸笛卡尔积纯函数；`DEFAULT_POSTPROCESS_MEDIA` = 4 媒体 / 15 尺寸                |
-| `src/lib/postprocessNaming.ts`                               | `{token}` 命名模板（含 `{preset}`）；项目树方向名优先于尺寸推导的横/竖/方                          |
-| `src/lib/postprocessProjectTree.ts`                          | `buildPostprocessProjectTree` / `resolvePostprocessProjectTargets` / `isCollectionWithinSelection` |
-| `src/lib/postprocessDistribution.ts`                         | 按天分发排期（起始日期 + 天数共同决定）                                                            |
-| `src/storePostprocessMedia.ts`                               | 编排配置 store（namespace `postprocessMedia`）                                                     |
-| `src/components/PostprocessSettingsModal.tsx`                | 80% 双栏工作区外壳                                                                                 |
-| `src/features/postprocess/renderVariant.ts`                  | `renderWithMaxKb`（尺寸压缩 + 水印叠加）                                                           |
-| `src/features/postprocess/PostprocessDistributionFields.tsx` | 分发表单（面板与节点参数弹窗共用）                                                                 |
-| `src/features/projectTree/params.ts`                         | 继承链遍历与逐级合并                                                                               |
-| `src/features/composite/components/PresetProjectTree.tsx`    | 水印归属树：项目树层级管理 + 归属（拖入绑定、按渠道图标就地编辑）；**只管归属，行上不挂任何分类 / 来源 / 状态标签**          |
-| `src/features/composite/lib/compositePresetLibrary.ts`       | 水印库筛选 + 跨组件拖拽 MIME（`PRESET_LIBRARY_DRAG_TYPE`，载荷 = id 数组 JSON）                    |
-| `src/features/composite/lib/presetBinding.ts`                | 单个 / 批量绑定纯函数（`bindPresetsToNode` 保住顺序即产出顺序）                                    |
+| 文件                                                         | 职责                                                                                                                |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/postprocessMedia.ts`                                | 媒体（渠道）表 + 尺寸笛卡尔积纯函数；`DEFAULT_POSTPROCESS_MEDIA` = 4 媒体 / 15 尺寸                                 |
+| `src/lib/postprocessNaming.ts`                               | `{token}` 命名模板（含 `{preset}`）；项目树方向名优先于尺寸推导的横/竖/方                                           |
+| `src/lib/postprocessProjectTree.ts`                          | `buildPostprocessProjectTree` / `resolvePostprocessProjectTargets` / `isCollectionWithinSelection`                  |
+| `src/lib/postprocessDistribution.ts`                         | 按天分发排期（起始日期 + 天数共同决定）                                                                             |
+| `src/storePostprocessMedia.ts`                               | 编排配置 store（namespace `postprocessMedia`）                                                                      |
+| `src/components/PostprocessSettingsModal.tsx`                | 80% 双栏工作区外壳                                                                                                  |
+| `src/features/postprocess/renderVariant.ts`                  | `renderWithMaxKb`（尺寸压缩 + 水印叠加）                                                                            |
+| `src/features/postprocess/PostprocessDistributionFields.tsx` | 分发表单（面板与节点参数弹窗共用）                                                                                  |
+| `src/features/projectTree/params.ts`                         | 继承链遍历与逐级合并                                                                                                |
+| `src/features/composite/components/PresetProjectTree.tsx`    | 水印归属树：项目树层级管理 + 归属（拖入绑定、按渠道图标就地编辑）；**只管归属，行上不挂任何分类 / 来源 / 状态标签** |
+| `src/features/composite/lib/compositePresetLibrary.ts`       | 水印库筛选 + 跨组件拖拽 MIME（`PRESET_LIBRARY_DRAG_TYPE`，载荷 = id 数组 JSON）                                     |
+| `src/features/composite/lib/presetBinding.ts`                | 单个 / 批量绑定纯函数（`bindPresetsToNode` 保住顺序即产出顺序）                                                     |
 
 **类型落点**：`PostprocessMediaConfig` 放 `lib/` 而不是 store 文件 —— `src/types.ts` 的 `ExportData` 要引它，
 放 store 会让基础模块反向依赖 store。
@@ -384,13 +384,13 @@
 渠道是**单元维度**（同一张原图会展开成多个渠道的变体），所以 `mediaId` 必须在**逐单元那一层**传，
 不能只在「一张源图解析一次」那里传。
 
-| 位置                                                  | 职责                                                                                               |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 位置                                                  | 职责                                                                                                                                         |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lib/postprocessMedia.ts`                             | `PostprocessMediaOverride` 类型；`applyPostprocessOverride(base, override, mediaId)`；`PostprocessProjectTarget.watermarkPresetIds(ByMedia)` |
-| `features/projectTree/params.ts`                      | `normalizeByMediaOverride` / `mergeByMediaOverride`；`resolveProjectPostprocessSlice` 加 `mediaId` |
-| `features/projectTree/ProjectNodeParamsDialog.tsx`    | 「按渠道分别设置」区块（只剩输出目录一项，默认收起）                                               |
-| `features/postprocess/taskPostprocess.ts`             | 按渠道拆桶（+ 纯净版单独一桶）                                                                     |
-| `features/composite/components/PresetProjectTree.tsx` | 节点行「按渠道」**图标**＝入口（第三轮起不再是 chip / 标签），点开就地展开渠道 × 预设勾选表          |
+| `features/projectTree/params.ts`                      | `normalizeByMediaOverride` / `mergeByMediaOverride`；`resolveProjectPostprocessSlice` 加 `mediaId`                                           |
+| `features/projectTree/ProjectNodeParamsDialog.tsx`    | 「按渠道分别设置」区块（只剩输出目录一项，默认收起）                                                                                         |
+| `features/postprocess/taskPostprocess.ts`             | 按渠道拆桶（+ 纯净版单独一桶）                                                                                                               |
+| `features/composite/components/PresetProjectTree.tsx` | 节点行「按渠道」**图标**＝入口（第三轮起不再是 chip / 标签），点开就地展开渠道 × 预设勾选表                                                  |
 
 - **合并是逐渠道的，不是整份替换**。界面上一次只改一个渠道的一个字段，整份替换会把没提到的渠道
   **静默抹掉**（改完百度发现头条没了，还看不到提示）。渠道内的 `undefined` 表示「恢复继承」，

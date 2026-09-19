@@ -28,12 +28,12 @@
 | [`mock-image-api.md`](mock-image-api.md)                         | 本地模拟生图接口，零成本验证链路                                                                                         | 现行 |
 | [`library-smoke-checklist.md`](library-smoke-checklist.md)       | 素材库手工冒烟清单                                                                                                       | 现行 |
 | [`custom-provider-llm-prompt.md`](custom-provider-llm-prompt.md) | 自定义服务商配置的 LLM 提示词                                                                                            | 现行 |
-| [`skin-authoring-guide.md`](skin-authoring-guide.md)             | 皮肤编写指南                                                                                                             | 现行 |
 
 ## 方案 / 设计（糖包时期）
 
 | 文件                                                                                                                         | 作用                                                             | 状态 |
 | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---- |
+| [`ui-retrofit-plan.md`](ui-retrofit-plan.md)                                                                                 | 主工作台首屏改造方案（含已实施记录与验收证据）                   | 现行 |
 | [`postprocess-unify-on-hanling-plan.md`](postprocess-unify-on-hanling-plan.md)                                               | 后处理统一到瀚灵编排的完整方案（**当前主线**，第九节是实现要点） | 现行 |
 | [`hanling-postprocess-replica-plan.md`](hanling-postprocess-replica-plan.md)                                                 | 复刻瀚灵后处理链路的原始方案                                     | 参考 |
 | [`output-location-import-2026-09-18.md`](output-location-import-2026-09-18.md)                                               | 《输出位置明细》导入记录 + 三条定案                              | 现行 |
@@ -73,7 +73,6 @@
 | [`optimization-plan.md`](optimization-plan.md)                                           | 优化计划                                             | 参考（基线 v0.8.x）  |
 | [`code-optimization-audit.md`](code-optimization-audit.md)                               | 代码优化审计                                         | 参考                 |
 | [`revert-generation-0.7.56-asset-library.md`](revert-generation-0.7.56-asset-library.md) | 回退到 0.7.56 素材库的说明                           | 归档                 |
-| [`skin-export-jank-analysis.md`](skin-export-jank-analysis.md)                           | 皮肤导出卡顿分析                                     | 归档                 |
 
 ## 其他资产
 

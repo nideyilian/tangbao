@@ -98,7 +98,7 @@ function PromptPreview({ prompt, promptIndex }: { prompt: string; promptIndex: n
       </button>
       <ViewportTooltip
         visible={tooltip.visible}
-        className="w-[min(30rem,calc(100vw-2rem))] max-w-none whitespace-normal p-0 text-left shadow-xl"
+        className="w-[min(30rem,calc(100vw-2rem))] max-w-none whitespace-normal p-0 text-left shadow-ds-md"
       >
         <span className="block border-b border-ds-border px-3 py-2 font-medium text-ds-text dark:border-ds-border dark:text-ds-text-subtle">
           第 {promptIndex} 条完整提示词
@@ -596,7 +596,7 @@ export default function SopBatchDetailModal({
                                 {results.map((item) => renderPreview(item))}
                               </div>
                             ) : (
-                              <div className="flex h-24 items-center justify-center rounded-ds-lg bg-ds-surface text-xs text-ds-muted dark:bg-ds-subtle/60">
+                              <div className="flex h-24 items-center justify-center rounded-ds-lg border border-ds-border border-dashed bg-ds-surface-subtle text-xs text-ds-muted">
                                 暂无可用结果
                               </div>
                             )}

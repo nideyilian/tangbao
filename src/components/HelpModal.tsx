@@ -84,7 +84,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
           {isAssetLibrary ? (
             <>
               <section>
-                <h4 className="mb-4 text-sm font-medium text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
+                <h4 className="mb-4 text-sm font-semibold text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
                   <svg
                     className="w-4 h-4 text-ds-primary"
                     fill="none"
@@ -239,7 +239,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
           ) : isFavoriteCollectionOverview ? (
             <>
               <section>
-                <h4 className="mb-4 text-sm font-medium text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
+                <h4 className="mb-4 text-sm font-semibold text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
                   <svg
                     className="w-4 h-4 text-ds-muted dark:text-ds-muted"
                     fill="none"
@@ -282,7 +282,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                 </div>
               </section>
               <section>
-                <h4 className="mb-4 text-sm font-medium text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
+                <h4 className="mb-4 text-sm font-semibold text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
                   <svg
                     className="w-4 h-4 text-ds-muted dark:text-ds-muted"
                     fill="none"
@@ -308,7 +308,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
           ) : isMobile ? (
             <>
               <section>
-                <h4 className="mb-4 text-sm font-medium text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
+                <h4 className="mb-4 text-sm font-semibold text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
                   <svg
                     className="w-4 h-4 text-ds-muted dark:text-ds-muted"
                     fill="none"
@@ -328,7 +328,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                 </div>
               </section>
               <section>
-                <h4 className="mb-4 text-sm font-medium text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
+                <h4 className="mb-4 text-sm font-semibold text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
                   <svg
                     className="w-4 h-4 text-ds-muted dark:text-ds-muted"
                     fill="none"
@@ -355,7 +355,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
           ) : (
             <>
               <section>
-                <h4 className="mb-4 text-sm font-medium text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
+                <h4 className="mb-4 text-sm font-semibold text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
                   <svg
                     className="w-4 h-4 text-ds-muted dark:text-ds-muted"
                     fill="none"
@@ -390,7 +390,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                 </div>
               </section>
               <section>
-                <h4 className="mb-4 text-sm font-medium text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
+                <h4 className="mb-4 text-sm font-semibold text-ds-text dark:text-ds-text-subtle flex items-center gap-1.5">
                   <svg
                     className="w-4 h-4 text-ds-muted dark:text-ds-muted"
                     fill="none"

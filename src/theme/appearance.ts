@@ -1,18 +1,18 @@
 /**
- * 外观运行时：统一负责「应用皮肤 + 明暗模式」「首屏快照持久化」「兼容迁移」。
+ * 外观运行时：统一负责「明暗模式应用」「首屏快照持久化」。
  *
  * - applyAppearance：唯一允许写 document.documentElement 外观状态的入口。
  * - read/writeAppearanceSnapshot：轻量 localStorage 快照，保证首屏无闪烁
  *   （Electron 的正式设置为异步文件存储，Zustand 恢复后会再校准一次）。
  * - bootstrapAppearance：在 React 渲染前同步调用。
+ *
+ * 2026-09-19（docs/adr/0008）：多皮肤（换肤）机制已移除，只保留 light / dark 两态。
+ * 颜色的唯一真相源是 src/design-system/styles.css 的 :root / .dark。
  */
-
-import { DEFAULT_SKIN_ID, normalizeSkinId, type SkinId } from './registry'
 
 export type ThemeMode = 'light' | 'dark'
 
 export interface AppearanceState {
-  skinId: SkinId
   themeMode: ThemeMode
 }
 
@@ -33,8 +33,8 @@ interface ApplyAppearanceOptions {
 }
 
 /**
- * 将皮肤与明暗模式应用到根节点。
- * 只操作 data-skin、dark class 与 style.colorScheme，不涉及布局。
+ * 将明暗模式应用到根节点。
+ * 只操作 dark class 与 style.colorScheme，不涉及布局。
  */
 export function applyAppearance(
   state: AppearanceState,
@@ -46,24 +46,17 @@ export function applyAppearance(
     const schedule = options.schedule ?? ((callback: () => void, delay: number) => window.setTimeout(callback, delay))
     schedule(() => root.classList.remove(THEME_TRANSITION_CLASS), THEME_TRANSITION_DURATION_MS)
   }
-  root.setAttribute('data-skin', state.skinId)
   root.classList.toggle('dark', state.themeMode === 'dark')
   root.style.colorScheme = state.themeMode
 }
 
-/** 兼容旧接口：仅应用明暗模式 */
+/** 只应用明暗模式（等价于 applyAppearance） */
 export function applyThemeMode(
   themeMode: ThemeMode,
   root: HTMLElement = document.documentElement,
   options: ApplyAppearanceOptions = {},
 ) {
-  if (options.transition) {
-    root.classList.add(THEME_TRANSITION_CLASS)
-    const schedule = options.schedule ?? ((callback: () => void, delay: number) => window.setTimeout(callback, delay))
-    schedule(() => root.classList.remove(THEME_TRANSITION_CLASS), THEME_TRANSITION_DURATION_MS)
-  }
-  root.classList.toggle('dark', themeMode === 'dark')
-  root.style.colorScheme = themeMode
+  applyAppearance({ themeMode }, root, options)
 }
 
 type SnapshotStorage = Pick<Storage, 'getItem' | 'setItem'>
@@ -86,10 +79,7 @@ export function readAppearanceSnapshot(storage: SnapshotStorage | null = default
     if (typeof parsed !== 'object' || parsed === null) return null
     const record = parsed as Record<string, unknown>
     if (record.version !== APPEARANCE_SNAPSHOT_VERSION) return null
-    return {
-      skinId: normalizeSkinId(record.skinId),
-      themeMode: normalizeThemeMode(record.themeMode),
-    }
+    return { themeMode: normalizeThemeMode(record.themeMode) }
   } catch {
     return null
   }
@@ -102,7 +92,6 @@ export function writeAppearanceSnapshot(state: AppearanceState, storage: Snapsho
       APPEARANCE_SNAPSHOT_KEY,
       JSON.stringify({
         version: APPEARANCE_SNAPSHOT_VERSION,
-        skinId: normalizeSkinId(state.skinId),
         themeMode: normalizeThemeMode(state.themeMode),
       }),
     )
@@ -112,10 +101,10 @@ export function writeAppearanceSnapshot(state: AppearanceState, storage: Snapsho
 }
 
 /**
- * 首屏引导：在 React 渲染之前同步应用上次外观，消除“默认皮肤闪一下”。
+ * 首屏引导：在 React 渲染之前同步应用上次外观，消除「浅色闪一下」。
  * Zustand 正式设置恢复后，App 会再次 applyAppearance 校准并重写快照。
  */
 export function bootstrapAppearance(root: HTMLElement = document.documentElement) {
   const snapshot = readAppearanceSnapshot()
-  applyAppearance(snapshot ?? { skinId: DEFAULT_SKIN_ID, themeMode: 'light' }, root)
+  applyAppearance(snapshot ?? { themeMode: 'light' }, root)
 }

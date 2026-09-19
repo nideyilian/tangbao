@@ -128,21 +128,50 @@ AI 在后续修改、新建页面时都做出一致决策的约束系统。它�
 
 ### 4.2 颜色
 
+> 下表由 `src/design-system/styles.css` 的 HSL 通道值换算得出，**实现是唯一真相源**。
+> 修改 Token 后必须同步本表 —— 一致性由 `src/design-system/tokensContract.test.ts` 与
+> `src/design-system/docColorTable.test.ts` 双重锁定。HSL 通道写法（不带 `hsl()` 包裹）
+> 是为了让 Tailwind 能追加 `/<alpha-value>`。
+
 | 语义              | 浅色      | 深色      | 用途                               |
 | ----------------- | --------- | --------- | ---------------------------------- |
-| Canvas            | `#F9FAFB` | `#151619` | 页面最底层                         |
-| Surface           | `#FFFFFF` | `#1E2024` | 卡片、面板、浮层                   |
-| Surface subtle    | `#F3F4F6` | `#282A2E` | 次级区域、禁用底色                 |
-| Text              | `#23272F` | `#EEEFF1` | 主要文本                           |
-| Text muted        | `#636874` | `#ADB1B8` | 说明、元数据                       |
-| Border            | `#E0E2E6` | `#393C41` | 分隔和控件边界                     |
-| Primary           | `#4468A7` | `#95B1DA` | 当前页面唯一主要行动               |
-| Success           | `#397F56` | `#89CDA5` | 成功状态                           |
-| Warning           | `#966D2C` | `#DAB981` | 可继续但需关注                     |
-| Danger            | `#BD4242` | `#DD9292` | 错误和破坏性操作                   |
-| Info              | `#387794` | `#8FBFD6` | 非阻断信息                         |
-| Selection surface | `#F0F2F4` | `#2D2F34` | 选中项的中性表面，不叠加品牌蓝蒙层 |
-| Selection border  | `#BCC0C8` | `#5A5F68` | 选中项边界、标签下划线和缩略图轮廓 |
+| Canvas            | `#F2F4F7` | `#0B0C0F` | 页面最底层                         |
+| Surface           | `#FFFFFF` | `#191B1F` | 卡片、面板、浮层                   |
+| Surface subtle    | `#EDEFF3` | `#282C33` | 次级区域、禁用底色                 |
+| Surface raised    | `#FFFFFF` | `#1F2228` | 真正浮起的区域（弹窗壳 / 下拉）    |
+| Text              | `#1A1E28` | `#F0F2F4` | 主要文本                           |
+| Text muted        | `#555D6D` | `#B6BAC3` | 说明、元数据                       |
+| Text subtle       | `#676F7E` | `#959BA7` | 三级文本、占位                     |
+| Border            | `#D2D7E0` | `#4A4F59` | 分隔和控件边界                     |
+| Border strong     | `#A6AFBF` | `#6F7785` | 强调边界、悬停描边                 |
+| Primary           | `#2C59BA` | `#89A8EC` | 当前页面唯一主要行动               |
+| Primary hover     | `#214697` | `#A6BEF2` | 主行动悬停                         |
+| Primary subtle    | `#EBF0FA` | `#2A3651` | 主色弱底                           |
+| Success           | `#277C54` | `#82D3AE` | 成功状态                           |
+| Warning           | `#9C601C` | `#E7BB79` | 可继续但需关注                     |
+| Danger            | `#BE2D36` | `#EA8A90` | 错误和破坏性操作                   |
+| Info              | `#216A8C` | `#89C5E1` | 非阻断信息                         |
+| Selection surface | `#E6E9EF` | `#30343B` | 选中项的中性表面，不叠加品牌蓝蒙层 |
+| Selection border  | `#A6AFBF` | `#6F7785` | 选中项边界、标签下划线和缩略图轮廓 |
+| Focus             | `#2F5FC6` | `#89A8EC` | 键盘焦点环                         |
+| Scrim             | `#14171F` | `#0F1114` | 模态遮罩底                         |
+
+**表面层级的可辨阈值**（实测，改色时按此自查）：
+
+- 相邻两级的对比度必须 ≥ **1.10:1**，否则肉眼无法分辨（历史事故见 `docs/RISK.md` R-38）。
+- 描边对底色的对比度必须 ≥ **1.3:1**。
+- 正文字号文本对比度必须 ≥ **4.5:1**（WCAG AA）。
+- 浅色态 `canvas ↔ surface` = 1.10:1，深色态 `canvas ↔ surface` = 1.13:1；
+  `surface-subtle` 相对 `surface-raised` 浅色 1.15:1 / 深色 1.14:1。
+
+**四级表面层级**（弹窗与工作台必须按此选色，不得自造）：
+
+```text
+surface-raised（弹窗壳 / 下拉 / 浮层）
+  └─ surface（DialogPane 内容区 / 侧栏 / 停靠栏）
+       └─ surface-subtle（下沉分组卡 / 输入框 / 表头）
+            └─ canvas（画布型工作台 / 内嵌预览区）
+```
 
 颜色不能成为唯一状态信号；必须同时有文本、图标、形状或位置差异。
 品牌色只用于主行动、焦点和语义状态；导航、列表、缩略图的选中态使用中性

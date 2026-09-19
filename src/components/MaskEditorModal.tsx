@@ -945,17 +945,17 @@ export default function MaskEditorModal() {
         {/* Workspace */}
         <div
           ref={stageRef}
-          className="flex-1 relative flex items-center justify-center overflow-hidden bg-ds-surface/50 dark:bg-ds-scrim/50 p-0 pb-[76px] sm:p-6 sm:pb-[100px]"
+          className="flex-1 relative flex items-center justify-center overflow-hidden bg-ds-canvas p-0 pb-[76px] sm:p-6 sm:pb-[100px]"
           style={{ containerType: 'size' }}
         >
           {isLoading && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-ds-surface/50 text-sm text-ds-muted backdrop-blur-sm dark:bg-ds-scrim/50 dark:text-ds-muted">
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-ds-canvas/80 text-sm text-ds-muted backdrop-blur-sm">
               正在载入图片...
             </div>
           )}
           <div
             ref={baseFrameRef}
-            className="relative max-h-full max-w-full sm:rounded-ds-lg shadow-inner sm:ring-1 ring-ds-border/5 touch-none dark:bg-ds-scrim/50 dark:ring-ds-border/5"
+            className="relative max-h-full max-w-full sm:rounded-ds-lg shadow-ds-inner sm:ring-1 sm:ring-ds-border touch-none"
             onWheel={handleWheel}
             style={{
               aspectRatio: size ? `${size.width} / ${size.height}` : '1 / 1',
@@ -994,7 +994,9 @@ export default function MaskEditorModal() {
         <div className="absolute bottom-4 sm:bottom-8 left-1/2 -translate-x-1/2 flex items-center justify-center z-20 pointer-events-none w-full px-2 sm:px-4">
           <div className="flex items-center gap-2 sm:gap-4 px-2 sm:px-3 py-1.5 sm:py-2 bg-[hsl(var(--ds-color-surface-raised)/0.95)] dark:bg-[hsl(var(--ds-color-surface-raised)/0.95)] backdrop-blur-md border border-[hsl(var(--ds-color-border)/0.8)] rounded-ds-xl sm:rounded-[1.25rem] shadow-ds-lg pointer-events-auto">
             <div className="flex items-center gap-1.5 sm:gap-3">
-              <div className="flex items-center bg-ds-surface/80 dark:bg-ds-surface-subtle/80 p-1 rounded-ds-lg sm:rounded-[14px]">
+              {/* 工具栏内的工具组容器：底是 surface-raised 浮条，用下沉色区分选中态。
+                  原 `bg-ds-surface/80` 在浮条上白叠白，选中按钮反而"看不出被选中" —— 2026-09-19 收敛。 */}
+              <div className="flex items-center bg-ds-surface-subtle p-1 rounded-ds-lg sm:rounded-[14px]">
                 <button
                   className={`p-2 sm:p-2.5 rounded-lg sm:rounded-ds-lg transition ${tool === 'brush' ? 'bg-ds-surface shadow-sm text-ds-primary dark:bg-ds-surface-subtle dark:text-ds-primary dark:shadow-none' : 'text-ds-muted hover:text-ds-text dark:text-ds-text-subtle dark:hover:text-ds-text'}`}
                   onClick={() => setTool('brush')}
@@ -1042,7 +1044,7 @@ export default function MaskEditorModal() {
                   disabled={!isReady || isSaving}
                   title="调节笔刷大小"
                 >
-                  <span className="text-ds-md sm:text-[15px] font-semibold tracking-tight">{brushSize}</span>
+                  <span className="text-ds-md font-semibold tracking-tight">{brushSize}</span>
                 </button>
               </div>
             </div>
@@ -1137,7 +1139,7 @@ export default function MaskEditorModal() {
         createPortal(
           <div
             ref={brushSizePanelRef}
-            className="fixed z-[var(--ds-z-toast)] h-44 w-14 -translate-x-1/2 bg-ds-surface dark:bg-ds-subtle rounded-ds-lg shadow-xl border border-ds-border dark:border-ds-border-strong"
+            className="fixed z-[var(--ds-z-toast)] h-44 w-14 -translate-x-1/2 rounded-ds-lg border border-ds-border bg-ds-surface shadow-ds-md dark:border-ds-border-strong"
             style={{ left: sliderAnchor.left, bottom: sliderAnchor.bottom }}
           >
             <input

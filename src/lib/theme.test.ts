@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeSettings } from './apiProfiles'
-import { applyThemeMode, THEME_TRANSITION_CLASS, THEME_TRANSITION_DURATION_MS, normalizeThemeMode } from './theme'
+import {
+  applyThemeMode,
+  THEME_TRANSITION_CLASS,
+  THEME_TRANSITION_DURATION_MS,
+  normalizeThemeMode,
+} from '../theme/appearance'
 
 describe('normalizeThemeMode', () => {
   it('defaults missing or invalid values to light', () => {

@@ -1892,13 +1892,13 @@ export function migratePersistedState(persistedState: unknown, version?: number)
     ...persistedState,
     agentConversations: stripPersistedAgentConversations(persistedState.agentConversations),
   }
-  // v4：外观设置 colorScheme -> skinId（非法值由 normalizeSettings 回退默认皮肤）
-  // 仅对 v4 之前的存档执行；v4 起写入的就是 skinId，不再有 colorScheme 字段。
-  // version 缺省（直接调用 / 测试）时保持旧行为：全量执行。
-  if ((version === undefined || version < 4) && isRecord(persistedState.settings)) {
+  // v5：移除皮肤（换肤）字段（docs/adr/0008）。旧存档里的 skinId / colorScheme 一律丢弃，
+  // 因为颜色已收敛为「一套 Token × 明暗两态」，保留这两个字段只会让人误以为还能换肤。
+  if (isRecord(persistedState.settings)) {
     const settings = persistedState.settings as Record<string, unknown>
-    if (settings.skinId === undefined && settings.colorScheme !== undefined) {
-      migrated.settings = { ...settings, skinId: settings.colorScheme }
+    if (settings.skinId !== undefined || settings.colorScheme !== undefined) {
+      const { skinId: _skinId, colorScheme: _colorScheme, ...rest } = settings
+      migrated.settings = rest
     }
   }
   // Migrate old data without workspaceTabs or with empty workspaceTabs: create a default tab from galleryInputDraft or current input state

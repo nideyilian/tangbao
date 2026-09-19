@@ -154,7 +154,7 @@ export default function ModelSwitcher() {
   const textConfigName =
     textProfile.name || (settings.agentShareApiParameters ? `${imageProfile.name} · Agent` : 'Agent 服务')
 
-  const sectionHeaderClass = 'px-2 pb-1 pt-0.5 text-[13px] font-medium text-ds-muted dark:text-ds-muted'
+  const sectionHeaderClass = 'px-2 pb-1 pt-0.5 text-ds-sm font-medium text-ds-muted dark:text-ds-muted'
   const listClass = 'max-h-48 overflow-y-auto custom-scrollbar'
   const itemBaseClass = 'flex w-full items-center gap-2 rounded-ds-lg px-2 py-1.5 text-left text-xs transition-colors'
   const itemActiveClass = 'bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary'
@@ -183,7 +183,7 @@ export default function ModelSwitcher() {
           ref={menuRef}
           role="listbox"
           aria-label="切换模型"
-          className="absolute bottom-full left-0 z-dropdown mb-2 w-[340px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-ds-xl border border-ds-border/70 bg-ds-surface/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-ds-border dark:bg-ds-scrim/95 dark:ring-white/10"
+          className="absolute bottom-full left-0 z-dropdown mb-2 w-[340px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-ds-xl border border-ds-border bg-ds-surface p-1.5 shadow-ds-md dark:border-ds-border"
         >
           <div className={sectionHeaderClass}>
             生图模型
@@ -192,7 +192,7 @@ export default function ModelSwitcher() {
           <div className={listClass}>
             {imageProfilesByProvider.map(([provider, profiles]) => (
               <div key={provider} data-provider-group={provider}>
-                <div className="px-2 pb-0.5 pt-1 text-[12px] font-medium text-ds-muted dark:text-ds-muted">
+                <div className="px-2 pb-0.5 pt-1 text-ds-xs font-medium text-ds-muted dark:text-ds-muted">
                   {getApiProviderLabel(settings, provider)}
                 </div>
                 {profiles.map((profile) => {
@@ -211,7 +211,7 @@ export default function ModelSwitcher() {
                       <span className="min-w-0 flex-1 truncate">
                         <span className="font-medium">{profile.name}</span>
                         <span className="text-ds-muted dark:text-ds-muted"> · </span>
-                        <span className="font-mono text-[13px] text-ds-text-subtle dark:text-ds-muted">
+                        <span className="font-mono text-ds-sm text-ds-text-subtle dark:text-ds-muted">
                           {profile.model || '未配置'}
                         </span>
                       </span>
@@ -251,19 +251,19 @@ export default function ModelSwitcher() {
                   <span className="min-w-0 flex-1 truncate">
                     <span className="font-medium">{textConfigName}</span>
                     <span className="text-ds-muted dark:text-ds-muted"> · </span>
-                    <span className="font-mono text-[13px] text-ds-text-subtle dark:text-ds-muted">{modelId}</span>
+                    <span className="font-mono text-ds-sm text-ds-text-subtle dark:text-ds-muted">{modelId}</span>
                   </span>
                   {active && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-ds-primary" />}
                 </button>
               )
             })}
             {!textModelsLoading && textModels && textModels.length === 0 && (
-              <p className="px-2 py-1 text-[13px] text-ds-muted dark:text-ds-muted">
+              <p className="px-2 py-1 text-ds-sm text-ds-muted dark:text-ds-muted">
                 未获取到模型列表，可手动输入模型 ID
               </p>
             )}
             {textModelsError && (
-              <p className="px-2 py-1 text-[13px] text-ds-danger dark:text-ds-danger">{textModelsError}</p>
+              <p className="px-2 py-1 text-ds-sm text-ds-danger dark:text-ds-danger">{textModelsError}</p>
             )}
           </div>
 
@@ -280,7 +280,7 @@ export default function ModelSwitcher() {
               placeholder={`为「${textConfigName}」输入模型 ID，如 ${DEFAULT_RESPONSES_MODEL}`}
               aria-label="手动输入文本模型"
               title={`将切换到文本配置「${textConfigName}」的模型`}
-              className="min-w-0 flex-1 rounded-ds-lg border border-ds-border/70 bg-ds-surface/55 px-2.5 py-1.5 text-xs text-ds-text outline-none transition placeholder:text-ds-muted focus:border-ds-primary/35 focus:ring-2 focus:ring-ds-focus/70 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/40 dark:focus:ring-ds-focus/10"
+              className="min-w-0 flex-1 rounded-ds-lg border border-ds-border/70 bg-ds-surface-subtle px-2.5 py-1.5 text-xs text-ds-text outline-none transition placeholder:text-ds-muted focus:border-ds-primary/35 focus:ring-2 focus:ring-ds-focus/70 dark:border-ds-border dark:text-ds-text-subtle dark:focus:border-ds-primary/40 dark:focus:ring-ds-focus/50"
             />
             <button
               type="submit"

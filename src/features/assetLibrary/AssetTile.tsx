@@ -213,8 +213,12 @@ function AssetTile({
       onPointerLeave={handlePointerLeave}
       style={style}
       className={cx(
-        'group cursor-pointer overflow-hidden rounded-lg border bg-ds-surface transition',
-        selected ? 'border-ds-primary ring-2 ring-ds-focus/40' : 'border-ds-border hover:border-ds-muted',
+        // 素材卡片是画布上的「实体」，必须有自己的表面色（bg-ds-surface）与描边，
+        // 才能在灰蓝画布（bg-ds-canvas）上明确「浮」起来 —— 2026-09-19 表面层级收敛。
+        'group cursor-pointer overflow-hidden rounded-lg border bg-ds-surface shadow-ds-sm transition',
+        selected
+          ? 'border-ds-primary ring-2 ring-ds-focus/50'
+          : 'border-ds-border hover:border-ds-border-strong hover:shadow-ds-md',
         className,
       )}
     >

@@ -7,37 +7,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: 'hsl(var(--background) / <alpha-value>)',
-        border: 'hsl(var(--border) / <alpha-value>)',
+        // gray 收敛到 zinc（与设计系统中性灰阶同族）
         gray: colors.zinc,
-        foreground: 'hsl(var(--foreground) / <alpha-value>)',
-        input: 'hsl(var(--input) / <alpha-value>)',
-        muted: {
-          DEFAULT: 'hsl(var(--muted) / <alpha-value>)',
-          foreground: 'hsl(var(--muted-foreground) / <alpha-value>)',
-        },
-        primary: {
-          DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
-          foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
-        },
-        sidebar: {
-          DEFAULT: 'hsl(var(--sidebar) / <alpha-value>)',
-          foreground: 'hsl(var(--sidebar-foreground) / <alpha-value>)',
-        },
-        // 皮肤驱动的品牌色板：让全局写死的 blue-* 随配色方案（默认 / Apple / 小米）变化
-        blue: {
-          50: 'hsl(var(--skin-blue-50) / <alpha-value>)',
-          100: 'hsl(var(--skin-blue-100) / <alpha-value>)',
-          200: 'hsl(var(--skin-blue-200) / <alpha-value>)',
-          300: 'hsl(var(--skin-blue-300) / <alpha-value>)',
-          400: 'hsl(var(--skin-blue-400) / <alpha-value>)',
-          500: 'hsl(var(--skin-blue-500) / <alpha-value>)',
-          600: 'hsl(var(--skin-blue-600) / <alpha-value>)',
-          700: 'hsl(var(--skin-blue-700) / <alpha-value>)',
-          800: 'hsl(var(--skin-blue-800) / <alpha-value>)',
-          900: 'hsl(var(--skin-blue-900) / <alpha-value>)',
-          950: 'hsl(var(--skin-blue-950) / <alpha-value>)',
-        },
+        // 语义色单一来源：Tailwind 的 ds-* 全部映射到 --ds-color-*（src/design-system/styles.css）。
+        // 2026-09-19 已删除：shadcn 旧桥映射（background/foreground/muted/border/input/primary/sidebar）
+        // 与 blue.* 皮肤色板映射 —— 二者实测 0 消费，见 docs/adr/0008。
         ds: {
           canvas: 'hsl(var(--ds-color-canvas) / <alpha-value>)',
           surface: 'hsl(var(--ds-color-surface) / <alpha-value>)',
@@ -123,6 +97,7 @@ export default {
         'ds-sm': 'var(--ds-shadow-sm)',
         'ds-md': 'var(--ds-shadow-md)',
         'ds-lg': 'var(--ds-shadow-lg)',
+        'ds-inner': 'var(--ds-shadow-inner)',
       },
       zIndex: {
         sticky: '20',

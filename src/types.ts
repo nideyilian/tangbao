@@ -11,10 +11,13 @@ export type ApiTransportMode = 'auto' | 'renderer'
 export type AppMode = 'gallery' | 'strategy' | 'ordering' | 'agent' | 'postprocess'
 export type AgentBackend = 'agent' | 'canny' | 'kling'
 export type ThemeMode = 'light' | 'dark'
-/** 皮肤 ID：由 src/theme/registry.ts 注册表自动推导，不再手写联合类型 */
-export type { SkinId } from './theme/registry'
-/** @deprecated 使用 SkinId（保留用于旧代码/导入兼容） */
-export type ColorScheme = import('./theme/registry').SkinId
+/**
+ * @deprecated 皮肤（换肤）机制已于 2026-09-19 移除（docs/adr/0008）。
+ * 仅保留类型别名用于旧存档 / 第三方导入的**读取兼容**，新代码一律使用 `ThemeMode`。
+ */
+export type SkinId = string
+/** @deprecated 同上；旧存档字段 colorScheme 的读取兼容别名。 */
+export type ColorScheme = string
 export type ImageSaveLayout = 'flat' | 'batch-folder'
 export type ReferenceImageEditAction = 'ask' | 'replace-reference' | 'add-mask'
 export const ZIP_DOWNLOAD_ROUTE_VALUES = [
@@ -121,8 +124,11 @@ export interface ApiProfile {
 export interface AppSettings {
   /** 界面主题：手动浅色 / 深色 */
   themeMode: ThemeMode
-  /** 皮肤：由注册表驱动的整体视觉预设，仅改变颜色/字体/圆角/阴影，不影响布局 */
-  skinId: import('./theme/registry').SkinId
+  /**
+   * @deprecated 皮肤字段已废弃（docs/adr/0008），仅保留以兼容旧存档与旧导入包。
+   * 读取时一律忽略，不再产生任何视觉效果。新代码请勿写入。
+   */
+  skinId?: SkinId
   /** 旧版单配置字段：保留用于导入/查询参数兼容，实际请求以 active profile 为准 */
   baseUrl: string
   apiKey: string

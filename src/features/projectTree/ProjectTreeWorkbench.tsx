@@ -15,7 +15,6 @@ import { SearchIcon } from '../../components/icons'
 import { useStore } from '../../store'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../assetLibrary/store'
-import ProjectNodeParamsDialog from './ProjectNodeParamsDialog'
 import ProjectTreeTable from './ProjectTreeTable'
 import { buildProjectTreeTableRows, filterProjectTreeTableRows, summarizeProjectTreeRows } from './tableRows'
 import type { ProjectTreeTableRow } from './tableRows'
@@ -24,6 +23,9 @@ import { useProjectTreeParamsStore } from './storeProjectTreeParams'
 interface Props {
   onClose: () => void
 }
+
+/** 后处理面板的入口位置提示：参数编辑只有那一个地方，这里给用户指路而不是再开一个弹窗。 */
+const POSTPROCESS_ENTRY_HINT = '参数已统一到「后处理」面板：左侧选节点，右侧改参数（输入栏的滑块按钮进入）'
 
 const ROOT_VALUE = ''
 
@@ -110,7 +112,6 @@ export default function ProjectTreeWorkbench({ onClose }: Props) {
   const showToast = useStore((state) => state.showToast)
 
   const [keyword, setKeyword] = useState('')
-  const [paramTarget, setParamTarget] = useState<string | null>(null)
   const [adding, setAdding] = useState<{ parentId: string | null } | null>(null)
 
   const rows = useMemo(
@@ -147,6 +148,16 @@ export default function ProjectTreeWorkbench({ onClose }: Props) {
       showToast('重命名失败，请重试', 'error')
     }
   }
+
+  /**
+   * 表格里的「参数」入口。
+   *
+   * 参数编辑现在只有一个地方：后处理面板的右栏。这里不再叠一层弹窗——
+   * 同一份参数有两个入口，迟早出现「在 A 改了、在 B 看不到」。
+   */
+  const openPostprocessParams = useCallback(() => {
+    showToast(POSTPROCESS_ENTRY_HINT, 'info')
+  }, [showToast])
 
   const handleDelete = (row: ProjectTreeTableRow) => {
     const descendantCount = rows.filter((item) => item.id !== row.id && item.path.startsWith(`${row.path} / `)).length
@@ -211,7 +222,7 @@ export default function ProjectTreeWorkbench({ onClose }: Props) {
               rows={visibleRows}
               describeSource={describeSource}
               onAddChild={(parentId) => setAdding({ parentId })}
-              onOpenParams={(collectionId) => setParamTarget(collectionId)}
+              onOpenParams={openPostprocessParams}
               onRename={(collectionId, name) => void handleRename(collectionId, name)}
               onDelete={handleDelete}
               onTogglePostprocess={toggleSelectedCollection}
@@ -228,8 +239,6 @@ export default function ProjectTreeWorkbench({ onClose }: Props) {
           onSubmit={(name, parentId) => void handleCreate(name, parentId)}
         />
       )}
-
-      {paramTarget && <ProjectNodeParamsDialog collectionId={paramTarget} onClose={() => setParamTarget(null)} />}
     </>
   )
 }

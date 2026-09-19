@@ -11,13 +11,13 @@
 
 这几项是实测优化后的结论，回退会直接反映为用户可感知的卡顿：
 
-| 约束 | 位置 | 为什么 |
-| --- | --- | --- |
-| 高频进度走独立的 `runtimeStore` | `src/stores/runtimeStore.ts` | 避免高频 setState 触发主 store 全量重渲 |
-| SQLite 访问走 UtilityProcess | `electron/catalog-worker.ts` | 主进程不被同步数据库操作阻塞 |
-| 任务网格虚拟化 + `useDeferredValue` | `src/components/TaskGrid.tsx` | 大列表滚动不掉帧 |
-| 缩略图编码走 `canvasToWebpDataUrl`（异步） | `src/lib/canvasImage.ts:164` | `toDataURL` 是同步的，1024px webp q0.82 实测 **71–110ms/张**主线程冻结 |
-| 整图字节优先：`saveImageBytes`，**新代码勿传 dataUrl** | `electron/preload.ts:46` | 避免 base64 双向转换与主进程同步解码 |
+| 约束                                                   | 位置                          | 为什么                                                                 |
+| ------------------------------------------------------ | ----------------------------- | ---------------------------------------------------------------------- |
+| 高频进度走独立的 `runtimeStore`                        | `src/stores/runtimeStore.ts`  | 避免高频 setState 触发主 store 全量重渲                                |
+| SQLite 访问走 UtilityProcess                           | `electron/catalog-worker.ts`  | 主进程不被同步数据库操作阻塞                                           |
+| 任务网格虚拟化 + `useDeferredValue`                    | `src/components/TaskGrid.tsx` | 大列表滚动不掉帧                                                       |
+| 缩略图编码走 `canvasToWebpDataUrl`（异步）             | `src/lib/canvasImage.ts:164`  | `toDataURL` 是同步的，1024px webp q0.82 实测 **71–110ms/张**主线程冻结 |
+| 整图字节优先：`saveImageBytes`，**新代码勿传 dataUrl** | `electron/preload.ts:46`      | 避免 base64 双向转换与主进程同步解码                                   |
 
 ⚠️ **验收陷阱**：改缩略图编码路径时，**改前后"总耗时"几乎一样**（编码量相同）。
 按总耗时比会得出"这个改动没用"的错误结论 —— **必须挂 rAF 帧探针看主线程长任务**。

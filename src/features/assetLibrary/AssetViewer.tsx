@@ -527,7 +527,7 @@ function AssetViewerInner() {
                 })
                 .catch(() => useStore.getState().showToast('操作失败', 'error'))
             }
-            className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-red-500/70"
+            className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
           >
             <TrashIcon size={13} /> 移入回收站
           </button>

@@ -224,7 +224,7 @@ function AssetFilterTabBar() {
         }
       }}
       className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs outline-none transition focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${
-        isDragOverTarget ? 'border-ds-primary ring-2 ring-ds-focus/60' : ''
+        isDragOverTarget ? 'border-ds-primary ring-2 ring-ds-focus/70' : ''
       } ${
         active
           ? 'border-ds-primary bg-ds-primary text-ds-text-inverse dark:bg-ds-primary/90'

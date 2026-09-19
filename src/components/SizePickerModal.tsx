@@ -206,7 +206,7 @@ export default function SizePickerModal({
     return `rounded-ds-lg border px-3 py-2 text-sm transition ${
       active
         ? 'border-ds-primary bg-ds-primary-subtle text-ds-primary dark:border-ds-primary/50 dark:bg-ds-primary/10 dark:text-ds-primary'
-        : 'border-ds-border/70 bg-ds-surface/60 text-ds-muted hover:bg-ds-subtle dark:border-ds-border dark:bg-ds-surface dark:text-ds-muted dark:hover:bg-ds-surface'
+        : 'border-ds-border bg-ds-surface-subtle text-ds-muted hover:bg-ds-surface dark:hover:bg-ds-surface/10'
     }`
   }
 
@@ -244,7 +244,7 @@ export default function SizePickerModal({
         </div>
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto pr-1">
-          <div className="flex rounded-ds-lg bg-ds-surface/80 p-1 dark:bg-ds-surface">
+          <div className="flex rounded-ds-lg bg-ds-surface-subtle p-1">
             {allowAuto && (
               <button
                 onClick={() => setMode('auto')}
@@ -286,7 +286,7 @@ export default function SizePickerModal({
                       />
                     </svg>
                   </div>
-                  <h4 className="text-sm font-medium text-ds-text dark:text-ds-text-subtle">自动尺寸</h4>
+                  <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">自动尺寸</h4>
                   <p className="mt-2 text-xs text-ds-muted leading-relaxed dark:text-ds-muted">
                     不向模型传递具体的分辨率参数
                     <br />
@@ -362,8 +362,8 @@ export default function SizePickerModal({
                       placeholder="例如 5:4 / 2.39:1"
                       className={`w-full rounded-ds-lg border px-3 py-2 text-sm outline-none transition ${
                         customRatioValid
-                          ? 'border-ds-border/70 bg-ds-surface/60 text-ds-text focus:border-ds-primary/35 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle dark:focus:border-ds-primary/50'
-                          : 'border-ds-danger/35 bg-ds-surface/60 text-ds-text focus:border-ds-danger dark:border-ds-danger/40 dark:bg-ds-surface dark:text-ds-text-subtle'
+                          ? 'border-ds-border bg-ds-surface-subtle text-ds-text focus:border-ds-primary/60 focus:bg-ds-surface'
+                          : 'border-ds-danger/60 bg-ds-surface-subtle text-ds-text focus:border-ds-danger focus:bg-ds-surface'
                       }`}
                     />
                   </label>

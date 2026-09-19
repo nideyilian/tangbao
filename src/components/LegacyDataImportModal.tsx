@@ -202,7 +202,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
 
         {/* 主体 */}
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 custom-scrollbar">
-          <div className="rounded-ds-lg border border-ds-border/60 bg-ds-subtle/60 p-3 text-xs leading-relaxed text-ds-muted dark:bg-ds-subtle/40">
+          <div className="rounded-ds-lg border border-ds-border bg-ds-surface-subtle p-3 text-xs leading-relaxed text-ds-muted">
             导入只<strong className="text-ds-text">复制不覆盖</strong>：已存在的数据不会被改动。任务等 IndexedDB
             数据与运行模式绑定（安装版与开发模式互不可见），目录导入只恢复当前模式的数据；跨模式迁移请用「数据管理 →
             导出数据」（ZIP）。
@@ -298,7 +298,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
                       </button>
                     </div>
                     {lastResult?.dir === source.dir && (
-                      <div className="mt-2 space-y-1 rounded-ds-lg bg-ds-subtle/70 p-2.5 text-xs dark:bg-ds-subtle/40">
+                      <div className="mt-2 space-y-1 rounded-ds-lg bg-ds-surface-subtle p-2.5 text-xs">
                         {lastResult.result.imported.length > 0 && (
                           <p className="text-ds-success">已导入：{lastResult.result.imported.join('、')}</p>
                         )}
@@ -385,7 +385,7 @@ export default function LegacyDataImportModal({ open, onClose }: Props) {
             )}
 
             {fileImportSummary && (
-              <p className="rounded-ds-lg bg-ds-subtle/70 p-2.5 text-xs text-ds-success dark:bg-ds-subtle/40">
+              <p className="rounded-ds-lg bg-ds-success-subtle p-2.5 text-xs text-ds-success">
                 已导入：{fileImportSummary}
               </p>
             )}

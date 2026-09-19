@@ -137,8 +137,8 @@ export type {
 
 export { useDialogFocusTrap } from './useDialogFocusTrap'
 
-export { ColorSchemeSwitcher, ColorPresetGrid, COLOR_SCHEME_OPTIONS } from './skin'
-export type { ColorSchemeOption, ColorSchemeSwitcherProps, ColorSchemeValue, ColorPresetGridProps } from './skin'
+export { ThemeSwitcher, THEME_OPTIONS } from './themeSwitcher'
+export type { ThemeOption, ThemeSwitcherProps, ThemeSwitcherValue } from './themeSwitcher'
 
 export {
   componentCategoryLabels,

@@ -2044,7 +2044,7 @@ function AssetLibrarySidebar({
   return (
     <aside
       data-testid="asset-library-sidebar"
-      className="relative flex w-[var(--asset-library-panel-width)] min-w-[var(--asset-library-panel-width)] max-w-[var(--asset-library-panel-width)] shrink-0 flex-col overflow-hidden border-r border-ds-border bg-ds-surface/50"
+      className="relative flex w-[var(--asset-library-panel-width)] min-w-[var(--asset-library-panel-width)] max-w-[var(--asset-library-panel-width)] shrink-0 flex-col overflow-hidden border-r border-ds-border bg-ds-surface"
     >
       {/* 侧栏头部 */}
       <div className="flex h-ds-control-lg shrink-0 items-center gap-2 border-b border-ds-border/70 px-3">

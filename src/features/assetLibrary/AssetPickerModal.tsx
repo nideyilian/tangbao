@@ -230,7 +230,7 @@ function AssetPickerModalInner({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索提示词、模型或项目"
-            className="min-h-ds-control-lg w-full rounded-md border border-ds-border bg-ds-surface pl-9 pr-3 text-sm outline-none focus:border-ds-primary focus:ring-2 focus:ring-ds-focus/20"
+            className="min-h-ds-control-lg w-full rounded-md border border-ds-border bg-ds-surface pl-9 pr-3 text-sm outline-none focus:border-ds-primary focus:ring-2 focus:ring-ds-focus/50"
           />
         </label>
 

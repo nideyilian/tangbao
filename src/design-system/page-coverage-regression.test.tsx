@@ -187,7 +187,6 @@ describe('DesignSystemPreview 渲染 smoke test', () => {
   it('浅色主题下渲染的 HTML 包含关键语义类', () => {
     // jsdom 提供 document，不自行 mock/清空
     document.documentElement.classList.remove('dark')
-    document.documentElement.setAttribute('data-skin', 'default')
 
     const html = renderToStaticMarkup(<DesignSystemPreview />)
 
@@ -203,7 +202,6 @@ describe('DesignSystemPreview 渲染 smoke test', () => {
 
   it('深色主题下渲染的 HTML 包含关键语义类', () => {
     document.documentElement.classList.add('dark')
-    document.documentElement.setAttribute('data-skin', 'default')
 
     const html = renderToStaticMarkup(<DesignSystemPreview />)
 

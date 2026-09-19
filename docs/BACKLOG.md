@@ -535,6 +535,144 @@
   渠道表被盖住；见 RISK R-34
 - **回滚点**：本轮 16 个文件可整包 revert（无 schema / 无落盘格式变更，`mediaOutputDirs` 缺失即默认空）
 
+### TB-045 配色与主题系统收敛：移除多皮肤机制，统一为一套设计 Token + 明暗双主题
+
+- **来源**：杰哥原话「配色与主题（皮肤）系统不必沿用我当前的实现：配色方案可以完全重新设计，若皮肤/换肤系统会增加复杂度或影响可维护性，也可以直接移除。请按你认为的最优解来实现，优先保证视觉统一、结构清晰和代码简洁，包括重新整理颜色变量（统一为一套设计 token）、清理冗余的主题切换逻辑。」（2026-09-19）
+- **状态**：DONE · 写线：主写线
+- **决策依据**：`docs/adr/0008-unify-color-system.md`
+- **改了什么**
+  1. **移除多皮肤（换肤）机制**：删除 `src/theme/styles/skins/`（5 套皮肤 1175 行）、
+     `skins.css`（717 行 / 143 处 `:is(:root[data-skin='X'],…)` 工具类重映射）、
+     `skinContract.test.ts`（219 行 WCAG 矩阵）、`src/design-system/skin.tsx`、`src/lib/theme.ts`。
+  2. **重新设计配色**：`styles.css` 的 `:root` / `.dark` 全量替换为 28 个 `--ds-color-*` Token；
+     以模板 00009（xAI-inspired）的克制制度为基底（描边承载层级、不用阴影堆浮起感），
+     但按明亮桌面工具重新设计浅色态，品牌蓝（hue 221）保留为 primary。
+  3. **清除双轨冗余**：删除 `index.css` 的旧桥变量（`--background` / `--foreground` / `--muted` /
+     `--sidebar` / `--input` / `--primary`，**实测 0 消费**）与 `--skin-blue-*` 色板；
+     `tailwind.config.js` 删除对应映射与整个 `blue.*` 色板。
+  4. **主题逻辑收敛**：`registry.ts` 从皮肤注册表改造为主题注册表（`SKIN_REGISTRY` → `THEME_REGISTRY`）；
+     `applyAppearance` 只保留 `themeMode`；顶栏「配色（调色板）」按钮删除（与明暗按钮是同一件事）；
+     `ColorSchemeSwitcher` + `ColorPresetGrid` 合并为单一 `ThemeSwitcher`。
+  5. **迁移改为丢弃式**：`migratePersistedState` 无条件丢弃旧存档的 `skinId` / `colorScheme`
+     （保留字段会让人误以为还能换肤）。
+  6. **主题过渡不再全局扫描**：`.theme-transitioning *` → `.theme-transitioning [data-theme-transition]`。
+  7. **文档清理**：删除 `docs/skin-authoring-guide.md`（437 行）、`docs/skin-export-jank-analysis.md`；
+     同步更新 `COMPONENTS.md` 组件表、`docs/adr/README.md` 索引（补登 0006–0008）。
+- **验收标准**（可测）
+  1. 全仓 `data-skin` / `SKIN_REGISTRY` / `ColorSchemeSwitcher` / `skins.css` 引用为 0
+  2. 浅色 `canvas = 218 24% 96%`、深色 `canvas = 220 14% 5%`，且 `dark` class 切换后
+     `document.documentElement.getAttribute('data-skin')` 为 `null`（实测已验）
+  3. 全部文字 / 表面组合通过 WCAG AA（`text-subtle` 4.19:1 → 4.82:1）
+  4. 相邻表面可辨：浅色 canvas↔surface ≥ 1.10:1（实测 1.102:1）、深色 ≥ 1.10:1（实测 1.134:1）；
+     描边 vs 两侧表面 ≥ 1.3:1
+  5. 无详情面板时 `--app-docked-right-width` 为 `0px`，主区宽度 == 视口宽度（实测 1258/1258）
+  6. `migratePersistedState` 对含 `colorScheme` / `skinId` 的旧存档均丢弃且保留 `themeMode`
+  7. `npm run verify` 全绿（226 文件 / 2511 用例）
+- **二次修正（2026-09-19，杰哥反馈「怎么没看出什么区别」）**
+
+  首版方案**结构对、取值错**，是一次典型的失败：
+
+  | 问题               | 事实                                                                                      | 修正                                                               |
+  | ------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+  | **等效值**         | 首版浅色画布 `220 20% 98%` 与旧值 `210 20% 98%` 换算后**同为 `#f9fafb`**；描边只差 2 色阶 | 改用明度差表达层级：浅 `#f2f4f7`↔`#ffffff`；深 `#0b0c0f`↔`#191b1f` |
+  | **alpha 抹平层级** | 侧栏 `bg-ds-surface/50`、顶栏 `bg-ds-surface/90 backdrop-blur-sm` 让灰画布透出            | 布局级面板一律不透明 `bg-ds-surface`；仅浮层/抽屉保留透明度        |
+  | **存量缺陷被暴露** | 右侧 340px 空白：`WordLibrarySidebar` `return null` 未卸载 → 占位变量不释放               | effect 判定改为 `detailAvailable && !compactViewport`（R-39）      |
+  | **暗色层级不足**   | 首版 `canvas 6%` / `surface 10%` 只差 4 色阶                                              | 拉开到 5% / 11%，并抬亮描边（30% → 32%）                           |
+
+  **核心教训**：HSL 在亮度 > 96% 时色相/饱和度几乎不影响 sRGB。改表面色**必须换算 hex 逐条比对**，
+  且相邻表面要 ≥ 1.10:1 才有肉眼可见差异。已写进 runbook 第十节 + `RISK.md` R-38/R-39。
+
+  改动文件：`styles.css`、`tokens.tokens.json`（28×2 全量重算）、`tokensContract.test.ts`、
+  `AssetLibrarySidebar.tsx`、`AssetLibraryWorkspace.tsx`、`AssetTile.tsx`、
+  `Header.tsx`、`WordLibrarySidebar.tsx`、`index.css`
+
+- **影响面**：`design-system/styles.css`、`design-system/tokens.tokens.json`、`design-system/tokensContract.test.ts`、
+  `index.css`、`tailwind.config.js`、`theme/registry.ts`、`theme/appearance.ts`、`main.tsx`、`App.tsx`、
+  `store.ts`、`types.ts`、`lib/apiProfiles.ts`、`components/Header.tsx`、`components/SettingsModal.tsx`、
+  `design-system/themeSwitcher.tsx`（新增）、`design-system/catalog.ts`、`design-system/DesignSystemPreview.tsx`、
+  `components/WordLibrarySidebar.tsx`、`features/assetLibrary/AssetLibrarySidebar.tsx`、
+  `features/assetLibrary/AssetLibraryWorkspace.tsx`、`features/assetLibrary/AssetTile.tsx`
+- **已知坑**：改 `.dark` 的值必须同步 `tokens.tokens.json` 与 `tokensContract.test.ts` 的
+  `DARK_COLOR_VALUES`，否则 `tokensContract` 会红（该测试钉死精确值，见 R-37）；
+  改表面色必须验算 hex（R-38）；停靠面板占位要对齐可见性（R-39）
+- **回滚点**：本轮改动可作为整包 revert；但**不要**只回滚 `styles.css` 而保留已删的皮肤文件
+  （皮肤 CSS 依赖已删除的 `--skin-blue-*` 变量，会得到错乱外观）
+
+- **第三轮：UI 细节一致性收口（2026-09-19，杰哥要求「对照设计规范逐一核对」）**
+
+  前两轮解决了**颜色层级**，本轮补**组件与排版细节**。做法：把 `MASTER.md` 当验收清单逐条核对。
+
+  | 项                    | 发现                                                                                           | 处理                                                                                                    |
+  | --------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+  | **§4.2 文档过期**     | MASTER.md §4.2 颜色表 26 个值里 **24 个**与实现不符（文档 `Canvas #F9FAFB` vs 实现 `#F2F4F7`） | 用脚本从 `styles.css` 反算 hex 重写全表；新增 `docColorTable.test.ts` **逐行断言**锁死（R-41）          |
+  | **§4.5 圆角两套命名** | 裸 `rounded-lg`(8px) 与 Token `rounded-ds-md`(8px) **同值不同名**；规范要求卡片/面板 12px      | 逐点修正真卡片为 `rounded-ds-lg`；存量 376 处建**棘轮快照**只减不增（R-42）                             |
+  | **§4.5 阴影**         | 8 处写死数值的临时阴影 + 8 处 `shadow-xl/2xl`                                                  | 全部收口到 `shadow-ds-sm/md/lg`；新增 `--ds-shadow-inner` Token 收编 `shadow-inner`（画布内嵌预览专用） |
+  | **§4.3 字号**         | 14 处体系外 `text-[15px]` / `[13px]` / `[17px]` / `[12px]`                                     | 归一到 `text-ds-xs/sm/md/lg`（Agent 聊天正文 15→16px，符合「长文本 16px/1.65」）                        |
+  | **§4.3 字重**         | 同名标题「导入旧版数据」在 `SettingsModal` 用 700、在 `LegacyDataImportModal` 用 600           | 同角色统一 `font-semibold`；SettingsModal 改 13 处、HelpModal 改 7 处                                   |
+  | **§4.2 焦点色**       | 焦点环碎片化成 **7 档**不透明度；`GallerySopBatchModal` 33 处误用品牌色当焦点环                | 收敛为 `/70`（标准）+ `/50`（轻量）两档；33 处改回 `ring-ds-focus`                                      |
+  | **§4.6 半透明面板**   | `SettingsModal` 20 处输入框 `bg-ds-surface/60` 叠在 raised 底上 → 边界不可见                   | 改 `bg-ds-surface-subtle`；`AgentWorkspace` / `InputBar` / `FavoriteCollections` 同类共 8 处一并收口    |
+  | **§4.4 派生间距**     | `pl-[26px]` 写死「图标 18px + gap 8px」                                                        | 改 `pl-[calc(1.125rem+0.5rem)]`，改图标尺寸时自动跟随                                                   |
+  | **§4.3 标题层级**     | 帮助页品牌标题用 `text-[17px]`（体系外值）                                                     | 改 `text-ds-lg`                                                                                         |
+
+  **本轮新增加固**（`compliance.test.ts` 9 → 12 条规则）：体系外字号、体系外阴影、
+  h4 字重、焦点环两档。所有新规则均**剥离注释后匹配**，避免误伤解释性注释。
+
+  **取舍说明**：裸 `rounded-*` 376 处**没有**一次性重写 —— 回归面覆盖 53 个文件、
+  视觉收益为零（8px→12px 只在卡片上可辨），用棘轮逐点治理更稳。
+  同理 `mt-[1px]` 这类光学校正值、`pb-[76px]` 这类固定工具栏预留是**刻意**的，不动。
+
+### TB-046 后处理参数展示结构收敛：左栏改纯树导航，参数定义收为单一元数据源
+
+- **来源**：杰哥原话「请重构后处理弹窗的参数展示结构，消除参数重复定义的问题…」（2026-09-19）
+- **状态**：DONE · 写线：主写线
+- **现状问题**（改前实测，非推测）
+  1. 左栏**不是纯导航**：每节点一个「参数」IconButton 开第三层弹窗 + 顶部「参数表格」按钮开工作台；
+  2. 参数入口共 **3 个**（左栏节点按钮 / 参数表格按钮 / 右栏 6 段硬编码），同名字段在三处出现；
+  3. `DIRECTION_OPTIONS` 与 `DirectionValue` 在 `PostprocessSettingsModal` 与 `ProjectNodeParamsDialog`
+     **逐字复制 2 份**；
+  4. `PostprocessMediaConfig`（全局）与 `PostprocessNodeOverride`（节点）**8 个字段重叠**；
+  5. ~9 个 media CRUD action **零 UI 入口**（`addMedia`/`renameMedia`/`deleteMedia`/`addMediaSize`…），
+     媒体表事实上只读。
+- **验收标准**（可测）
+  1. 左栏 `aside.ds-dialog-pane--sidebar` 内 `input[type="checkbox"]` 数量为 **0**，
+     且无 `button[aria-label^="设置"]`、无 `[data-testid="postprocess-open-tree-table"]`
+     → 断言于 `PostprocessSettingsModal.test.tsx`
+  2. `grep -rn "跟随尺寸" src/` **只命中** `features/postprocess/paramSchema.ts`（+ 测试）
+  3. 切换树节点右栏同步刷新：选全局默认有「全局编排」分组，选真实节点该分组消失
+  4. 未选中节点显示空状态；节点被删显示「节点已被删除」
+  5. 节点上改的参数写入 `useProjectTreeParamsStore`，**不回写全局基线**，切换节点不丢
+  6. `paramSchema.test.ts` 15 例契约：键唯一 / 分组都有定义 / 无死分组 / 两作用域覆盖完整
+  7. `npm run verify` 全绿（**228 文件 / 2556 用例**）
+- **影响面**
+  - **新增**：`features/postprocess/paramSchema.ts`（唯一元数据源）、`paramSchema.test.ts`、
+    `features/postprocess/PostprocessParamPanel.tsx`（右栏唯一详情面板）、
+    `features/postprocess/MediaTableManager.tsx`（媒体表 CRUD 的 UI）
+  - **重写**：`components/PostprocessSettingsModal.tsx`（701 → 树宿主，只留 `selectedNodeId`）、
+    `components/PostprocessSettingsModal.test.tsx`（19 例改写 + 18 例新增）
+  - **删除**：`features/projectTree/ProjectNodeParamsDialog.tsx`（446 行）、
+    `params.ts` 的死导出 `resolveProjectParams`、`types.ts` 的死类型 `ResolvedProjectParams`
+  - **微调**：`ProjectTreeWorkbench.tsx`（`onOpenParams` 改为指路 toast）、`design-system/catalog.ts`
+- **关键设计点**
+  - 树根挂哨兵节点 `GLOBAL_NODE_ID = '__postprocess_global__'` 代表「全局默认」，
+    于是全局配置也在树里，`scope: global|node|both` 这套过滤才立得住；
+  - `control` 是**渲染分派键**而非 JSX —— 元数据表保持可断言；
+  - 水印归属**只读展示**（编辑唯一入口在水印预设工作区的归属树），
+    刻意不在右栏开第二个入口 —— 同一件事两个入口必然出现「在 A 改了、在 B 看不到」。
+- **已知坑**：见 `RISK.md` **R-43**（同一份参数被多处渲染）与 runbook **§十三**（含
+  `Switch` 必填 `label`、`Button` 无 `icon` 属性、`Checkbox` 文本在 `label` 上等实测坑）
+- **追补（同日，杰哥「清掉」）**：再删 3 个**零 UI 调用方**的 action
+  - `storePostprocessMedia.ts`：`setMedia`（整表替换，与 `addMedia`/`renameMedia`/`deleteMedia` 重叠）、
+    `setWatermarkPresetIds` 与 `toggleWatermarkPreset`（水印归属改为只读后已无编辑入口）——接口声明 + 实现一并删除；
+  - **保留字段** `watermarkPresetIds`：它不是死字段，仍参与 `resolvePostprocessOutputPlan`
+    的水印归属解析（`lib/postprocessMedia.ts:402`）与落盘快照（`partialize` / `getPostprocessMediaConfigSnapshot`），
+    只是**不再有 UI 写入口**——值目前只能由 `migrate`/`restorePostprocessMediaConfig` 与项目节点归属兜底带入。
+    这是有意的：真要改水印归属，走水印预设工作区，不在这里开第二入口。
+  - 连带确认 `normalizeStringList` 与 `pruneSelectedMediaIds` **未变死**（仍被 `deleteMedia` /
+    `setSelectedMediaIds` / 归一化路径调用），保留；
+  - `storePostprocessMedia.test.ts` 删掉 2 条断言已删 action 的用例（45 例仍全绿）。
+- **回滚点**：本轮改动可整包 revert；但**不要**只还原 `PostprocessSettingsModal.tsx`
+  —— 旧版 import 已删除的 `ProjectNodeParamsDialog`，会直接编译失败
+
 ## 记录模板（新需求照抄）
 
 ```markdown

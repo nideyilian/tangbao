@@ -253,7 +253,7 @@ export default function WorkspaceTabManagerModal() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索标签页"
-              className="w-full h-ds-control-sm pl-7 pr-2 text-xs rounded-md border border-ds-border bg-ds-subtle/40 focus:outline-none focus:ring-1 focus:ring-primary"
+              className="w-full h-ds-control-sm pl-7 pr-2 text-xs rounded-md border border-ds-border bg-ds-surface-subtle text-ds-text placeholder:text-ds-muted focus:outline-none focus:ring-2 focus:ring-ds-focus/70 focus:bg-ds-surface"
             />
           </div>
           <button

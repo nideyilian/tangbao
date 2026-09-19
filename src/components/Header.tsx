@@ -12,12 +12,11 @@ import {
   type GenerationStatsTabCount,
 } from '../lib/generationStats'
 import type { AppMode } from '../types'
-import { SKIN_IDS, SKIN_REGISTRY, type SkinId } from '../theme/registry'
 import { SegmentedControl } from '../design-system'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
-import { HelpCircleIcon, MoonIcon, PaletteIcon, SettingsIcon, SunIcon } from './icons'
+import { HelpCircleIcon, MoonIcon, SettingsIcon, SunIcon } from './icons'
 
 type GenerationStatsMetricKey = 'total' | 'elapsedMs' | 'success' | 'failure'
 
@@ -35,10 +34,11 @@ function formatGenerationStatsValue(key: GenerationStatsMetricKey, value: number
 }
 
 function getGenerationStatsMetricValueClass(key: GenerationStatsMetricKey) {
-  if (key === 'total') return 'text-ds-primary dark:text-ds-primary'
-  if (key === 'elapsedMs') return 'text-ds-text dark:text-white'
-  if (key === 'success') return 'text-ds-success dark:text-ds-success'
-  return 'text-ds-danger dark:text-ds-danger'
+  // 令牌本身已按明暗模式给值，无需再补 dark: 变体
+  if (key === 'total') return 'text-ds-primary'
+  if (key === 'elapsedMs') return 'text-ds-text'
+  if (key === 'success') return 'text-ds-success'
+  return 'text-ds-danger'
 }
 
 function getGenerationStatsMetricLabel(key: GenerationStatsMetricKey) {
@@ -62,28 +62,29 @@ function GenerationStatsMetric({
 
   return (
     <div className="relative" {...tooltip.handlers}>
-      <div className="flex min-w-[3.5rem] flex-col items-start rounded-md px-2 py-1 transition-colors hover:bg-ds-surface/70 dark:hover:bg-ds-surface">
-        <span className="text-xs leading-none text-ds-muted dark:text-ds-muted">{label}</span>
+      {/* 圆角制度：交互元素统一 pill；间距由父级 gap 控制，本元素不再自带水平 padding */}
+      <div className="flex min-w-[3.5rem] flex-col items-start rounded-full px-2.5 py-1 transition-colors hover:bg-ds-surface-subtle">
+        <span className="text-xs leading-none text-ds-muted">{label}</span>
         <span className={`mt-0.5 text-xs font-semibold leading-none ${getGenerationStatsMetricValueClass(metricKey)}`}>
           {formatGenerationStatsValue(metricKey, value)}
         </span>
       </div>
       <ViewportTooltip visible={tooltip.visible} className="w-56">
         <div className="space-y-1.5">
-          <div className="font-medium text-ds-text dark:text-ds-text-subtle">按标签统计：{label}</div>
+          <div className="font-medium text-ds-text">按标签统计：{label}</div>
           {tabs.length ? (
             <div className="space-y-1">
               {tabs.map((tab) => (
                 <div key={tab.id} className="flex items-center justify-between gap-3">
-                  <span className="min-w-0 truncate text-ds-muted dark:text-ds-muted">{tab.name}</span>
-                  <span className="shrink-0 font-mono text-ds-text dark:text-ds-text-subtle">
+                  <span className="min-w-0 truncate text-ds-muted">{tab.name}</span>
+                  <span className="shrink-0 font-mono text-ds-text">
                     {formatGenerationStatsValue(metricKey, tab[metricKey])}
                   </span>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="text-ds-muted dark:text-ds-muted">暂无标签数据</div>
+            <div className="text-ds-muted">暂无标签数据</div>
           )}
         </div>
       </ViewportTooltip>
@@ -117,17 +118,17 @@ function GenerationStatsBar() {
     { key: 'failure', value: stats.totals.failure },
   ]
 
+  // 层级制度：只用 1px 描边表达层级，不再叠 阴影 / 半透明底 / 嵌套卡片。
+  // 原实现在边框卡片里又放了一个带 shadow-sm 的按钮，形成「三层浮起」，与同排图标按钮的平面语言冲突。
   return (
-    <div className="hidden lg:flex items-center gap-1 rounded-ds-lg border border-ds-border bg-ds-surface/70 p-1 text-xs dark:border-ds-border dark:bg-ds-surface">
-      <div className="flex items-center divide-x divide-gray-200 dark:divide-white/[0.08]">
-        {metrics.map((metric) => (
-          <GenerationStatsMetric key={metric.key} metricKey={metric.key} value={metric.value} tabs={stats.byTab} />
-        ))}
-      </div>
+    <div className="hidden lg:flex items-center gap-1 rounded-full border border-ds-border bg-ds-surface px-1.5 py-1 text-xs">
+      {metrics.map((metric) => (
+        <GenerationStatsMetric key={metric.key} metricKey={metric.key} value={metric.value} tabs={stats.byTab} />
+      ))}
       <button
         type="button"
         onClick={() => setRange((current) => getNextGenerationStatsRange(current))}
-        className="ml-1 min-w-[3rem] rounded-lg bg-ds-surface/80 px-2.5 py-1.5 text-xs font-medium leading-none text-ds-text shadow-sm transition-colors hover:bg-ds-surface hover:text-ds-text dark:bg-ds-surface dark:text-ds-text-subtle dark:hover:bg-ds-surface dark:hover:text-white"
+        className="ml-0.5 min-w-[3rem] rounded-full bg-ds-surface-subtle px-2.5 py-1.5 text-xs font-medium leading-none text-ds-text transition-colors hover:bg-ds-border"
         title="切换统计范围"
       >
         {getGenerationStatsRangeLabel(range)}
@@ -140,7 +141,6 @@ export default function Header() {
   const appMode = useStore((s) => s.appMode)
   const setAppMode = useStore((s) => s.setAppMode)
   const themeMode = useStore((s) => s.settings.themeMode)
-  const skinId = useStore((s) => s.settings.skinId)
   const setSettings = useStore((s) => s.setSettings)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
@@ -200,33 +200,24 @@ export default function Header() {
   const helpTooltip = useTooltip()
   const themeTooltip = useTooltip()
   const settingsTooltip = useTooltip()
-  const schemeTooltip = useTooltip()
   const nextThemeMode = themeMode === 'dark' ? 'light' : 'dark'
   const themeTooltipText = nextThemeMode === 'dark' ? '切换深色主题' : '切换浅色主题'
-  const schemeOrder: SkinId[] = SKIN_IDS
-  const schemeLabels: Record<SkinId, string> = schemeOrder.reduce(
-    (acc, id) => {
-      acc[id] = SKIN_REGISTRY[id].label
-      return acc
-    },
-    {} as Record<SkinId, string>,
-  )
-  const nextScheme = schemeOrder[(schemeOrder.indexOf(skinId) + 1) % schemeOrder.length]
-  const schemeTooltipText = `配色：${schemeLabels[skinId]}（点击切换为 ${schemeLabels[nextScheme]}）`
 
   return (
     <>
       <header
         data-no-drag-select
-        className={`safe-area-top fixed top-0 left-0 right-0 z-sticky bg-ds-surface/90 dark:bg-ds-scrim/90 backdrop-blur-sm border-b border-ds-border dark:border-ds-border transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}
+        data-theme-transition
+        className={`safe-area-top fixed top-0 left-0 right-0 z-sticky bg-ds-surface border-b border-ds-border transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}
       >
-        <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center justify-between relative">
-          <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
-            <h1 className="inline-flex min-w-0 items-start relative mr-2">
+        {/* 间距制度：水平间距一律由父级 gap 控制，子元素不再用 mr-N / ml-N 各自推 */}
+        <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center gap-2 relative">
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <h1 className="inline-flex min-w-0 items-start relative">
               {showFavoriteCollectionTitle ? (
                 <>
                   <span
-                    className="min-w-0 truncate text-[17px] font-bold tracking-tight text-ds-text dark:text-ds-text-subtle sm:hidden"
+                    className="min-w-0 truncate text-ds-lg font-bold tracking-tight text-ds-text sm:hidden"
                     title={favoriteCollectionTitle}
                   >
                     {favoriteCollectionTitle}
@@ -235,7 +226,7 @@ export default function Header() {
                     href="https://github.com/nideyilian/tangbao"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="hidden items-center gap-2 text-lg font-bold tracking-tight text-ds-text transition-colors hover:text-ds-muted dark:text-ds-text-subtle dark:hover:text-ds-text sm:inline-flex"
+                    className="hidden items-center gap-2 text-ds-lg font-bold tracking-tight text-ds-text transition-colors hover:text-ds-muted sm:inline-flex"
                   >
                     <img src="./app-icon.png" alt="" className="h-6 w-6 rounded-full" />
                     糖包
@@ -246,7 +237,7 @@ export default function Header() {
                   href="https://github.com/nideyilian/tangbao"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-[17px] font-bold tracking-tight text-ds-text transition-colors hover:text-ds-muted dark:text-ds-text-subtle dark:hover:text-ds-text sm:text-lg"
+                  className="flex items-center gap-2 text-ds-lg font-bold tracking-tight text-ds-text transition-colors hover:text-ds-muted"
                 >
                   <img src="./app-icon.png" alt="" className="h-6 w-6 rounded-full" />
                   糖包
@@ -258,7 +249,7 @@ export default function Header() {
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={dismiss}
-                  className="absolute -right-1 -top-1 translate-x-full -translate-y-1/4 px-1 py-0.5 rounded-[4px] border border-ds-danger/30 text-xs font-black bg-ds-danger text-ds-text-inverse hover:bg-ds-danger-hover transition animate-fade-in leading-none shadow-sm"
+                  className="absolute -right-1 -top-1 translate-x-full -translate-y-1/4 px-1 py-0.5 rounded-sm border border-ds-danger/30 text-xs font-black bg-ds-danger text-ds-text-inverse hover:bg-ds-danger-hover transition animate-fade-in leading-none"
                   title={`新版本 ${latestRelease.tag}`}
                 >
                   NEW
@@ -269,17 +260,15 @@ export default function Header() {
           {showFavoriteCollectionTitle && (
             <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
               <div
-                className="truncate rounded px-2 py-1 text-sm font-semibold text-ds-text dark:text-ds-muted"
+                className="truncate rounded-full px-2 py-1 text-sm font-semibold text-ds-text"
                 title={favoriteCollectionTitle}
               >
                 {favoriteCollectionTitle}
               </div>
             </div>
           )}
-          <div className="mr-3">
-            <GenerationStatsBar />
-          </div>
-          <div className="mr-4 hidden sm:block">
+          <GenerationStatsBar />
+          <div className="hidden sm:block">
             <SegmentedControl
               aria-label="切换工作区"
               value={appMode}
@@ -294,32 +283,17 @@ export default function Header() {
                   dismissAllTooltips()
                   setSettings({ themeMode: nextThemeMode })
                 }}
-                className="p-2 rounded-lg hover:bg-ds-subtle dark:hover:bg-ds-subtle transition-colors"
+                className="p-2 rounded-full text-ds-muted hover:bg-ds-surface-subtle hover:text-ds-text transition-colors"
                 aria-label={themeTooltipText}
               >
                 {themeMode === 'dark' ? (
-                  <SunIcon className="w-5 h-5 text-ds-muted dark:text-ds-muted" />
+                  <SunIcon className="w-5 h-5 text-current" />
                 ) : (
-                  <MoonIcon className="w-5 h-5 text-ds-muted dark:text-ds-muted" />
+                  <MoonIcon className="w-5 h-5 text-current" />
                 )}
               </button>
               <ViewportTooltip visible={themeTooltip.visible} className="whitespace-nowrap">
                 {themeTooltipText}
-              </ViewportTooltip>
-            </div>
-            <div className="relative" {...schemeTooltip.handlers}>
-              <button
-                onClick={() => {
-                  dismissAllTooltips()
-                  setSettings({ skinId: nextScheme })
-                }}
-                className="p-2 rounded-lg hover:bg-ds-subtle dark:hover:bg-ds-subtle transition-colors"
-                aria-label={schemeTooltipText}
-              >
-                <PaletteIcon className="w-5 h-5 text-ds-muted dark:text-ds-muted" />
-              </button>
-              <ViewportTooltip visible={schemeTooltip.visible} className="whitespace-nowrap">
-                {schemeTooltipText}
               </ViewportTooltip>
             </div>
             <div className="relative" {...helpTooltip.handlers}>
@@ -328,10 +302,10 @@ export default function Header() {
                   dismissAllTooltips()
                   setShowHelp(true)
                 }}
-                className="p-2 rounded-lg hover:bg-ds-subtle dark:hover:bg-ds-subtle transition-colors"
+                className="p-2 rounded-full text-ds-muted hover:bg-ds-surface-subtle hover:text-ds-text transition-colors"
                 aria-label="操作指南"
               >
-                <HelpCircleIcon className="w-5 h-5 text-ds-muted dark:text-ds-muted" />
+                <HelpCircleIcon className="w-5 h-5 text-current" />
               </button>
               <ViewportTooltip visible={helpTooltip.visible} className="whitespace-nowrap">
                 操作指南
@@ -340,10 +314,10 @@ export default function Header() {
             <div className="relative" {...settingsTooltip.handlers}>
               <button
                 onClick={() => setShowSettings(true)}
-                className="p-2 rounded-lg hover:bg-ds-subtle dark:hover:bg-ds-subtle transition-colors"
+                className="p-2 rounded-full text-ds-muted hover:bg-ds-surface-subtle hover:text-ds-text transition-colors"
                 aria-label="设置"
               >
-                <SettingsIcon className="w-5 h-5 text-ds-muted dark:text-ds-muted" />
+                <SettingsIcon className="w-5 h-5 text-current" />
               </button>
               <ViewportTooltip visible={settingsTooltip.visible} className="whitespace-nowrap">
                 设置
@@ -367,9 +341,9 @@ export default function Header() {
 
       {/* Hint for sliding down */}
       <div
-        className={`fixed top-0 left-0 right-0 z-30 flex justify-center pointer-events-none transition duration-300 ease-in-out sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}
+        className={`fixed top-0 left-0 right-0 z-sticky flex justify-center pointer-events-none transition duration-300 ease-in-out sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}
       >
-        <div className="bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-b-xl shadow-lg">
+        <div className="bg-ds-scrim/85 backdrop-blur-sm text-ds-text-inverse text-xs px-3 py-1.5 rounded-b-ds-lg">
           下拉展示顶栏
         </div>
       </div>

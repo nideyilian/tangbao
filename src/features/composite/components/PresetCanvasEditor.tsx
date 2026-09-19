@@ -421,7 +421,7 @@ export function PresetCanvasEditor(props: Props) {
             <div
               data-layout="preset-canvas"
               data-preview-backdrop={previewBackdropMode}
-              className={`relative m-auto overflow-hidden rounded-md border border-ds-border shadow-inner dark:border-ds-border ${getPreviewBackdropClasses(previewBackdropMode)}`}
+              className={`relative m-auto overflow-hidden rounded-md border border-ds-border shadow-ds-inner dark:border-ds-border ${getPreviewBackdropClasses(previewBackdropMode)}`}
               style={{
                 width: preset ? preset.baseCanvas.width * currentScale : 800,
                 height: preset ? preset.baseCanvas.height * currentScale : 450,
@@ -479,7 +479,7 @@ export function PresetCanvasEditor(props: Props) {
                       finishTextEdit()
                     }
                   }}
-                  className="absolute z-30 resize-none overflow-hidden border border-ds-primary bg-ds-surface/90 text-ds-text outline-none ring-2 ring-ds-focus/20"
+                  className="absolute z-30 resize-none overflow-hidden border border-ds-primary bg-ds-surface/90 text-ds-text outline-none ring-2 ring-ds-focus/50"
                   style={{
                     ...getLayerStyle(editingTextLayer, preset),
                     fontFamily: editingTextLayer.fontFamily,

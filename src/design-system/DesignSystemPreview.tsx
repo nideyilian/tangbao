@@ -39,9 +39,8 @@ import {
   SearchField,
   SectionHeader,
   SegmentedControl,
-  ColorSchemeSwitcher,
-  ColorPresetGrid,
-  type ColorSchemeValue,
+  ThemeSwitcher,
+  type ThemeSwitcherValue,
   SelectField,
   SettingsIcon,
   Skeleton,
@@ -113,12 +112,15 @@ function Section({ title, description, children }: { title: string; description?
 
 export default function DesignSystemPreview() {
   const [dark, setDark] = useState(document.documentElement.classList.contains('dark'))
-  const [scheme, setScheme] = useState<ColorSchemeValue>(
-    (document.documentElement.getAttribute('data-skin') as ColorSchemeValue) || 'default',
+  const [theme, setTheme] = useState<ThemeSwitcherValue>(
+    document.documentElement.classList.contains('dark') ? 'dark' : 'light',
   )
-  const handleSchemeChange = (next: ColorSchemeValue) => {
-    setScheme(next)
-    document.documentElement.setAttribute('data-skin', next)
+  const handleThemeChange = (next: ThemeSwitcherValue) => {
+    setTheme(next)
+    const nextDark = next === 'dark'
+    setDark(nextDark)
+    document.documentElement.classList.toggle('dark', nextDark)
+    document.documentElement.style.colorScheme = next
   }
   const [checked, setChecked] = useState(true)
   const [switchOn, setSwitchOn] = useState(true)
@@ -223,12 +225,14 @@ export default function DesignSystemPreview() {
           </div>
         </Section>
 
-        <Section title="视觉皮肤" description="一次性切换颜色、字体、圆角、阴影与表面质感，与全局皮肤注册表完全同步。">
+        <Section
+          title="主题"
+          description="浅色与深色共用同一套设计令牌，切换只改变明暗取值。多皮肤（换肤）机制已移除，见 ADR-0008。"
+        >
           <div className="grid gap-4">
-            <ColorPresetGrid value={scheme} onChange={handleSchemeChange} columns={4} />
-            <ColorSchemeSwitcher value={scheme} onChange={handleSchemeChange} />
+            <ThemeSwitcher value={theme} onChange={handleThemeChange} />
             <p className="text-xs text-[hsl(var(--ds-color-text-muted))]">
-              上方卡片网格用于设置页，紧凑 SegmentedControl 用于顶栏等空间受限场景。切换后本页会跟随更新。
+              颜色只有一套 Token（src/design-system/styles.css 的 :root / .dark），不再叠加皮肤覆盖层。
             </p>
           </div>
         </Section>

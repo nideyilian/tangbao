@@ -638,7 +638,7 @@ function InputIconOptionButton({
           <div
             role="listbox"
             aria-label={label}
-            className={`absolute bottom-full right-0 z-overlay mb-2 w-44 overflow-hidden rounded-ds-xl border border-ds-border/80 bg-ds-surface p-1.5 text-left shadow-[0_16px_40px_rgba(15,23,42,0.18)] dark:border-ds-border dark:bg-ds-subtle ${menuClass ?? ''}`}
+            className={`absolute bottom-full right-0 z-overlay mb-2 w-44 overflow-hidden rounded-ds-xl border border-ds-border/80 bg-ds-surface p-1.5 text-left shadow-ds-md dark:border-ds-border dark:bg-ds-subtle ${menuClass ?? ''}`}
           >
             <div className="border-b border-ds-border px-2.5 py-1.5 text-xs font-medium text-ds-text dark:border-ds-border dark:text-white">
               {label}：{currentValueLabel}
@@ -3095,7 +3095,7 @@ export default function InputBar() {
         {touchDragPreview?.src &&
           createPortal(
             <div
-              className="fixed z-[var(--ds-z-tooltip)] h-ds-52 w-ds-52 overflow-hidden rounded-ds-lg shadow-xl pointer-events-none opacity-90"
+              className="fixed z-[var(--ds-z-tooltip)] h-ds-52 w-ds-52 overflow-hidden rounded-ds-lg shadow-ds-md pointer-events-none opacity-90"
               style={{ left: touchDragPreview.x, top: touchDragPreview.y, transform: 'translate(-50%, -50%)' }}
             >
               <img src={touchDragPreview.src} className="h-full w-full object-cover" alt="" />
@@ -3181,7 +3181,7 @@ export default function InputBar() {
             <div
               role="listbox"
               aria-label="输出位置"
-              className="absolute bottom-full right-0 z-overlay mb-2 w-56 overflow-hidden rounded-ds-xl border border-ds-border/80 bg-ds-surface p-1.5 text-left shadow-[0_16px_40px_rgba(15,23,42,0.18)] dark:border-ds-border dark:bg-ds-subtle"
+              className="absolute bottom-full right-0 z-overlay mb-2 w-56 overflow-hidden rounded-ds-xl border border-ds-border/80 bg-ds-surface p-1.5 text-left shadow-ds-md dark:border-ds-border dark:bg-ds-subtle"
             >
               <div className="border-b border-ds-border px-2.5 py-1.5 dark:border-ds-border">
                 <p className="text-xs font-medium text-ds-text dark:text-white">输出位置</p>
@@ -3795,10 +3795,10 @@ export default function InputBar() {
         <PostprocessSettingsModal sourceSize={params.size} onClose={() => setShowPostprocessSettings(false)} />
       )}
 
-      <div data-input-bar className="fixed bottom-4 z-30 transition duration-300 sm:bottom-6">
+      <div data-input-bar className="fixed bottom-4 z-overlay transition duration-300 sm:bottom-6">
         {showFavoriteCollectionBatchBar && (
           <div className="flex justify-center mb-3">
-            <div className="bg-ds-surface/90 dark:bg-ds-subtle/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-ds-border/50 dark:border-ds-border pointer-events-auto">
+            <div className="bg-ds-surface/90 dark:bg-ds-subtle/90 backdrop-blur shadow-ds-md rounded-full flex items-center p-1 border border-ds-border/50 dark:border-ds-border pointer-events-auto">
               <BatchActionButton
                 onClick={clearFavoriteCollectionSelection}
                 className="p-2 text-ds-muted dark:text-ds-muted hover:text-ds-text dark:hover:text-white transition-colors"
@@ -3883,7 +3883,7 @@ export default function InputBar() {
         )}
         {showTaskBatchBar && (
           <div className="flex justify-center mb-3">
-            <div className="bg-ds-surface/90 dark:bg-ds-subtle/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-ds-border/50 dark:border-ds-border pointer-events-auto">
+            <div className="bg-ds-surface/90 dark:bg-ds-subtle/90 backdrop-blur shadow-ds-md rounded-full flex items-center p-1 border border-ds-border/50 dark:border-ds-border pointer-events-auto">
               <BatchActionButton
                 onClick={clearSelection}
                 className="p-2 text-ds-muted dark:text-ds-muted hover:text-ds-text dark:hover:text-white transition-colors"
@@ -3955,7 +3955,7 @@ export default function InputBar() {
                     id="task-move-destination-picker"
                     role="dialog"
                     aria-label="选择目标标签"
-                    className="absolute bottom-full left-1/2 z-dropdown mb-3 w-60 -translate-x-1/2 overflow-hidden rounded-ds-lg border border-ds-border/80 bg-ds-surface p-1.5 text-left shadow-[0_16px_40px_rgba(15,23,42,0.18)] dark:border-ds-border dark:bg-ds-subtle"
+                    className="absolute bottom-full left-1/2 z-dropdown mb-3 w-60 -translate-x-1/2 overflow-hidden rounded-ds-lg border border-ds-border/80 bg-ds-surface p-1.5 text-left shadow-ds-md dark:border-ds-border dark:bg-ds-subtle"
                   >
                     <div className="border-b border-ds-border px-2.5 py-2 dark:border-ds-border">
                       <p className="text-xs font-medium text-ds-text dark:text-white">
@@ -4057,9 +4057,14 @@ export default function InputBar() {
             </button>
           </div>
         )}
+        {/* 输入卡片是主任务路径的核心实体，必须是**不透明**面板：
+            原 `bg-ds-surface/90 backdrop-blur-md + shadow-[...]` 是「玻璃拟态」写法，
+            半透明会让画布色透上来、卡片边界发虚（MASTER 4.6：停靠/浮起用显式状态表达，
+            不靠零散透明度模拟）。同时统一到 shadow-ds-* 与语义描边。
+            2026-09-19 表面层级与阴影收口。 */}
         <div
           ref={cardRef}
-          className="relative bg-ds-surface/90 dark:bg-ds-scrim/90 backdrop-blur-md border border-white/50 dark:border-ds-border shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] rounded-ds-xl sm:rounded-ds-2xl p-3 sm:p-4 ring-1 ring-black/5 dark:ring-white/10"
+          className="relative bg-ds-surface border border-ds-border shadow-ds-md rounded-ds-xl sm:rounded-ds-2xl p-3 sm:p-4"
         >
           {/* 移动端拖动条 */}
           <div
@@ -4288,7 +4293,7 @@ export default function InputBar() {
                   )}
                 </div>
                 {visualSkillDraftResult && (
-                  <div className="grid gap-2 rounded-ds-md border border-ds-warning/40 bg-ds-surface/80 p-2">
+                  <div className="grid gap-2 rounded-ds-md border border-ds-warning/40 bg-ds-warning-subtle p-2">
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-xs font-semibold text-ds-text">分析完成：确认每个维度是否衍生</div>
                       <button
@@ -4480,7 +4485,7 @@ export default function InputBar() {
                   </details>
                 )}
                 {visualSkillEditing && visualSkillDraft && (
-                  <div className="grid gap-2 rounded-ds-md border border-ds-border bg-ds-surface/70 p-2">
+                  <div className="grid gap-2 rounded-ds-md border border-ds-border bg-ds-surface-subtle p-2">
                     <input
                       value={visualSkillDraft.name}
                       onChange={(event) => setVisualSkillDraft({ ...visualSkillDraft, name: event.target.value })}
@@ -4530,7 +4535,7 @@ export default function InputBar() {
                   </div>
                 )}
                 {referenceStylePreview && (
-                  <details className="rounded-ds-md border border-ds-border/70 bg-ds-surface/70 px-2.5 py-2">
+                  <details className="rounded-ds-md border border-ds-border bg-ds-surface-subtle px-2.5 py-2">
                     <summary className="cursor-pointer text-xs font-medium text-ds-text">查看本次生成预览</summary>
                     <div className="mt-2 grid gap-2 text-xs">
                       <div className="whitespace-pre-wrap">
@@ -4583,12 +4588,14 @@ export default function InputBar() {
             />
           )}
 
-          {/* 输入框 */}
-          <div className="relative grid rounded-ds-xl border border-ds-border/70 bg-ds-surface/55 shadow-sm transition-[border-color,box-shadow] duration-200 focus-within:border-ds-primary/35 focus-within:ring-2 focus-within:ring-ds-focus/70 dark:border-ds-border dark:bg-ds-surface dark:focus-within:border-ds-primary/40 dark:focus-within:ring-ds-focus/10">
+          {/* 输入框本体是「下沉」的编辑区（弹窗/卡片底是 surface），
+              必须用 surface-subtle 才能看见输入区域边界；原 `bg-ds-surface/55` 在白底上
+              等于没有背景。dark: 补丁随之冗余，已移除。2026-09-19 表面层级收敛。 */}
+          <div className="relative grid rounded-ds-xl border border-ds-border/70 bg-ds-surface-subtle shadow-sm transition-[border-color,box-shadow] duration-200 focus-within:border-ds-primary/35 focus-within:ring-2 focus-within:ring-ds-focus/70 dark:border-ds-border dark:focus-within:border-ds-primary/40 dark:focus-within:ring-ds-focus/50">
             {showAtImageMenu && (
               <div
                 style={{ left: `${menuLeft}px` }}
-                className="absolute bottom-full z-dropdown mb-2 w-64 overflow-hidden rounded-ds-xl border border-ds-border/70 bg-ds-surface/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-ds-border dark:bg-ds-scrim/95 dark:ring-white/10"
+                className="absolute bottom-full z-dropdown mb-2 w-64 overflow-hidden rounded-ds-xl border border-ds-border bg-ds-surface p-1.5 shadow-ds-md"
               >
                 <div className="px-2 pb-1 pt-0.5 text-xs text-ds-muted dark:text-ds-muted">选择图片引用</div>
                 <div className="max-h-56 overflow-y-auto custom-scrollbar">

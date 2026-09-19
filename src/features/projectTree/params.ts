@@ -17,7 +17,7 @@ import {
 } from '../../lib/postprocessMedia'
 // 路径解析与后处理命名模板共用同一份实现，避免「表格里的路径」和「产出文件名里的路径」出现两套口径
 import { resolveCollectionPath } from '../../lib/postprocessProjectTree'
-import type { ProjectNodeKind, ProjectNodeParams, ProjectNodeParamsMap, ResolvedProjectParams } from './types'
+import type { ProjectNodeKind, ProjectNodeParams, ProjectNodeParamsMap } from './types'
 
 /** 由节点深度推导层级语义。 */
 export function resolveProjectNodeKind(depth: number): ProjectNodeKind {
@@ -68,7 +68,7 @@ export function resolveProjectOverrideChain(
 export function resolveProjectNodePathNames(
   collections: AssetCollection[],
   collectionId: string | null,
-): ResolvedProjectParams['path'] {
+): { line: string; product: string; direction: string } {
   if (!collectionId) return { line: '', product: '', direction: '' }
   const path = resolveCollectionPath(collections, collectionId)
   return {
@@ -223,28 +223,6 @@ export function resolveNodeWatermarkBindingsByMedia(
     result.push({ mediaId, presetIds: resolved.presetIds })
   }
   return result
-}
-
-/**
- * 解析出完整的生效参数（含路径名与归属），供表格展示与后处理执行使用。
- *
- * 归属为空（图片没有挂任何项目）时 `sourcedFrom` 为 null，参数全部来自全局默认——
- * 这是「没配过也能出图」的兜底，不是错误。
- */
-export function resolveProjectParams(
-  collections: AssetCollection[],
-  params: ProjectNodeParamsMap,
-  collectionId: string | null,
-  fallback: PostprocessMediaConfig,
-): ResolvedProjectParams {
-  const slice = resolveProjectPostprocessSlice(collections, params, collectionId, fallback)
-  return {
-    collectionId,
-    path: resolveProjectNodePathNames(collections, collectionId),
-    enabled: slice.enabled,
-    sourcedFrom: slice.sourcedFrom,
-    sourcedDepth: slice.sourcedDepth,
-  }
 }
 
 /** 归一化水印预设 id 列表：去空、去重、保序。空数组有效（= 显式不加水印）。 */

@@ -5,17 +5,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 全局运行时变量（布局 / 字体 / 安全区）。
+   颜色 Token 一律在 src/design-system/styles.css 定义（唯一真相源）——
+   2026-09-19 已删除此处的 --background / --foreground / --muted / --border / --input /
+   --primary / --sidebar 桥接变量（实测 0 消费）与 --skin-blue-* 皮肤色板（见 docs/adr/0008）。 */
 :root {
-  --background: 220 22% 97%;
-  --foreground: 220 16% 14%;
-  --muted: 220 16% 95%;
-  --muted-foreground: 220 9% 40%;
-  --border: 220 14% 88%;
-  --input: 220 14% 88%;
-  --primary: 218 42% 46%;
-  --primary-foreground: 0 0% 100%;
-  --sidebar: 220 16% 95%;
-  --sidebar-foreground: 220 16% 14%;
   --font-ui-sans: 'HarmonyOS Sans SC', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'Maple Mono', 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
   --safe-area-top: env(safe-area-inset-top, 0px);
@@ -34,19 +28,6 @@
   );
   --app-docked-right-width: calc(var(--workspace-tabbar-right-width) + var(--word-library-right-width));
   --app-header-offset: calc(3.5rem + var(--safe-area-top) + 1px);
-  /* 皮肤品牌色板（默认 = 原始 Tailwind blue）：自定义皮肤在 src/theme/styles/skins/*.css 中
-     覆盖 --skin-blue-*（Tailwind blue-* 类随皮肤变色）；data-skin 是皮肤的唯一运行时入口 */
-  --skin-blue-50: 213 93% 95%;
-  --skin-blue-100: 214 95% 93%;
-  --skin-blue-200: 213 97% 87%;
-  --skin-blue-300: 212 96% 78%;
-  --skin-blue-400: 213 94% 68%;
-  --skin-blue-500: 217 91% 60%;
-  --skin-blue-600: 221 83% 53%;
-  --skin-blue-700: 224 76% 48%;
-  --skin-blue-800: 226 71% 40%;
-  --skin-blue-900: 224 64% 33%;
-  --skin-blue-950: 226 57% 20%;
 }
 
 html {
@@ -81,16 +62,28 @@ select optgroup {
   background-color: hsl(var(--ds-color-primary-hover, 218 45% 39%));
 }
 
-.theme-transitioning,
-.theme-transitioning *,
-.theme-transitioning *::before,
-.theme-transitioning *::after {
+/* 主题切换过渡（2026-09-19 改造 L2）：
+   此前用 `.theme-transitioning *` 通配符命中全部元素 —— 切主题时上千个素材卡
+   同时进入 transition，是切主题卡顿的直接原因。
+   改为只作用于**显式标记**的元素（顶栏 / 侧栏 / 输入栏等固定外壳），
+   列表项与卡片不参与过渡（它们本来就该瞬时换色）。 */
+.theme-transitioning [data-theme-transition],
+.theme-transitioning [data-theme-transition]::before,
+.theme-transitioning [data-theme-transition]::after {
   transition-property: background-color, border-color, color, fill, stroke, box-shadow;
   transition-duration: var(--ds-duration-slow);
   transition-timing-function: ease;
 }
 
+/* 外壳容器：为左侧页轨 / 右侧停靠面板预留水平内边距。
+   2026-09-19 补 `display: flow-root` —— 此前是普通 block，而各工作区根节点 `<main>`
+   是 `display:flex` 的块级盒子；在没有显式 width 的情况下 flex 容器会**收缩包裹内容**
+   （实测 1258px 视口下素材库只占 918px），余下一条被 body 的画布色暴露出来，
+   表现为右侧一条莫名其妙的灰边。flow-root 让外壳成为独立 BFC 并占满父宽，
+   子级 `min-w-0 flex-1` 链条随之正常撑开。 */
 .app-shell-with-docked-panels {
+  display: flow-root;
+  min-height: 100%;
   padding-left: var(--app-docked-left-width);
   padding-right: var(--app-docked-right-width);
 }
@@ -103,7 +96,9 @@ select optgroup {
 .app-mode-switcher--mobile .ds-segmented__item {
   flex: 1 1 0;
   justify-content: center;
-  min-height: 2.75rem;
+  /* 移动端顶栏高度收敛：原 2.75rem(44px) 让顶栏两行占到约 96px，
+     而移动端首屏最该留给输入框与素材。32px 仍满足可点区域（配合整行通栏宽度）。 */
+  min-height: var(--ds-control-sm);
   min-width: 0;
   padding-inline: 0.25rem;
 }
@@ -736,6 +731,7 @@ html,
   bottom: calc(var(--input-bar-clearance, 12rem) + var(--ds-space-2));
   display: flex;
   flex-direction: column;
+  gap: var(--ds-space-2);
   justify-content: center;
   position: fixed;
   right: var(--app-docked-right-width);
@@ -751,7 +747,7 @@ html,
   cursor: pointer;
   display: flex;
   flex: none;
-  height: 1.5rem;
+  height: var(--ds-space-4);
   justify-content: center;
   margin: 0;
   padding: 0;
@@ -759,10 +755,11 @@ html,
 }
 
 .app-page-rail__marker::after {
-  background: hsl(var(--ds-color-text-subtle) / 0.32);
+  /* 近黑画布上 32% 透明度的 3px 短划几乎不可见 → 提到 48% 并加粗到 4px，保持"低调但不消失" */
+  background: hsl(var(--ds-color-text-subtle) / 0.48);
   border-radius: var(--ds-radius-full);
   content: '';
-  height: 0.1875rem;
+  height: 0.25rem;
   transition:
     background-color var(--ds-duration-fast) ease,
     width var(--ds-duration-fast) ease;
@@ -771,8 +768,8 @@ html,
 
 .app-page-rail__marker:hover::after,
 .app-page-rail__marker[data-active]::after {
-  background: hsl(var(--ds-color-text-subtle) / 0.72);
-  width: 0.75rem;
+  background: hsl(var(--ds-color-text-subtle) / 0.85);
+  width: 0.875rem;
 }
 
 .app-page-rail__marker:focus-visible {
@@ -828,19 +825,6 @@ body.drag-selecting * {
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
-}
-
-.dark {
-  --background: 220 12% 8%;
-  --foreground: 220 10% 94%;
-  --muted: 220 10% 16%;
-  --muted-foreground: 220 7% 70%;
-  --border: 220 12% 22%;
-  --input: 220 12% 22%;
-  --primary: 216 48% 72%;
-  --primary-foreground: 220 15% 12%;
-  --sidebar: 220 10% 12%;
-  --sidebar-foreground: 220 10% 94%;
 }
 
 /* ===== 暗色主题表单控件兜底 =====

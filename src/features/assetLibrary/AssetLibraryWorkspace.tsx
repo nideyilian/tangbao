@@ -662,7 +662,7 @@ function AssetLibraryWorkspaceInner() {
       <main
         data-home-main
         data-testid="asset-library-workspace"
-        className="h-[calc(100dvh-7rem)] overflow-hidden sm:h-[calc(100dvh-3.5rem)]"
+        className="h-[calc(100dvh-7rem)] overflow-hidden bg-ds-surface sm:h-[calc(100dvh-3.5rem)]"
       >
         <div className="flex h-full items-center justify-center text-sm text-ds-muted">素材库加载中…</div>
       </main>
@@ -673,8 +673,10 @@ function AssetLibraryWorkspaceInner() {
     <main
       data-home-main
       data-testid="asset-library-workspace"
-      className="relative flex h-[calc(100dvh-7rem)] min-h-0 flex-col overflow-hidden sm:h-[calc(100dvh-3.5rem)]"
+      className="relative flex h-[calc(100dvh-7rem)] min-h-0 flex-col overflow-hidden bg-ds-canvas sm:h-[calc(100dvh-3.5rem)]"
     >
+      {/* 三大横向区块：左侧导航面（surface）| 主工作区面（surface），中间以 canvas 描边分隔。
+          容器底色显式声明为 canvas，避免「谁都没设背景 → 全靠 body 兜底」的隐式继承。 */}
       <div className="flex min-h-0 flex-1">
         {!isNarrow && (
           <AssetLibrarySidebar
@@ -685,7 +687,7 @@ function AssetLibraryWorkspaceInner() {
             onSelectCollection={(id) => setScope({ kind: 'collection', id })}
           />
         )}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-surface">
           {migrationStatus === 'running' && (
             <div
               role="status"
@@ -862,7 +864,7 @@ function AssetLibraryWorkspaceInner() {
 
       {isNarrow && sidebarOpen && (
         <div
-          className="absolute inset-0 z-overlay flex bg-black/40"
+          className="absolute inset-0 z-overlay flex bg-ds-scrim/45"
           data-testid="asset-library-sidebar-drawer"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setSidebarOpen(false)
@@ -874,7 +876,7 @@ function AssetLibraryWorkspaceInner() {
             aria-modal="true"
             aria-label="素材库导航"
             tabIndex={-1}
-            className="relative flex max-w-[85vw] bg-ds-surface shadow-xl"
+            className="relative flex max-w-[85vw] bg-ds-surface shadow-ds-lg"
           >
             <AssetLibrarySidebar
               counts={counts}

@@ -207,7 +207,9 @@ function AssetDetailPanelInner({ embedded = false, onNext, onPrev, onPurgeReques
       className={
         embedded
           ? 'flex min-h-0 min-w-0 flex-1 flex-col bg-transparent'
-          : 'flex w-80 max-w-full shrink-0 flex-col border-l border-ds-border bg-ds-surface/50'
+          : // 右侧详情面板是**布局级面板**（与左侧素材库导航同级），必须不透明：
+            // 原 `bg-ds-surface/50` 会让画布色透上来，面板"浮"不起来 —— 2026-09-19 表面层级收敛。
+            'flex w-80 max-w-full shrink-0 flex-col border-l border-ds-border bg-ds-surface'
       }
     >
       {!embedded && (

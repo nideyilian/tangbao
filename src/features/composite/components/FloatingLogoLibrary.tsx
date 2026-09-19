@@ -87,7 +87,7 @@ export function FloatingLogoLibrary({
       className={
         variant === 'sidebar'
           ? 'flex h-full min-h-0 w-full flex-col overflow-hidden bg-ds-surface dark:bg-ds-scrim'
-          : 'absolute inset-y-4 right-4 z-20 flex w-72 flex-col overflow-hidden rounded-md border border-ds-border bg-ds-surface/95 shadow-xl backdrop-blur dark:border-ds-border dark:bg-ds-scrim/90'
+          : 'absolute inset-y-4 right-4 z-20 flex w-72 flex-col overflow-hidden rounded-md border border-ds-border bg-ds-surface shadow-ds-lg dark:border-ds-border'
       }
     >
       <div className="flex items-center justify-between border-b border-ds-border px-3 py-2 dark:border-ds-border">
@@ -108,7 +108,7 @@ export function FloatingLogoLibrary({
           onChange={(event) => setSearchQuery(event.target.value)}
           placeholder="搜索 LOGO 名称..."
           aria-label="搜索 LOGO"
-          className="w-full rounded-md border border-ds-border bg-ds-surface px-2 py-1.5 text-xs text-ds-text outline-none transition focus:border-ds-primary focus:ring-2 focus:ring-ds-focus/10 dark:border-ds-border dark:bg-ds-scrim dark:text-ds-text-subtle"
+          className="w-full rounded-md border border-ds-border bg-ds-surface px-2 py-1.5 text-xs text-ds-text outline-none transition focus:border-ds-primary focus:ring-2 focus:ring-ds-focus/50 dark:border-ds-border dark:bg-ds-scrim dark:text-ds-text-subtle"
         />
       </div>
 

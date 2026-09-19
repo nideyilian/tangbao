@@ -1009,7 +1009,7 @@ function AssetGroupedView({
                       }
                     }}
                     className={`absolute overflow-hidden rounded-ds-lg outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${
-                      isHighlighted ? 'ring-2 ring-inset ring-ds-focus/60' : ''
+                      isHighlighted ? 'ring-2 ring-inset ring-ds-focus/70' : ''
                     }`}
                     style={{ left, top, width, height }}
                   >
@@ -1055,7 +1055,7 @@ function AssetGroupedView({
                       ref={setGroupRef(group.id)}
                       data-testid="asset-batch-group"
                       data-group-id={group.id}
-                      className={`absolute left-0 right-0 overflow-hidden rounded-ds-lg border border-ds-border/50 bg-ds-surface/60 ${
+                      className={`absolute left-0 right-0 overflow-hidden rounded-ds-lg border border-ds-border bg-ds-surface ${
                         isHighlighted ? 'bg-ds-primary/5 ring-1 ring-inset ring-ds-focus/50' : ''
                       }`}
                       style={{ top, height }}

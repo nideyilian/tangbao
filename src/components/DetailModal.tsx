@@ -808,7 +808,7 @@ export default function DetailModal() {
                           'group relative overflow-hidden rounded-lg border bg-ds-surface transition',
                           aspectClass,
                           isSelected
-                            ? 'border-ds-primary shadow-[0_0_0_1px_rgba(96,165,250,0.75)]'
+                            ? 'border-ds-primary ring-1 ring-ds-focus'
                             : itemStatus === 'error'
                               ? 'border-ds-danger/60'
                               : 'border-ds-border/10 hover:border-ds-border/40',
@@ -1445,7 +1445,7 @@ export default function DetailModal() {
                 </button>
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 bg-ds-surface/50 dark:bg-ds-surface overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 bg-ds-surface-subtle overscroll-contain">
               <div className="space-y-2.5">
                 {rawImageUrls.map((url, i) => (
                   <div
@@ -1536,7 +1536,7 @@ export default function DetailModal() {
                 </button>
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-5 bg-ds-surface/50 dark:bg-ds-surface overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 bg-ds-surface-subtle overscroll-contain">
               <pre
                 data-selectable-text
                 className="text-xs sm:text-xs text-ds-muted dark:text-ds-muted font-mono whitespace-pre-wrap break-all select-text"

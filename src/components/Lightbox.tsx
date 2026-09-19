@@ -694,7 +694,7 @@ function LightboxInner({
           <img
             src={fallbackSrc || src}
             data-image-id={imageId}
-            className="saveable-image max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
+            className="saveable-image max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-ds-lg"
             decoding="async"
             onError={handleImageError}
             onDragStart={(e) => e.preventDefault()}

@@ -81,7 +81,6 @@ function waitForStoreHydration(): Promise<void> {
 export default function App() {
   const appMode = useStore((s) => s.appMode)
   const themeMode = useStore((s) => s.settings.themeMode)
-  const skinId = useStore((s) => s.settings.skinId)
   const themeAppliedRef = useRef(false)
   const [startupSafeMode, setStartupSafeMode] = useState(false)
   useGlobalClickSuppression()
@@ -120,10 +119,10 @@ export default function App() {
 
   useEffect(() => {
     // Zustand 正式设置为准：应用外观并重写首屏快照
-    applyAppearance({ skinId, themeMode }, document.documentElement, { transition: themeAppliedRef.current })
-    writeAppearanceSnapshot({ skinId, themeMode })
+    applyAppearance({ themeMode }, document.documentElement, { transition: themeAppliedRef.current })
+    writeAppearanceSnapshot({ themeMode })
     themeAppliedRef.current = true
-  }, [themeMode, skinId])
+  }, [themeMode])
 
   useEffect(() => {
     const api = window.electronAPI

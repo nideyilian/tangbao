@@ -37,7 +37,6 @@ import {
 export type { PostprocessMediaConfig }
 
 export interface PostprocessMediaStore extends PostprocessMediaConfig {
-  setMedia: (media: PostprocessMedia[]) => void
   addMedia: (name: string, id?: string) => string | null
   renameMedia: (mediaId: string, name: string) => void
   setMediaEnabled: (mediaId: string, enabled: boolean) => void
@@ -65,8 +64,6 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   clearMediaOutputDirs: (mediaId: string) => void
   setNamePattern: (namePattern: string) => void
   setCreator: (creator: string) => void
-  setWatermarkPresetIds: (presetIds: string[]) => void
-  toggleWatermarkPreset: (presetId: string) => void
   setAutoCompanionClean: (enabled: boolean) => void
   /** 局部更新分发配置（只传要改的字段，其余保持） */
   patchDistribution: (patch: Partial<PostprocessDistributionConfig>) => void
@@ -252,12 +249,6 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
     (set, get) => ({
       ...createDefaultPostprocessMediaConfig(),
 
-      setMedia: (media) =>
-        set((state) => {
-          const normalized = normalizePostprocessMediaConfig({ ...state, media }).media
-          return { media: normalized, selectedMediaIds: pruneSelectedMediaIds(normalized, state.selectedMediaIds) }
-        }),
-
       addMedia: (name, id) => {
         const trimmedName = name.trim()
         if (!trimmedName) return null
@@ -432,20 +423,6 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         }),
 
       setCreator: (creator) => set({ creator: typeof creator === 'string' ? creator : '' }),
-
-      setWatermarkPresetIds: (presetIds) => set({ watermarkPresetIds: normalizeStringList(presetIds) ?? [] }),
-
-      toggleWatermarkPreset: (presetId) =>
-        set((state) => {
-          const trimmed = presetId.trim()
-          if (!trimmed) return state
-          const has = state.watermarkPresetIds.includes(trimmed)
-          return {
-            watermarkPresetIds: has
-              ? state.watermarkPresetIds.filter((id) => id !== trimmed)
-              : [...state.watermarkPresetIds, trimmed],
-          }
-        }),
 
       setAutoCompanionClean: (enabled) => set({ autoCompanionClean: enabled === true }),
 

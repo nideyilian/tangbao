@@ -275,3 +275,234 @@ zustand persist `version: 5`），底层是 Chromium LevelDB：
 **踩过的坑**：`node:sqlite` 用 `readOnly: true` 读是对的；但**用 read-write 打开一个带残留 WAL 的库时，
 WAL 里未 checkpoint 的帧可能不可见** —— 实测读到 0 条记录、实际 WAL 里有 1 条，差点把「合并」做成
 「覆盖」。所以：**写库前的基线一律先用 `readOnly` 连接读出来**，再开 rw 去 UPDATE。
+
+## 十、改颜色 / 主题 Token（2026-09-19 实测定稿，ADR-0008）
+
+颜色只有**一套**真相源，但改了要**三处同步**，漏一处 `npm test` 就红：
+
+| 顺序 | 文件                                       | 改什么                                                    |
+| ---- | ------------------------------------------ | --------------------------------------------------------- |
+| 1    | `src/design-system/styles.css`             | `:root`（浅色）/ `.dark`（深色）的 `--ds-color-*` 值      |
+| 2    | `src/design-system/tokens.tokens.json`     | `color.light` / `color.dark` 的 sRGB `components` + `hex` |
+| 3    | `src/design-system/tokensContract.test.ts` | `LIGHT_COLOR_VALUES` / `DARK_COLOR_VALUES` 两个 dict      |
+
+**为什么是这些值**：HSL 通道格式（`220 20% 98%`，无 `hsl()` 包裹）才能让 Tailwind 加 alpha
+（`bg-ds-surface/90`）。换算 sRGB 手算易错，写一次性脚本转换后**立刻删**：
+
+```js
+// hsl → sRGB（h 0-360, s/l 0-100）→ hex
+const f = (n) => {
+  const k = (n + h / 30) % 12
+  const a = s * Math.min(l, 1 - l)
+  return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
+}
+```
+
+**验收命令**（不要跑全量，太慢）：
+
+```bash
+npm test -- src/design-system/tokensContract.test.ts   # 150 例，钉死精确值 + CSS↔JSON 交叉校验
+```
+
+**看实际生效值**（比读 CSS 文件可靠，能看到继承与 `data-theme-transition` 的影响）：
+
+```js
+getComputedStyle(document.documentElement).getPropertyValue('--ds-color-canvas')
+```
+
+**对比度**：改文字色必查 WCAG AA（≥ 4.5:1）。实测教训：浅色 `text-subtle` 取 `220 8% 50%` 只有
+**4.19:1**，调到 `220 8% 46%` 才过（4.82:1）—— 目测"够灰了"不可靠，必须算。
+
+### ⚠️ 验收第一关：先算 hex，别只看 diff（2026-09-19 翻车实录）
+
+**表面色（canvas / surface / surface-subtle / border）改完，必须先换算成 hex 与旧值逐条比对。**
+
+原因是 HSL 在**高亮度段**极度不敏感：色相差 10°、饱和度差 10%，换算后可能**完全是同一个颜色**。
+
+真实案例：首版把浅色画布从 `210 20% 98%` "重新设计"为 `220 20% 98%`，两个值换算后
+**同为 `#f9fafb`**；描边 `#e0e2e6` → `#e2e4e9` 只差 2 个色阶。代码 diff 很漂亮，
+但界面**零变化** —— 杰哥一眼看出「怎么没看出什么区别」。
+
+**可辨性阈值（实测）**：
+
+| 关系                       | 最低要求   | 说明                    |
+| -------------------------- | ---------- | ----------------------- |
+| 相邻表面（canvas↔surface） | ≥ 1.10 : 1 | < 1.05:1 肉眼基本不可辨 |
+| 描边 vs 其两侧表面         | ≥ 1.30 : 1 | 低于此值描边"糊"在一起  |
+| 正文文字 vs 背景           | ≥ 4.5 : 1  | WCAG AA                 |
+
+第二轮定稿值（换算后）：浅色 `#f2f4f7` ↔ `#ffffff` = **1.102:1**；
+深色 `#0b0c0f` ↔ `#191b1f` = **1.134:1**。
+
+### 层级没出来时，先查「透明修饰符」再查 Token
+
+**语义类带 alpha 会让画布色透上来，把面板层级直接抹平** —— 这时改 Token 完全无效。
+
+- `bg-ds-surface/50`（侧栏）：一半透明 → 灰画布透出 → 侧栏看着和画布一样 → 面板"浮"不起来
+- `bg-ds-surface/90 backdrop-blur-sm`（顶栏）：同理
+
+**规则：布局级面板（顶栏 / 侧栏 / 主区）一律用不透明 `bg-ds-surface`；
+只有抽屉 / 浮层 / 气泡这类"临时悬浮物"才保留透明度。**
+
+查法：在真实 DOM 上遍历 `getComputedStyle(el).backgroundColor`，凡是 `rgba(...,<1)` 且
+宽度 > 200px 的高层容器，基本就是嫌疑对象。
+
+### 弹窗内的「下沉分组」：白叠白是隐形 bug
+
+弹窗底是 `surface-raised`（≈白）。**里面所有 `bg-ds-surface/xx` 的分组卡 = 白叠白 = 看不见**，
+而且半透明会把弹窗外的遮罩透进来。这类写法一律是缺陷。
+
+**正确层级（四级，照这个选）**：
+
+| 角色                           | 用哪个 Token     | 说明                                      |
+| ------------------------------ | ---------------- | ----------------------------------------- |
+| 弹窗本体                       | `surface-raised` | `.ds-dialog` / `.ds-modal-surface` 已设好 |
+| 弹窗内**分区/内容**面          | `surface`        | `DialogPane tone="content\|sidebar"`      |
+| 弹窗内**下沉分组卡 / 输入框**  | `surface-subtle` | 让分组"凹"下去，才看得出边界              |
+| 画布型工作台（蒙版编辑器舞台） | `canvas`         | `DialogPane tone="canvas"`                |
+
+排查命令（列出弹窗里所有仍带 alpha 的 surface 面板）：
+
+```bash
+grep -rn "bg-ds-surface/[0-9]\|bg-ds-subtle/[0-9]" src/components/*Modal*.tsx \
+  | grep -viE "backdrop-blur|/9[05]|/5\b|/10\b|/20\b"
+```
+
+**验收阈值**（2026-09-19 实测）：`surface-subtle` vs `surface-raised`
+浅色 **1.151:1**（`#edeff3` vs `#ffffff`）、深色 **1.137:1**（`#282c33` vs `#1f2228`）。
+深色侧原本 16% 只有 1.068:1 → 低于可辨线，已提到 18%。**改这个值必须两侧都验算。**
+
+### 停靠面板的占位变量要对齐「可见性」
+
+`--app-docked-left/right-width` 决定主区两侧留多少空。**留白必须与该面板是否真的渲染一致**，
+否则会出现右侧一条莫名其妙的空白（`--word-library-right-width` 被写死 340px）。
+
+排查一行命令（无详情面板时应为 `0px`）：
+
+```js
+getComputedStyle(document.documentElement).getPropertyValue('--app-docked-right-width')
+```
+
+坑点在于：组件 `return null` **不等于卸载**，`useEffect` 的 cleanup 不会触发，
+所以副作用必须自己按「可见性」判定，不能只按 docked 状态。详见 `RISK.md` R-39。
+
+### 主题切换链路（只有一条）
+
+`settings.themeMode` → `App.tsx` effect → `applyAppearance()` → `html.dark` class + `style.colorScheme`；
+首屏由 `main.tsx` 的 `bootstrapAppearance()` 读 localStorage 快照提前应用（防闪白）。
+
+**多皮肤（`data-skin`）机制已于 2026-09-19 移除**（ADR-0008）。不要再引入 `data-skin` 这类
+"再叠一层 CSS 覆盖"的方案；若确需换肤，用**变量集（variable modes）**重做。
+
+### 清 vite 缓存（改 Token 后样式不更新时）
+
+Vite 预打包缓存会被安全删除护栏拦住（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`，阈值 50 个文件/次），
+`npm run dev` 会直接起不来。分批删：
+
+```js
+// 每批 ≤ 40 个，避免触发护栏
+const fs = require('fs'),
+  p = 'node_modules/.vite/deps'
+// 同时清掉报 EPERM 的 deps_temp_* 残留目录
+```
+
+残留 `deps_temp_*` 会让 dev 报 `EPERM: open ...\react-dom.js` —— 删掉即可，不是代码问题。
+
+## 十一、UI 细节一致性改动的五条纪律（2026-09-19 实测定稿）
+
+做「统一间距 / 组件样式 / 排版层级」这类收口时，**先分类再动手**，否则会把设计意图当缺陷改掉。
+
+### 1. 改之前先分「本体背景」和「交互反馈背景」
+
+半透明不是一律要清。判据是**它是不是元素本体**：
+
+| 写法                                   | 判定     | 处理                        |
+| -------------------------------------- | -------- | --------------------------- |
+| `bg-ds-surface/55` 直接在面板/输入框上 | 本体背景 | 改不透明或 `surface-subtle` |
+| `hover:bg-ds-surface/60`               | 交互反馈 | **保留**（半透明是合理的）  |
+| `group-hover:bg-*` / `focus:bg-*`      | 交互反馈 | 保留                        |
+| `bg-ds-scrim/45`（遮罩）               | 遮罩语义 | 保留                        |
+
+用这条命令列出**本体背景**（已排除交互前缀）：
+
+```bash
+grep -rn --include=*.tsx -E "bg-ds-(surface|raised)/(55|60|70|80|85|90|95)" src \
+  | grep -vE "hover:bg-|group-hover:bg-|focus:bg-"
+```
+
+### 2. 焦点环只用两档，且必须用 `focus` 色
+
+`ring-ds-focus/70` = 标准控件；`ring-ds-focus/50` = 轻量（大面积容器）。
+**不要用 `ring-ds-primary` 当焦点环** —— 它是选中/装饰环，语义不同（但 `ring-ds-primary`
+不带 `focus:` 前缀用于选中态是**合法的**，别误改）。
+
+### 3. 光学校正类微调不要动
+
+`mt-[1px]` / `mt-[1.5px]` / `mt-[2px]` 是图标与文字基线对齐的**手工校正**，不是错误。
+同理 `pb-[76px]` 这类是给固定工具栏预留的空间。只有**派生值写死**才该改
+（例：`pl-[26px]` = 图标 18px + gap 8px → 改 `pl-[calc(1.125rem+0.5rem)]`，改图标时自动跟随）。
+
+### 4. 圆角按语义选 Token，不要按"值相同"选
+
+| 角色            | 类                  | 实际值   |
+| --------------- | ------------------- | -------- |
+| 小控件 / 输入框 | `rounded-ds-md`     | 8px      |
+| **卡片 / 面板** | **`rounded-ds-lg`** | **12px** |
+| 模态壳 / 大浮层 | `rounded-ds-xl`     | 16px     |
+
+陷阱：裸 `rounded-lg` **也是 8px**，与 `rounded-ds-md` 同值但是另一套命名。
+存量 376 处裸圆角走棘轮（`compliance.test.ts` 的 `bareRounded` 快照），**只减不增**，
+不要一次性 sed 替换。
+
+### 5. 同角色元素的字重必须一致
+
+`<h4>` 在本仓约定 = 弹窗/面板内的**区块标题**，统一 `font-semibold`(600)。
+例外：`uppercase tracking-wide` 的微标签式 h4（语义是标签 → 保留 `font-medium`）。
+`<h3>` 被复用作卡片主文本（`truncate`/`line-clamp` 的提示词预览），**不属标题**。
+
+---
+
+## 十二、加了合规规则后必须做的事
+
+`src/design-system/compliance.test.ts` 是**棘轮**：一旦加了新规则，全仓立刻要能过。
+
+1. 先用 `grep` 数出违规量。**量级 > 50 就不要一次清零** —— 改为快照棘轮
+   （仿 `LEGACY_SNAPSHOT` 的模式：`'<文件>|<规则名>': 数量`），只减不增。
+2. 写规则时**必须剥离注释**再做匹配，否则注释里为解释历史而引用的类名会被误判，
+   逼着后来者不敢写注释。用 `compliance.test.ts` 里现成的 `stripComments()`。
+3. 规则要**足够窄**。例：`h4` 字重规则只查 `h4` 不查 `h3`（`h3` 被复用作卡片文本）；
+   阴影规则豁免 `shadow-[inset_...]`（那是描边/指示条，不是阴影）。
+4. 跑 `npx vitest run src/design-system/compliance.test.ts` 单独验证，再进 `npm run verify`。
+
+---
+
+## 十三、给"多处渲染同一份参数"做结构收敛（2026-09-19 定稿）
+
+**症状识别**：改一个字段要动 N 个文件；或同一个选项数组（如方向选项）在仓库里出现多份。
+`grep -c` 一下就能确认，别靠印象。
+
+```bash
+grep -rn "跟随尺寸" src/          # 应只命中 paramSchema.ts
+git grep -c "DIRECTION_OPTIONS"   # 每份都是漏改点
+```
+
+**标准配方**（后处理那轮的形态，可照搬）：
+
+1. **建元数据表**（`src/features/postprocess/paramSchema.ts`）。每项声明
+   `key` / `label` / `control` / `scope` / `group` / `resettable` / `help`。
+   - `control` 是**渲染分派键**，不是 JSX —— 放 JSX 会让这张表变成组件文件，也没法针对字段断言。
+   - `scope` 三档：`global` / `node` / `both`。两种宿主共用的字段才写 `both`。
+   - 校验（如命名模板的未知/缺失/重复占位符）**跟字段放一起**，因为它与字段定义是同一件事的两半。
+2. **容器只留状态**：左栏树只提供 `selectedNodeId`，不再持有任何参数控件。
+   树根挂一个哨兵 id（`GLOBAL_NODE_ID = '__postprocess_global__'`）代表「全局默认」，
+   不要让全局配置游离在树外——否则 `scope` 这套过滤就用不起来。
+3. **详情面板一次性渲染**：取字段 → 按 `group` 分组 → 按 `control` 分派。加字段不改这里。
+4. **删掉旧入口**：按 R-18 三查（grep import / grep 字面量 / grep `readFileSync`）后 `rm`，
+   并同步删掉 `design-system/catalog.ts` 里对应的条目（否则 catalog 测试会红）。
+5. **测试**：原有用例会因为 DOM 变了而大面积失败，这是**预期**而非回归。
+   逐条判断该用例断言的是"新结构下的等价行为"还是"已废除的入口"，前者改写、后者删除。
+   另外补一条**契约测试**守住本轮的核心不变量（键唯一、无死分组、无重复定义）。
+
+**坑**：`Switch` 的 `label` 是必填（要传 `label=""`）；`Button` 没有 `icon` 属性
+（图标当 children 传）；`Checkbox` 的文本在 `label` 上而不是 `button` 里——
+用 `findButton` 找媒体勾选框会失败，要按 `input[type=checkbox]` + `.ds-check__label` 找。
