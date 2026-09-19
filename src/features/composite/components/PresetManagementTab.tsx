@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Checkbox } from '../../../design-system'
-import { CopyIcon as Copy, PlusIcon as Plus, TrashIcon as Trash2 } from '../../../design-system/icons'
+import { Checkbox, SegmentedControl } from '../../../design-system'
+import {
+  CopyIcon as Copy,
+  ExportIcon,
+  ImportIcon,
+  PlusIcon as Plus,
+  TrashIcon as Trash2,
+} from '../../../design-system/icons'
 import {
   PRESET_LIBRARY_DRAG_TYPE as LIBRARY_PRESET_DRAG_TYPE,
   filterPresetsByQuery,
@@ -14,8 +20,30 @@ import {
   removeCompositeAsset,
   storeCompositeBlobs,
 } from '../lib/compositeAssets'
+import {
+  IDENTIFIER_PLACEMENTS,
+  IDENTIFIER_PLACEMENT_LABELS,
+  createDefaultIdentifier,
+  isIdentifierEnabled,
+} from '../lib/compositeIdentifier'
+import {
+  buildPresetTransferFile,
+  collectPresetBindings,
+  embedPresetAssets,
+  parsePresetTransferFile,
+  pickPresetTransferFile,
+  planPresetImport,
+  restorePresetAssets,
+  savePresetTransferFile,
+  type PresetImportPlan,
+} from '../lib/compositePresetTransfer'
+import { bindPresetToNode } from '../lib/presetBinding'
 import { useCompositeV2Store } from '../storeV2'
 import { useStore } from '../../../store'
+import { resolveNodeWatermarkBinding } from '../../projectTree/params'
+import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
+import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
+import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { FloatingLogoLibrary } from './FloatingLogoLibrary'
 import { PresetCanvasEditor } from './PresetCanvasEditor'
 import { PresetLayerPanel } from './PresetLayerPanel'
@@ -43,6 +71,11 @@ export function PresetManagementTab() {
    */
   const [librarySelection, setLibrarySelection] = useState<string[]>([])
   const setSelectedPreviewPresetId = useCompositeV2Store((state) => state.setSelectedPreviewPresetId)
+  const collections = useAssetLibraryStore((state) => state.collections)
+  const params = useProjectTreeParamsStore((state) => state.params)
+  const media = usePostprocessMediaStore((state) => state.media)
+  const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
+  const identifier = store.identifier ?? createDefaultIdentifier()
 
   const toggleLibrarySelection = (presetId: string) =>
     setLibrarySelection((prev) =>
@@ -223,6 +256,107 @@ export function PresetManagementTab() {
     setEditingPresetName('')
   }
 
+  /**
+   * 导出：库里勾了就导勾选的那批，没勾就导全部（「我要备份整个水印库」是默认预期）。
+   * 归属与图片资产一并带走，保证接收方导入即可用。
+   */
+  async function handleExportPresets() {
+    const targets =
+      librarySelection.length > 0
+        ? store.presets.filter((preset) => librarySelection.includes(preset.id))
+        : store.presets
+    if (targets.length === 0) {
+      useStore.getState().showToast('水印库是空的，没有可导出的水印', 'info')
+      return
+    }
+    const bindings = collectPresetBindings({
+      presetIds: targets.map((preset) => preset.id),
+      collections,
+      params,
+      media,
+    })
+    const presets = await embedPresetAssets(targets, store.projectLogos ?? [])
+    const result = await savePresetTransferFile(buildPresetTransferFile({ presets, bindings, identifier }))
+    if (!result.ok) {
+      if (result.error) useStore.getState().showToast(result.error, 'error')
+      return
+    }
+    useStore
+      .getState()
+      .showToast(
+        `已导出 ${targets.length} 个水印${bindings.length > 0 ? `，含 ${bindings.length} 条归属` : ''}`,
+        'success',
+      )
+  }
+
+  async function handleImportPresets() {
+    const picked = await pickPresetTransferFile()
+    if (!picked.text) {
+      if (picked.error) useStore.getState().showToast(picked.error, 'error')
+      return
+    }
+    const file = parsePresetTransferFile(picked.text)
+    if (!file) {
+      openInfoDialog({
+        title: '不是水印预设文件',
+        message: '请选择从「水印库 → 导出」保存下来的 JSON 文件。其它 JSON 不会被猜着导入。',
+      })
+      return
+    }
+    const plan = planPresetImport({ file, collections, media, existingPresets: store.presets })
+    const updated = plan.resolutions.filter((item) => item.mode === 'update').length
+    const summary = [
+      `新增 ${plan.resolutions.length - updated} 个水印${updated > 0 ? `，覆盖 ${updated} 个同 id 的水印` : ''}。`,
+      plan.bindings.length > 0 ? `可恢复 ${plan.bindings.length} 条归属。` : '文件里没有可恢复的归属。',
+      plan.unmatchedBindings.length > 0
+        ? `有 ${plan.unmatchedBindings.length} 条归属在本机找不到同名路径，导入后不会动你的项目树。`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+    openConfirmDialog({
+      title: '导入水印预设？',
+      message: summary,
+      confirmText: '导入',
+      action: () => void applyImport(plan),
+    })
+  }
+
+  async function applyImport(plan: PresetImportPlan) {
+    const presets = await restorePresetAssets(plan.presets)
+    store.mergeImportedPresets(presets)
+    for (const binding of plan.bindings) {
+      // 每次都取最新 params：循环里连写多条，用闭包里的旧值会把前一条覆盖掉
+      const latestParams = useProjectTreeParamsStore.getState().params
+      const current = resolveNodeWatermarkBinding(
+        collections,
+        latestParams,
+        binding.collectionId,
+        globalWatermarkPresetIds,
+        binding.mediaId ?? undefined,
+      ).presetIds
+      const nextIds = bindPresetToNode(current, binding.presetId)
+      setPostprocessOverrideOf(binding.collectionId, binding.mediaId, nextIds)
+    }
+    // 标识符只在本机没配过时才采用文件里的：静默改掉用户已有的署名是最糟的一类意外
+    if (plan.identifier && !isIdentifierEnabled(identifier)) store.setIdentifier(plan.identifier)
+    useStore
+      .getState()
+      .showToast(
+        `已导入 ${plan.resolutions.length} 个水印${plan.bindings.length > 0 ? `，恢复 ${plan.bindings.length} 条归属` : ''}`,
+        'success',
+      )
+  }
+
+  function setPostprocessOverrideOf(collectionId: string, mediaId: string | null, presetIds: string[]) {
+    useProjectTreeParamsStore
+      .getState()
+      .setPostprocessOverride(
+        collectionId,
+        mediaId ? { byMedia: { [mediaId]: { watermarkPresetIds: presetIds } } } : { watermarkPresetIds: presetIds },
+      )
+  }
+
   function selectNewestLayer(presetId: string) {
     const latestPreset = useCompositeV2Store.getState().presets.find((preset) => preset.id === presetId)
     const newestLayerId = latestPreset?.layers.at(-1)?.id ?? ''
@@ -274,17 +408,37 @@ export function PresetManagementTab() {
               {librarySelection.length > 0 ? `已选 ${librarySelection.length} 个` : '拖到上方方向即可归属'}
             </p>
           </div>
-          <button
-            type="button"
-            title="新建预设"
-            onClick={() => {
-              store.createPreset('新预设')
-              useStore.getState().showToast('已创建预设', 'success')
-            }}
-            className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md border border-ds-border dark:border-ds-border hover:bg-ds-subtle dark:hover:bg-ds-subtle"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              title="导入水印预设文件"
+              aria-label="导入水印预设文件"
+              onClick={() => void handleImportPresets()}
+              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md text-ds-muted hover:bg-ds-subtle hover:text-ds-primary dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
+            >
+              <ImportIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              title="导出水印预设到文件（勾选时只导勾选的）"
+              aria-label="导出水印预设到文件"
+              onClick={() => void handleExportPresets()}
+              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md text-ds-muted hover:bg-ds-subtle hover:text-ds-primary dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
+            >
+              <ExportIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              title="新建预设"
+              onClick={() => {
+                store.createPreset('新预设')
+                useStore.getState().showToast('已创建预设', 'success')
+              }}
+              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md border border-ds-border dark:border-ds-border hover:bg-ds-subtle dark:hover:bg-ds-subtle"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
         </header>
         <div className="shrink-0 space-y-1.5 p-3">
           <input
@@ -303,6 +457,42 @@ export function PresetManagementTab() {
               清空选择
             </button>
           )}
+
+          {/* 标识符是全局一份：改一次对所有预设同时生效，所以它挨着「水印库」而不是塞进
+              单个预设的图层面板——放在预设里会让人以为它只管这一个水印。 */}
+          <div
+            data-layout="preset-identifier"
+            className="space-y-1.5 border-t border-ds-border pt-2 dark:border-ds-border"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-ds-text dark:text-ds-text">水印标识符</span>
+              <span className="text-xs text-ds-muted dark:text-ds-muted">
+                {isIdentifierEnabled(identifier) ? '已生效' : '未启用'}
+              </span>
+            </div>
+            <input
+              value={identifier.text}
+              onChange={(event) => store.setIdentifier({ text: event.target.value })}
+              placeholder="如 @小王"
+              aria-label="水印标识符"
+              data-identifier-input
+              className="w-full rounded-md border border-ds-border bg-ds-surface px-2 py-1.5 text-sm text-ds-text outline-none focus:border-ds-primary dark:border-ds-border dark:bg-ds-scrim dark:text-ds-text"
+            />
+            <SegmentedControl
+              aria-label="标识符附加位置"
+              size="sm"
+              value={identifier.placement}
+              onValueChange={(placement) => store.setIdentifier({ placement })}
+              options={IDENTIFIER_PLACEMENTS.map((value) => ({
+                value,
+                label: IDENTIFIER_PLACEMENT_LABELS[value],
+              }))}
+              className="w-full"
+            />
+            <p className="text-xs text-ds-muted dark:text-ds-muted">
+              有文字的水印按所选位置附加；没有文字水印的，自动加在左下角。
+            </p>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto space-y-0.5 px-2 pb-2">
           {visiblePresets.length === 0 && (

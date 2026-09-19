@@ -108,6 +108,8 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'features/assetLibrary/AssetViewer.tsx|hex': 7,
   'features/composite/components/PresetLayerPanel.tsx|hex': 1,
   'features/composite/lib/compositeDefaults.ts|hex': 18,
+  // IDENTIFIER_FALLBACK_STYLE 的白/黑是画布水印默认色（写入持久化数据、不随主题变），非 UI 样式类
+  'features/composite/lib/compositeV2Types.ts|hex': 2,
   'features/composite/lib/compositeRenderer.ts|hex': 1,
   'features/composite/lib/compositeRendererV2.ts|hex': 2,
   'features/composite/storeV2.ts|hex': 4,

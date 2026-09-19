@@ -108,6 +108,8 @@ function preserveFreeLayerCenter(
 export function PresetCanvasEditor(props: Props) {
   const { preset } = props
   const { openInfoDialog } = useAppDialog()
+  // 标识符是渲染时叠加的派生值，改它不会动到 preset 对象——不订阅的话画布会一直停在旧帧。
+  const identifier = useCompositeV2Store((state) => state.identifier)
   const [internalSelectedLayerId, setInternalSelectedLayerId] = useState('')
   const [backgroundDataUrl, setBackgroundDataUrl] = useState('')
   const [editingTextLayerId, setEditingTextLayerId] = useState('')
@@ -264,7 +266,7 @@ export function PresetCanvasEditor(props: Props) {
     return () => {
       renderVersionRef.current += 1
     }
-  }, [backgroundDataUrl, preset])
+  }, [backgroundDataUrl, identifier, preset])
 
   useEffect(() => {
     if (!stageRef.current || canvasWidth === undefined || canvasHeight === undefined) return

@@ -16,9 +16,11 @@ import { createStore } from 'zustand/vanilla'
 import { persist } from 'zustand/middleware'
 import { createPreviewHistory } from './lib/compositeBackgrounds'
 import { createDefaultCompositeV2State } from './lib/compositeV2Defaults'
+import { createDefaultIdentifier, normalizeIdentifier } from './lib/compositeIdentifier'
 import { fitCompositeTextLayer } from './lib/compositeTextLayout'
 import { hasLegacyCompositeAssets, migrateLegacyCompositeAssets } from './lib/compositeAssetMigration'
 import type {
+  CompositeV2IdentifierConfig,
   CompositeV2BackgroundImage,
   CompositeV2FitMode,
   CompositeV2ImageAssetRef,
@@ -41,6 +43,7 @@ type CompositeV2UndoSnapshot = {
   logoLibraryPath: string
   logoOrder: string[]
   projectLogos: CompositeV2State['projectLogos']
+  identifier?: CompositeV2State['identifier']
   backgroundFolders: string[]
   recursiveBackgrounds: boolean
   backgrounds: CompositeV2BackgroundImage[]
@@ -82,10 +85,12 @@ type CompositeV2StoreActions = {
   createPreset: (name: string) => void
   deletePreset: (presetId: string) => void
   duplicatePreset: (presetId: string) => void
+  mergeImportedPresets: (imported: CompositeV2State['presets']) => void
   copyLayer: (presetId: string, layerId: string) => void
   pasteLayer: (presetId: string) => void
   duplicateLayer: (presetId: string, layerId: string) => void
   setGlobalFitMode: (mode: CompositeV2FitMode) => void
+  setIdentifier: (patch: Partial<CompositeV2IdentifierConfig>) => void
 }
 
 export type CompositeV2StoreState = CompositeV2BatchState &
@@ -106,11 +111,14 @@ const DEFAULT_LAYER_STROKE = { enabled: false, color: '#111827', width: 0 }
 const HISTORY_LIMIT = 100
 const HISTORY_MERGE_WINDOW_MS = 1200
 /**
- * 持久化版本。4 → 5：**预设组**退役（分组交给项目树，预设不再需要自己的分组壳）。
- * 必须靠迁移把 `presetGroups` / `selectedPresetGroupId` 丢掉——否则旧数据反序列化
- * 会把脏字段写回，且 `merge` 还会拿它去校验当前预览的预设，导致选中态莫名清空。
+ * 持久化版本。
+ * 4 → 5：**预设组**退役（分组交给项目树，预设不再需要自己的分组壳）。
+ *   必须靠迁移把 `presetGroups` / `selectedPresetGroupId` 丢掉——否则旧数据反序列化
+ *   会把脏字段写回，且 `merge` 还会拿它去校验当前预览的预设，导致选中态莫名清空。
+ * 5 → 6：新增**水印标识符**（`identifier`，全局一份）。旧数据没有这个字段，迁移时补默认值
+ *   （空文本 = 不附加），因此升级后已配好的水印**渲染结果不变**。
  */
-const COMPOSITE_V2_PERSIST_VERSION = 5
+const COMPOSITE_V2_PERSIST_VERSION = 6
 
 export function createCompositeV2StoreState(): CompositeV2BatchState & CompositeV2UndoState & CompositeV2State {
   const defaults = createDefaultCompositeV2State()
@@ -127,6 +135,7 @@ export function createCompositeV2StoreState(): CompositeV2BatchState & Composite
     selectedPreviewPresetId: defaults.presets[0]?.id ?? '',
     presets: defaults.presets,
     globalFitMode: defaults.globalFitMode,
+    identifier: createDefaultIdentifier(),
     clipboardLayer: null,
     undoStack: [],
     redoStack: [],
@@ -143,6 +152,7 @@ export function getCompositeV2PersistedState(state: CompositeV2StoreState): Comp
     projectLogos: state.projectLogos ?? [],
     presets: state.presets,
     globalFitMode: state.globalFitMode,
+    identifier: normalizeIdentifier(state.identifier),
     backgroundFolders: state.backgroundFolders,
     recursiveBackgrounds: state.recursiveBackgrounds,
     selectedPreviewPresetId: state.selectedPreviewPresetId,
@@ -196,6 +206,7 @@ export function migrateCompositeV2PersistedState(persistedState: unknown, _versi
     projectLogos: Array.isArray(legacy.projectLogos) ? (legacy.projectLogos as CompositeV2State['projectLogos']) : [],
     presets,
     globalFitMode: normalizeFitMode(legacy.globalFitMode),
+    identifier: normalizeIdentifier(legacy.identifier),
     backgroundFolders: Array.isArray(legacy.backgroundFolders) ? (legacy.backgroundFolders as string[]) : [],
     recursiveBackgrounds: Boolean(legacy.recursiveBackgrounds),
     selectedPreviewPresetId:
@@ -461,6 +472,23 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
               selectedPreviewPresetId: preset.id,
             }
           }, 'presets:structure'),
+        /**
+         * 合并导入的预设：同 id 覆盖、**保留原位**，新 id 追加在末尾。
+         *
+         * 覆盖不新增条目是「导入 = 恢复」的语义；留在原位是为了不打断用户排好的顺序
+         * （顺序即归属里的产出顺序，整体追加会把已有水印挤到后面）。
+         */
+        mergeImportedPresets: (imported) =>
+          setWithHistory((state) => {
+            if (imported.length === 0) return {}
+            const presets = [...state.presets]
+            for (const preset of imported) {
+              const index = presets.findIndex((item) => item.id === preset.id)
+              if (index >= 0) presets[index] = preset
+              else presets.push(preset)
+            }
+            return { presets }
+          }, 'presets:import'),
         copyLayer: (presetId, layerId) =>
           setWithoutHistory((state) => {
             const preset = state.presets.find((p) => p.id === presetId)
@@ -504,6 +532,13 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
             `preset:${presetId}:layers`,
           ),
         setGlobalFitMode: (globalFitMode) => setWithHistory(() => ({ globalFitMode }), 'output:fit-mode'),
+        // 标识符是全局一份：改一次要立刻反映到**所有**预设的预览与后处理产出上，
+        // 所以只改这一个字段，不去遍历预设（那会把一次输入变成 N 次预设写盘，且撤销栈爆掉）。
+        setIdentifier: (patch) =>
+          setWithHistory(
+            (state) => ({ identifier: normalizeIdentifier({ ...state.identifier, ...patch }) }),
+            'watermark:identifier',
+          ),
       }
     },
     {
@@ -579,6 +614,7 @@ function captureUndoSnapshot(state: CompositeV2StoreState): CompositeV2UndoSnaps
     logoLibraryPath: state.logoLibraryPath,
     logoOrder: [...(state.logoOrder ?? [])],
     projectLogos: [...(state.projectLogos ?? [])],
+    identifier: state.identifier,
     backgroundFolders: [...state.backgroundFolders],
     recursiveBackgrounds: state.recursiveBackgrounds,
     backgrounds: [...state.backgrounds],

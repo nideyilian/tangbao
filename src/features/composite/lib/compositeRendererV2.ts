@@ -9,7 +9,14 @@ import {
   loadImageOriented,
   type OrientedImageSource,
 } from '../../../lib/canvasImage'
+import {
+  applyIdentifierToText,
+  getIdentifierSignature,
+  normalizeIdentifier,
+  resolveIdentifierLayer,
+} from './compositeIdentifier'
 import type {
+  CompositeV2IdentifierConfig,
   CompositeV2MediaLayer,
   CompositeV2Preset,
   CompositeV2FitMode,
@@ -94,51 +101,71 @@ export function getScaledLayerStrokeWidth(stroke: CompositeV2Stroke | undefined,
 }
 
 /**
- * 叠加层缓存键。除预设修订号与目标尺寸外，还纳入项目 Logo 的资产签名：
- * 更换/重命名项目 Logo 不会更新 preset.updatedAt，若不纳入签名会导致预览/导出沿用旧 Logo。
+ * 叠加层缓存键。除预设修订号与目标尺寸外，还纳入两个**不在预设里**的输入签名：
+ * - 项目 Logo 资产签名：更换/重命名项目 Logo 不会更新 preset.updatedAt，不纳入会沿用旧 Logo。
+ * - 水印标识符签名：标识符是渲染时叠加的派生值（见 `compositeIdentifier`），改它同样不会
+ *   动到 updatedAt —— 漏掉这一项的表现是「改了标识符，预览和产出纹丝不动」，且只在
+ *   重启应用清掉缓存后才突然生效，极难定位。
  */
 export function getCompositeOverlayCacheKey(
   preset: Pick<CompositeV2Preset, 'id' | 'updatedAt'>,
   target: Size,
   logoSignature?: string,
+  identifierSignature?: string,
 ) {
-  return `${preset.id}:${preset.updatedAt}:${target.width}x${target.height}${logoSignature ? `:logos=${logoSignature}` : ''}`
+  return `${preset.id}:${preset.updatedAt}:${target.width}x${target.height}${logoSignature ? `:logos=${logoSignature}` : ''}${identifierSignature ? `:id=${identifierSignature}` : ''}`
 }
 
 export async function renderCombinedOverlay(preset: CompositeV2Preset, target: Size) {
-  const logoSignature = await getProjectLogosSignature()
+  const { logoSignature, identifierSignature, identifier } = await getRuntimeRenderContext()
 
   // 与预设画布同比例的尺寸：以 baseCanvas 等比放大（覆盖最大所需尺寸）的版本渲染一次，
   // 所有同比例输出共享并缩放合成——避免每个输出尺寸都全量重绘所有图层（这是批量导出的主要加速点）。
   // 比例不同（或 baseCanvas 无效）时回退为按目标尺寸精确渲染。
   if (sameRatio(preset.baseCanvas, target)) {
-    const key = `base:${preset.id}:${preset.updatedAt}:logos=${logoSignature}`
+    const key = `base:${preset.id}:${preset.updatedAt}:logos=${logoSignature}:id=${identifierSignature}`
     const need = coverSize(preset.baseCanvas, target)
     const cached = overlayCache.get(key)
     if (cached && cached.width >= need.width && cached.height >= need.height) {
       touchOverlayEntry(key, cached)
       return cached.canvas
     }
-    const canvas = await renderOverlayAt(preset, need)
+    const canvas = await renderOverlayAt(preset, need, identifier)
     cacheOverlay(key, canvas)
     return canvas
   }
 
-  const key = getCompositeOverlayCacheKey(preset, target, logoSignature)
+  const key = getCompositeOverlayCacheKey(preset, target, logoSignature, identifierSignature)
   const cached = overlayCache.get(key)
   if (cached) {
     touchOverlayEntry(key, cached)
     return cached.canvas
   }
-  const canvas = await renderOverlayAt(preset, target)
+  const canvas = await renderOverlayAt(preset, target, identifier)
   cacheOverlay(key, canvas)
   return canvas
 }
 
-async function getProjectLogosSignature(): Promise<string> {
+/**
+ * 取渲染时那些「不在预设里」的输入。
+ *
+ * 动态 import 是为了避开 `storeV2 → 本文件` 的循环依赖（store 侧要用到本文件的度量函数），
+ * 与 `resolveLayerImage` 里的 Logo 查找同一个理由。
+ */
+async function getRuntimeRenderContext(): Promise<{
+  logoSignature: string
+  identifierSignature: string
+  identifier: CompositeV2IdentifierConfig
+}> {
   const { useCompositeV2Store } = await import('../storeV2')
-  const logos = useCompositeV2Store.getState().projectLogos ?? []
-  return logos.map((logo) => logo.assetId ?? logo.dataUrl ?? logo.id).join('|')
+  const state = useCompositeV2Store.getState()
+  const logos = state.projectLogos ?? []
+  const identifier = normalizeIdentifier(state.identifier)
+  return {
+    logoSignature: logos.map((logo) => logo.assetId ?? logo.dataUrl ?? logo.id).join('|'),
+    identifierSignature: getIdentifierSignature(identifier),
+    identifier,
+  }
 }
 
 function sameRatio(a: Size, b: Size, tolerance = 0.01) {
@@ -155,15 +182,23 @@ function coverSize(base: Size, target: Size): Size {
   }
 }
 
-async function renderOverlayAt(preset: CompositeV2Preset, size: Size): Promise<HTMLCanvasElement> {
+async function renderOverlayAt(
+  preset: CompositeV2Preset,
+  size: Size,
+  identifier?: CompositeV2IdentifierConfig | null,
+): Promise<HTMLCanvasElement> {
   const overlay = document.createElement('canvas')
   overlay.width = size.width
   overlay.height = size.height
   const overlayCtx = overlay.getContext('2d')
   if (!overlayCtx) throw new Error('当前环境不支持 Canvas')
   for (const layer of [...preset.layers].reverse()) {
-    if (layer.visible) await drawLayer(overlayCtx, layer, preset, size)
+    if (layer.visible) await drawLayer(overlayCtx, layer, preset, size, identifier)
   }
+  // 一个能出字的文字层都没有时，标识符退化成一个左下角图层。最后画 = 压在最上层，
+  // 且它本身就是标识符原文，不再二次叠加（传 null）。
+  const identifierLayer = resolveIdentifierLayer(preset, identifier)
+  if (identifierLayer) await drawLayer(overlayCtx, identifierLayer, preset, size, null)
   return overlay
 }
 
@@ -222,6 +257,7 @@ async function drawLayer(
   layer: CompositeV2TextLayer | CompositeV2MediaLayer,
   preset: CompositeV2Preset,
   target: Size,
+  identifier?: CompositeV2IdentifierConfig | null,
 ) {
   const rect = mapLayerPositionToCanvas(layer.position, preset.baseCanvas, target)
   ctx.save()
@@ -265,7 +301,8 @@ async function drawLayer(
     ctx.fillStyle = layer.color
     ctx.textAlign = layer.align
     ctx.textBaseline = 'middle'
-    const lines = layer.text.split('\n')
+    // 标识符在这里叠加，不写回预设：一次改动要对所有预设同时生效，且导出预设时不该把署名带走
+    const lines = applyIdentifierToText(layer.text, identifier).split('\n')
     const textX =
       layer.align === 'left' ? -rect.width / 2 + padding : layer.align === 'right' ? rect.width / 2 - padding : 0
     lines.forEach((line, index) => {

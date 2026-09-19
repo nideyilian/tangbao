@@ -21,6 +21,16 @@ describe('composite renderer v2', () => {
     )
   })
 
+  it('includes the watermark identifier signature in the overlay cache key', () => {
+    // 标识符不写回预设，改它不会动 updatedAt —— 不进缓存键就是「改了但预览/产出不变」
+    const base = { id: 'p1', updatedAt: 123 }
+    const size = { width: 640, height: 360 }
+    expect(getCompositeOverlayCacheKey(base, size, undefined, 'suffix:@小王')).toBe('p1:123:640x360:id=suffix:@小王')
+    expect(getCompositeOverlayCacheKey(base, size, undefined, 'prefix:@小王')).not.toBe(
+      getCompositeOverlayCacheKey(base, size, undefined, 'suffix:@小王'),
+    )
+  })
+
   it('scales a shared layer stroke from the preset canvas', () => {
     expect(
       getScaledLayerStrokeWidth(

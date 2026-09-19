@@ -127,6 +127,7 @@ describe('composite v2 store state factory', () => {
       projectLogos: [],
       presets: store.getState().presets,
       globalFitMode: store.getState().globalFitMode,
+      identifier: { text: '', placement: 'suffix' },
       backgroundFolders: ['D:/bg'],
       recursiveBackgrounds: true,
       selectedPreviewPresetId: store.getState().selectedPreviewPresetId,
@@ -384,5 +385,37 @@ describe('composite v2 store state factory', () => {
     const store = createCompositeV2Store()
     store.getState().setGlobalFitMode('contain-blur')
     expect(store.getState().globalFitMode).toBe('contain-blur')
+  })
+
+  it('migrates a snapshot without an identifier to the disabled default', () => {
+    // 升级后已配好的水印渲染结果必须不变：默认空文本 = 不附加
+    const migrated = migrateCompositeV2PersistedState({ presets: [createDefaultCompositeV2Preset(1)] }, 5)
+    expect(migrated.identifier).toEqual({ text: '', placement: 'suffix' })
+  })
+
+  it('keeps a persisted identifier and lets one edit cover every preset', () => {
+    const store = createCompositeV2Store()
+    store.getState().setIdentifier({ text: '@小王', placement: 'both' })
+    expect(store.getState().identifier).toEqual({ text: '@小王', placement: 'both' })
+    // 预设本身一个都没动：标识符是渲染时叠加的，不是逐预设写盘
+    expect(store.getState().presets.every((preset) => preset.updatedAt <= Date.now())).toBe(true)
+    store.getState().undo()
+    expect(store.getState().identifier).toEqual({ text: '', placement: 'suffix' })
+  })
+
+  it('merges imported presets in place for known ids and appends new ones', () => {
+    const store = createCompositeV2Store()
+    const first = store.getState().presets[0]!
+    store.getState().createPreset('第二个')
+    const before = store.getState().presets.map((preset) => preset.id)
+
+    store.getState().mergeImportedPresets([
+      { ...first, name: '覆盖后的名字' },
+      { ...first, id: 'brand-new', name: '全新的' },
+    ])
+
+    // 覆盖留在原位（顺序即归属里的产出顺序），新增追加在末尾
+    expect(store.getState().presets[0]?.name).toBe('覆盖后的名字')
+    expect(store.getState().presets.map((preset) => preset.id)).toEqual([...before, 'brand-new'])
   })
 })
