@@ -1027,8 +1027,11 @@ button.sop-center-group-tree-toggle:hover {
   border: 1px solid hsl(var(--ds-color-border));
   border-radius: var(--ds-radius-md);
   display: grid;
-  flex: none;
+  /* 撑满编辑器容器的剩余高度：面板下方不再留大片空白（原为 `flex: none`） */
+  flex: 1 1 auto;
   gap: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -1062,7 +1065,13 @@ button.sop-center-group-tree-toggle:hover {
 .sop-recipe-panel__body {
   display: grid;
   gap: 0.625rem;
+  min-height: 0;
   padding: 0.75rem;
+}
+
+/* 窗口很矮时让正文区自己滚，而不是被面板的 overflow: hidden 裁掉操作栏 */
+.sop-recipe-panel > .sop-recipe-panel__body {
+  overflow: auto;
 }
 
 /* 整段录入区块：视觉上独立于下方「解析结果确认」，表明它是入口而非数据本体 */
@@ -1072,12 +1081,24 @@ button.sop-center-group-tree-toggle:hover {
   border-radius: var(--ds-radius-md);
   display: grid;
   gap: 0.5rem;
+  /* 标题 / 原文框 / 操作栏：原文框吃掉剩余高度（提示行按需追加，自动为 auto） */
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
   padding: 0.625rem;
+}
+
+.sop-recipe-import__field {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
 }
 
 .sop-recipe-import__field textarea {
   font-family: var(--ds-font-mono);
+  height: 100%;
   min-height: 7rem;
+  /* 高度由布局算，禁止手动拖拽（拖了会与自适应打架） */
+  resize: none;
 }
 
 .sop-recipe-import__actions {

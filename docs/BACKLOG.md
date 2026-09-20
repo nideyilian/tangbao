@@ -1421,6 +1421,42 @@ APP-拉新 / 快手 / 网赚·萌宠·老歌 / 卡券 …）。
 
 ---
 
+### TB-055 配方卡面板撑满容器（消除下方大片留白）
+
+- **来源**：杰哥截图反馈「引擎卡的组件需要自适应填满整个界面容器，避免在下方留出大面积空白」
+- **状态**：✅ 已完成 · 写线：主写线
+- **根因**：`.sop-recipe-panel` 写死 `flex: none` —— 它只占自身内容高度，
+  而编辑器卡片（`flex-1 flex-col`）里剩下的空间全空着。面板瘦身后（TB-054 续）
+  内容更少，留白更明显。
+
+**改法（只动面板自己的伸展链，不碰共享类的行模板）**：
+
+| 选择器                               | 改动                                                                                                  |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `.sop-recipe-panel`                  | `flex: none` ⇒ `flex: 1 1 auto` + `min-height: 0` + 行模板 `auto minmax(0,1fr)`（头部固定、正文吃满） |
+| `.sop-recipe-panel__body`            | 加 `min-height: 0`（flex/grid 子项默认不收缩）+ 显式 `grid-template-rows: minmax(0,1fr)`              |
+| `.sop-recipe-panel > …__body`        | `overflow: auto`：窗口很矮时正文自己滚，而不是被面板的 `overflow:hidden` 裁掉操作栏                   |
+| `.sop-recipe-import`                 | 自己吃满 + 行模板 `auto minmax(0,1fr) auto`（标题 / **原文框** / 操作栏）                             |
+| `.sop-recipe-import__field`          | 新增规则：`grid-template-rows: auto minmax(0,1fr)`（label / textarea）                                |
+| `.sop-recipe-import__field textarea` | 加 `height: 100%` 与 `resize: none`（高度改由布局算，手动拖拽会与自适应打架）                         |
+
+**为什么 `__body` 要显式写 1fr**：原本只靠「auto 行会被 `align-content` 拉伸」这个隐式行为，
+它依赖容器有确定高度才成立 —— 换个父容器就会**静默**退回「又留白」。
+显式 1fr 后：面板场景吃满；弹窗场景（容器高度由内容决定）1fr 退化为内容尺寸，与原来的 auto 等价。
+
+**⚠️ 验证边界（如实记录）**：本轮**没能渲染验证**。三次尝试都被环境挡住：
+① `agent-browser` 的 Chromium 未安装（`open` 静默被杀）；
+② Electron 离屏加载 `file://` 一律 `ERR_FAILED`（连极简 HTML 也拦，判定为环境级限制）；
+③「Electron + 本地静态服务」组合在这条命令里 127 起不来。
+所以改法与量测台都按 CSS 规则推导，**待杰哥在运行中的实例里过目**（styles.css 改动会 HMR 生效）。
+量测台与量测脚本已留在 `.git/`（`build-fill-harness.py` / `measure-fill.cjs` / `serve-temp.cjs`），
+环境修好后可一键复测。
+
+**验收**：`prettier --check styles.css` 通过（CSS 语法解析无误）；
+**无 JS 改动**，故测试面不变。
+
+---
+
 ### TB-054 配方卡「解析结果」弹窗（只读）
 
 - **来源**：杰哥「为配方卡引擎解析出的内容添加弹窗展示功能：在配方卡原文区域右下角、
