@@ -25,6 +25,17 @@
 - 状态落盘 = SQLite `local-saves/db/asset-kernel.sqlite` 的 `app_data_records`。
 - 糖包 = 主线，豆泡 = 维护；两仓**无共享 git 历史** → 只能 `fetch` + `cherry-pick`。
 - **`vite build` 必须 Node 24**（Node 22 报 `DatabaseSync` 未导出）。
+- **⭐ 本机 `node` 默认是 v22，跑任何 npm 脚本都会回落 v22 → 必须显式提到 v24**（R-59）：
+  `node --version` = **v22.22.2**（`C:\Users\tt\.workbuddy\binaries\node\versions\22.22.2-2\`，WorkBuddy 托管），
+  v24 在 `C:\Program Files\nodejs\`，**v22 在 PATH 里靠前**。`npm run dev/test/verify` 全都会命中
+  `vite.config.ts` 的 `MIN_NODE_MAJOR=24` 守卫而失败。正确跑法：
+  `PATH="/c/Program Files/nodejs:$PATH" "/c/Program Files/nodejs/node.exe" "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run <script>`
+  （`start.bat` 已内建这套探测，双击即可；命令行手跑要自己加）。
+  **坑**：`vite --version` **不加载配置**、不报错，别拿它验版本；只有 `dev`/`build` 才命中守卫。
+  **坑**：`timeout` 杀不掉 vite 派生的 electron → 会一直占着 41731，要 `taskkill /T`。
+- **探针脚本一律写 `%TEMP%`，禁止落项目根**：根目录是 Electron 主进程 CWD，会被加载进主进程
+  （本轮 `probe-api.cjs` 就因 `path.join(process.env.APPDATA,…)` 抛 `ERR_INVALID_ARG_TYPE`
+  弹了「main process error」窗）。
 - `npm run verify` ≈ 3–4 分钟（tsc 双端 + lint + format + 全量测试）。
 - **改完源码必须 `npx prettier --write`**，否则 `format:check` 会挂（连 `AGENTS.md` 也要过 prettier）。
 - `release.yml` **勿**改回 `--publish always`（exe 超时）。
