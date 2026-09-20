@@ -940,16 +940,17 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/CompositeWorkspace.tsx',
-    responsibility: '中控台工作区装配：功能分区 SegmentedControl（分区表在 lib/controlConsoleSections.ts）+ 撤销栈',
+    responsibility:
+      '中控台工作区装配（复刻灵境策略中心）：左栏作用域树 + 右区（作用域标题 + 分区 SegmentedControl + 分区内容）+ 撤销栈',
     decision: 'retain',
     targets: ['SplitPane', 'Panel', 'Toolbar', 'Tabs'],
   },
   {
-    module: 'src/features/composite/components/ConsoleScopePicker.tsx',
+    module: 'src/features/composite/components/ConsoleAssetTree.tsx',
     responsibility:
-      '中控台作用域选择器：选「全局默认」或某个树节点，决定分区内控件读写哪一层参数；配套 isGlobalScope 统一哨兵判定',
+      '中控台左栏「配置资产库」作用域树（复刻灵境策略中心）：搜索 + 全局默认总览项 + 项目树（节点带覆盖计数徽章）；点节点 = 切作用域',
     decision: 'compose',
-    targets: ['SelectField'],
+    targets: ['Badge', 'SearchField'],
   },
   {
     module: 'src/features/composite/components/MediaSection.tsx',
@@ -961,7 +962,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/OutputSection.tsx',
     responsibility:
-      '中控台「输出位置」分区：作用域选择器（全局 / 节点）决定编辑哪一层；全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir',
+      '中控台「输出位置」分区：作用域由左树驱动（全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir）',
     decision: 'compose',
     targets: ['SectionHeader', 'Alert', 'Badge'],
   },

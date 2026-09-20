@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   CONTROL_CONSOLE_SECTIONS,
   DEFAULT_CONTROL_CONSOLE_SECTION,
+  isGlobalScope,
   normalizeControlConsoleSection,
 } from './controlConsoleSections'
+import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 
 describe('controlConsoleSections', () => {
   it('把水印放在第一个分区，因为它是历史行为唯一的入口', () => {
@@ -28,5 +30,11 @@ describe('controlConsoleSections', () => {
     expect(normalizeControlConsoleSection(undefined)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
     expect(normalizeControlConsoleSection(null)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
     expect(normalizeControlConsoleSection(42)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
+  })
+
+  it('isGlobalScope 只认哨兵值（从已退役的 ConsoleScopePicker 迁来）', () => {
+    expect(isGlobalScope(GLOBAL_NODE_ID)).toBe(true)
+    expect(isGlobalScope('line-a')).toBe(false)
+    expect(isGlobalScope('__postprocess_global__')).toBe(true)
   })
 })

@@ -1,20 +1,35 @@
 /**
  * 中控台的功能分区注册表。
  *
- * 形态对齐「灵境 · 资产中心」：资产中心不把水印当成独立页面，而是产品资料下的一批
- * **配置维度**（渠道与尺寸 / 输出位置 / 水印 …）。糖包照这个口径把原先「整个 tab 就是水印」
- * 收成「水印是中控台里的一个功能」，与其它维度平级。
+ * 形态对齐「灵境 · 策略中心」（junbo-cy.jetmobo.com/strategy/center，2026-09-20 登录实测）：
+ * **左树 + 右内容**。左树是项目树（产品线 / 产品 / 方向，节点带计数徽章 + 搜索框 +
+ * 「全局默认」总览项），右侧是当前作用域的分区工作区。顶部分区切换（水印 /
+ * 渠道与尺寸 / 输出位置 / 分发）在右区工具栏上，树不在分区里 ——
+ * 树决定「改谁」，分区决定「改什么」。
  *
  * ⚠️ 这里只声明「有哪些分区、怎么显示」，**分区内容不在这里**——内容各自引用既有组件，
  * 不新造第二套实现。
  *
  * 本表的设计约束（2026-09-20 修订）：**中控台是全部参数的统一编辑入口**。
- * 节点级覆盖与全局基线都在分区内改，靠 `ConsoleScopePicker` 切换作用域；不设
- * 「中控台只能改全局、节点级要去项目树」的断层。但作用域选择器**只在节点层真有
- * 可覆盖字段时才挂** —— `PostprocessNodeOverride` 目前只有 `outputDir` / `byMedia` /
- * `watermarkPresetIds` / `enabled`，所以「渠道与尺寸」「分发」是纯全局分区。
- * 挂了却选不动，比不挂更糟。详见 `design-system/tangbao/pages/postprocess.md`。
+ * 节点级覆盖与全局基线都在分区内改，作用域由左侧树驱动；不设
+ * 「中控台只能改全局、节点级要去项目树」的断层。但分区**只在节点层真有
+ * 可覆盖字段时才消费作用域** —— `PostprocessNodeOverride` 目前只有 `outputDir` /
+ * `byMedia` / `watermarkPresetIds` / `enabled`，所以「渠道与尺寸」「分发」是纯全局分区。
+ * 给了作用域却什么都不变，比不给更糟。详见 `design-system/tangbao/pages/postprocess.md`。
  */
+
+import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
+
+/**
+ * 作用域：`GLOBAL_NODE_ID`（全局基线）或某个 `AssetCollection.id`。
+ * 由左侧作用域树驱动，工作区级共享 —— 切分区不重置。
+ */
+export type ConsoleScope = string
+
+/** 当前作用域是否为全局基线。全工作区共用同一条判定，避免各处各写一遍哨兵比较。 */
+export function isGlobalScope(scope: ConsoleScope): boolean {
+  return scope === GLOBAL_NODE_ID
+}
 
 export type ControlConsoleSectionId = 'watermark' | 'media' | 'output' | 'distribution'
 

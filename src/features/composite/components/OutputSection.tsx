@@ -4,10 +4,10 @@
  * 复刻资产中心里「输出位置」那个独立 tab 的形态。糖包的输出位置是**两层**的
  * （全局渠道表 `mediaOutputDirs` + 节点覆盖 `byMedia`），资产中心只有一个层级。
  *
- * 本轮（TB-053 第三轮）把两层**合到一个界面里**：顶部选作用域，
- * 选「全局默认」改的是全局渠道表，选某个节点改的是那个节点的覆盖。
- * 这样做的依据是杰哥对中控台的定位——**它是所有参数的唯一编辑入口**，
- * 因此不该出现「中控台只能改全局、改节点得去别处」这种断层。
+ * 两层**合在一个界面里**：作用域由工作区左侧的配置资产库树驱动（TB-053 第四轮，
+ * 原内嵌下拉已退役），选「全局默认」改的是全局渠道表，选某个节点改的是那个节点的覆盖。
+ * 依据是杰哥对中控台的定位——**它是所有参数的唯一编辑入口**，
+ * 不该出现「中控台只能改全局、改节点得去别处」的断层。
  *
  * 保留的约束：节点覆盖仍写 `PostprocessNodeOverride.byMedia`（ADR-0011 收窄后的字段），
  * 并且同时摘掉旧的单值 `outputDir`，避免两个字段并存时「显示的」与「生效的」不一致。
@@ -22,14 +22,13 @@ import ChannelOutputDirs from '../../postprocess/ChannelOutputDirs'
 import { useStore } from '../../../store'
 import { normalizeOutputDirList, type PostprocessNodeOverride } from '../../../lib/postprocessMedia'
 import { resolveCollectionPath } from '../../../lib/postprocessProjectTree'
-import { ConsoleScopePicker, isGlobalScope, type ConsoleScope } from './ConsoleScopePicker'
+import { isGlobalScope, type ConsoleScope } from '../lib/controlConsoleSections'
 
 interface Props {
   scope: ConsoleScope
-  onScopeChange: (scope: ConsoleScope) => void
 }
 
-export function OutputSection({ scope, onScopeChange }: Props) {
+export function OutputSection({ scope }: Props) {
   const media = usePostprocessMediaStore((state) => state.media)
   const outputDir = usePostprocessMediaStore((state) => state.outputDir)
   const mediaOutputDirs = usePostprocessMediaStore((state) => state.mediaOutputDirs)
@@ -143,10 +142,10 @@ export function OutputSection({ scope, onScopeChange }: Props) {
       </div>
 
       <div className="shrink-0 space-y-3 px-4 pt-3">
-        <ConsoleScopePicker value={scope} onValueChange={onScopeChange} label="输出位置" />
         {!isGlobal && (
           <p className="text-xs text-ds-muted dark:text-ds-muted">
             正在编辑「{scopeNode?.name ?? '已删除节点'}」的覆盖值；留空的项继续按树向上继承。
+            换作用域请用左侧的配置资产库树。
           </p>
         )}
       </div>
@@ -156,7 +155,7 @@ export function OutputSection({ scope, onScopeChange }: Props) {
           <Alert tone="warning" className="mb-3">
             有 <strong>{overriddenCount.count}</strong> 个方向配了节点级覆盖
             {overriddenCount.names.length > 0 && `（如 ${overriddenCount.names.join('、')}）`}
-            ，它们<strong>不受下面这套全局配置影响</strong>。把上方作用域切到那个节点即可直接改。
+            ，它们<strong>不受下面这套全局配置影响</strong>。在左侧树点那个节点即可直接改。
           </Alert>
         )}
 
