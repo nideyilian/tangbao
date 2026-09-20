@@ -25,20 +25,15 @@
 - 状态落盘 = SQLite `local-saves/db/asset-kernel.sqlite` 的 `app_data_records`。
 - 糖包 = 主线，豆泡 = 维护；两仓**无共享 git 历史** → 只能 `fetch` + `cherry-pick`。
 - **`vite build` 必须 Node 24**（Node 22 报 `DatabaseSync` 未导出）。
-- **⭐ 本机 `node` 默认是 v22，跑任何 npm 脚本都会回落 v22 → 必须显式提到 v24**（R-59）：
-  `node --version` = **v22.22.2**（`C:\Users\tt\.workbuddy\binaries\node\versions\22.22.2-2\`，WorkBuddy 托管），
-  v24 在 `C:\Program Files\nodejs\`，**v22 在 PATH 里靠前**。`npm run dev/test/verify` 全都会命中
-  `vite.config.ts` 的 `MIN_NODE_MAJOR=24` 守卫而失败。正确跑法：
-  `PATH="/c/Program Files/nodejs:$PATH" "/c/Program Files/nodejs/node.exe" "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run <script>`
-  （`start.bat` 已内建这套探测，双击即可；命令行手跑要自己加）。
-  **坑**：`vite --version` **不加载配置**、不报错，别拿它验版本；只有 `dev`/`build` 才命中守卫。
-  **坑**：`timeout` 杀不掉 vite 派生的 electron → 会一直占着 41731，要 `taskkill /T`。
+- **⭐ 本机 `node` 默认是 v22，跑任何 npm 脚本都会回落 v22 → 必须显式提到 v24**（R-59）。
+  正确跑法、`vite --version` 不加载配置这个坑、`timeout` 杀不掉 electron 这个坑
+  → **runbook §18.4**。`start.bat` 已内建版本探测，双击即可。
 - **探针脚本一律写 `%TEMP%`，禁止落项目根**：根目录是 Electron 主进程 CWD，会被加载进主进程
   （本轮 `probe-api.cjs` 就因 `path.join(process.env.APPDATA,…)` 抛 `ERR_INVALID_ARG_TYPE`
   弹了「main process error」窗）。
 - **改 `.bat` 必须 GBK(936) + CRLF，且不要 `chcp 65001`** —— 缺一条就满屏
-  `'xxx' 不是内部或外部命令`；转换用 `iconv-lite`（PowerShell 转换实测静默失败），
-  且**只能对 UTF-8 源跑一次**（对 GBK 文件再跑会把中文全变成 `?`）。配方见 runbook §18。
+  `'xxx' 不是内部或外部命令`。**改法：编辑 `scripts/start.bat.utf8-source.txt` 再跑
+  `node scripts/build-start-bat.mjs`**，别手改 GBK 文件 → **runbook §18 / R-61**。
 - `npm run verify` ≈ 3–4 分钟（tsc 双端 + lint + format + 全量测试）。
 - **改完源码必须 `npx prettier --write`**，否则 `format:check` 会挂（连 `AGENTS.md` 也要过 prettier）。
 - `release.yml` **勿**改回 `--publish always`（exe 超时）。
@@ -60,63 +55,48 @@
 
 ## 高频入口（细节见 `docs/architecture-constraints.md`）
 
-- **性能**：高频进度走 `runtimeStore`、SQLite 走 UtilityProcess、缩略图 `canvasToWebpDataUrl`、
-  整图字节优先（新代码**勿传 dataUrl**）→ 改编码路径必须用 **rAF 帧探针**验收，不能比总耗时。
-- **生图编排**：普通 SOP = 1 条、系列 = 1 组（3 段拆 3 条），互不套用；守卫用字面量断言。
-- **SOP 三场景分流**（`campaign-recipe` / `variable-prompt` / 其余），互斥、输入来源与输出形式各不相同：
-  - 触发：`campaignRecipe` 字段 或 `executionMode`（优先级：配方卡 > 变量提示词 > AI）。
-  - 配方卡 = **纯本地**，不调 AI、不读参考图、无 JSON 解析重试；合规红线 21 词内置不可关闭。
-  - 编辑入口：SOP 列表头「新建 | 配方卡」→ `SopCampaignRecipePanel`（挂在编辑面板 `SopTextEditor` 下方，
-    按类型条件渲染）。骨架存 `campaignRecipe.body` 而**不是** `content`。
-  - **不要为省一行让弹窗 import 生成模块的辅助函数** → 测试整体 mock 会挂全部生成用例（R-46）。
-- **移植外部算法时保真优先于"顺手修笔误"**：改前必须与原始实现对拍
-  （`selections`/`signatures`/`attempts` 逐位一致），有意保留的怪异行为要写注释 + 登记 RISK（R-45）。
-- **新增可编辑字段 → 三处「静默失效」清单必须逐项过**（都表现为"改了但存不下去/顺序错乱"，UI 不报错）：
-  ① `SopManagementCenter.itemDirty` 的手写比较链（漏了 = 草稿不脏，保存按钮恒灰）→ R-47；
-  ② `createDesktopJsonStorage` 持久化白名单（漏了 = 完全存不住）；
-  ③ 排序键要同时改内存 `compareAssets` 与桌面端 SQL 分页。
-- **新增 `src/**/*.tsx` 必须登记 `design-system/catalog.ts`**，否则 `catalog.test.ts`
-  全等比较直接失败（刻意棘轮，不是 bug）→ R-48。
-- **`tangbao://image/`**：只能进 `<img src>`；要像素走 `ensureImageCached`；
-  `fetch('tangbao://…')` 被 CSP 拦是**刻意的**，别加 `connect-src`。
-- **后处理/项目树**：一棵树（`collections`）四模块共用，不另建树；`undefined` = 继承、空值 = 显式覆盖；
-  勾选 = 启用范围，产出目标 = 图片归属方向；`byMedia` 只开 `outputDir` 与 `watermarkPresetIds`。
-- **素材命名/排序**：命名唯一实现 = `lib/generatedImageFilename.ts`；排序键加一项必须**同时改内存
-  `compareAssets` 与桌面端 SQL 分页**（只改前者会让第一页顺序错乱）→ §9。
-- **持久化**：`createDesktopJsonStorage(ns)` 是全仓唯一落盘入口；
-  **新增 store 忘配白名单 = 完全存不住而 UI 不报**；读失败 → 降级态拒绝写盘。
-- **配色/主题（2026-09-19 收敛，ADR-0008）**：**只有一套**颜色 Token
-  （`design-system/styles.css` 的 `:root` / `.dark`，28 个 `--ds-color-*`）；
-  **多皮肤 `data-skin` 机制已移除**，不要再引入"再叠一层 CSS 覆盖"的方案（要换肤用变量集 modes）。
-  改任何颜色值必须**三处同步**：`styles.css` + `tokens.tokens.json`（sRGB 分量 + hex）
-  - `tokensContract.test.ts` 的 `LIGHT/DARK_COLOR_VALUES` → 详见 runbook 第十节 / R-37。
-    旧桥变量（`--background` / `--foreground` / `--muted` / `--sidebar` / `--input` / `--primary`）已删（实测 0 消费）。
-- **⭐ 改表面色必须先换算 hex，不要只看 diff**（R-38）：HSL 在亮度 >96% 时色相/饱和度
-  **几乎不影响 sRGB** —— `220 20% 98%` 与 `210 20% 98%` 同为 `#f9fafb`。
-  可辨阈值：相邻表面 ≥ **1.10:1**，描边 ≥ **1.3:1**，正文 ≥ 4.5:1。
-  定稿：浅 `#f2f4f7`↔`#ffffff`；深 `#0b0c0f`↔`#191b1f`。
-- **⭐ Token 只负责"给对颜色"，"用对颜色"要靠消费端别滥用 alpha**：
-  布局级面板（顶栏/侧栏/主区）一律不透明 `bg-ds-surface`；只有抽屉/浮层/气泡才用 `/90` 之类。
-  `bg-ds-surface/50` 会让画布色透上来，把面板层级**彻底抹平**（改 Token 也救不回来）。
-- **`return null` ≠ 卸载**（R-39）：组件提前 `return null` 时 `useEffect` 的 cleanup 不触发，
-  副作用必须自己按**可见性**判定，不能只按状态。自查：
-  `getComputedStyle(documentElement).getPropertyValue('--app-docked-right-width')` 无面板时应为 `0px`。
-- **主题切换唯一链路**：`settings.themeMode` → `App.tsx` effect → `applyAppearance()`
-  → `html.dark` + `style.colorScheme`；首屏 `main.tsx` 的 `bootstrapAppearance()` 读快照防闪白。
-- **共享工具（2026-09-18 起为唯一实现，勿再复制）**：`lib/contentEditableText.ts`（contentEditable
-  取纯文本）、`lib/pathBaseName.ts`、`lib/typeGuards.ts`（`isRecord` / `getStringValue`(trim) /
-  **`getUntrimmedStringValue`(不 trim，agentApi 流式解析依赖)**）、`lib/clamp.ts`、
-  `lib/escapeRegExp.ts`、`lib/browserStorage.ts`；`isDataUrl` 与 `getDataUrlDecodedByteSize`
-  的唯一实现在 `lib/imageApiShared.ts`。故意不合并：路径净化 4 份、`escapeHtml` 3 份、`formatDate`。
+**以下条目的完整内容一律在 `docs/architecture-constraints.md`，此处只留索引，别在这里补细节。**
 
-- **任务数量不一致** = 落盘不完整（`tasks` vs `assets`），**别去查加载链**。
-- **`InputBar` 的 prompt 是双写**：程序性改写必须先 `isUserInputRef.current = false`。
+**完整内容一律在 `docs/architecture-constraints.md`，此处只留关键词，别在这里补细节。**
+
+| 关键词                                                                  | 去哪                                       |
+| ----------------------------------------------------------------------- | ------------------------------------------ |
+| 性能基线 · 整图字节优先 · rAF 帧探针验收                                | 一章                                       |
+| 生图提示词编排（普通 SOP 1 条 / 系列 1 组）                             | 二章                                       |
+| `tangbao://image/` 协议（`fetch` 被 CSP 拦是刻意的）                    | 三章                                       |
+| 后处理 + 统一项目树（`undefined` = 继承、空值 = 显式覆盖；`byMedia`）   | 四章                                       |
+| 持久化 · 读失败 → 降级态拒绝写盘                                        | 五章                                       |
+| 任务落盘完整性（`tasks` vs `assets`，**别去查加载链**）                 | 六章                                       |
+| SOP 三场景分流（配方卡 > 变量提示词 > AI）· 移植算法保真（R-45 / R-46） | 六·五章                                    |
+| UI 约定 · 新增 `.tsx` 必登记 `catalog.ts`（R-48，刻意棘轮）             | 七章                                       |
+| **三处「静默失效」清单**（`itemDirty` / 持久化白名单 / 排序键双链路）   | 七·五章                                    |
+| 共享工具唯一实现 + 故意不合并的三份                                     | 七·六章                                    |
+| `InputBar` prompt 双写（先 `isUserInputRef.current = false`）           | 八章                                       |
+| 素材命名与排序（排序键加一项必须改两条链路）                            | 九章                                       |
+| 配色/主题 · hex 换算与可辨阈值 · `return null ≠ 卸载` · 主题切换链路    | **runbook §19 / §10 / R-37 / R-38 / R-39** |
+
+## 排查手法（写在这里 —— 是方法论，不是架构事实）
+
 - **抓渲染进程报错**：`ELECTRON_ENABLE_LOGGING=1 npm run dev`。
 - **`npm run dev` / `mock:api` 必须出沙箱**：默认沙箱会**无声回收监听端口的进程（~40s）**，
   症状 = 「窗口刚起来就自己消失」。对照实验：纯 `sleep` 后台任务能活满，Node 监听服务 40s 就没，
-  且无报错、无 Crashpad 转储 → 起这两个服务要 `dangerouslyDisableSandbox: true`（或让杰哥自己终端跑）。
+  且无报错、无 Crashpad 转储 → 起这两个服务要 `dangerouslyDisableSandbox: true`。
 - **窗口「点什么都没反应」先看是不是错误页**：`location.href === 'chrome-error://chromewebdata/'`
-  - `#root` 不存在 + 标题 = URL ⇒ 界面根本没加载（dev server 已死，**窗口不会自恢复**）；
-    正常时 `Get-Process electron | Select MainWindowTitle` = `糖包`。
+  ⇒ 界面根本没加载（dev server 已死，**窗口不会自恢复**）；
+  正常时 `Get-Process electron | Select MainWindowTitle` = `糖包`。
 - **门禁假象**：`noUnusedLocals/Parameters` 关着、`no-unused-vars` 仅 warn → 死 import 零告警
   （存量 116 处，见 `BACKLOG.md` TB-021）。
+- **⭐ 报障排查第一步：拿界面原文字符串去 `grep`**。比读文档/猜链路快一个数量级
+  （实例：`导出位置不可用` → `outputRoots.ts:47` 一击命中，2026-09-20）。
+- **⭐ IPC handler 里 `catch (err) { console.error(...); return false }` 是可诊断性缺陷**：
+  渲染侧只拿到布尔值，**失败原因永久丢失**，真因往往就在被 catch 掉的那个异常里。
+  排查「功能完全不可用但没报权限错」时优先怀疑它（实例：`fs:ensure-dir` 吞掉
+  `assertAllowedPath` 的 `Path is outside allowed application directories` → R-62）。
+- **⭐ 主进程 IPC 路径白名单会打死「导出到业务盘」**（`electron/ipc-handlers.ts` 的
+  `getAllowedRoots` / `assertAllowedPath`）：**只放行 桌面/文档/下载/图片/userData +
+  `localSettings.localSavePath` + `sessionAllowedRoots`**；`D:\…` `E:\…` `C:\Users\Public\…`
+  一律拒绝。两处不对称：① 只有 `fs:select-directory` 对话框选过才 `addAllowedRoot`，
+  **手输同路径无效**；② `sessionAllowedRoots` 是**内存 Set，重启清空**。
+  ⇒ 任何「导出/写到自定义目录」的功能，先想这一层（R-31 旧、R-62 新）。
+- **写失败文案必须与真因对齐**：写「请检查路径是否可达」会把排查带偏（路径明明打得开，
+  真因是不在白名单里）。自问一句「用户照这句话去查，能不能查到」。

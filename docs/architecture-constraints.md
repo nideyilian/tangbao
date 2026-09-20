@@ -116,6 +116,27 @@
   必须走 `canSettleTaskOutputs` 放行，否则迟到的真实结果是**孤儿数据**
   （既不进任务卡片也不进素材库）（`RISK.md` R-22）。
 
+## 六·五、SOP 三场景分流（互斥，勿互相套用）
+
+`campaign-recipe`（配方卡）/ `variable-prompt`（变量提示词）/ 其余（AI 生成）。
+
+- **触发优先级**：`campaignRecipe` 字段 > `executionMode`。**判定写在弹窗内联**
+  （`Boolean(sop.campaignRecipe) || sop.executionMode === 'campaign-recipe'`），
+  **不要为省一行去 import 生成模块的辅助函数**（R-46：测试整体 mock 会挂掉该文件全部生成用例）。
+- **配方卡 = 纯本地**：不调 AI、不读参考图、无 JSON 解析重试；合规红线 21 词内置且不可关闭。
+- **骨架存 `campaignRecipe.body`，不是 `content`** —— 配方卡 `content` 为空是**合法形态**，
+  保存门槛按类型分叉（R-51）。
+- 编辑入口：SOP 列表头「新建 | 配方卡」→ `SopCampaignRecipePanel`
+  （挂在 `SopTextEditor` 下方，按类型条件渲染）。
+
+### 移植外部算法：保真优先于"顺手修笔误"（R-45）
+
+`farthestPointSampling.ts` 有两处**疑似笔误**（`enforce` 的循环变量 `n` 遮蔽外层、
+`windowFar` 死参数），但**实测影响采样分布**（8 维池取 10 条的最小差异由 4 → 1）。
+`mix64` 的 64 位常量也不能截断。改前必须与原始实现对拍
+（同 seed 同输入下 `selections` / `signatures` / `totalAttempts` **逐位一致**），
+有意保留的怪异行为要写注释 + 登记 RISK。详见 R-45。
+
 ## 七、UI 与组件约定
 
 - **标准弹窗 = design-system 的 `Dialog`**。
@@ -124,6 +145,37 @@
 - **任务卡片高度固定** `TASK_CARD_ROW_HEIGHT = 192`；卡内加可展开区块会撑破布局。
 - 新增 `.tsx` 必须登记 `src/design-system/catalog.ts` 的 `legacyComponentCoverage`；
   旧工具类只减不增（`compliance.test.ts` 强制）。
+- **新增组件必须登记 `design-system/catalog.ts`**，否则 `catalog.test.ts` 的全等比较直接失败
+  —— 这是**刻意的棘轮**，不是 bug（R-48）。
+
+## 七·五、新增可编辑字段 → 三处「静默失效」清单（必逐项过）
+
+三者都表现为「改了但存不下去 / 顺序错乱」，而 **UI 不报任何错**，所以只能靠清单防：
+
+| #   | 位置                                                                  | 漏了会怎样                                                         | 详见 |
+| --- | --------------------------------------------------------------------- | ------------------------------------------------------------------ | ---- |
+| ①   | `SopManagementCenter.itemDirty` 的手写比较链                          | 草稿**不标记为脏** → 自动保存不触发、「保存修改」按钮恒 `disabled` | R-47 |
+| ②   | `createDesktopJsonStorage` 持久化白名单（`electron/asset-kernel.ts`） | **完全存不住**                                                     | R-14 |
+| ③   | 排序键：内存 `compareAssets` + 桌面端 SQL `SORT_EXPRESSIONS` 分页     | **第一页顺序错乱**（首屏 120 条由 SQL 给）                         | §九  |
+
+`itemDirty` 是**手写枚举比较**（逐字段 `!==` + 两处 `JSON.stringify`），不是深比较。
+对象/数组字段用 `JSON.stringify(x ?? null)`，与既有 `variableMeta` / `seriesConfig` 写法一致。
+
+## 七·六、共享工具（勿再复制）
+
+2026-09-18 起为**唯一实现**：
+
+| 工具                         | 职责                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `lib/contentEditableText.ts` | contentEditable 取纯文本                                                                                |
+| `lib/pathBaseName.ts`        | 取路径末段                                                                                              |
+| `lib/typeGuards.ts`          | `isRecord` / `getStringValue`(trim) / **`getUntrimmedStringValue`**（不 trim，`agentApi` 流式解析依赖） |
+| `lib/clamp.ts`               | 数值钳制                                                                                                |
+| `lib/escapeRegExp.ts`        | 正则转义                                                                                                |
+| `lib/browserStorage.ts`      | localStorage 读写                                                                                       |
+| `lib/imageApiShared.ts`      | `isDataUrl` 与 `getDataUrlDecodedByteSize` 的唯一实现                                                   |
+
+**故意不合并**（差异是有意的，别去"统一"）：路径净化 4 份、`escapeHtml` 3 份、`formatDate`。
 
 ## 八、`InputBar` 的 prompt 是双写（易踩）
 

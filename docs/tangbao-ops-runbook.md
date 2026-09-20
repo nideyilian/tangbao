@@ -984,3 +984,74 @@ node scripts/build-start-bat.mjs                            # 期望 [ok] 恢复
 
 当前 `mb` 数基线：`start.bat` = **5719 bytes / 147 CRLF / 0 裸 LF / 0 个 `?` 污染行**。
 数字变了先怀疑编码，再怀疑逻辑。
+
+## 十九、配色 / 外观改动的验收配方（2026-09-20 归拢）
+
+本节只做**索引**：详细论证在各 R 条目里，这里给「改色时照做」的可执行清单。
+
+### 1. 颜色 Token 只有一套（ADR-0008）
+
+- 唯一真相源：`src/design-system/styles.css` 的 `:root`（浅）/ `.dark`（深），共 28 个 `--ds-color-*`。
+- **`data-skin` 多皮肤机制已移除**，不要再引入「再叠一层 CSS 覆盖」的方案。
+  要换肤请用变量集 modes，别再开第二套 token。
+- 旧桥变量（`--background` / `--foreground` / `--muted` / `--sidebar` / `--input` / `--primary`）
+  **已删除**（实测 0 消费），别再往组件里写。
+
+### 2. 改任何颜色值 → **三处必须同步**（漏一处 `verify` 就红）
+
+| #   | 位置                                   | 内容                                       |
+| --- | -------------------------------------- | ------------------------------------------ |
+| 1   | `design-system/styles.css`             | `:root` / `.dark` 变量                     |
+| 2   | `design-system/tokens.tokens.json`     | **sRGB 分量 + hex 两个都要改**             |
+| 3   | `design-system/tokensContract.test.ts` | `LIGHT_COLOR_VALUES` / `DARK_COLOR_VALUES` |
+
+详见 **R-37**。
+
+### 3. ⭐ 改表面色必须先换算 hex，不能只看 diff（R-38）
+
+HSL 在**亮度 > 96%** 时，色相/饱和度对 sRGB **几乎没有影响**：
+
+```
+220 20% 98%  与  210 20% 98%    →  都是 #f9fafb    （肉眼与代码都分辨不出）
+```
+
+**可辨阈值**（改完拿计算器核一遍）：
+
+| 关系     | 最低对比度   |
+| -------- | ------------ |
+| 相邻表面 | ≥ **1.10:1** |
+| 描边     | ≥ **1.3:1**  |
+| 正文     | ≥ 4.5:1      |
+
+**一版定稿值**（供参照，不等于永久锁定）：
+浅色 `#f2f4f7` ↔ `#ffffff`；深色 `#0b0c0f` ↔ `#191b1f`。
+
+### 4. ⭐ 「给对颜色」≠「用对颜色」——消费端别滥用 alpha
+
+Token 只能保证色值正确；**用错地方**会出现「改 Token 也救不回来」的层级塌陷：
+
+- **布局级面板**（顶栏 / 侧栏 / 主区）一律**不透明** `bg-ds-surface`。
+- 只有**抽屉 / 浮层 / 气泡**这类悬浮物才用 `/90` 之类半透明。
+- `bg-ds-surface/50` 会让下层画布色透上来，把面板层级**彻底抹平**。
+
+### 5. `return null` ≠ 卸载（R-39）
+
+组件提前 `return null` 时 **`useEffect` 的 cleanup 不会触发**，
+副作用必须自己按**可见性**判定，不能只按 state。
+
+自查命令：
+
+```js
+getComputedStyle(document.documentElement).getPropertyValue('--app-docked-right-width')
+// 无面板时应为 '0px'
+```
+
+### 6. 主题切换的唯一链路
+
+```
+settings.themeMode → App.tsx effect → applyAppearance() → html.dark + style.colorScheme
+首屏：main.tsx 的 bootstrapAppearance() 读快照（防闪白）
+```
+
+排查「切换主题后某处颜色不对」时，**先确认这条链路上有没有旁路**——
+任何第二处直接改 `documentElement.classList` 的地方都是 bug。
