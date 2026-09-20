@@ -3,15 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CompositeWorkspace from './CompositeWorkspace'
 import { CONTROL_CONSOLE_SECTIONS, DEFAULT_CONTROL_CONSOLE_SECTION } from './lib/controlConsoleSections'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
+import { useAssetLibraryStore } from '../assetLibrary/store'
+import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 
 /**
  * 中控台装配测试。
  *
- * 分区内容各自 mock 成占位文本：这里要锁的是**分区注册表 → 渲染分支**的对应关系
- * （切到哪个分区就渲染哪一块），不是各分区内部的业务逻辑 —— 那种测试该跟着分区组件自己走。
+ * 复刻灵境策略中心后的形态是**左树 + 右内容**：
+ * - 左栏作用域树（`ConsoleAssetTree`）；
+ * - 右区 = 作用域标题 + 工具栏（配置维度下拉切换分区）+ 内容。
+ *
+ * 分区内容各自 mock 成占位文本：这里锁的是**分区注册表 → 渲染分支**的对应关系，
+ * 以及「树 → 作用域 → 右区标题」这条链 —— 不是各分区内部的业务逻辑。
  */
-vi.mock('./components/PresetManagementTab', () => ({
-  PresetManagementTab: () => <div>preset-screen</div>,
+vi.mock('./components/ConsolePresetGrid', () => ({
+  ConsolePresetGrid: () => <div>preset-screen</div>,
 }))
 vi.mock('./components/MediaSection', () => ({
   MediaSection: () => <div>media-screen</div>,
@@ -22,29 +28,51 @@ vi.mock('./components/OutputSection', () => ({
 vi.mock('./components/DistributionSection', () => ({
   DistributionSection: () => <div>distribution-screen</div>,
 }))
+vi.mock('./components/PresetManagementTab', () => ({
+  PresetManagementTab: () => <div>editor-screen</div>,
+}))
 
-/**
- * 切到某个分区。
- *
- * `SegmentedControl` 的按钮只带 `data-segment-index`（位置），不带 value，
- * 所以按「注册表里的顺序」换算下标 —— 这样也顺带锁住了「注册表顺序 = 界面顺序」。
- */
-function switchTo(renderer: ReturnType<typeof create>, value: string) {
-  const index = CONTROL_CONSOLE_SECTIONS.findIndex((section) => section.id === value)
-  if (index < 0) throw new Error(`注册表里没有这个分区：${value}`)
-  const button = renderer.root.findAll(
-    (node) => typeof node.type === 'string' && node.type === 'button' && node.props['data-segment-index'] === index,
-  )[0]
-  if (!button) throw new Error(`未找到分区按钮（下标 ${index}）：${value}`)
-  const onClick = button.props.onClick as (() => void) | undefined
+/** 递归收集 props.children 里的全部文本（children 可能是字符串 / 单元素 / 数组） */
+function collectText(children: unknown): string {
+  if (typeof children === 'string') return children
+  if (Array.isArray(children)) return children.map(collectText).join('')
+  if (children && typeof children === 'object' && 'props' in (children as Record<string, unknown>)) {
+    return collectText((children as { props: { children?: unknown } }).props.children)
+  }
+  return ''
+}
+
+/** 切到某个配置维度：触发工具栏「配置维度」下拉的 onChange */
+function switchSection(renderer: ReturnType<typeof create>, sectionId: string) {
+  const select = renderer.root.findAll((node) => node.type === 'select' && node.props['aria-label'] === '配置维度')[0]
+  if (!select) throw new Error('未找到「配置维度」下拉')
   act(() => {
-    onClick?.()
+    ;(select.props.onChange as (event: { target: { value: string } }) => void)({ target: { value: sectionId } })
   })
+}
+
+/** 点左树里的某个节点：按可见文本找按钮 */
+function clickTreeButton(renderer: ReturnType<typeof create>, text: string) {
+  const button = renderer.root.find((node) => node.type === 'button' && collectText(node.props.children).includes(text))
+  act(() => {
+    ;(button.props.onClick as () => void)()
+  })
+}
+
+function findByText(renderer: ReturnType<typeof create>, text: string) {
+  return renderer.root.find((node) => node.type === 'button' && collectText(node.props.children).includes(text))
 }
 
 describe('CompositeWorkspace', () => {
   beforeEach(() => {
-    usePostprocessMediaStore.setState({ selectedMediaIds: [] })
+    usePostprocessMediaStore.setState({ selectedMediaIds: [], watermarkPresetIds: [] })
+    useAssetLibraryStore.setState({
+      collections: [
+        { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'direction-moon', name: '月亮', parentId: 'line-a', order: 0, createdAt: 0, updatedAt: 0 },
+      ] as never,
+    })
+    useProjectTreeParamsStore.setState({ params: {} })
   })
 
   it('fills the viewport below the fixed application header', () => {
@@ -74,15 +102,15 @@ describe('CompositeWorkspace', () => {
     expect(renderer.root.findAllByProps({ children: 'media-screen' })).toHaveLength(0)
   })
 
-  it('labels the console as 中控台 rather than 水印预设', () => {
+  it('labels the console as 中控台 and exposes the scope tree', () => {
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    const main = renderer.root.findByType('main')
-    expect(main.props['aria-label']).toBe('中控台工作区')
-    expect(renderer.root.findByProps({ 'aria-label': '切换中控台功能' })).toBeTruthy()
+    expect(renderer.root.findByType('main').props['aria-label']).toBe('中控台工作区')
+    // 左栏作用域树是复刻灵境策略中心的核心部件，必须有稳定可访问名
+    expect(renderer.root.findByProps({ 'aria-label': '中控台作用域树' })).toBeTruthy()
   })
 
   it('switches to each registered section and renders exactly one at a time', () => {
@@ -99,7 +127,7 @@ describe('CompositeWorkspace', () => {
     }
     // 注册表里的每个分区都要真的能切过去 —— 加了分区却忘了接线是这类注册表最常见的失效
     for (const section of CONTROL_CONSOLE_SECTIONS) {
-      switchTo(renderer, section.id)
+      switchSection(renderer, section.id)
       const expected = expectations[section.id]
       expect(expected, `分区 ${section.id} 缺少期望的占位文本`).toBeTruthy()
       expect(renderer.root.findAllByProps({ children: expected })).toHaveLength(1)
@@ -111,5 +139,33 @@ describe('CompositeWorkspace', () => {
         expect(renderer.root.findAllByProps({ children: other })).toHaveLength(0)
       }
     }
+  })
+
+  it('右区标题跟随左树选择的作用域', () => {
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('全局默认')
+
+    clickTreeButton(renderer, '月亮')
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
+  })
+
+  it('方向作用域下「批量启用」才可用（全局默认下置灰并给出原因）', () => {
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    // 全局默认：没有「启用」这个概念（水印由各方向自己声明），按钮置灰且带说明
+    const globalButton = findByText(renderer, '批量启用')
+    expect(globalButton.props.disabled).toBe(true)
+    expect(String(globalButton.props.title)).toContain('方向')
+
+    clickTreeButton(renderer, '月亮')
+    // 换成方向后不再置灰（仍未选中卡片时会 disabled，但原因变成「没选卡片」，不再是「必须是方向」）
+    expect(findByText(renderer, '批量启用').props.title).toBeUndefined()
   })
 })

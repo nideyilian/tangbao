@@ -16,7 +16,7 @@
  */
 
 import { useMemo, useState } from 'react'
-import { Badge, SearchField } from '../../../design-system'
+import { Badge, SearchField, SegmentedControl } from '../../../design-system'
 import { ChevronDownIcon, ChevronRightIcon } from '../../../design-system/icons'
 import { buildPostprocessProjectTree, flattenPostprocessProjectTree } from '../../../lib/postprocessProjectTree'
 import type { PostprocessProjectTreeNode } from '../../../lib/postprocessProjectTree'
@@ -52,9 +52,21 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
   const [query, setQuery] = useState('')
+  /** 灵境的「全部 / 已归档」两个 tab；糖包对应「未回收 / 回收站」 */
+  const [tab, setTab] = useState<'active' | 'trashed'>('active')
 
-  const tree = useMemo(() => buildPostprocessProjectTree(collections), [collections])
+  /**
+   * 树数据源。回收站视图把 `trashedAt` 抹平后再建树——
+   * `buildPostprocessProjectTree` 会过滤掉已回收节点，直接传进去只会得到空树。
+   */
+  const source = useMemo(() => {
+    if (tab === 'active') return collections
+    return collections.filter((item) => item.trashedAt).map((item) => ({ ...item, trashedAt: null, parentId: null }))
+  }, [collections, tab])
+
+  const tree = useMemo(() => buildPostprocessProjectTree(source), [source])
   const flatNodes = useMemo(() => flattenPostprocessProjectTree(tree), [tree])
+  const trashedCount = useMemo(() => collections.filter((item) => item.trashedAt).length, [collections])
   /** 有子节点的 id 集合，用于判断该渲染展开箭头 */
   const parentIds = useMemo(
     () => new Set(flatNodes.filter((node) => node.children.length > 0).map((node) => node.id)),
@@ -161,9 +173,21 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
       <div className="shrink-0 space-y-2 px-3 pt-3">
         <h2 className="text-sm font-semibold text-ds-text dark:text-ds-text">配置资产库</h2>
         <SearchField label="搜索节点" placeholder="搜索节点" size="sm" value={query} onChange={setQuery} />
+        {/* 灵境的「全部 N / 已归档」tab：糖包对应「全部 / 回收站」 */}
+        <SegmentedControl
+          aria-label="切换资产范围"
+          size="sm"
+          value={tab}
+          options={[
+            { value: 'active' as const, label: `全部 ${collections.length - trashedCount}` },
+            { value: 'trashed' as const, label: `回收站 ${trashedCount}` },
+          ]}
+          onValueChange={setTab}
+        />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-3 pt-2">
+      {/* 回收站视图下「全局默认」没有意义（回收站节点不参与参数解析），故隐藏 */}
+      <div className={tab === 'active' ? 'min-h-0 flex-1 overflow-y-auto px-1 pb-3 pt-2' : 'hidden'}>
         {/* 「全局默认」= 灵境的「全部策略」总览项：回到全局基线的编辑位。徽章 = 节点总数 */}
         <div
           className={`mr-2 flex items-center rounded-ds-lg pl-2 pr-1 ${
@@ -196,6 +220,17 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
           </p>
         )}
       </div>
+
+      {/* 回收站视图：只列已回收节点。回收站节点不参与参数解析，
+          所以这里点选只用于「看一眼有哪些」，不会成为编辑作用域。 */}
+      {tab === 'trashed' && (
+        <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-3 pt-2">
+          {renderNodes(visibleTree)}
+          {visibleTree.length === 0 && (
+            <p className="px-2 py-3 text-xs text-ds-muted dark:text-ds-muted">回收站是空的。</p>
+          )}
+        </div>
+      )}
     </nav>
   )
 }

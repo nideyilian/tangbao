@@ -948,9 +948,30 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/ConsoleAssetTree.tsx',
     responsibility:
-      '中控台左栏「配置资产库」作用域树（复刻灵境策略中心）：搜索 + 全局默认总览项 + 项目树（节点带覆盖计数徽章）；点节点 = 切作用域',
+      '中控台左栏「配置资产库」作用域树（复刻灵境策略中心）：搜索 + 全部/回收站 tab + 全局默认总览项 + 项目树（节点带覆盖计数徽章）；点节点 = 切作用域',
     decision: 'compose',
-    targets: ['Badge', 'SearchField'],
+    targets: ['Badge', 'SearchField', 'SegmentedControl'],
+  },
+  {
+    module: 'src/features/composite/components/ConsoleToolbar.tsx',
+    responsibility:
+      '中控台右区工具栏（复刻灵境策略中心）：配置维度/归属范围筛选 + 搜索 + 每行数量 + 网格列表切换，下行是批量启用/停用/复制/删除',
+    decision: 'compose',
+    targets: ['Toolbar', 'SelectField', 'SearchField', 'SegmentedControl', 'Button'],
+  },
+  {
+    module: 'src/features/composite/components/ConsolePresetGrid.tsx',
+    responsibility:
+      '中控台水印卡片网格：按每行数量排布、网格/列表两种视图；徽章随作用域在「N 个方向在用」与「已启用/未启用」之间切换',
+    decision: 'compose',
+    targets: ['EmptyState'],
+  },
+  {
+    module: 'src/features/composite/components/ConsolePresetCard.tsx',
+    responsibility:
+      '中控台水印卡片：真实画布封面（renderCompositeV2ToCanvas）+ 使用状态徽章 + 编号 + 画布/图层说明 + 悬停操作条（启用停用/编辑/预览/复制/更多/删除）',
+    decision: 'compose',
+    targets: ['Card', 'Thumbnail', 'Badge', 'Checkbox', 'Button', 'Popover', 'Menu'],
   },
   {
     module: 'src/features/composite/components/MediaSection.tsx',
