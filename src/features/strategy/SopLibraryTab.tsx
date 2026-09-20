@@ -632,17 +632,24 @@ export default function SopLibraryTab({
                 onChange={(event) => setItemDraft({ ...itemDraft, description: event.target.value })}
               />
             </div>
-            <SopTextEditor
-              documentId={itemDraft.id}
-              value={itemDraft.content}
-              onChange={(content) => setItemDraft({ ...itemDraft, content })}
-              onSaveAsRevision={saveRevisionAsNewItem}
-              onTestRevision={onTestSopRevision ? (content) => onTestSopRevision({ ...itemDraft, content }) : undefined}
-              variableMeta={itemDraft.executionMode === 'variable-prompt' ? itemDraft.variableMeta : undefined}
-              onVariableMetaChange={(meta) =>
-                setItemDraft((current) => (current ? { ...current, variableMeta: meta } : current))
-              }
-            />
+            {/* 配方卡引擎不显示普通 SOP 的正文编辑窗口。
+                它的「正文」是骨架（在「配方卡详情」弹窗里），content 本来就该是空的 ——
+                留一个空的正文明细框只会让人以为配方卡也要写正文，还容易误判成「内容丢了」。 */}
+            {!isCampaignRecipeItem(itemDraft) && (
+              <SopTextEditor
+                documentId={itemDraft.id}
+                value={itemDraft.content}
+                onChange={(content) => setItemDraft({ ...itemDraft, content })}
+                onSaveAsRevision={saveRevisionAsNewItem}
+                onTestRevision={
+                  onTestSopRevision ? (content) => onTestSopRevision({ ...itemDraft, content }) : undefined
+                }
+                variableMeta={itemDraft.executionMode === 'variable-prompt' ? itemDraft.variableMeta : undefined}
+                onVariableMetaChange={(meta) =>
+                  setItemDraft((current) => (current ? { ...current, variableMeta: meta } : current))
+                }
+              />
+            )}
             {isCampaignRecipeItem(itemDraft) && (
               <SopCampaignRecipePanel
                 config={itemDraft.campaignRecipe ?? { body: '', dimensions: [] }}

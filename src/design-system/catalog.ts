@@ -1089,14 +1089,14 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/strategy/SopCampaignRecipePanel.tsx',
-    responsibility: '配方卡引擎编辑器（提示词骨架、维度池增删、合规红线提示与采样预览）',
+    responsibility: '配方卡引擎「整段录入」外面板：只放配方卡原文 + 解析/清空 + 详情入口；骨架与维度在详情弹窗里编辑',
     decision: 'compose',
     targets: ['TextArea', 'Badge', 'Button', 'IconButton'],
   },
   {
     module: 'src/features/strategy/SopCampaignRecipeParseResultDialog.tsx',
     responsibility:
-      '配方卡「解析结果」弹窗（只读）：原资产信息 / 维度池候选值全文 / 骨架 / 缺失池 / 解析告警 / 元信息；关闭走 X、底部按钮、Esc、点遮罩',
+      '配方卡「详情」弹窗（**可编辑**）：解析结果的唯一展示与编辑处 —— 状态条 / 原资产信息 / 缺失池 / 告警 / 骨架 / 维度池 / 采样预览 / 红线词表；关闭走 X、底部按钮、Esc、点遮罩',
     decision: 'compose',
     targets: ['Dialog', 'Badge', 'Button', 'Card'],
   },

@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, create, type ReactTestInstance } from 'react-test-renderer'
 import SopManagementCenter from './SopManagementCenter'
+import SopCampaignRecipePanel from './SopCampaignRecipePanel'
+import SopTextEditor from './SopTextEditor'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import type { GenerateSop } from './sopGeneration'
 import type { SopGroup, SopLibraryItem, SopMetaInstruction, SopVersion } from './types'
@@ -1431,12 +1433,36 @@ describe('SopManagementCenter campaign recipe SOPs', () => {
     expect(textContent(result.renderer.root)).toContain('配方卡引擎')
     expect(result.renderer.root.findByProps({ 'aria-label': '配方卡引擎配置' })).toBeTruthy()
 
-    // 维度池按数据渲染出可编辑输入框，骨架里引用的维度名就是 aria-label 的一部分
-    expect(result.renderer.root.findByProps({ 'aria-label': '维度 1 名称' }).props.value).toBe('主体')
-    expect(result.renderer.root.findByProps({ 'aria-label': '维度 主体 候选值 1' }).props.value).toBe('帆布包')
-    expect(textContent(result.renderer.root)).toContain('2 个维度 · 组合空间 4 条')
+    // 骨架 / 维度池已收进「配方卡详情」弹窗（弹窗走 portal，react-test-renderer 触达不了），
+    // 所以这里锁「外面能看到的东西 + 编辑器入口可用」；编辑行为由
+    // SopCampaignRecipeParseResultDialog.test.tsx 在 jsdom 下覆盖。
+    expect(textContent(result.renderer.root)).not.toContain('提示词骨架')
+    expect(textContent(result.renderer.root)).not.toContain('维度池')
+    const entry = result.renderer.root
+      .findAll((node) => node.type === 'button')
+      .find((node) => textContent(node).includes('查看解析结果'))
+    expect(entry, '配方卡 SOP 必须能打开详情（否则骨架与维度没有入口）').toBeTruthy()
+    expect(entry!.props.disabled).toBe(false)
 
     result.renderer.unmount()
+  })
+
+  it('配方卡引擎不渲染普通 SOP 的正文编辑窗口（它的正文是骨架）', () => {
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ items: [recipeItem], selectedSopId: 'sop-recipe' })
+    })
+    // 配方卡的 content 恒为空，正文编辑器在这里只会让人以为「内容丢了」
+    expect(result.renderer.root.findAllByType(SopTextEditor)).toHaveLength(0)
+    result.renderer.unmount()
+
+    // 普通 SOP 仍然要有正文编辑窗口
+    let ordinary!: ReturnType<typeof renderCenter>
+    act(() => {
+      ordinary = renderCenter({ selectedSopId: 'sop-1' })
+    })
+    expect(ordinary.renderer.root.findAllByType(SopTextEditor).length).toBeGreaterThan(0)
+    ordinary.renderer.unmount()
   })
 
   it('does not render the recipe editor for ordinary SOPs', () => {
@@ -1449,36 +1475,23 @@ describe('SopManagementCenter campaign recipe SOPs', () => {
     result.renderer.unmount()
   })
 
-  it('flags red-line option values instead of silently dropping them', () => {
-    const dirty: SopLibraryItem = {
-      ...recipeItem,
-      campaignRecipe: {
-        body: '{{主体}}，高清实拍',
-        dimensions: [{ name: '主体', options: ['帆布包', '现金礼盒'] }],
-      },
-    }
-    let result!: ReturnType<typeof renderCenter>
-    act(() => {
-      result = renderCenter({ items: [dirty], selectedSopId: 'sop-recipe' })
-    })
-
-    // 候选值命中红线时给出黄色提示条，并标出具体命中的红线词
-    expect(textContent(result.renderer.root)).toContain('命中合规红线')
-    expect(textContent(result.renderer.root)).toContain('现金')
-    result.renderer.unmount()
-  })
-
   it('lets a recipe SOP with empty content be saved, since the skeleton lives in campaignRecipe', () => {
     let result!: ReturnType<typeof renderCenter>
     act(() => {
       result = renderCenter({ items: [recipeItem], selectedSopId: 'sop-recipe' })
     })
 
-    // 真改一个候选值让草稿变脏；content 仍为空 —— 普通 SOP 在这种情况下不允许保存
+    // 真改一个候选值让草稿变脏；content 仍为空 —— 普通 SOP 在这种情况下不允许保存。
+    // 编辑入口在弹窗里（portal，测不到），所以直接调面板的 onChange：
+    // 这正是弹窗改完值后走的同一条路（弹窗测试已锁「编辑会调 onChange」）。
     act(() =>
-      result.renderer.root
-        .findByProps({ 'aria-label': '维度 主体 候选值 1' })
-        .props.onChange({ target: { value: '帆布斜挎包' } }),
+      result.renderer.root.findByType(SopCampaignRecipePanel).props.onChange({
+        body: recipeItem.campaignRecipe!.body,
+        dimensions: [
+          { name: '主体', options: ['帆布斜挎包', '运动鞋'] },
+          { name: '背景', options: ['原木桌面', '城市街景'] },
+        ],
+      }),
     )
     const saveButton = findButton(result.renderer.root, '保存修改')
     expect(saveButton).toBeTruthy()
@@ -1510,9 +1523,13 @@ describe('SopManagementCenter campaign recipe SOPs', () => {
     })
 
     act(() =>
-      result.renderer.root
-        .findByProps({ 'aria-label': '维度 主体 候选值 1' })
-        .props.onChange({ target: { value: '帆布斜挎包' } }),
+      result.renderer.root.findByType(SopCampaignRecipePanel).props.onChange({
+        body: recipeItem.campaignRecipe!.body,
+        dimensions: [
+          { name: '主体', options: ['帆布斜挎包', '运动鞋'] },
+          { name: '背景', options: ['原木桌面', '城市街景'] },
+        ],
+      }),
     )
     act(() => findButton(result.renderer.root, '保存修改')!.props.onClick())
 
