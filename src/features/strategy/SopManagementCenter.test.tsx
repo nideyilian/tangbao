@@ -184,7 +184,9 @@ describe('SopManagementCenter apply and save actions', () => {
       result.renderer.root.find((node) => String(node.props.className).includes('sop-center-dialog')).props.style,
     ).toMatchObject({
       width: '80vw',
-      height: '80vh',
+      // 高度随内容（上限 80vh）：写死 80vh 时，内容少的分组底部会留一片比默认模式更大的空白
+      height: 'auto',
+      maxHeight: '80vh',
       maxWidth: 'none',
     })
 

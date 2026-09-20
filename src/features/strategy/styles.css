@@ -64,9 +64,27 @@
   box-shadow: var(--ds-shadow-lg);
   color: hsl(var(--ds-color-text));
   font-family: var(--ds-font-sans);
-  height: min(86vh, 860px);
+  /* 高度随内容：写死 min(86vh, 860px) 时，内容少的分组（单张配方卡、列表只几条）
+     排不满就在底部留一大片空白。上限仍由 max-height 兜住，超出交给内部列表自己滚。 */
+  height: auto;
   line-height: var(--ds-line-height-normal);
+  max-height: min(86vh, 860px);
   max-width: min(1420px, calc(100vw - 2rem));
+}
+
+/*
+ * 弹窗高度改由内容决定后，内容根的 flex-basis 不能是 0：
+ * basis 0 会让它在「内容高度」里贡献 0，弹窗直接塌成「头部 + 标签栏」。
+ * auto 在两种情形都对 —— 内容少时贴合内容，被 max-height 截住时仍撑满并内部滚动。
+ * 用两段选择器提高特异性，压过行内的 `.flex-1`（basis 0%）。
+ */
+.sop-center-dialog .sop-center-library-grid,
+.sop-center-dialog .sop-center-meta-grid,
+.sop-center-dialog .sop-center-generate-grid {
+  flex: 1 1 auto;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sop-center-header {
@@ -113,7 +131,8 @@
 }
 
 .sop-center-dialog:has([data-generation-one-screen='true']) {
-  height: min(92dvh, 860px);
+  height: auto;
+  max-height: min(92dvh, 860px);
 }
 
 .sop-center-generate-grid > .ds-dialog-pane {

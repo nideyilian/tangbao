@@ -1426,7 +1426,14 @@ export default function SopManagementCenter({
       }}
     >
       <div
-        style={largeView ? LARGE_MODAL_SIZE_STYLE : undefined}
+        style={
+          largeView
+            ? // 大弹窗模式：宽度给到 80vw，但**高度同样随内容**（上限 80vh）。
+              // 固定 80vh 时内容少的分组会在底部留出比默认模式更大的一片空白 ——
+              // 「点一下放大反而更空」就是这么来的。内容多时仍能撑到 80vh 并内部滚动。
+              { ...LARGE_MODAL_SIZE_STYLE, height: 'auto', maxHeight: '80vh' }
+            : undefined
+        }
         className="sop-center-dialog relative animate-modal-in flex w-full flex-col overflow-hidden transition-[width,height,max-width] duration-200 ease-out"
       >
         <header className="sop-center-header">
