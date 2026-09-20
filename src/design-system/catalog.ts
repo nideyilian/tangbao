@@ -940,9 +940,29 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/CompositeWorkspace.tsx',
-    responsibility: '中控台工作区装配：功能分区 SegmentedControl（水印为首个分区）+ 撤销栈',
+    responsibility: '中控台工作区装配：功能分区 SegmentedControl（分区表在 lib/controlConsoleSections.ts）+ 撤销栈',
     decision: 'retain',
     targets: ['SplitPane', 'Panel', 'Toolbar', 'Tabs'],
+  },
+  {
+    module: 'src/features/composite/components/MediaSection.tsx',
+    responsibility:
+      '中控台「渠道与尺寸」分区：渠道分组 + 组内尺寸卡片 + 分组头「N / M 已应用」计数徽章；规格增删改复用 MediaTableManager（折叠在下段）',
+    decision: 'compose',
+    targets: ['SectionHeader', 'Badge', 'Checkbox', 'EmptyState', 'Button'],
+  },
+  {
+    module: 'src/features/composite/components/OutputSection.tsx',
+    responsibility:
+      '中控台「输出位置」分区：全局渠道表（复用 ChannelOutputDirs）+ 有节点级覆盖时的显式警告；不在此处编辑节点覆盖',
+    decision: 'compose',
+    targets: ['SectionHeader', 'Alert', 'Badge'],
+  },
+  {
+    module: 'src/features/composite/components/DistributionSection.tsx',
+    responsibility: '中控台「分发」分区：纯净版自动伴随开关 + 分发配置（复用 PostprocessDistributionFields）',
+    decision: 'compose',
+    targets: ['SectionHeader', 'Switch'],
   },
   {
     module: 'src/features/postprocess/PostprocessDistributionFields.tsx',

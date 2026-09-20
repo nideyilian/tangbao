@@ -1425,29 +1425,95 @@ APP-拉新 / 快手 / 网赚·萌宠·老歌 / 卡券 …）。
 
 - **来源**：杰哥原话「将水印预设 tab 改为中控台，具体内容参数参考这个网站的资产中心，
   **将水印预设改为其中的一个功能」**（2026-09-20）
-- **状态**：✅ 已完成 · 写线：主写线
+- **状态**：✅ 已完成（两轮）· 写线：主写线
 - **验收标准**（可测）
   1. 顶栏 tab 文案 = **「中控台」**（原「水印预设」），`appMode` 仍是 `postprocess`
   2. 工作区有**功能分区导航**（`aria-label="切换中控台功能"`），水印是**首个分区**且为默认
-  3. 水印分区内容与改动前**一致**（三栏装配未动）
-  4. 工作区容器 `aria-label` = `中控台工作区`
-  5. `npm run verify` 全绿
-- **落地**：`src/components/Header.tsx`（tab 文案）、`CompositeWorkspace.tsx`（分区容器 +
-  `CONTROL_CONSOLE_SECTIONS` 注册表）、`catalog.ts`（3 处登记）、
-  `design-system/tangbao/pages/postprocess.md`（页面规范去陈旧）
+  3. **每个注册分区都能切过去，且同一时刻只渲染一块**（有专门用例锁定）
+  4. 水印分区内容与改动前**一致**（三栏装配未动）
+  5. 工作区容器 `aria-label` = `中控台工作区`
+  6. 新增分区遵守「唯一作用域」准入约束（见下方第二轮小节）
+  7. `npm run verify` 全绿
+- **落地（第一轮）**：`src/components/Header.tsx`（tab 文案）、`CompositeWorkspace.tsx`、
+  `catalog.ts`（登记）、`pages/postprocess.md`
+- **落地（第二轮）**：新增 `lib/controlConsoleSections.ts`（分区注册表）、
+  `components/MediaSection.tsx` / `OutputSection.tsx` / `DistributionSection.tsx`；
+  `CompositeWorkspace.tsx` 改为装配 4 个分区；`catalog.ts` 补 3 条登记
 - **形态依据**：灵境资产中心里水印**不是独立页面**，而是产品资料下与
   「渠道与尺寸 / 输出位置」并列的**配置 tab** ⇒ 糖包照此把水印从「整个 tab 就是水印」
-  收成「中控台里的一个功能」，后续渠道规格 / 输出位置可平行加入同一分区导航
-- **验收证据**：`npm run verify` 全绿；`CompositeWorkspace.test.tsx` 3 例
-  （含「标签是中控台不是水印预设」，**已做反向验证**：改回旧 aria-label 即失败）
+  收成「中控台里的一个功能」
 
 #### ⚠️ 未完成的核实（需杰哥补一次凭证）
 
-杰哥给过一次账号密码让去线上实测，但**服务端返回 `用户不存在/密码错误`**
-（`POST /login` → `{"msg":"用户不存在/密码错误","code":500}`；已试 `Nideyilian`/`nideyilian`
-× `nide2025.`/`nide2025`/`Nide2025.`/`Nide2025` 共 8 组组合全部失败）。
+线上实测没做成：杰哥给的账号密码被服务端拒绝（见本节末「线上复核」）。
+分区设计依据的是仓库已沉淀的实测报告 `docs/reference-lingjing-asset-center.md`
+（2026-09-20 早先已登录实测过），**不是凭印象**。
 
-⇒ 本轮的分区设计**依据的是仓库里已沉淀的实测报告**
-（`docs/reference-lingjing-asset-center.md`，2026-09-20 已登录实测过），**不是凭印象**；
-但**资产中心当前的 tab 全集与字段细节未能本轮复核**。若线上已改版，
-分区清单（渠道规格 / 输出位置 / 配置模板）需要按实际再对一次。
+#### 第二轮（同日）：从「单分区占位」扩成真正的中控台框架
+
+杰哥原话「你可以拉取这个项目的最新分支来进行复刻资产中心：
+`git clone https://git.gzjunbo.net/Digital-Intelligence-Lab/junbo_cy_admin.git`」，
+后改为「那先不克隆了，你根据现有资料做好框架出来」。
+
+**⚠️ 仓库拉取失败（已实测，不是猜的）**：
+
+```
+curl https://git.gzjunbo.net/.../junbo_cy_admin.git/info/refs?service=git-upload-pack
+  → HTTP 401 Unauthorized
+git ls-remote <同地址>
+  → fatal: could not read Username for 'https://git.gzjunbo.net': terminal prompts disabled
+```
+
+⇒ 该仓库**需要鉴权**，且本机 `git-credential-manager` 里**没有 `git.gzjunbo.net` 的凭据**
+（同主机 `https://git.gzjunbo.net/` 根路径返回 303，说明站点可达，纯粹是权限问题）。
+**未克隆成功，未读取任何该仓库代码。**
+
+**交付：4 个分区的中控台框架**
+
+分区注册表 `src/features/composite/lib/controlConsoleSections.ts`（单一真相源，
+顺序即界面顺序，第一个是默认分区）：
+
+| 分区       | 组件                  | 作用域口径                                                         |
+| ---------- | --------------------- | ------------------------------------------------------------------ |
+| 水印       | `PresetManagementTab` | 既有三栏装配**一行未动**；**默认分区**（历史唯一入口）             |
+| 渠道与尺寸 | `MediaSection`        | 复刻资产中心的**分组头计数徽章**（`N / M 已应用`）+ 尺寸卡片三要素 |
+| 输出位置   | `OutputSection`       | 全局渠道表（复用 `ChannelOutputDirs`）+ 节点覆盖冲突**显式警告**   |
+| 分发       | `DistributionSection` | 纯净版自动伴随 + 分发配置（复用既有组件）                          |
+
+**⭐ 一条准入约束（写进页面规范，新增分区前必读）**：
+
+> **每个分区必须指向「唯一作用域」的参数。**
+> 全局共享规格（渠道与尺寸 / 分发）可以整体搬进来 —— 它们本来就只有一个家；
+> 多层继承的参数（输出位置、水印归属）只能用「**全局基线 + 冲突警告**」的形态，
+> **不在中控台里再造一套节点编辑器**（同参数两个可编辑入口 = 迟早「在 A 改了、在 B 看不到」，
+> 见 `PresetProjectTree.tsx:9-11`）。
+
+这条约束直接决定了本轮**没有**把 `PostprocessParamPanel` 整块搬进来 ——
+它是「全局 + 节点」双作用域面板，搬进来就会在输出位置/水印上制造第二个编辑器。
+
+**另一个实测发现**：`PostprocessSettingsModal` 是 `InputBar` 的**局部 state**
+（`InputBar.tsx:1375`），而 `InputBar` 只在 `gallery` / `agent` 下渲染 ——
+**中控台里「跳到后处理设置」这条路走不通**（组件没挂载）。
+⇒ 因此三分区改为**直接托管真实编辑器**（`MediaTableManager` / `ChannelOutputDirs` /
+`PostprocessDistributionFields` 都是自包含的），而不是「给个链接让人跳过去」。
+这条是设计被迫修正的地方，值得记住：**跨工作区的「跳转」要先确认目标在不在挂载树上。**
+
+**验收**
+
+- `tsc -b` 本轮文件零报错 · eslint 0 · prettier 全绿
+- `src/features/composite/` **19 文件 / 167 用例全绿**；`src/design-system/` **252 用例全绿**
+- 新增测试：分区注册表 3 例 + 装配 4 例（含「每个注册分区都必须能切过去且只渲染一块」）
+- **反向验证**：摘掉 `distribution` 分区的接线 → 装配用例立刻失败 ✔（探针有效）
+- 顺带修：`MediaSection` 两处裸 `rounded-md/sm` 被**设计系统棘轮**拦下 → 改 `rounded-ds-lg`
+  （合规测试是硬门禁，新 `.tsx` 写裸圆角必挂）
+
+#### 线上复核（未完成，需杰哥补凭证）
+
+```
+POST https://junbo-cy.jetmobo.com/login → {"msg":"用户不存在/密码错误","code":500}
+```
+
+已试 `Nideyilian`/`nideyilian` × `nide2025.`/`nide2025`/`Nide2025.`/`Nide2025` 共 8 组全失败。
+该站是 RuoYi 框架，登录走 AJAX `POST /login`（`captchaEnabled=false`），
+`<form>` 无 action 提交 ⇒ **点「登录」按钮不触发登录，必须调页面上的 `login()`**。
+排查手法：页面内 `fetch('/login', ...)` **一步拿到服务端原文**，比反复试界面快得多。
