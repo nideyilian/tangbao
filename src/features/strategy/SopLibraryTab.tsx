@@ -646,7 +646,20 @@ export default function SopLibraryTab({
             {isCampaignRecipeItem(itemDraft) && (
               <SopCampaignRecipePanel
                 config={itemDraft.campaignRecipe ?? { body: '', dimensions: [] }}
+                meta={{ name: itemDraft.name, desc: itemDraft.description, dominantSlots: itemDraft.dominantSlots }}
                 onChange={(campaignRecipe) => setItemDraft({ ...itemDraft, campaignRecipe })}
+                onMetaChange={(patch) => {
+                  // 解析出的名称/说明/主控槽直接落到草案上，随保存一起持久化；
+                  // 名称已有值时**不覆盖**用户手填的名字（只在识别到且当前为空时补）
+                  setItemDraft((current) => {
+                    if (!current) return current
+                    const next = { ...current }
+                    if (patch.name && !current.name.trim()) next.name = patch.name
+                    if (patch.desc && !current.description.trim()) next.description = patch.desc
+                    if (patch.dominantSlots) next.dominantSlots = patch.dominantSlots
+                    return next
+                  })
+                }}
               />
             )}
           </div>

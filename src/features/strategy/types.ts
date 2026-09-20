@@ -135,6 +135,12 @@ export type SopExecutionMode = 'prompt-generator' | 'variable-prompt' | 'campaig
 export interface SopCampaignRecipeDimension {
   name: string
   options: string[]
+  /**
+   * 主控槽权重（可选，由整段文本解析时的 `weight` 字段带入）。
+   * 权重更高的维度会被当作主控槽，最远点采样优先保证它与窗口内任意点取值都不同。
+   * 采样本身**不按权重加权抽取** —— 权重只影响「差异约束优先施加在哪个槽」。
+   */
+  weight?: number
 }
 
 /**
@@ -174,6 +180,11 @@ export interface SopLibraryItem {
    * 与 executionMode='campaign-recipe' 二者任一命中即判定为该类型（字段优先）。
    */
   campaignRecipe?: SopCampaignRecipeConfig
+  /**
+   * 主控槽名（原资产的 dominant 声明，整段解析时带入）。
+   * 仅作展示与「按骨架补齐」提示，实际主控槽由 `campaignRecipe.dimensions[].weight` 决定。
+   */
+  dominantSlots?: string[]
   source: 'manual' | 'generated' | 'legacy-preset'
   metaInstructionId?: string
   /** 变量提示词资产：content 为可被 parseVariablePrompt 解析的模板，可展开批量生图 */

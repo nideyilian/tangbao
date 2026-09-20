@@ -272,6 +272,7 @@ export default function SopManagementCenter({
       itemDraft.executionMode !== persistedItem.executionMode ||
       // 配方卡的骨架与维度池是独立字段（不在 content 里），漏比这一项会让编辑「看着改了但存不下去」
       JSON.stringify(itemDraft.campaignRecipe ?? null) !== JSON.stringify(persistedItem.campaignRecipe ?? null) ||
+      JSON.stringify(itemDraft.dominantSlots ?? null) !== JSON.stringify(persistedItem.dominantSlots ?? null) ||
       JSON.stringify(itemDraft.seriesConfig ?? null) !== JSON.stringify(persistedItem.seriesConfig ?? null)),
   )
   const itemDraftValid = Boolean(

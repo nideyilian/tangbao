@@ -1065,6 +1065,44 @@ button.sop-center-group-tree-toggle:hover {
   padding: 0.75rem;
 }
 
+/* 整段录入区块：视觉上独立于下方「解析结果确认」，表明它是入口而非数据本体 */
+.sop-recipe-import {
+  background: hsl(var(--ds-color-primary-subtle) / 0.35);
+  border: 1px solid hsl(var(--ds-color-primary) / 0.22);
+  border-radius: var(--ds-radius-md);
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.625rem;
+}
+
+.sop-recipe-import__field textarea {
+  font-family: var(--ds-font-mono);
+  min-height: 7rem;
+}
+
+.sop-recipe-import__actions {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sop-recipe-import__hint {
+  color: hsl(var(--ds-color-text-subtle));
+  font-size: 0.625rem;
+  margin-left: auto;
+}
+
+.sop-recipe-panel__success {
+  background: hsl(var(--ds-color-success-subtle));
+  border: 1px solid hsl(var(--ds-color-success) / 0.3);
+  border-radius: 0.5rem;
+  color: hsl(var(--ds-color-success));
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0.4375rem 0.625rem;
+}
+
 .sop-recipe-panel__body-field textarea {
   font-family: var(--ds-font-mono);
   min-height: 4.5rem;

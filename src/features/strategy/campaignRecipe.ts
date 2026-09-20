@@ -99,7 +99,18 @@ export interface CampaignRecipeGenerationResult {
   /** 重掷统计，便于排查「怎么调不出差异」 */
   totalAttempts: number
   crossBatchHits: number
+  /** 因超过单维度上限而被截断的维度名（空数组表示未截断）。 */
+  truncatedDimensions: string[]
 }
+
+/**
+ * 单维度候选值上限。超过时按声明顺序截断并保留前 N 个。
+ *
+ * 起因：真实配方卡资产常把整份长文本压成一个候选值（例如一张歌单 = 一个候选值），
+ * 一个池可能有几百条。全量参与会让组合空间与重掷开销失控，且尾部值几乎不可能被选中；
+ * 截断后由调用方明确告知用户，比静默全收更可控。
+ */
+export const MAX_DIMENSION_OPTIONS = 400
 
 // ---------------------------------------------------------------------------
 // 合规红线（内置，不可关闭）
@@ -267,6 +278,39 @@ function domDiff(left: number[], right: number[], dom: number[]): number {
  *    主控槽不足时优先重掷主控槽。
  * 3. 签名去重：撞历史签名（跨批次）或本批已用时继续重掷，最多 40 轮。
  */
+export interface CampaignRecipeCandidate {
+  /** 维度名 */
+  key: string
+  /** 主控槽权重：数值越大越优先保证「与窗口内任意点的取值都不相同」 */
+  weight?: number
+}
+
+/** 由维度的候选值声明推导主控槽下标（按 weight 降序）。 */
+export function pickDominantIndices(dimensions: CampaignRecipeDimension[]): number[] | undefined {
+  const weighted = dimensions
+    .map((dimension, index) => ({ index, weight: dimension.weight }))
+    .filter((item) => typeof item.weight === 'number' && Number.isFinite(item.weight) && item.weight > 0)
+  if (weighted.length === 0) return undefined
+  // 只把「明显更重」的维度当主控：权重 >= 其次大者时入选，避免把全部维度都算主控
+  const maxWeight = Math.max(...weighted.map((item) => item.weight as number))
+  const dominant = weighted.filter((item) => item.weight === maxWeight).map((item) => item.index)
+  return dominant.length > 0 && dominant.length < dimensions.length ? dominant : undefined
+}
+
+/** 按上限截断超长维度池，返回截断后的维度与被动过的维度名。 */
+export function truncateOversizedDimensions(dimensions: CampaignRecipeDimension[]): {
+  dimensions: CampaignRecipeDimension[]
+  truncated: string[]
+} {
+  const truncated: string[] = []
+  const next = dimensions.map((dimension) => {
+    if (dimension.options.length <= MAX_DIMENSION_OPTIONS) return dimension
+    truncated.push(dimension.name)
+    return { ...dimension, options: dimension.options.slice(0, MAX_DIMENSION_OPTIONS) }
+  })
+  return { dimensions: next, truncated }
+}
+
 export function farthestPointSample(
   variables: CampaignRecipeVariable[],
   count: number,
@@ -397,12 +441,26 @@ export function farthestPointSample(
 // 渲染与对外入口
 // ---------------------------------------------------------------------------
 
+/**
+ * 渲染骨架：把占位符替换成该维度本轮选中的候选值。
+ *
+ * 支持两种占位符写法：
+ * - `{{维度名}}` —— 本项目的标准写法；
+ * - `{维度名}` —— 外部真实资产（如产品线手工配的配方卡）常见写法。
+ *
+ * 单花括号分支**只替换能对上维度名的标记**，对上不上的原样保留（例：`{M}` 若没有 M 维度，
+ * 就留在正文里暴露给用户，而不是静默删掉）。这样即使识别不全也不会丢失信息。
+ */
 function renderRecipeBody(body: string, dimensions: CampaignRecipeVariable[], selection: number[]) {
   const valueByName = new Map(
     dimensions.map((dimension, index) => [dimension.name, dimension.options[selection[index]]]),
   )
   return body
     .replace(/\{\{\s*([^{}\r\n]+?)\s*\}\}/gu, (marker, rawName: string) => valueByName.get(rawName.trim()) ?? marker)
+    .replace(/\{\s*([A-Za-z][A-Za-z0-9_]{0,15})\s*\}/gu, (marker, rawName: string) => {
+      const value = valueByName.get(rawName.trim())
+      return value === undefined ? marker : value
+    })
     .replace(/[ \t]+\n/g, '\n')
     .trim()
 }
@@ -419,7 +477,11 @@ export function generateCampaignRecipeBatch(
 ): CampaignRecipeGenerationResult {
   const errors = validateCampaignRecipeConfig(config)
   if (errors.length > 0) throw new Error(`配方卡格式有误：${errors[0]}`)
-  const { body, dimensions } = config
+  // 超长池先截断（真实资产里常见「一个候选值 = 一整段长文本」，池可能有几百条），
+  // 截断结果通过 truncatedDimensions 回传，由调用方提示用户，不静默丢数据。
+  const { dimensions: usableDimensions, truncated } = truncateOversizedDimensions(config.dimensions)
+  const body = config.body
+  const dimensions: CampaignRecipeVariable[] = usableDimensions
   const requestedCount = Math.max(1, Math.trunc(options.count))
   const usedSignatures = options.usedSignatures ?? new Set<string>()
   const existing = new Set((options.existingPrompts ?? []).map((prompt) => prompt.trim()).filter(Boolean))
@@ -433,6 +495,8 @@ export function generateCampaignRecipeBatch(
     ...options,
     // seed 缺省时由配方卡内容派生：同一张配方卡默认结果稳定可复现
     seed: options.seed?.trim() || `${body}|${dimensions.map((item) => item.name).join(',')}`,
+    // 显式传入的 dominantIndices 优先；否则按候选值声明的 weight 推导主控槽
+    dominantIndices: options.dominantIndices ?? pickDominantIndices(usableDimensions),
     usedSignatures,
   })
 
@@ -457,6 +521,7 @@ export function generateCampaignRecipeBatch(
     exhausted: samples.length < requestedCount,
     totalAttempts: sampled.totalAttempts,
     crossBatchHits: sampled.crossBatchHits,
+    truncatedDimensions: truncated,
   }
 }
 
@@ -498,7 +563,12 @@ export function parseCampaignRecipeConfig(value: unknown): CampaignRecipeConfig 
       ? dimension.options.filter((option): option is string => typeof option === 'string' && option.trim().length > 0)
       : []
     if (!name || options.length === 0) continue
-    dimensions.push({ name, options })
+    const parsed: CampaignRecipeDimension = { name, options }
+    // weight 影响主控槽选择，必须保留（丢掉会让采样退化回「全槽平等」）
+    if (typeof dimension.weight === 'number' && Number.isFinite(dimension.weight) && dimension.weight > 0) {
+      parsed.weight = dimension.weight
+    }
+    dimensions.push(parsed)
   }
   if (!body.trim() || dimensions.length === 0) return null
   return { body, dimensions }

@@ -554,9 +554,91 @@ git status -sb                             # 应显示 ## main...origin/main
 ```
 
 **要点**：
+
 - **reflog 是恢复分支头的关键**（`.git/logs/refs/heads/main`），比 `FETCH_HEAD` 可靠。
 - 只有 `.pack` 丢了才需要 fetch；`refs/` 单独丢失时对象还在，重建 refs 即可。
 - `git fsck` 报 `invalid reflog entry` 时，用 `grep -v <坏hash>` 过滤 `logs/HEAD`
   与 `logs/refs/heads/main` 后写回（先备份原文件）。
 - 恢复后 `git status` 显示的未提交改动应当是**你自己的那几个文件**，逐一核对。
 
+---
+
+## 十五、外部资产「整段粘贴 → 自动解析」的验收配方（2026-09-20 实测定稿）
+
+适用：给任何「粘贴外部 JSON / 文本 → 解析进内部结构」的功能加验收。
+本节配方源自配方卡整段录入（TB-047），坑见 R-49 / R-50。
+
+### 1. 先做「领域对齐」，再写代码
+
+**先读资产，再读需求。** 用户的需求描述可能是**另一个领域**的词汇
+（本次用户说的是「原料与用量 / 制作步骤 / 温度」，而资产是广告创意配方卡
+`{ body, dimensions }`，全仓无这些字段）。
+
+```bash
+# 第一步永远是：看真实资产长什么样，数清顶层键
+node -e "const a=require('C:/Users/tt/Desktop/xxx.json');console.log(Object.keys(a))"
+```
+
+**判定规则**：若需求里的字段名在**现有 schema 里一个都不存在**，
+不要新建平行 schema —— 按现存的字段实现，并把这个差异**明确告诉用户**。
+另建一套无人消费的数据模型比"少做一半"更糟。
+
+### 2. 端到端脚本（临时落盘，验完即删）
+
+`Bash` 会吃 `\\` / `${}` / 改写 `/c/...`（R-19），**脚本必须用 Write 落盘再执行**：
+
+```ts
+// import-e2e.mts（放在仓库根，跑完删掉）
+import { readFileSync } from 'node:fs'
+import { parseCampaignRecipeText, toCampaignRecipeConfig } from './src/features/strategy/campaignRecipeImport.ts'
+import { generateCampaignRecipeBatch } from './src/features/strategy/campaignRecipe.ts'
+
+const raw = readFileSync('C:/Users/tt/Desktop/真实资产.json', 'utf8')
+const parsed = parseCampaignRecipeText(raw)
+console.log('ok:', parsed.ok, '| source:', parsed.source)
+console.log('dimensions:', parsed.dimensions.length)
+for (const d of parsed.dimensions) {
+  console.log(`  ${d.name}: ${d.options.length} 值, weight=${d.weight ?? '-'}`)
+}
+console.log('missingPools:', parsed.missingPools, '| warnings:', parsed.warnings)
+```
+
+```bash
+npx tsx import-e2e.mts        # 跑通后 rm import-e2e.mts
+```
+
+**必须打印并人工过一遍的 4 个数字**：
+① `ok` / `source`（走了哪条分支）② `dimensions.length`（有没有虚高 → R-49）
+③ 每个维度的 `options.length` 与 `weight`（权重映射对不对）
+④ `missingPools` / `warnings` / `truncatedDimensions`（**必须是空，否则有静默问题**）
+
+### 3. 用「重掷次数」反证约束真的生效
+
+主控槽（weight）这类约束**不看界面**——看引擎的 `totalAttempts`：
+
+| 场景                        | 重掷次数 | 含义                 |
+| --------------------------- | -------- | -------------------- |
+| 无权重（未识别 `dominant`） | 8        | 约束形同虚设         |
+| 权重已生效                  | 481      | 主控槽真的在被反复挑 |
+
+**重掷次数从个位数跳到三位数 = 约束接上了**；两次跑出来差不多 = 没接上。
+
+### 4. 「宁可少提也不乱填」的三条硬检查
+
+- 骨架引用了但池里没有的槽位 → 落成**空维度占位**并进 `missingPools`，UI 可见可补；
+- 解析不确定的字段 → 留空 + 进 `warnings`，**绝不猜**；
+- 空输入 / 完全无法解析 → `ok: false` + `error` 文案，**不得产出空配方**。
+
+### 5. 解析结果必须仍走原有保存链路
+
+解析出的是**草稿**，写进同一个 `onChange` 通道 → 已有的脏标记 / 自动保存 / 保存按钮
+全部照旧生效（否则会踩 R-47 那类「改了存不下去」）。
+`onMetaChange` 回填 `name` / `desc` 时要**判断当前是否为空**，不覆盖用户已填内容。
+
+### 6. 收尾清单
+
+```bash
+rm import-e2e.mts                    # 临时脚本必须删
+npx prettier --write <本轮改动文件>   # 新文件几乎一定不过 format:check
+npm run verify                       # 全绿再提交
+```

@@ -1,6 +1,13 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Badge, Button, IconButton, TextArea, cx } from '../../design-system'
-import { EyeIcon as Eye, PlusIcon as Plus, ShuffleIcon as Shuffle, TrashIcon as Trash } from '../../design-system/icons'
+import {
+  AlertTriangleIcon as AlertTriangle,
+  EyeIcon as Eye,
+  PlusIcon as Plus,
+  ShuffleIcon as Shuffle,
+  SparklesIcon as Sparkles,
+  TrashIcon as Trash,
+} from '../../design-system/icons'
 import {
   CAMPAIGN_RECIPE_FORBIDDEN_TERMS,
   findCampaignRecipeViolations,
@@ -8,20 +15,20 @@ import {
   validateCampaignRecipeConfig,
   type CampaignRecipeDimension,
 } from './campaignRecipe'
+import { parseCampaignRecipeText, toCampaignRecipeConfig, type ParsedCampaignRecipe } from './campaignRecipeImport'
 import type { SopCampaignRecipeConfig } from './types'
 
 /**
- * 配方卡编辑器：与变量提示词资产的「可变项参数工作台」同级，但用途完全不同。
+ * 配方卡编辑器。
  *
- * 差异要点（与变量提示词的「选项池 + AI 衍生」严格区分）：
- * - 这里编辑的是**维度池**，候选值全部由人手填，不调 AI 衍生；
- * - 骨架里的 `{{维度名}}` 占位符由最远点采样组合填充，目标不是「每个维度全覆盖」，
- *   而是「每批 N 条两两差异尽量大」；
- * - 合规红线是**硬约束**：命中红线词的候选值在生成前会被引擎剔除，
- *   因此这里提前给出黄条警告，避免用户填完才发现值不生效。
+ * 两个入口分工明确：
+ * - **整段录入**（默认）：把真实配方卡原文（JSON 或自由排版）整段粘进来，点「解析」自动
+ *   拆出名称 / 骨架 / 维度池，再落到可编辑表单里确认。真实资产动辄十几个维度、上百个候选值，
+ *   手工分栏填写成本过高且必错。
+ * - **逐项微调**：解析结果始终以可编辑表单呈现，识别错了能就地改，不强迫重来。
  *
- * 骨架与维度池存在 `campaignRecipe` 字段，`content` 仍留作摘要/说明，
- * 与 `generateCampaignRecipePromptsFromStore` 的「字段优先」读取顺序一致。
+ * 关键约束：解析**只填能确定的字段**，认不出的一律留空并在提示条里点明，
+ * 绝不静默编造 —— 一个错的配方比一个报错的配方危险得多。
  */
 
 /** 一键铺开的预览条数；只用于看效果，不影响实际生成数量。 */
@@ -29,37 +36,46 @@ const RECIPE_PREVIEW_COUNT = 6
 
 export type SopCampaignRecipePanelProps = {
   config: SopCampaignRecipeConfig
+  /** 解析出的素材信息（名称 / 说明 / 主控槽），随配方卡一起保存。 */
+  meta?: { name?: string; desc?: string; dominantSlots?: string[] }
   onChange: (config: SopCampaignRecipeConfig) => void
+  onMetaChange?: (meta: { name?: string; desc?: string; dominantSlots?: string[] }) => void
 }
 
 function blankDimension(): CampaignRecipeDimension {
   return { name: '', options: [''] }
 }
 
-/** 抽出正文里已用到的占位符名称，用于提示「哪些维度没被骨架引用」。 */
+/** 抽出骨架里已用到的占位符名称（两种花括号写法都认）。 */
 function extractPlaceholders(body: string): string[] {
   const names: string[] = []
-  const pattern = /\{\{\s*([^{}\r\n]+?)\s*\}\}/gu
-  for (const match of body.matchAll(pattern)) {
-    const name = match[1].trim()
+  const push = (raw: string) => {
+    const name = raw.trim()
     if (name && !names.includes(name)) names.push(name)
   }
+  const doubleBrace = /\{\{\s*([^{}\r\n]+?)\s*\}\}/gu
+  for (const match of body.matchAll(doubleBrace)) push(match[1])
+  const withoutDouble = body.replace(doubleBrace, '\u0000')
+  for (const match of withoutDouble.matchAll(/\{\s*([A-Za-z][A-Za-z0-9_]{0,15}|[^{}\r\n]{1,12}?)\s*\}/gu))
+    push(match[1])
   return names
 }
 
-export default function SopCampaignRecipePanel({ config, onChange }: SopCampaignRecipePanelProps) {
+export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaChange }: SopCampaignRecipePanelProps) {
+  const [rawText, setRawText] = useState('')
+  const [parseError, setParseError] = useState('')
+  const [parseNotice, setParseNotice] = useState('')
+  const [parsed, setParsed] = useState<ParsedCampaignRecipe | null>(null)
+
   const body = config.body ?? ''
   // config 每次编辑都是新对象，直接进 useMemo 依赖会让派生计算每次重算；
-  // 拆出稳定标量（body 字符串 + dimensions 引用）后，只有内容真变时才算。
+  // 拆出稳定引用后，只有内容真变时才重算。
   const dimensions = useMemo(() => config.dimensions ?? [], [config.dimensions])
 
   const placeholders = useMemo(() => extractPlaceholders(body), [body])
   const errors = useMemo(() => validateCampaignRecipeConfig(config), [config])
 
-  /**
-   * 合规体检：骨架命中的红线词会让整个 body 被引擎清空（sanitize 的行为），
-   * 所以这里必须让用户先看到，而不是等到生成时才莫名其妙失败。
-   */
+  /** 骨架命中红线会让整段骨架被引擎清空，必须提前告知。 */
   const bodyViolations = useMemo(() => findCampaignRecipeViolations(body), [body])
   const optionViolations = useMemo(
     () =>
@@ -72,7 +88,6 @@ export default function SopCampaignRecipePanel({ config, onChange }: SopCampaign
     [dimensions],
   )
 
-  /** 骨架与维度池齐全时给出前几条预览，让「差异够大」可肉眼验收。 */
   const preview = useMemo(() => {
     if (errors.length > 0 || bodyViolations.length > 0) return []
     try {
@@ -82,7 +97,6 @@ export default function SopCampaignRecipePanel({ config, onChange }: SopCampaign
     }
   }, [bodyViolations.length, config, errors.length])
 
-  /** 维度池总组合数：用于在耗尽前提醒「空间不够」。 */
   const combinationCount = useMemo(
     () =>
       dimensions.reduce(
@@ -94,6 +108,40 @@ export default function SopCampaignRecipePanel({ config, onChange }: SopCampaign
       ),
     [dimensions],
   )
+
+  function handleParse() {
+    const result = parseCampaignRecipeText(rawText)
+    setParsed(result)
+    if (!result.ok) {
+      setParseError(result.error)
+      setParseNotice('')
+      return
+    }
+    // 解析成功 → 填入可编辑表单（这是「先确认再落库」的关键：不直接覆盖保存）
+    const next = toCampaignRecipeConfig(result)
+    if (!next) {
+      setParseError('解析出的配方卡缺少骨架或可用维度，请在下方手动补齐')
+      setParseNotice('')
+      return
+    }
+    setParseError('')
+    setParseNotice(
+      `已识别 ${next.dimensions.length} 个维度、组合空间 ${next.dimensions.reduce((total, item) => total * item.options.length, 1)} 条。请核对下方内容后保存。`,
+    )
+    onChange(next)
+    onMetaChange?.({
+      ...(result.name ? { name: result.name } : {}),
+      ...(result.desc ? { desc: result.desc } : {}),
+      ...(result.dominantSlots.length > 0 ? { dominantSlots: result.dominantSlots } : {}),
+    })
+  }
+
+  function handleClearInput() {
+    setRawText('')
+    setParsed(null)
+    setParseError('')
+    setParseNotice('')
+  }
 
   function updateDimension(index: number, patch: Partial<CampaignRecipeDimension>) {
     onChange({
@@ -119,7 +167,6 @@ export default function SopCampaignRecipePanel({ config, onChange }: SopCampaign
 
   function addOption(dimensionIndex: number) {
     const dimension = dimensions[dimensionIndex]
-    // 新增空行后立刻聚焦由浏览器默认行为处理；这里只保证数组长度正确
     updateDimension(dimensionIndex, { options: [...dimension.options, ''] })
   }
 
@@ -151,29 +198,66 @@ export default function SopCampaignRecipePanel({ config, onChange }: SopCampaign
       </header>
 
       <div className="sop-recipe-panel__body">
-        <TextArea
-          label="提示词骨架"
-          value={body}
-          onChange={(event) => onChange({ ...config, body: event.target.value })}
-          placeholder="用 {{维度名}} 占位，例如：{{主体}}，{{背景}}，{{光线}}，高清实拍"
-          helperText={
-            placeholders.length > 0
-              ? `已识别占位符：${placeholders.map((name) => `{{${name}}}`).join('、')}`
-              : '尚未识别到 {{维度名}} 占位符，引擎会提示骨架缺少维度引用'
-          }
-          containerClassName="sop-recipe-panel__body-field"
-          className="sop-recipe-panel__body-input"
-        />
+        {/* ---- 整段录入：粘贴原文 → 解析 ---- */}
+        <div className="sop-recipe-import">
+          <div className="sop-recipe-panel__section-head">
+            <div className="min-w-0">
+              <strong>
+                <Sparkles size={13} />
+                整段录入
+              </strong>
+              <span>把配方卡原文整段粘进来，支持 JSON 与「键: 值 + 列表」自由排版</span>
+            </div>
+          </div>
+          <TextArea
+            label="配方卡原文"
+            value={rawText}
+            onChange={(event) => setRawText(event.target.value)}
+            placeholder={
+              '直接粘贴整份配方卡，例如：\n\n{\n  "name": "歌单推荐美女",\n  "template": "{M}, {S1}, ...",\n  "master": [...],\n  "pools": { "S1": [...], "S2": [...] }\n}\n\n或自由排版：\nname: 歌单推荐美女\ntemplate: {M}, {S1}, {S2}\nmaster:\n  M1 戴耳机侧颜特写, close-up side profile...\npools:\n  S1: 甜美元气, 温柔治愈, 清冷'
+            }
+            containerClassName="sop-recipe-import__field"
+            className="sop-recipe-import__input"
+          />
+          <div className="sop-recipe-import__actions">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={handleParse}
+              disabled={!rawText.trim()}
+              leadingIcon={<Sparkles size={14} />}
+            >
+              解析
+            </Button>
+            <Button size="sm" variant="secondary" onClick={handleClearInput} disabled={!rawText && !parsed}>
+              清空
+            </Button>
+            <span className="sop-recipe-import__hint">{rawText.trim().length} 字符</span>
+          </div>
 
-        {bodyViolations.length > 0 && (
-          <p className="sop-recipe-panel__warning" role="alert">
-            骨架命中合规红线「{bodyViolations.join('、')}」，生成时整段骨架会被清空。请先改写。
-          </p>
-        )}
+          {parseError && (
+            <p className="sop-recipe-panel__warning" role="alert">
+              {parseError}
+            </p>
+          )}
+          {parseNotice && <p className="sop-recipe-panel__success">{parseNotice}</p>}
+          {parsed?.ok && parsed.warnings.length > 0 && (
+            <p className="sop-recipe-panel__hint" role="status">
+              {parsed.warnings.join('；')}
+            </p>
+          )}
+          {parsed?.ok && (parsed.meta.model || parsed.meta.forbidden?.length) && (
+            <p className="sop-recipe-panel__hint">
+              原资产元信息：{parsed.meta.model ? `模型 ${parsed.meta.model}` : ''}
+              {parsed.meta.forbidden?.length ? ` · 禁用词 ${parsed.meta.forbidden.length} 项（本引擎不自动套用）` : ''}
+            </p>
+          )}
+        </div>
 
+        {/* ---- 解析结果确认与微调 ---- */}
         <div className="sop-recipe-panel__section-head">
           <div className="min-w-0">
-            <strong>维度池</strong>
+            <strong>解析结果确认</strong>
             <span>
               {dimensions.length} 个维度 · 组合空间 {combinationCount} 条
               {combinationCount > 0 && combinationCount < 20 ? '（偏小，建议加候选值）' : ''}
@@ -191,6 +275,32 @@ export default function SopCampaignRecipePanel({ config, onChange }: SopCampaign
           </div>
         </div>
 
+        <TextArea
+          label="提示词骨架"
+          value={body}
+          onChange={(event) => onChange({ ...config, body: event.target.value })}
+          placeholder="用 {维度名} 或 {{维度名}} 占位"
+          helperText={
+            placeholders.length > 0
+              ? `已识别占位符：${placeholders.map((name) => `{${name}}`).join('、')}`
+              : '尚未识别到占位符，引擎会拒绝生成'
+          }
+          containerClassName="sop-recipe-panel__body-field"
+          className="sop-recipe-panel__body-input"
+        />
+
+        {bodyViolations.length > 0 && (
+          <p className="sop-recipe-panel__warning" role="alert">
+            骨架命中合规红线「{bodyViolations.join('、')}」，生成时整段骨架会被清空。请先改写。
+          </p>
+        )}
+
+        {meta?.dominantSlots && meta.dominantSlots.length > 0 && (
+          <p className="sop-recipe-panel__hint">
+            主控槽（来自原资产的 dominant 声明，差异优先保证这些槽）：{meta.dominantSlots.join('、')}
+          </p>
+        )}
+
         {unusedDimensions.length > 0 && (
           <p className="sop-recipe-panel__hint">
             维度「{unusedDimensions.map((dimension) => dimension.name).join('、')}」未被骨架引用，
@@ -199,63 +309,70 @@ export default function SopCampaignRecipePanel({ config, onChange }: SopCampaign
         )}
 
         <div className="sop-recipe-panel__dimensions">
-          {dimensions.map((dimension, dimensionIndex) => (
-            <article key={dimensionIndex} className="sop-recipe-dimension">
-              <div className="sop-recipe-dimension__head">
-                <input
-                  value={dimension.name}
-                  placeholder="维度名（与骨架里的 {{名称}} 对应）"
-                  aria-label={`维度 ${dimensionIndex + 1} 名称`}
-                  onChange={(event) => updateDimension(dimensionIndex, { name: event.target.value })}
-                />
-                <span className="sop-recipe-dimension__count">
-                  {dimension.options.filter((option) => option.trim()).length} 个值
-                </span>
-                <IconButton
-                  size="sm"
-                  onClick={() => removeDimension(dimensionIndex)}
-                  aria-label={`删除维度 ${dimension.name || dimensionIndex + 1}`}
-                  title="删除维度"
-                  icon={<Trash size={14} />}
-                />
-              </div>
-              <div className="sop-recipe-dimension__options">
-                {dimension.options.map((option, optionIndex) => {
-                  const hit = findCampaignRecipeViolations(option)
-                  return (
-                    <label
-                      key={optionIndex}
-                      className={cx('sop-recipe-option', hit.length > 0 && 'sop-recipe-option--blocked')}
-                      title={hit.length > 0 ? `命中合规红线：${hit.join('、')}，生成时会被剔除` : undefined}
-                    >
-                      <input
-                        value={option}
-                        placeholder="候选值"
-                        aria-label={`维度 ${dimension.name || dimensionIndex + 1} 候选值 ${optionIndex + 1}`}
-                        onChange={(event) => updateOption(dimensionIndex, optionIndex, event.target.value)}
-                      />
-                      {hit.length > 0 && <Badge tone="danger">红线</Badge>}
-                      <button
-                        type="button"
-                        className="sop-recipe-option__remove"
-                        onClick={() => removeOption(dimensionIndex, optionIndex)}
-                        aria-label={`删除候选值 ${option || optionIndex + 1}`}
-                        title="删除候选值"
+          {dimensions.map((dimension, dimensionIndex) => {
+            const isDominant = Boolean(dimension.name.trim() && meta?.dominantSlots?.includes(dimension.name))
+            return (
+              <article key={dimensionIndex} className="sop-recipe-dimension">
+                <div className="sop-recipe-dimension__head">
+                  <input
+                    value={dimension.name}
+                    placeholder="维度名（与骨架里的 {名称} 对应）"
+                    aria-label={`维度 ${dimensionIndex + 1} 名称`}
+                    onChange={(event) => updateDimension(dimensionIndex, { name: event.target.value })}
+                  />
+                  {isDominant && <Badge tone="info">主控</Badge>}
+                  {dimension.weight !== undefined && <Badge tone="neutral">权重 {dimension.weight}</Badge>}
+                  <span className="sop-recipe-dimension__count">
+                    {dimension.options.filter((option) => option.trim()).length} 个值
+                  </span>
+                  <IconButton
+                    size="sm"
+                    onClick={() => removeDimension(dimensionIndex)}
+                    aria-label={`删除维度 ${dimension.name || dimensionIndex + 1}`}
+                    title="删除维度"
+                    icon={<Trash size={14} />}
+                  />
+                </div>
+                <div className="sop-recipe-dimension__options">
+                  {dimension.options.map((option, optionIndex) => {
+                    const hit = findCampaignRecipeViolations(option)
+                    return (
+                      <label
+                        key={optionIndex}
+                        className={cx('sop-recipe-option', hit.length > 0 && 'sop-recipe-option--blocked')}
+                        title={hit.length > 0 ? `命中合规红线：${hit.join('、')}，生成时会被剔除` : undefined}
                       >
-                        <Trash size={12} />
-                      </button>
-                    </label>
-                  )
-                })}
-                <button type="button" className="sop-recipe-dimension__add" onClick={() => addOption(dimensionIndex)}>
-                  <Plus size={12} />
-                  加候选值
-                </button>
-              </div>
-            </article>
-          ))}
+                        <input
+                          value={option}
+                          placeholder="候选值"
+                          aria-label={`维度 ${dimension.name || dimensionIndex + 1} 候选值 ${optionIndex + 1}`}
+                          onChange={(event) => updateOption(dimensionIndex, optionIndex, event.target.value)}
+                        />
+                        {hit.length > 0 && <Badge tone="danger">红线</Badge>}
+                        <button
+                          type="button"
+                          className="sop-recipe-option__remove"
+                          onClick={() => removeOption(dimensionIndex, optionIndex)}
+                          aria-label={`删除候选值 ${option || optionIndex + 1}`}
+                          title="删除候选值"
+                        >
+                          <Trash size={12} />
+                        </button>
+                      </label>
+                    )
+                  })}
+                  <button type="button" className="sop-recipe-dimension__add" onClick={() => addOption(dimensionIndex)}>
+                    <Plus size={12} />
+                    加候选值
+                  </button>
+                </div>
+              </article>
+            )
+          })}
           {dimensions.length === 0 && (
-            <p className="sop-recipe-panel__hint">还没有维度。点「加维度」开始，或按骨架自动补齐。</p>
+            <p className="sop-recipe-panel__hint">
+              <AlertTriangle size={13} /> 还没有维度。粘贴原文后点「解析」，或手动加维度。
+            </p>
           )}
         </div>
 
