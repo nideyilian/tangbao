@@ -6,13 +6,14 @@
  * 收成「水印是中控台里的一个功能」，与其它维度平级。
  *
  * ⚠️ 这里只声明「有哪些分区、怎么显示」，**分区内容不在这里**——内容各自引用既有组件，
- * 不新造第二套实现。原因见 `PresetProjectTree.tsx` 开头那条铁律：同一个参数有两个入口，
- * 迟早会出现「在 A 改了、在 B 看不到」。
+ * 不新造第二套实现。
  *
- * 因此本表的设计约束是：**每个分区必须指向一个「唯一作用域」的参数**。
- * - 全局共享规格（渠道与尺寸）→ 可以整体搬进来，因为它本来就只有一个家；
- * - 节点级/多层继承的参数（输出位置、水印归属）→ 只能用「全局基线 + 跳转改节点」的形态，
- *   不能在中控台里再造一套节点编辑。
+ * 本表的设计约束（2026-09-20 修订）：**中控台是全部参数的统一编辑入口**。
+ * 节点级覆盖与全局基线都在分区内改，靠 `ConsoleScopePicker` 切换作用域；不设
+ * 「中控台只能改全局、节点级要去项目树」的断层。但作用域选择器**只在节点层真有
+ * 可覆盖字段时才挂** —— `PostprocessNodeOverride` 目前只有 `outputDir` / `byMedia` /
+ * `watermarkPresetIds` / `enabled`，所以「渠道与尺寸」「分发」是纯全局分区。
+ * 挂了却选不动，比不挂更糟。详见 `design-system/tangbao/pages/postprocess.md`。
  */
 
 export type ControlConsoleSectionId = 'watermark' | 'media' | 'output' | 'distribution'
@@ -37,17 +38,17 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
   {
     id: 'media',
     label: '渠道与尺寸',
-    description: '全局共享规格：每个渠道产出哪些尺寸、体积上限多少。节点上只能勾选启用哪些渠道。',
+    description: '全局共享规格：每个渠道产出哪些尺寸、体积上限多少。勾选决定渠道是否参与产出。',
   },
   {
     id: 'output',
     label: '输出位置',
-    description: '按渠道指定导出目录（可双写）。留空 = 走默认输出位置；节点级覆盖请在项目树里改。',
+    description: '按渠道指定导出目录（可双写）。切换作用域可分别设置全局默认与单个节点。',
   },
   {
     id: 'distribution',
     label: '分发',
-    description: '按天把产出分散到日期目录，以及纯净版原图是否伴随产出。',
+    description: '全局一套：按天把产出分散到日期目录，以及纯净版原图是否伴随产出。',
   },
 ]
 

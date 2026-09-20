@@ -1,14 +1,16 @@
 /**
  * 中控台 · 「分发」分区。
  *
- * 把「按天分散到日期目录」+「纯净版是否自动伴随」这两个**全局统一**的开关收在一处。
- * 两者都是全局唯一的参数（`PostprocessDistributionFields` 的注释里已声明：分发配置
- * 从旧编排移植过来后，宿主只有后处理面板与节点覆盖弹窗两个），中控台是第三个入口 —
- * ⚠️ 因此这里**刻意不引入新的写入口径**，只是把同一组件搬到更显眼的位置，
- * 与「后处理设置」用的是同一个 store action（`patchDistribution` / `setAutoCompanionClean`）。
+ * 把「按天分散到日期目录」+「纯净版是否自动伴随」两个开关收在一处。
  *
- * 为什么不把节点级分发也放进来：节点覆盖层的「恢复继承」是宿主概念，
- * 塞进中控台会让「这个开关到底改了哪一层」变得需要推理 —— 与 ADR-0011 的收窄方向相反。
+ * ⚠️ **这个分区是纯全局的，不参与作用域切换。**
+ * 上一轮我一度以为分发可以按节点覆盖，实测类型后确认不行：
+ * `PostprocessNodeOverride`（ADR-0011 收窄后）只有 `outputDir` / `watermarkPresetIds` /
+ * `enabled` / `byMedia` 四个字段，`distribution` 与 `autoCompanionClean` **不在其中** ——
+ * 它们在 v1→v2 迁移时被「提升」到了 `promotedGlobals`，即**只读的历史存档**。
+ *
+ * 所以这里不挂作用域选择器，并在界面上把「全局一套」说清楚：
+ * 给用户一个能选节点、选了却什么都不改变的控件，比不给更糟。
  */
 
 import { SectionHeader, Switch } from '../../../design-system'
@@ -26,7 +28,10 @@ export function DistributionSection() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="shrink-0 px-4 pt-3">
-        <SectionHeader title="分发" description="全局一套。按天把产出分散到日期目录，并决定纯净版原图是否跟随产出。" />
+        <SectionHeader
+          title="分发"
+          description="全局一套，对所有方向统一生效。按天把产出分散到日期目录，并决定纯净版原图是否跟随产出。"
+        />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-3">

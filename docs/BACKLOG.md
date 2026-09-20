@@ -1425,14 +1425,14 @@ APP-拉新 / 快手 / 网赚·萌宠·老歌 / 卡券 …）。
 
 - **来源**：杰哥原话「将水印预设 tab 改为中控台，具体内容参数参考这个网站的资产中心，
   **将水印预设改为其中的一个功能」**（2026-09-20）
-- **状态**：✅ 已完成（两轮）· 写线：主写线
+- **状态**：✅ 已完成（三轮）· 写线：主写线
 - **验收标准**（可测）
   1. 顶栏 tab 文案 = **「中控台」**（原「水印预设」），`appMode` 仍是 `postprocess`
   2. 工作区有**功能分区导航**（`aria-label="切换中控台功能"`），水印是**首个分区**且为默认
   3. **每个注册分区都能切过去，且同一时刻只渲染一块**（有专门用例锁定）
   4. 水印分区内容与改动前**一致**（三栏装配未动）
   5. 工作区容器 `aria-label` = `中控台工作区`
-  6. 新增分区遵守「唯一作用域」准入约束（见下方第二轮小节）
+  6. 中控台是**全部参数的统一编辑入口**：有节点级可覆盖字段的分区必须能就地改节点值
   7. `npm run verify` 全绿
 - **落地（第一轮）**：`src/components/Header.tsx`（tab 文案）、`CompositeWorkspace.tsx`、
   `catalog.ts`（登记）、`pages/postprocess.md`
@@ -1503,6 +1503,68 @@ git ls-remote <同地址>
 - `tsc -b` 本轮文件零报错 · eslint 0 · prettier 全绿
 - `src/features/composite/` **19 文件 / 167 用例全绿**；`src/design-system/` **252 用例全绿**
 - 新增测试：分区注册表 3 例 + 装配 4 例（含「每个注册分区都必须能切过去且只渲染一块」）
+
+#### 第三轮（同日）：修正定位 —— 中控台是「全部参数的统一编辑入口」
+
+**触发**：杰哥指出「中控台目的是控制所有参数设置资产，所以应该拥有全部权限，你觉得呢」，
+并在阿伟以 `PresetProjectTree.tsx:9-11` 那条铁律反驳后澄清：
+「有没有可能那个所谓的铁律是你理解错了呢，我说只有一个入口就是指中控台」。
+
+**⭐ 阿伟确实读反了那条注释**（记下来，避免再犯）：
+
+- `PresetProjectTree.tsx` 的主语是**树**：「输出目录、命名模板、渠道规格、启用范围全在
+  后处理那套界面里……**所以树上一个都不放**」——树为不跟后处理界面打架而退让，
+  **不是**「后处理界面只能看」。
+- `docs/postprocess-unify-on-hanling-plan.md:321` 更直白：「**归属的唯一入口 = 树**，
+  `ProjectNodeParamsDialog` 删掉『水印预设』字段」——归属树是权威，弹窗是被砍的一方。
+- 结论：**中控台才是被保护的主入口**。上一轮把「树」当成权威、把中控台锁在只读全局层，
+  是方向搞反了。
+
+**本轮交付：作用域选择器**
+
+新增 `components/ConsoleScopePicker.tsx`：下拉选「全局默认」或某个树节点，
+决定分区内控件读写哪一层参数（`GLOBAL_NODE_ID` = 基线，其余 = `AssetCollection.id`），
+配套 `isGlobalScope()` 统一哨兵判定。`OutputSection` 已接入：
+
+| 作用域 | 写入目标                                                          |
+| ------ | ----------------------------------------------------------------- |
+| 全局   | `usePostprocessMediaStore.mediaOutputDirs`（`setMediaOutputDir`） |
+| 节点   | `PostprocessNodeOverride.byMedia[mediaId].outputDirs`（并存时摘旧 `outputDir`）|
+
+节点作用域下留空的项继续向上继承，并用**父节点单独解析一次**作为占位提示——
+让用户看见「清掉本级覆盖会退回哪里」，而不是清完才发现变了。
+
+**⭐ 实测纠正了一个错误假设（重要）**：本来打算给「渠道与尺寸」「分发」也挂作用域选择器，
+`tsc` 直接报错拦下 —— `PostprocessNodeOverride`（ADR-0011 收窄后）**只有四个字段**：
+
+```
+outputDir / watermarkPresetIds / enabled / byMedia
+```
+
+`distribution` / `autoCompanionClean` / `selectedMediaIds` **不在其中**，
+它们在前端只在全局层存在（v1→v2 迁移时被提升到 `promotedGlobals`，属**只读存档**）。
+⇒ 那两个分区**刻意不挂作用域选择器**，界面上写明「全局一套」。
+**给用户一个能选节点、选了却什么都不变的控件，比不给更糟。**
+
+（写进 `pages/postprocess.md` 的准入约束：新增分区先问「这个参数在 `PostprocessNodeOverride`
+里吗」——在就挂选择器，不在就按纯全局分区处理。）
+
+**验收**
+
+- `tsc -b` 零报错 · 主进程 `tsc` 零报错 · eslint 0 · prettier 全绿
+- **`npm test` 237 文件 / 2719 用例全绿**
+- 新增 `ConsoleScopePicker.test.tsx` 4 例：全局首项 / 节点按层级缩进 / 悬空 id 退回全局 / `allowNodeScope:false` 只剩一项
+- **反向验证已做**（两条探针都有效）：
+  1. 拿掉「悬空 id 退回全局」兜底 → 对应用例立刻失败 ✅
+  2. 忽略 `allowNodeScope` → 对应用例立刻失败 ✅
+
+**文档同步**：`pages/postprocess.md`（分区表 + 准入约束重写）、
+`lib/controlConsoleSections.ts`（表头约束 + 三条描述）、
+`PresetProjectTree.tsx`（补一句「别把这条读成树是权威」，点明中控台才是统一入口）、
+`catalog.ts`（登记 `ConsoleScopePicker` + 修正 `OutputSection` 描述）
+
+**⚠️ 顺带发现（未处理）**：`docs/BACKLOG.md` 里 **`TB-053` 编号被用了两次** ——
+1271 行是「取消提示词生成点了没反应」，1424 行是本节（中控台）。编号冲突应改掉其中一个。
 - **反向验证**：摘掉 `distribution` 分区的接线 → 装配用例立刻失败 ✔（探针有效）
 - 顺带修：`MediaSection` 两处裸 `rounded-md/sm` 被**设计系统棘轮**拦下 → 改 `rounded-ds-lg`
   （合规测试是硬门禁，新 `.tsx` 写裸圆角必挂）

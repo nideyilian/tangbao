@@ -945,6 +945,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['SplitPane', 'Panel', 'Toolbar', 'Tabs'],
   },
   {
+    module: 'src/features/composite/components/ConsoleScopePicker.tsx',
+    responsibility:
+      '中控台作用域选择器：选「全局默认」或某个树节点，决定分区内控件读写哪一层参数；配套 isGlobalScope 统一哨兵判定',
+    decision: 'compose',
+    targets: ['SelectField'],
+  },
+  {
     module: 'src/features/composite/components/MediaSection.tsx',
     responsibility:
       '中控台「渠道与尺寸」分区：渠道分组 + 组内尺寸卡片 + 分组头「N / M 已应用」计数徽章；规格增删改复用 MediaTableManager（折叠在下段）',
@@ -954,7 +961,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/OutputSection.tsx',
     responsibility:
-      '中控台「输出位置」分区：全局渠道表（复用 ChannelOutputDirs）+ 有节点级覆盖时的显式警告；不在此处编辑节点覆盖',
+      '中控台「输出位置」分区：作用域选择器（全局 / 节点）决定编辑哪一层；全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir',
     decision: 'compose',
     targets: ['SectionHeader', 'Alert', 'Badge'],
   },

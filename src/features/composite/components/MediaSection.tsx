@@ -20,6 +20,15 @@
  *
  * 规格的新增 / 改名 / 删除 / 尺寸增删复用 `MediaTableManager`（那批 CRUD action 的既有
  * 唯一 UI 入口），放在下段折叠区里，不另写一套编辑器。
+ *
+ * ⚠️ **这个分区目前也是纯全局的，不挂作用域选择器。**
+ * 「应用哪些渠道」（`selectedMediaIds`）看起来像是节点级参数，但实测类型后确认不是：
+ * `PostprocessNodeOverride`（ADR-0011 收窄后）只有 `outputDir` / `watermarkPresetIds` /
+ * `enabled` / `byMedia` 四个字段，`selectedMediaIds` 不在其中。
+ * 节点要关掉某个渠道，走的是 `enabled: false`（整个方向不产出）——
+ * 粒度比「逐渠道」粗，这是那次收窄时明确做的取舍。
+ *
+ * 因此这里不挂作用域选择器：给了能选节点、选了却什么都不变的控件比不给更糟。
  */
 
 import { useMemo, useState } from 'react'

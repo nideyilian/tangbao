@@ -10,6 +10,8 @@ import { DistributionSection } from './components/DistributionSection'
 import { MediaSection } from './components/MediaSection'
 import { OutputSection } from './components/OutputSection'
 import { PresetManagementTab } from './components/PresetManagementTab'
+import type { ConsoleScope } from './components/ConsoleScopePicker'
+import { GLOBAL_NODE_ID } from '../postprocess/paramSchema'
 import { useCompositeV2Store } from './storeV2'
 
 /**
@@ -21,10 +23,18 @@ import { useCompositeV2Store } from './storeV2'
  *
  * 分区表在 `lib/controlConsoleSections.ts`（单一真相源），此处只负责装配与切换。
  *
+ * **作用域是工作区级的**：三个分区共用同一个 `scope`，切分区不重置。
+ * 理由是这些参数经常要一起调（「这个方向既不产某渠道、又换个输出目录」），
+ * 每换一个分区都要重选一次节点会很烦。作用域在分区内部也各自可见可改，
+ * 只是选中值由这里托管。
+ *
  * ⚠️ 一条硬约束：**每个分区必须指向「唯一作用域」的参数**。
- * 全局共享规格（渠道与尺寸 / 分发）可以整体搬进来，因为它们本来就只有一个家；
- * 而多层继承的参数（输出位置、水印归属）只能用「全局基线 + 跳转改节点」的形态，
- * 不在中控台里再造一套节点编辑器 —— 见 `PresetProjectTree.tsx` 开头那条铁律。
+ * 全局共享规格（渠道与尺寸的定义、分发）本来就只有一个家，直接搬进来；
+ * 多层继承的参数（输出位置、渠道勾选、分发覆盖、水印归属）统一用
+ * 「作用域选择器 + 就地编辑」的形态 —— 编辑入口只有中控台一处，
+ * 不再靠「跳到项目树去改」。这是 TB-053 第三轮的核心变更：
+ * 上一轮「不在中控台造节点编辑器」的顾虑已经作废，因为按项目定位，
+ * 节点级参数的唯一入口本来就该是中控台。
  *
  * 顶栏 `SegmentedControl` 的一个 tab，与素材库 / Agent 同级。归属要边看项目树边配，
  * 「盖一层」会让下层内容既不可用又占着版面；而且它是唯一自带撤销栈与画布编辑快捷键的
@@ -38,6 +48,7 @@ export default function CompositeWorkspace() {
   const canUndo = useCompositeV2Store((state) => state.canUndo)
   const undo = useCompositeV2Store((state) => state.undo)
   const [section, setSection] = useState<ControlConsoleSectionId>(DEFAULT_CONTROL_CONSOLE_SECTION)
+  const [scope, setScope] = useState<ConsoleScope>(GLOBAL_NODE_ID)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -87,7 +98,7 @@ export default function CompositeWorkspace() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-ds-lg border border-ds-border dark:border-ds-border">
         {section === 'watermark' && <PresetManagementTab />}
         {section === 'media' && <MediaSection />}
-        {section === 'output' && <OutputSection />}
+        {section === 'output' && <OutputSection scope={scope} onScopeChange={setScope} />}
         {section === 'distribution' && <DistributionSection />}
       </div>
     </main>
