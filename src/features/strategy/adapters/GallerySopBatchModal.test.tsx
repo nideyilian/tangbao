@@ -26,60 +26,78 @@ const dbMocks = vi.hoisted(() => ({
   getSopBatchSnapshot: vi.fn(),
   putSopBatchSnapshot: vi.fn(),
 }))
-const requirementState = vi.hoisted(() => ({
-  sopLibrary: [
-    {
-      id: 'sop-1',
-      name: '商品图 SOP',
-      description: '',
-      content: '生成商品图。',
-      source: 'manual',
-      createdBy: 'user-1',
-      createdAt: 1,
-      updatedAt: 1,
-    },
-    {
-      id: 'sop-2',
-      name: '海报 SOP',
-      description: '',
-      content: '生成海报。',
-      source: 'manual',
-      createdBy: 'user-1',
-      createdAt: 2,
-      updatedAt: 2,
-    },
-    {
-      id: 'sop-series',
-      name: '系列海报 SOP',
-      description: '同组统一视觉规范',
-      content: '同组保持同一视觉规范，只改主体与背景。',
-      kind: 'series' as const,
-      seriesConfig: { imageCount: 3 as const, fixedDimensions: ['视觉风格'], variableDimensions: ['主体', '背景'] },
-      source: 'manual',
-      createdBy: 'user-1',
-      createdAt: 3,
-      updatedAt: 3,
-    },
-    {
-      id: 'sop-recipe',
-      name: '双十一配方卡',
-      description: '本地引擎批量组合',
-      content: '{{主视觉}}，主体是{{主体}}',
-      kind: 'campaign-recipe' as const,
-      campaignRecipe: {
-        body: '{{主视觉}}，主体是{{主体}}',
-        dimensions: [
-          { name: '主视觉', options: ['产品特写', '手持使用', '使用场景'] },
-          { name: '主体', options: ['咖啡杯', '保温杯', '玻璃杯'] },
-        ],
+const requirementState = vi.hoisted(() => {
+  // 手工资产形态：没有 campaignRecipe 字段，配方配置直接放在 content 的 JSON 里。
+  // 引擎侧有 parseCampaignRecipeConfigFromContent 兜底，弹窗分流也必须认得（见 R-53）。
+  const recipeJsonSop = {
+    id: 'sop-recipe-json',
+    name: 'JSON 正文配方卡',
+    description: '',
+    content: '' as string,
+    source: 'manual' as const,
+    createdBy: 'user-1',
+    createdAt: 5,
+    updatedAt: 5,
+  }
+  return {
+    recipeJsonSop,
+    sopLibrary: [
+      {
+        id: 'sop-1',
+        name: '商品图 SOP',
+        description: '',
+        content: '生成商品图。',
+        source: 'manual',
+        createdBy: 'user-1',
+        createdAt: 1,
+        updatedAt: 1,
       },
-      source: 'manual',
-      createdBy: 'user-1',
-      createdAt: 4,
-      updatedAt: 4,
-    },
-  ],
-}))
+      {
+        id: 'sop-2',
+        name: '海报 SOP',
+        description: '',
+        content: '生成海报。',
+        source: 'manual',
+        createdBy: 'user-1',
+        createdAt: 2,
+        updatedAt: 2,
+      },
+      {
+        id: 'sop-series',
+        name: '系列海报 SOP',
+        description: '同组统一视觉规范',
+        content: '同组保持同一视觉规范，只改主体与背景。',
+        kind: 'series' as const,
+        seriesConfig: { imageCount: 3 as const, fixedDimensions: ['视觉风格'], variableDimensions: ['主体', '背景'] },
+        source: 'manual',
+        createdBy: 'user-1',
+        createdAt: 3,
+        updatedAt: 3,
+      },
+      {
+        id: 'sop-recipe',
+        name: '双十一配方卡',
+        description: '本地引擎批量组合',
+        content: '{{主视觉}}，主体是{{主体}}',
+        kind: 'campaign-recipe' as const,
+        campaignRecipe: {
+          body: '{{主视觉}}，主体是{{主体}}',
+          dimensions: [
+            { name: '主视觉', options: ['产品特写', '手持使用', '使用场景'] },
+            { name: '主体', options: ['咖啡杯', '保温杯', '玻璃杯'] },
+          ],
+        },
+        source: 'manual',
+        createdBy: 'user-1',
+        createdAt: 4,
+        updatedAt: 4,
+      },
+      // 手工资产形态：没有 campaignRecipe 字段，配方配置直接放在 content 的 JSON 里。
+      // 引擎侧有同款兜底解析，弹窗分流也必须认得（见 R-53）。
+      recipeJsonSop,
+    ],
+  }
+})
 const storeState = vi.hoisted(() => ({
   params: {
     model: 'gpt-image-1',
@@ -270,6 +288,39 @@ describe('GallerySopBatchModal background generation', () => {
 
     expect(generateMocks.generatePromptsFromSopStore).toHaveBeenCalledOnce()
     expect(generateMocks.generateCampaignRecipePromptsFromStore).not.toHaveBeenCalled()
+  })
+
+  it('routes a recipe card stored as JSON content to the local engine too', async () => {
+    // 回归 R-53：引擎侧用 parseCampaignRecipeConfigFromContent 兜底识别「content 直接放 JSON」的
+    // 手工资产，但弹窗分流曾只认 campaignRecipe 字段 / executionMode → 同一张卡被判成普通 SOP 走 AI。
+    requirementState.recipeJsonSop.content = JSON.stringify({
+      body: '{{主视觉}}，主体是{{主体}}',
+      dimensions: [
+        { name: '主视觉', options: ['产品特写', '使用场景'] },
+        { name: '主体', options: ['咖啡杯', '玻璃杯'] },
+      ],
+    })
+    generateMocks.generateCampaignRecipePromptsFromStore.mockResolvedValue(['JSON 配方卡本地生成的提示词'])
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe-json"
+          initialPromptCount={1}
+          autoStart
+          onAutoStartConsumed={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledOnce()
+    expect(generateMocks.generatePromptsFromSopStore).not.toHaveBeenCalled()
   })
 
   it('uses the latest input requirement when a mounted modal starts another run', async () => {

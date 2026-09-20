@@ -791,6 +791,34 @@
     - `npm run verify` 全绿（**230 文件 / 2606 用例**）
   - **新增风险**：文本分支维度名大小写坑 + 单双花括号并存 → R-47 / R-48
 
+- **⚠️ 用户实测报障：配方卡走了 AI 大模型生成（2026-09-20 第三轮，已修）**
+  - **现象**：杰哥说「我使用配方卡时还是走的普通 SOP 的 AI 大模型生成提示词的方式」，
+    弹窗显示「未命名配方卡 · 0 条提示词 · 生成中 · gemini-3.1-pro-preview」
+    （模型名出现在这里 = 走了 AI 分支，本地引擎不需要模型）。
+  - **排查方法（可复用）**：只读打开 `%APPDATA%\糖包|tangbao\local-saves\db\asset-kernel.sqlite`
+    的 `app_data_records`（`readOnly: true`，R-06），按 namespace 逐条看落盘时间与内容。
+    关键证据：**所有 namespace 的 `updated_at` 都停在 9/19 17:07**，而用户是 9/20 上午操作
+    → 当晚改动一个字节都没落盘；`sopLibrary` 里只有 1 条预置的普通 SOP（无 `campaignRecipe`）。
+  - **根因（三条，全部修复）**：
+    1. **R-51** `saveItemDraftNow` 漏了配方卡分支：`if (!draft?.content.trim()) return false`
+       对 `content` 为空的配方卡恒为真 → 永远返回 `false` → `runAfterDraftConfirmation`
+       弹「放弃未保存的修改？」→ 草稿写不进去、切换后被丢弃。
+       `itemDraftValid` 与自动保存 effect 都放宽了，**唯独这一处漏改**。
+    2. **R-52** 草稿同步 effect 静默换卡：选中项被搜索/分组过滤掉时直接
+       `setItemDraft(filteredItems[0])` → 换成列表第一条（普通 SOP）→ 后续按普通 SOP 走 AI。
+       而搜索框只匹配 `name/description/content`，**不匹配 `campaignRecipe`**。
+    3. **R-53** 分流口径不一致：引擎侧有 `parseCampaignRecipeConfigFromContent` 兜底
+       （认识「content 放 JSON」的手工资产），弹窗分流只认字段与 `executionMode`。
+  - **修法**
+    - R-51：门槛改为与另两处一致 —— `(!isCampaignRecipeSop(draft) && !draft.content.trim())`；
+    - R-52：加全量兜底 `if (selectedItemId && items.some(i => i.id === selectedItemId)) return`，
+      **只在「全量列表里也不存在」时才切到第一条**；
+    - R-53：弹窗内联补一条 `looksLikeRecipeJson` 探测（`content` 以 `{` 开头且
+      `body` 为字符串 + `dimensions` 为数组）。刻意**不**从 `storeSopGeneration` import
+      辅助函数 —— 会踩 R-46 的整模块 mock 坑。
+  - **验收**：3 例回归测试全绿，且**逐个反向验证过**（临时 `if (false)` / 回退门槛后
+    测试确实失败，证明不是"假绿"）；`npm run verify` 全绿（**230 文件 / 2609 用例**）。
+
 - **UI 入口（2026-09-20 补做，原为遗留项 1）**
   - **新建**：SOP 列表头部「新建 | 配方卡」两个按钮并列。点「配方卡」直接落一张
     带「主体/背景/光线」三件套骨架与 3×4 维度池的可用资产 —— 不给空对象，

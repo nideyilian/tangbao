@@ -642,3 +642,91 @@ rm import-e2e.mts                    # 临时脚本必须删
 npx prettier --write <本轮改动文件>   # 新文件几乎一定不过 format:check
 npm run verify                       # 全绿再提交
 ```
+
+---
+
+## 十六、用 SQLite 只读探查定位「改了但没存下」类问题（2026-09-20 实测定稿）
+
+适用：用户报「我明明改了/建了，但重启就没了」「功能没按类型走」这类**静默失效**。
+比在界面里反复点更快、更准。风险：**必须 `readOnly: true`**（R-06，残留 WAL 未 checkpoint
+时非只读连接会读到 0 条）。
+
+### 1. 定位库文件
+
+```bash
+# 正式版用 糖包，dev 用 tangbao（注意：dev 与正式版共用 dev 目录，正式版在「糖包」）
+node -e "const os=require('os'),p=require('path'),f=require('fs');for(const n of ['糖包','tangbao']){const d=p.join(os.homedir(),'AppData','Roaming',n,'local-saves','db');console.log(f.existsSync(d)?'FOUND '+d:'miss  '+d)}"
+```
+
+### 2. 表结构与全部 namespace（先看这两个，再谈内容）
+
+```js
+import { DatabaseSync } from 'node:sqlite'
+const db = new DatabaseSync('<上面找到的路径>/asset-kernel.sqlite', { readOnly: true })
+
+// 表结构：列名是 namespace / record_id / json / updated_at（不是 payload！）
+for (const c of db.prepare("PRAGMA table_info('app_data_records')").all()) console.log(c.name, c.type)
+
+// 全部记录 + 落盘时间 + 体积
+for (const r of db
+  .prepare(
+    'SELECT namespace, record_id, updated_at, length(json) AS len FROM app_data_records ORDER BY updated_at DESC',
+  )
+  .all()) {
+  console.log(new Date(r.updated_at).toLocaleString('zh-CN'), r.namespace, '/', r.record_id, r.len + 'B')
+}
+```
+
+**一眼定案的两个信号**：
+
+- **所有 `updated_at` 都远早于用户的操作时间** → 当晚改动**整体没落盘**，问题在存储层
+  （降级态 / 写盘失败 / 应用没正常退出），不要再去查业务逻辑；
+- 某个 namespace **缺失** → 对应 store 的 `partialize` 白名单漏了该字段（R-05 同源）。
+
+### 3. 看具体资产（以 SOP 库为例：在 `requirementPrototype` / `state`）
+
+```js
+const row = db
+  .prepare("SELECT json FROM app_data_records WHERE namespace='requirementPrototype' AND record_id='state'")
+  .get()
+let d = JSON.parse(row.json)
+if (typeof d === 'string') d = JSON.parse(d) // 双重编码时再 parse 一次
+console.log('version:', d.version) // 与代码里的 STORE_VERSION 比对，判断迁移会不会跑
+for (const it of d.state.sopLibrary) {
+  console.log(
+    it.name,
+    '| executionMode:',
+    it.executionMode,
+    '| campaignRecipe:',
+    Boolean(it.campaignRecipe),
+    '| keys:',
+    Object.keys(it).join(','),
+  )
+}
+```
+
+**看 `Object.keys(item)` 是最有用的**：字段在不在、有没有被裁掉，一目了然。
+
+### 4. 命名速查（本仓库）
+
+| 要看什么                                       | namespace / id                       |
+| ---------------------------------------------- | ------------------------------------ |
+| 主 store（settings / params / workspaceTabs…） | `zustand` / `state`                  |
+| SOP 库 / SOP 分组 / 元指令                     | `requirementPrototype` / `state`     |
+| 素材库 UI 态                                   | `assetLibraryUi` / `state`           |
+| 后处理参数                                     | `postprocessMedia` / `state`         |
+| 项目树参数                                     | `projectTreeParams` / `state`        |
+| 提示词仓库（SOP 批量历史）                     | `sopBatchSnapshots` / `sop-run-<id>` |
+| 迁移标记                                       | `meta` / `*-v1`                      |
+
+### 5. 探针脚本的写法与清理
+
+- **必须用 Write 落盘再 `node` 执行**（Bash 会吃 `\\` / `\${}`，R-19）；
+- node 用 `"C:/Program Files/nodejs/node.exe"`（24.x；`node:sqlite` 需要 ≥22 且会打
+  `ExperimentalWarning`，用 `grep -v ExperimentalWarning` 滤掉）；
+- **探针一律 `probe-*.mjs` 命名并放在仓库根，验完 `rm` 掉**，不要留在工作区里。
+
+### 6. 修完必须做「反向验证」
+
+静默失效类的修复，测试很容易写成"假绿"（断言写错方向也会过）。**逐个把修复临时改回
+`if (false)` 或还原旧条件，确认测试真的会失败**，再改回来。本次 3 个回归测试全部这样验过。

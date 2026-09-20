@@ -1499,4 +1499,47 @@ describe('SopManagementCenter campaign recipe SOPs', () => {
     expect(saved.campaignRecipe?.body).toContain('{{主体}}')
     result.renderer.unmount()
   })
+
+  // 回归 R-51：saveItemDraftNow 曾漏掉配方卡分支（content 为空即拒存），
+  // 导致切换/应用配方卡时弹出「放弃未保存的修改？」并把改动吞掉。
+  it('saves a dirty recipe draft without falling back to the discard dialog', () => {
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ items: [recipeItem], selectedSopId: 'sop-recipe' })
+    })
+
+    act(() =>
+      result.renderer.root
+        .findByProps({ 'aria-label': '维度 主体 候选值 1' })
+        .props.onChange({ target: { value: '帆布斜挎包' } }),
+    )
+    act(() => findButton(result.renderer.root, '保存修改')!.props.onClick())
+
+    expect(result.onSaveItem).toHaveBeenCalledTimes(1)
+    const saved = result.onSaveItem.mock.calls[0][0] as SopLibraryItem
+    expect(saved.campaignRecipe?.dimensions[0].options[0]).toBe('帆布斜挎包')
+    // content 始终为空，但保存必须成功 —— 不得退回「放弃未保存的修改？」
+    expect(textContent(result.renderer.root)).not.toContain('放弃未保存的修改')
+    result.renderer.unmount()
+  })
+
+  // 回归 R-52：草稿同步 effect 曾把「被搜索过滤掉但仍存在于全量列表」的选中项
+  // 静默换成 filteredItems[0]，于是刚建好的配方卡会串台成另一张普通 SOP，
+  // 随后按普通 SOP 走 AI 生成（表现为配方卡也去调大模型）。
+  it('keeps the selected recipe draft when the search filter hides it', () => {
+    const ordinary = { ...item, id: 'sop-ordinary', name: '普通 SOP 甲', content: '正文内容' }
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ items: [ordinary, recipeItem], selectedSopId: 'sop-recipe' })
+    })
+    // 配方卡编辑器在展开状态，说明草稿是配方卡
+    expect(result.renderer.root.findByProps({ 'aria-label': '配方卡引擎配置' })).toBeTruthy()
+
+    // 输入一个只命中普通 SOP 的搜索词，配方卡被过滤掉
+    act(() => result.renderer.root.findByProps({ placeholder: '搜索名称、说明或正文' }).props.onChange('普通'))
+
+    // 选中项仍是配方卡（未被静默换成第一条），编辑器不消失
+    expect(result.renderer.root.findAllByProps({ 'aria-label': '配方卡引擎配置' })).toHaveLength(1)
+    result.renderer.unmount()
+  })
 })

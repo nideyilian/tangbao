@@ -1969,10 +1969,25 @@ export default function GallerySopBatchModal({
           (item) => !item.deleted && item.promptText.trim() && promptBelongsToSource(item, sourceRun.source),
         ).length
         const isVariablePromptSop = selectedSop.executionMode === 'variable-prompt'
-        // 配方卡触发条件：带 campaignRecipe 字段，或 executionMode 显式标记。
+        // 配方卡触发条件（三条，与 generateCampaignRecipePromptsFromStore 的取配置口径保持一致，
+        // 否则会出现「判定走 AI、但引擎其实能认出配方卡」的割裂）：
+        // 1. 带 campaignRecipe 字段（新资产的标准形态）；
+        // 2. executionMode 显式标记；
+        // 3. content 是一段 {{...}} 骨架的 JSON（手工资产的旧形态，引擎侧有同款兜底）。
         // 这里内联判定而不调用 storeSopGeneration 的辅助函数，避免弹窗对生成模块产生
-        // 「非生成」依赖（该模块在测试中常被整体 mock）。
-        const isCampaignRecipe = Boolean(selectedSop.campaignRecipe) || selectedSop.executionMode === 'campaign-recipe'
+        // 「非生成」依赖（该模块在测试中常被整体 mock，见 R-46）。
+        const looksLikeRecipeJson = (() => {
+          const text = selectedSop.content?.trim() ?? ''
+          if (!text.startsWith('{')) return false
+          try {
+            const parsed = JSON.parse(text) as { body?: unknown; dimensions?: unknown } | null
+            return Boolean(parsed && typeof parsed.body === 'string' && Array.isArray(parsed.dimensions))
+          } catch {
+            return false
+          }
+        })()
+        const isCampaignRecipe =
+          Boolean(selectedSop.campaignRecipe) || selectedSop.executionMode === 'campaign-recipe' || looksLikeRecipeJson
         // 配方卡与变量提示词都是本地一次算完全部结果，不能走 AI 渐进式「逐单位请求」的批量方式。
         const isLocalGenerationSop = isCampaignRecipe || isVariablePromptSop
         const generationOptions: NonNullable<Parameters<typeof generatePromptsFromSopStore>[3]> & {

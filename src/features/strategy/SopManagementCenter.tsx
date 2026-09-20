@@ -347,10 +347,14 @@ export default function SopManagementCenter({
       setItemDraft(selected)
       return
     }
+    // 当前选中项被搜索/分组过滤掉时，只在「全量列表里也不存在」才切换到第一条。
+    // 若它仍存在于 items（只是被过滤），保留选中与草稿不动 —— 否则会出现
+    // 「刚新建的配方卡被静默换成另一张卡，随后按那张卡的类型走了 AI 生成」这种串台（R-52）。
+    if (selectedItemId && items.some((item) => item.id === selectedItemId)) return
     const next = filteredItems[0] ?? null
     setSelectedItemId(next?.id ?? '')
     setItemDraft(next)
-  }, [filteredItems, selectedItemId])
+  }, [filteredItems, items, selectedItemId])
 
   useEffect(() => {
     const selected = metaInstructions.find((item) => item.id === selectedMetaId)
@@ -457,7 +461,10 @@ export default function SopManagementCenter({
 
   const saveItemDraftNow = useCallback(
     (draft = itemDraft) => {
-      if (!draft?.name.trim() || !draft.content.trim()) return false
+      // 与自动保存 effect、itemDraftValid 共用同一门槛：配方卡的骨架在 campaignRecipe 里，
+      // content 为空是合法状态。漏掉这个分支会让配方卡永远存不下（弹「放弃未保存的修改？」），
+      // 见 R-51。
+      if (!draft?.name.trim() || (!isCampaignRecipeSop(draft) && !draft.content.trim())) return false
       if (autoSaveTimerRef.current !== null) {
         window.clearTimeout(autoSaveTimerRef.current)
         autoSaveTimerRef.current = null
