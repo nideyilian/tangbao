@@ -67,6 +67,7 @@ describe('CompositeWorkspace', () => {
   beforeEach(() => {
     usePostprocessMediaStore.setState({ selectedMediaIds: [], watermarkPresetIds: [] })
     useAssetLibraryStore.setState({
+      scope: 'all',
       collections: [
         { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
         { id: 'direction-moon', name: '月亮', parentId: 'line-a', order: 0, createdAt: 0, updatedAt: 0 },
@@ -167,5 +168,42 @@ describe('CompositeWorkspace', () => {
     clickTreeButton(renderer, '月亮')
     // 换成方向后不再置灰（仍未选中卡片时会 disabled，但原因变成「没选卡片」，不再是「必须是方向」）
     expect(findByText(renderer, '批量启用').props.title).toBeUndefined()
+  })
+
+  it('作用域读的是**全局上下文指针**：打开即默认选中当前方向', () => {
+    // 别的入口（素材库 / SOP）把指针指到某个方向后再进中控台，右区应直接是那个方向
+    useAssetLibraryStore.setState({ scope: { kind: 'collection', id: 'direction-moon' } })
+
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
+  })
+
+  it('在树里选方向会写回全局指针，别的入口能读到同一个值', () => {
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    clickTreeButton(renderer, '月亮')
+    expect(useAssetLibraryStore.getState().scope).toEqual({ kind: 'collection', id: 'direction-moon' })
+
+    clickTreeButton(renderer, '全局默认')
+    expect(useAssetLibraryStore.getState().scope).toBe('all')
+  })
+
+  it('切作用域不动素材库的选中态（否则在别的入口选好的素材会被静默清掉）', () => {
+    useAssetLibraryStore.setState({ selectedAssetIds: ['asset-1', 'asset-2'] })
+
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    clickTreeButton(renderer, '月亮')
+    expect(useAssetLibraryStore.getState().selectedAssetIds).toEqual(['asset-1', 'asset-2'])
   })
 })

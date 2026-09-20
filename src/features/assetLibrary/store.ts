@@ -136,6 +136,20 @@ export interface AssetLibraryStoreState {
   /** 把（归档等后台链路新建的）项目文件夹同步进内存态，侧栏立即可见。 */
   upsertCollections: (collections: AssetCollection[]) => void
   setScope: (scope: AssetLibraryScope) => void
+  /**
+   * 只改「当前在哪个项目文件夹」这个**上下文指针**，不动素材选中态与预览。
+   *
+   * 与 `setScope` 的区别（别合并，合并必出事故）：
+   * - `setScope` 是**素材库内部**的切换语义，会顺带清掉 `selectedAssetIds` /
+   *   `activeAssetId` / `similarToAssetId`——那些选中项都属于「上一屏的列表」，
+   *   换了范围再留着就是错的选择；
+   * - 本 action 是**跨工作区的上下文同步**：中控台点一个方向、SOP 打开时跟随，
+   *   都只是想改「现在看哪个方向」。此时素材库里正在选中的素材**没道理被清掉**
+   *   （用户只是在另一个工作区换了上下文），所以这里一个字段都不多动。
+   *
+   * `null` = 不指向任何具体文件夹（回到「全部」），对应中控台的「全局默认」。
+   */
+  setCollectionContextScope: (collectionId: string | null) => void
   setQuery: (query: string) => void
   setFilters: (filters: AssetLibraryFilters) => void
   setOperationProgress: (progress: { label: string; done: number; total: number } | null) => void
@@ -664,6 +678,8 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       },
 
       setScope: (scope) => set({ scope, activeAssetId: null, selectedAssetIds: [], similarToAssetId: null }),
+      setCollectionContextScope: (collectionId) =>
+        set({ scope: collectionId ? { kind: 'collection', id: collectionId } : 'all' }),
       setQuery: (query) => set({ query, similarToAssetId: null }),
       setFilters: (filters) => set({ filters, selectedAssetIds: [] }),
       setOperationProgress: (operationProgress) => set({ operationProgress }),

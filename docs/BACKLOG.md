@@ -1653,6 +1653,45 @@ outputDir / watermarkPresetIds / enabled / byMedia
 列表视图不留无效样式 / 空态）+ 装配测试重写为 6 例（含「树 → 作用域 → 右区标题」链路）。
 **反向验证两条均有效**：全局也给开关 → 对应用例失败 ✔；忽略 perRow → 对应用例失败 ✔
 
+#### 第六轮（同日）：作用域接上全局上下文指针（「在任何地方打开都默认是当前方向」）
+
+**触发**：杰哥「现在全局统一树结构，那么我在那个方向打开任何东西都应该是默认选择了对应方向下的
+内容，比如 SOP、比如水印等等，你觉得呢」。
+
+**调研结论：方向和一半基础设施都已经在了（不是从零做）**：
+
+| 已有件                                                                                     | 位置                                                |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| 唯一主源（项目树）                                                                         | `useAssetLibraryStore.collections`                  |
+| **全局、持久化的「当前集合」指针**                                                         | `useAssetLibraryStore.scope`（`partialize` 里含着） |
+| SOP 分组**已是项目树的投影**（`SopGroup.collectionId` 注释写明「项目文件夹树是唯一主源」） | `features/strategy/types.ts:100`                    |
+| 中控台自己的局部 scope（第四轮写的 `useState`）⇒ **重复状态，本轮消除**                    | `CompositeWorkspace`                                |
+
+**本轮交付（只做中控台这一半，理由见下）**：
+
+- 中控台 `scope` 改为读 `useAssetLibraryStore.scope`（`{kind:'collection',id}` ⇄ `ConsoleScope`，
+  非 collection 值 ⇒ 全局默认），点树节点写回同一个指针 ⇒ **切到中控台默认就是当前方向**；
+- 新增窄 action `setCollectionContextScope(collectionId | null)`：
+  **只挪指针，不动素材选中态**。与 `setScope` 刻意分开 ——
+  后者是「素材库内部换范围」的语义，会清 `selectedAssetIds`；
+  跨工作区同步时清掉用户在素材库选好的一堆图就是静默丢操作。
+
+**⚠️ 刻意没做 SOP 侧**：`src/features/strategy/*` 正是**另一条写线**在动的文件
+（工作区里 8 个 `M`），按 R-09 不碰。SOP 侧的方案已定（`selectedGroupId` 初始值由 scope
+推导到对应 collectionId 的分组），等那条线收工再做。
+
+**⭐ 分层铁律（写进页面规范）**：
+
+> **上下文指针 ≠ 参数**。指针唯一（`scope`：现在看哪个方向）；
+> 参数可多值（`selectedCollectionIds` 启用范围、`watermarkPresetIds` 方向用哪些水印）。
+> 别把「当前方向」做成可多选的参数，也别让「启用范围」去覆盖指针。
+
+**验收**：tsc 双端 0 · eslint 0 · prettier 全绿 · **`npm test` 238 文件 / 2751 用例全绿**；
+新增 4 例（装配 3：读全局指针 / 写回全局指针 / 不动素材选中态；store 2：
+窄 action 不清选中 + `setScope` 仍清选中）。
+**反向验证两条均有效**：窄 action 也清选中 → store 用例失败 ✔；
+中控台改回局部常量 → 3 个用例失败 ✔
+
 #### 线上复核（未完成，需杰哥补凭证）
 
 ```

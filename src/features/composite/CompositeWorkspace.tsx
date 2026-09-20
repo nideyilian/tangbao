@@ -66,7 +66,23 @@ export default function CompositeWorkspace() {
   const { openConfirmDialog } = useAppDialog()
 
   const [section, setSection] = useState<ControlConsoleSectionId>(DEFAULT_CONTROL_CONSOLE_SECTION)
-  const [scope, setScope] = useState<ConsoleScope>(GLOBAL_NODE_ID)
+  /**
+   * 作用域来自**全局上下文指针** `useAssetLibraryStore.scope`，不是本工作区的局部 state。
+   *
+   * 这是「全局统一树结构」的落地（杰哥 2026-09-20）：项目树是唯一主源，
+   * 「现在看哪个方向」只该有**一个**指针，中控台 / 素材库 / SOP 都读它，
+   * 于是「在任何地方打开都默认是当前方向」自然成立。
+   *
+   * 注意用 `setCollectionContextScope` 而不是 `setScope`：后者会清空素材库的选中态，
+   * 在中控台点个方向就把用户在素材库选的一堆图清掉，那是事故（见 store 里两者的注释）。
+   */
+  const libraryScope = useAssetLibraryStore((state) => state.scope)
+  const setCollectionContextScope = useAssetLibraryStore((state) => state.setCollectionContextScope)
+  const scope: ConsoleScope =
+    typeof libraryScope === 'object' && libraryScope.kind === 'collection' ? libraryScope.id : GLOBAL_NODE_ID
+  const setScope = (next: ConsoleScope) => {
+    setCollectionContextScope(isGlobalScope(next) ? null : next)
+  }
   /** 水印分区有两个视图：卡片网格（管理）/ 编辑器（画布 + 库）。其余分区只有一种。 */
   const [watermarkView, setWatermarkView] = useState<'cards' | 'editor'>('cards')
   const [bindingFilter, setBindingFilter] = useState<ConsoleBindingFilter>('all')

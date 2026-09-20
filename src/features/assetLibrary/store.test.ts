@@ -175,6 +175,28 @@ describe('view state', () => {
     expect(state.sortOrder).toBe('asc')
   })
 
+  it('setCollectionContextScope 只挪上下文指针，不清素材选中态（跨工作区同步用）', () => {
+    // 与 setScope 的区别是硬约束：中控台点方向 / SOP 跟随上下文时，
+    // 用户在素材库选好的一批素材**不能**被静默清掉。
+    useAssetLibraryStore.getState().toggleSelectAsset('a')
+    useAssetLibraryStore.getState().toggleSelectAsset('b')
+
+    useAssetLibraryStore.getState().setCollectionContextScope('c1')
+    expect(useAssetLibraryStore.getState().scope).toEqual({ kind: 'collection', id: 'c1' })
+    expect(useAssetLibraryStore.getState().selectedAssetIds).toEqual(['a', 'b'])
+
+    // null = 回到「全部」（中控台的「全局默认」）
+    useAssetLibraryStore.getState().setCollectionContextScope(null)
+    expect(useAssetLibraryStore.getState().scope).toBe('all')
+    expect(useAssetLibraryStore.getState().selectedAssetIds).toEqual(['a', 'b'])
+  })
+
+  it('setScope（素材库内部切换）仍会清掉选中态 —— 两个 action 别合并', () => {
+    useAssetLibraryStore.getState().toggleSelectAsset('a')
+    useAssetLibraryStore.getState().setScope('favorites')
+    expect(useAssetLibraryStore.getState().selectedAssetIds).toEqual([])
+  })
+
   it('manages selection and active asset', () => {
     useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a'), b: makeAsset('b') }, assetOrder: ['a', 'b'] })
     useAssetLibraryStore.getState().selectAsset('a')
