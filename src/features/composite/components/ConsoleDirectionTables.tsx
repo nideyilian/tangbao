@@ -53,6 +53,7 @@ import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreePar
 import { useCompositeV2Store } from '../storeV2'
 import { usePostprocessGlobalConfig } from '../../postprocess/usePostprocessGlobalConfig'
 import type { AssetCollection } from '../../../types'
+import { ConsoleWatermarkBindings } from './ConsoleWatermarkBindings'
 
 /** 表格行：集合本身 + 它在树里的深度与路径（路径给「层级路径」列用）。 */
 export interface DirectionTableRow extends AssetCollection {
@@ -332,7 +333,7 @@ export function ConsoleDirectionTables() {
       {
         key: 'watermarks',
         header: '水印',
-        help: '只读。改水印请到「水印」分区的归属表 —— 一个参数只有一个入口。',
+        help: '只读。改水印看下面的「水印归属」表 —— 一个参数只有一个入口。',
         editor: 'readonly',
         width: 220,
         getValue: (row) => {
@@ -415,9 +416,11 @@ export function ConsoleDirectionTables() {
           onCellCommit={commitParam}
         />
         <p className="text-xs text-ds-muted dark:text-ds-muted">
-          水印归属在「水印」分区编辑；这里只读展示，避免同一个参数出现两个入口。
+          水印归属在下面那张表里编辑；这里只读展示，避免同一个参数出现两个入口。
         </p>
       </section>
+
+      <ConsoleWatermarkBindings />
     </div>
   )
 }

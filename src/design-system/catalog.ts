@@ -992,6 +992,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['DataGrid', 'SectionHeader', 'Alert', 'Button', 'IconButton', 'TextField'],
   },
   {
+    module: 'src/features/composite/components/ConsoleWatermarkBindings.tsx',
+    responsibility:
+      '中控台「方向」分区的水印归属表：一行一条「方向 → 预设」显式声明，区分「移除」（写空数组 = 显式不加水印）与「改为继承」（写 undefined）两种写入语义',
+    decision: 'compose',
+    targets: ['DataGrid', 'SectionHeader', 'Alert', 'Button', 'IconButton', 'SelectField'],
+  },
+  {
     module: 'src/features/composite/components/ConsoleMediaTables.tsx',
     responsibility:
       '中控台「渠道与尺寸」分区的表格本体：渠道表（含参与产出勾选与尺寸计数）+ 尺寸表（含跨渠道移动），规格增删改就地完成',

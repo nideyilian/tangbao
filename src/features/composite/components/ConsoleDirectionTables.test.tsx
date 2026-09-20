@@ -16,7 +16,27 @@ import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import type { AssetCollection } from '../../../types'
+import { useCompositeV2Store } from '../storeV2'
 import { buildDirectionRows, collectSubtreeIds, ConsoleDirectionTables } from './ConsoleDirectionTables'
+
+const PRESETS = [
+  {
+    id: 'preset-a',
+    name: '角标A',
+    baseCanvas: { width: 1280, height: 720 },
+    sampleBackgroundPath: '',
+    layers: [],
+    updatedAt: 1,
+  },
+  {
+    id: 'preset-b',
+    name: '角标B',
+    baseCanvas: { width: 1280, height: 720 },
+    sampleBackgroundPath: '',
+    layers: [],
+    updatedAt: 2,
+  },
+]
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -170,5 +190,79 @@ describe('方向分区渲染与写库', () => {
     })
     commitCell('输出目录：竖版展示', '')
     expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.outputDir).toBeUndefined()
+  })
+})
+
+describe('水印归属表', () => {
+  /** 受控 select 的写入同样要过原生 setter，理由与受控 input 一样。 */
+  function selectValue(select: HTMLSelectElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+    act(() => {
+      setter?.call(select, value)
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+  }
+
+  function clickText(label: string) {
+    const button = Array.from(container.querySelectorAll('button')).find((node) => node.textContent === label)
+    if (!button) throw new Error(`没找到按钮：${label}`)
+    act(() => button.click())
+  }
+
+  it('没人显式声明时给出空态，并写明全局默认是什么', () => {
+    act(() => {
+      root.render(<ConsoleDirectionTables />)
+    })
+    expect(text()).toContain('还没有任何方向显式声明水印')
+  })
+
+  it('绑定一套水印 → 写进该方向的 watermarkPresetIds', async () => {
+    await act(async () => {
+      useCompositeV2Store.setState({ presets: PRESETS })
+    })
+    act(() => {
+      root.render(<ConsoleDirectionTables />)
+    })
+    selectValue(container.querySelector<HTMLSelectElement>('select[aria-label="要绑定的方向"]')!, 'direction-a')
+    selectValue(container.querySelector<HTMLSelectElement>('select[aria-label="要绑定的水印预设"]')!, 'preset-b')
+    await act(async () => {
+      clickText('绑定水印')
+    })
+    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.watermarkPresetIds).toEqual([
+      'preset-b',
+    ])
+  })
+
+  it('「移除」只摘掉那一套（保留其余），不是整体清空', async () => {
+    await act(async () => {
+      useCompositeV2Store.setState({ presets: PRESETS })
+      useProjectTreeParamsStore
+        .getState()
+        .setPostprocessOverride('direction-a', { watermarkPresetIds: ['preset-a', 'preset-b'] })
+    })
+    act(() => {
+      root.render(<ConsoleDirectionTables />)
+    })
+    const removeButtons = container.querySelectorAll<HTMLButtonElement>('[aria-label*=" 移除 "]')
+    expect(removeButtons.length).toBe(2)
+    await act(async () => {
+      removeButtons[0]!.click()
+    })
+    const next = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.watermarkPresetIds
+    expect(next).toHaveLength(1)
+  })
+
+  it('「改为继承」写 undefined（不表态），与「移除」的空数组是两种语义', async () => {
+    await act(async () => {
+      useCompositeV2Store.setState({ presets: PRESETS })
+      useProjectTreeParamsStore.getState().setPostprocessOverride('direction-a', { watermarkPresetIds: ['preset-a'] })
+    })
+    act(() => {
+      root.render(<ConsoleDirectionTables />)
+    })
+    await act(async () => {
+      clickText('改为继承')
+    })
+    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.watermarkPresetIds).toBeUndefined()
   })
 })
