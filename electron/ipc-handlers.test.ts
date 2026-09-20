@@ -995,3 +995,54 @@ describe('图片写盘通道：fs:save-image 与 composite:save-image（字节�
     expect(existsSync(outside)).toBe(false)
   })
 })
+
+// TB-049 / R-62：`fs:ensure-dir` 失败时必须把**真因**交出去，不能塌缩成布尔 false。
+// 老实现 `catch (err) { console.error(err); return false }` 让渲染侧只拿到一个布尔值，
+// 白名单拒绝（'Path is outside allowed application directories'）与「磁盘不可写」完全无法区分，
+// 排查时摸不到白名单这一层 —— 用户看到的只是「导出位置不可用，请检查路径是否可达」。
+describe('fs:ensure-dir 的失败原因必须可诊断（TB-049 / R-62）', () => {
+  const dirFixtures = path.join(allowedRoot, 'ensure-dir-fixtures')
+
+  async function resolveEnsureDir() {
+    vi.mocked(ipcMain.handle).mockClear()
+    const mod = await import('./ipc-handlers')
+    mod.registerIpcHandlers()
+    const call = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'fs:ensure-dir')
+    expect(call).toBeTruthy()
+    return call![1] as unknown as (event: unknown, payload: { dirPath: string }) => Promise<unknown>
+  }
+
+  function trustedSender() {
+    // 与上面那个 describe 同一个口径：可信来源必须匹配打包后的 index.html，
+    // 否则 `handleChecked` 的发送方校验会先一步把请求挡掉（那样测的就不是白名单了）。
+    const frame = { url: new URL('../dist/index.html', import.meta.url).href }
+    return { senderFrame: frame, sender: { mainFrame: frame } }
+  }
+
+  it('白名单内的目录建成并返回 true', async () => {
+    const handler = await resolveEnsureDir()
+    const target = path.join(dirFixtures, 'nested', 'deep')
+    await expect(handler(trustedSender(), { dirPath: target })).resolves.toBe(true)
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('已存在的目录重复调用仍返回 true（幂等）', async () => {
+    const handler = await resolveEnsureDir()
+    const target = path.join(dirFixtures, 'nested', 'deep')
+    await expect(handler(trustedSender(), { dirPath: target })).resolves.toBe(true)
+  })
+
+  it('白名单外的目录返回**错误消息字符串**而不是 false —— 真因不得被吞掉', async () => {
+    const handler = await resolveEnsureDir()
+    // 刻意造一个白名单外的路径：`app.getPath` 被 mock 成 allowedRoot，
+    // 所以系统临时目录之外的盘符路径一定不在放行范围内。
+    const outside = 'Z:\\tangbao-not-allowed\\导出'
+    const result = await handler(trustedSender(), { dirPath: outside })
+
+    // 关键断言：不是布尔 false，而是能读到原因的字符串
+    expect(result).not.toBe(false)
+    expect(typeof result).toBe('string')
+    expect(result as string).toContain('outside allowed application directories')
+    // 反向验证锚点：若改回 `return false`，上面这两条立刻挂
+  })
+})

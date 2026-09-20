@@ -128,6 +128,10 @@ export async function writeRequirementManifests(
   if (outputPaths.length === 0) return false
   await Promise.all(
     outputPaths.map(async (outputPath) => {
+      // 与后处理同一条口径（TB-049）：写之前先把目标目录纳入主进程白名单。
+      // 这里的路径来自任务自己的 `scheduledOutputPath`，可能指向业务盘，不先授权会被
+      // `assertAllowedPath` 拒掉而悄悄什么都不写。
+      await api.authorizeCompositeOutputDirectory?.(outputPath)
       await api.ensureDir(outputPath)
       const jsonPath = await joinPath(outputPath, `${order.number}-manifest.json`)
       const htmlPath = await joinPath(outputPath, `${order.number}-overview.html`)

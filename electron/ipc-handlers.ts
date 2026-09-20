@@ -1200,8 +1200,12 @@ export function registerIpcHandlers(): void {
       if (!existsSync(safeDirPath)) mkdirSync(safeDirPath, { recursive: true })
       return true
     } catch (err) {
+      // 这里曾经只 `console.error` 后 `return false`，渲染侧只拿到一个布尔值，
+      // 「Path is outside allowed application directories」这类真因永久丢失 ——
+      // 用户看到的是「导出位置不可用」，排查时完全摸不到白名单这一层（R-62 / TB-049）。
+      // 返回字符串让失败原因能一路带到界面上，调用方按 `=== true` 判成功即可。
       console.error('创建目录失败:', err)
-      return false
+      return err instanceof Error ? err.message : '创建目录失败'
     }
   })
 

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type AgentConversation, type AgentRound, type TaskRecord } from '../types'
 import {
+  authorizeOutputDirectory,
   formatAgentRoundSummaryMarkdown,
+  getExplicitImageSaveDirectory,
   getLocalImageSaveDirectoryForSegments,
   readThumbnailFromDisk,
   saveAgentRoundSummaryToLocal,
@@ -326,5 +328,78 @@ describe('导出成图写盘：字节优先、dataUrl 回退', () => {
     } as unknown as Api
     await expect(saveCompositeImage(api, '/out/legacy.jpg', DATA_URL)).resolves.toBe(true)
     expect(api.saveCompositeImage).toHaveBeenCalledWith('/out/legacy.jpg', DATA_URL)
+  })
+})
+
+// TB-049：手输的导出目录先授权、再建目录。
+// 这一组直接调真实实现（`authorizeOutputDirectory` / `getExplicitImageSaveDirectory`），
+// 覆盖的是「这两个函数自身的行为」。
+// ⚠️ 调用**顺序**（授权必须在建目录之前）锁在 `features/postprocess/outputRootResolver.test.ts` ——
+// 那才是 bug 真正住的地方；本组测试单独存在时会漏掉顺序问题（反向验证踩过）。
+describe('TB-049 · 导出目录授权先于建目录', () => {
+  function installApi(
+    authorize: (dir: string) => Promise<boolean>,
+    ensureDir: (dir: string) => Promise<boolean | string>,
+  ) {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: {} })
+    Object.defineProperty(globalThis.window, 'electronAPI', {
+      configurable: true,
+      value: { isElectron: true, authorizeCompositeOutputDirectory: authorize, ensureDir },
+    })
+  }
+
+  it('authorizeOutputDirectory 把手输路径原样交给主进程授权', async () => {
+    const authorize = vi.fn(async () => true)
+    installApi(
+      authorize,
+      vi.fn(async () => true),
+    )
+    await expect(authorizeOutputDirectory('D:/导出/保险')).resolves.toBe(true)
+    expect(authorize).toHaveBeenCalledWith('D:/导出/保险')
+  })
+
+  it('authorizeOutputDirectory 对空串返回 false，不把 CWD 当受信根', async () => {
+    const authorize = vi.fn(async () => true)
+    installApi(
+      authorize,
+      vi.fn(async () => true),
+    )
+    await expect(authorizeOutputDirectory('')).resolves.toBe(false)
+    await expect(authorizeOutputDirectory('   ')).resolves.toBe(false)
+    expect(authorize).not.toHaveBeenCalled()
+  })
+
+  it('主进程拒绝（返回 false）时授权结果为 false，而不是默默放行', async () => {
+    installApi(
+      vi.fn(async () => false),
+      vi.fn(async () => true),
+    )
+    await expect(authorizeOutputDirectory('D:/导出')).resolves.toBe(false)
+  })
+
+  it('旧 preload 没有授权通道时返回 false（不假装成功）', async () => {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: {} })
+    Object.defineProperty(globalThis.window, 'electronAPI', {
+      configurable: true,
+      value: { isElectron: true, ensureDir: vi.fn(async () => true) },
+    })
+    await expect(authorizeOutputDirectory('D:/导出')).resolves.toBe(false)
+  })
+
+  it('ensureDir 返回错误消息字符串时判为失败，不会当成目录建好了', async () => {
+    const authorize = vi.fn(async () => true)
+    installApi(
+      authorize,
+      vi.fn(async () => 'Path is outside allowed application directories'),
+    )
+    await expect(getExplicitImageSaveDirectory('D:/导出')).resolves.toBeNull()
+  })
+
+  it('授权 + 建目录都成功时返回目录本身', async () => {
+    installApi(
+      vi.fn(async () => true),
+      vi.fn(async () => true),
+    )
+    await expect(getExplicitImageSaveDirectory('D:/导出/保险')).resolves.toBe('D:/导出/保险')
   })
 })

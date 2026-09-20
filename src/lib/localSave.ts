@@ -48,7 +48,7 @@ type ElectronAPI = {
   authorizeCompositeOutputDirectory?: (dirPath: string) => Promise<boolean>
   saveJson: (filePath: string, data: unknown) => Promise<boolean>
   saveText: (filePath: string, content: string) => Promise<boolean>
-  ensureDir: (dirPath: string) => Promise<boolean>
+  ensureDir: (dirPath: string) => Promise<boolean | string>
   pathJoin: (...paths: string[]) => Promise<string>
   checkExists: (filePath: string) => Promise<boolean>
   readDir: (dirPath: string) => Promise<string[]>
@@ -599,13 +599,41 @@ export async function getLocalImageSaveDirectoryForSegments(segments: string[]):
   return imagesDir
 }
 
+/**
+ * 把用户在输入框里**手输**的导出位置纳入主进程白名单（TB-049）。
+ *
+ * 为什么需要这一步：主进程的 `assertAllowedPath` 只放行 桌面/文档/下载/图片/userData +
+ * `localSettings.localSavePath` + 本次会话通过**目录选择对话框**选过的路径
+ * （`sessionAllowedRoots`，内存态、重启清空）。而「按渠道设置导出位置」这一栏
+ * （`ChannelOutputDirs`）允许用户**直接敲路径**，敲进去的 `D:\...` 不在白名单里，
+ * 于是 `fs:ensure-dir` 抛「Path is outside allowed application directories」并被
+ * catch 成 `false` → 整批产出静默跳过，界面上只看到「导出位置不可用」，真因永久丢失。
+ *
+ * 口径（杰哥 2026-09-20 确认）：**用户在设置里显式填过的目录即视为受信**。
+ * 这不是「开放整个盘」—— 目录是用户自己敲进去的，等价于一次授权行为。
+ *
+ * 必须在 `ensureDir` **之前**调用：`ensureDir` 内部第一句就是 `assertAllowedPath`，
+ * 授权晚一步就永远轮不到。文件夹选择对话框走的是另一条路（选完主进程自己就 add 了），
+ * 这里重复调用无害。
+ */
+export async function authorizeOutputDirectory(outputDirectory: string): Promise<boolean> {
+  const api = getAPI()
+  if (!api) return false
+  const trimmed = resolveOutputDirectoryVariables(outputDirectory.trim())
+  if (!trimmed) return false
+  return (await api.authorizeCompositeOutputDirectory?.(trimmed)) ?? false
+}
+
 export async function getExplicitImageSaveDirectory(outputDirectory: string): Promise<string | null> {
   const api = getAPI()
   if (!api) return null
   const trimmed = resolveOutputDirectoryVariables(outputDirectory.trim())
   if (!trimmed) return null
+  // 先前把授权放在后面（`taskPostprocess` 里 `ensureDir` 之后），等于永远等不到。
+  // `ensureDir` 现在失败时返回**错误消息字符串**而不是 `false`（R-62），所以这里同时兼容
+  // 布尔与字符串：只有 `true` 才算成功，字符串走「失败但可诊断」的路径由上层决定怎么提示。
   const ok = await api.ensureDir(trimmed)
-  return ok ? trimmed : null
+  return ok === true ? trimmed : null
 }
 
 export async function saveRawCacheImageToLocal(

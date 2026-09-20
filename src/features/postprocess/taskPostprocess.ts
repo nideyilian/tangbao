@@ -12,6 +12,7 @@
 
 import type { AssetCollection, TaskPostprocessOutput } from '../../types'
 import {
+  authorizeOutputDirectory,
   getExplicitImageSaveDirectory,
   getLocalSavePath,
   isElectron,
@@ -36,6 +37,7 @@ import { mergePromotedGlobals, useProjectTreeParamsStore } from '../projectTree/
 import type { ProjectNodeParamsMap } from '../projectTree/types'
 import { renderWithMaxKb } from './renderVariant'
 import { resolveBucketOutputRoots } from './outputRoots'
+import { createOutputRootResolver } from './outputRootResolver'
 import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
@@ -138,16 +140,15 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     return result
   }
 
-  /** 同一批图多半共用输出目录，按配置串缓存，避免每张图都走一次目录创建与授权。 */
-  const outputRootCache = new Map<string, string | null>()
-  const resolveOutputRootCached = async (configured: string): Promise<string | null> => {
-    const key = configured.trim()
-    const cached = outputRootCache.get(key)
-    if (cached !== undefined) return cached
-    const root = await resolveOutputRoot(configured)
-    outputRootCache.set(key, root)
-    return root
-  }
+  /**
+   * 同一批图多半共用输出目录，按配置串缓存，避免每张图都走一次目录创建与授权。
+   *
+   * 顺序（授权 → 建目录）不可交换，理由见 `outputRootResolver.ts` 的模块注释（TB-049）。
+   */
+  const resolveOutputRootCached = createOutputRootResolver({
+    authorize: authorizeOutputDirectory,
+    resolve: resolveOutputRoot,
+  })
 
   /** 配置级问题（预设被删、方向关闭）每批只提示一次，不逐图刷屏。 */
   const warnOnce = (message: string) => {
@@ -437,6 +438,13 @@ async function renderVariant(
   return await renderWithMaxKb(renderInput, plan.unit.maxSizeKb)
 }
 
+/**
+ * 逐级建子目录（`2026-09-20/保险/…` 这类）。
+ *
+ * 子目录跟在已授权的根目录之下，且**每一级都先授权再建**：只授权根目录是不够的 ——
+ * `assertAllowedPath` 逐级检查的是实际写入路径，多一层没授权就整条链断在这里，
+ * 而 `ensureDir` 现在会在失败时返回错误消息字符串（不再是布尔 `false`），所以用 `!== true` 判定。
+ */
 async function ensureDirectoryChain(
   api: NonNullable<Window['electronAPI']>,
   root: string,
@@ -445,8 +453,9 @@ async function ensureDirectoryChain(
   let directory = root
   for (const segment of subFolders) {
     directory = await api.pathJoin(directory, sanitizeFolderName(segment))
+    await api.authorizeCompositeOutputDirectory?.(directory)
     const ok = await api.ensureDir(directory)
-    if (!ok) return null
+    if (ok !== true) return null
   }
   return directory
 }
