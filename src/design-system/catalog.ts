@@ -985,11 +985,18 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Card', 'Thumbnail', 'Badge', 'Checkbox', 'Button', 'Popover', 'Menu'],
   },
   {
+    module: 'src/features/composite/components/ConsoleMediaTables.tsx',
+    responsibility:
+      '中控台「渠道与尺寸」分区的表格本体：渠道表（含参与产出勾选与尺寸计数）+ 尺寸表（含跨渠道移动），规格增删改就地完成',
+    decision: 'compose',
+    targets: ['DataGrid', 'SectionHeader', 'Alert', 'Button', 'IconButton', 'SelectField', 'TextField'],
+  },
+  {
     module: 'src/features/composite/components/MediaSection.tsx',
     responsibility:
-      '中控台「渠道与尺寸」分区：渠道分组 + 组内尺寸卡片 + 分组头「N / M 已应用」计数徽章；规格增删改复用 MediaTableManager（折叠在下段）',
+      '中控台「渠道与尺寸」分区：画面方向（整批三选一）+ 渠道与尺寸两张可编辑表 + 纯净版产出项；卡片看板的信息已全部并入渠道表的列',
     decision: 'compose',
-    targets: ['SectionHeader', 'Badge', 'Checkbox', 'EmptyState', 'Button'],
+    targets: ['SectionHeader', 'SegmentedControl', 'Checkbox', 'DataGrid'],
   },
   {
     module: 'src/features/composite/components/OutputSection.tsx',
@@ -1061,12 +1068,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
       'Switch',
       'TextField',
     ],
-  },
-  {
-    module: 'src/features/postprocess/MediaTableManager.tsx',
-    responsibility: '媒体表管理区（渠道与尺寸规格的增删改）',
-    decision: 'compose',
-    targets: ['Alert', 'Button', 'Checkbox', 'IconButton', 'SectionHeader', 'Switch', 'TextField'],
   },
   {
     module: 'src/features/requirementPrototype/QueueRunner.tsx',

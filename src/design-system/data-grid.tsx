@@ -5,8 +5,9 @@
  *
  * 中控台是全部数据的本体（见 `lib/controlConsoleSections.ts` 的头注），而它的每一个数据面
  * —— 渠道、尺寸、输出位置、方向参数、水印归属、分发 —— 都是「多条同构记录」。
- * 用卡片或表单逐条改既慢又容易漏（`MediaTableManager` 那种卡片式编辑器就是例子：
- * 「改规格」要先展开、再逐个字段点）。
+ * 用卡片或表单逐条改既慢又容易漏：中控台原先那套卡片式规格编辑器
+ * （`MediaTableManager`，TB-060 已被本组件取代并删除）就是例子 ——
+ * 「改规格」要先展开、再逐个字段点。
  *
  * 表格把「哪些行、哪些列、当前值」一次摆在眼前。**更重要的是它给了导入导出一个单一形状**：
  * 列定义同时驱动界面编辑与 Excel 表头映射，不存在「界面上叫渠道名、导出叫 name」这种两套清单。
@@ -19,7 +20,7 @@
  *    下标做 key 时，删行或排序会让正在编辑的单元格把值写到隔壁行上 —— 这是静默写坏数据。
  * 3. **单元格是草稿态提交**：输入期间只动本地 draft，失焦或回车才 `onCellCommit`。
  *    直接受控会在用户删空输入框的瞬间把它回填成原值，数字根本改不了
- *    （`MediaTableManager` 的 `SizeField` 已经踩过这个坑，注释还在）。
+ *    （原 `MediaTableManager` 的 `SizeField` 已经踩过这个坑）。
  *
  * ## 校验失败不写库
  *
@@ -48,6 +49,14 @@ export interface DataGridColumn<Row> {
   /** 数字列右对齐更易比较。 */
   align?: 'start' | 'end'
   placeholder?: string
+  /**
+   * 逐行不同的 placeholder（优先于 `placeholder`）。
+   *
+   * 用于「空值的含义取决于这一行」的场景：输出目录留空 = 继承上级，
+   * 而**每一级继承到的目录不同**，把具体路径显示出来用户才能核对。
+   * 与 `optionsForRow` 同一套思路。
+   */
+  placeholderForRow?: (row: Row) => string
   /** `select` 编辑器的候选（全表共用一套时给这个）。 */
   options?: SelectOption[]
   /** `select` 编辑器的候选（逐行不同时给这个，如「渠道」取决于行）。优先于 `options`。 */
@@ -224,7 +233,7 @@ function GridCell<Row extends object>({ column, row, rowId, onCommit }: GridCell
         className={cx('ds-input', 'ds-data-grid__editor', column.align === 'end' && 'ds-data-grid__editor--end')}
         aria-label={`${column.header}：${getRowLabel(row)}`}
         aria-invalid={error ? true : undefined}
-        placeholder={column.placeholder}
+        placeholder={column.placeholderForRow?.(row) ?? column.placeholder}
         value={shown}
         onFocus={() => {
           setDraft(toEditorText(rawValue))

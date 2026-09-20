@@ -195,7 +195,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
   })
 })
 
-describe('中控台 · 渠道与尺寸分区（画面方向 + 渠道勾选 + 规格入口）', () => {
+describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   it('画面方向默认「跟随尺寸」，在这里可以整批强制竖版', () => {
     render(<MediaSection />)
     expect(text()).toContain('画面方向')
@@ -208,24 +208,23 @@ describe('中控台 · 渠道与尺寸分区（画面方向 + 渠道勾选 + 规
     expect(usePostprocessMediaStore.getState().direction).toBeNull()
   })
 
-  it('勾选渠道写进 selectedMediaIds（决定这个渠道参不参与产出）', () => {
+  it('渠道表的「参与产出」开关写进 selectedMediaIds（决定这个渠道参不参与产出）', () => {
     render(<MediaSection />)
-    clickByAriaLabel('应用渠道 广点通')
+    clickByAriaLabel('参与产出：广点通')
     expect(usePostprocessMediaStore.getState().selectedMediaIds).toContain('gdt')
   })
 
-  it('「编辑规格」展开媒体表，渠道与尺寸的增删入口还在', () => {
+  it('渠道表与尺寸表直接可见、就地可编辑：不再需要先展开折叠的规格编辑器', () => {
     render(<MediaSection />)
-    const before = container.querySelector<HTMLInputElement>('input[placeholder="新渠道名称，如「抖音」"]')
-    expect(before).toBeNull()
-    clickByText('编辑规格')
+    expect(container.querySelector('table[aria-label="渠道表"]')).toBeTruthy()
+    expect(container.querySelector('table[aria-label="尺寸表"]')).toBeTruthy()
     expect(container.querySelector<HTMLInputElement>('input[placeholder="新渠道名称，如「抖音」"]')).toBeTruthy()
   })
 
-  it('渲染每个渠道已有的尺寸数与横竖标签', () => {
+  it('渠道名、尺寸数与横竖标签都落在列上（原卡片看板的信息一个没丢）', () => {
     const body = render(<MediaSection />)
     expect(body).toContain('广点通')
-    expect(body).toContain('1280 × 720')
+    expect(body).toContain('尺寸数')
     expect(body).toContain('横版')
   })
 })
