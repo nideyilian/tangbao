@@ -1,8 +1,11 @@
-import { useState } from 'react'
-import { Button, TextArea } from '../../design-system'
+import { useEffect, useRef, useState } from 'react'
+import { Badge, Button, TextArea } from '../../design-system'
 import { EyeIcon as Eye, ShuffleIcon as Shuffle, SparklesIcon as Sparkles } from '../../design-system/icons'
 import { parseCampaignRecipeText, toCampaignRecipeConfig, type ParsedCampaignRecipe } from './campaignRecipeImport'
-import SopCampaignRecipeParseResultDialog, { countParsedRecipeAttention } from './SopCampaignRecipeParseResultDialog'
+import SopCampaignRecipeParseResultDialog, {
+  countParsedRecipeAttention,
+  summarizeParsedRecipe,
+} from './SopCampaignRecipeParseResultDialog'
 import type { CampaignRecipeDimension } from './campaignRecipe'
 import type { SopCampaignRecipeConfig } from './types'
 
@@ -17,6 +20,11 @@ import type { SopCampaignRecipeConfig } from './types'
  * 2026-09-20 杰哥定的形态：「外面窗口只显示原文内容」，因为解析完一次之后用户反复操作的是
  * 骨架与维度池，留在原地下方会让面板越滚越长、录入区反被挤没。
  * ⇒ **弹窗不再是只读详情，它同时是编辑面**；面板上已无任何骨架 / 维度的编辑入口。
+ *
+ * 2026-09-20 追加：外面**要能看出「这个配方卡填了什么、解析到哪一步」**——
+ * 从库里打开的配方卡不会经过「粘贴原文」这一步，只有录入框的话外面一片空白，
+ * 无法判断有没有内容。所以下面多了一块**内容概览**（只读）：解析状态徽章 +
+ * 骨架原文 + 维度规模。它是「原文」的展示，不是编辑器。
  *
  * 关键约束：解析**只填能确定的字段**，认不出的一律留空并在详情里点明，
  * 绝不静默编造 —— 一个错的配方比一个报错的配方危险得多。
@@ -40,10 +48,52 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
    * 关掉就丢会让入口变成一次性的。
    */
   const [parseResultOpen, setParseResultOpen] = useState(false)
+  /**
+   * 解析进行中。**不是装饰**：解析是本地同步函数，几百 KB 的原文会把主线程卡住，
+   * 所以 handleParse 先置这个标志渲染一帧，再在下一 tick 跑解析 ——
+   * 让用户看到「正在解析」而不是「界面卡住」。
+   */
+  const [parsing, setParsing] = useState(false)
+  /** 上次解析所用的原文：与当前录入框不一致 ⇒ 提示「原文已改动，需重新解析」 */
+  const [lastParsedText, setLastParsedText] = useState('')
+  const parseTimerRef = useRef<number | null>(null)
 
   /** 入口按钮上只报「有几条要留意」，细节进弹窗（外面不重复铺内容） */
   const attentionCount = countParsedRecipeAttention(parsed)
 
+  /** 已保存的骨架与维度规模：外面据此判断「这个配方卡填了没有、大概填了多少」 */
+  const body = config.body ?? ''
+  const dimensions = config.dimensions ?? []
+  const summary = summarizeParsedRecipe(dimensions)
+
+  /**
+   * 解析状态。五态而不是四态：`已保存内容` 单列 ——
+   * 从库里打开的配方卡带着上次存下的骨架，本次并没有解析过，
+   * 把它算作「待解析」会让人以为内容没保存，算作「解析完成」又是假的。
+   */
+  type ParseStatus = 'idle' | 'parsing' | 'success' | 'failed' | 'saved'
+  const parseStatus: ParseStatus = parsing
+    ? 'parsing'
+    : parsed
+      ? parsed.ok && !parseError
+        ? 'success'
+        : 'failed'
+      : (config.body ?? '').trim().length > 0 || dimensions.length > 0
+        ? 'saved'
+        : 'idle'
+  const PARSE_STATUS_META: Record<
+    ParseStatus,
+    { label: string; tone: 'neutral' | 'info' | 'success' | 'danger' | 'warning' }
+  > = {
+    idle: { label: '待解析', tone: 'warning' },
+    parsing: { label: '解析中…', tone: 'info' },
+    success: { label: '解析完成', tone: 'success' },
+    failed: { label: '解析失败', tone: 'danger' },
+    saved: { label: '已保存内容', tone: 'neutral' },
+  }
+  const statusMeta = PARSE_STATUS_META[parseStatus]
+  /** 解析完之后又改了原文 ⇒ 当前内容可能已经对不上了 */
+  const rawChangedAfterParse = Boolean(parsed) && rawText !== lastParsedText
   /**
    * 入口的可用条件：**有解析结果，或本来就带着配置**。
    *
@@ -53,42 +103,63 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
    */
   const hasConfigContent = (config.body ?? '').trim().length > 0 || (config.dimensions ?? []).length > 0
   const canOpenDetail = Boolean(parsed) || hasConfigContent
-
-  /** 主控槽展示口径：HEAD 版本用解析出的声明（引擎侧的权重推导落地后可换成按权重算） */
+  /** 主控槽展示口径：用解析出的声明（引擎侧的权重推导落地后可换成按权重算） */
   const dominantSlotsForDisplay = meta?.dominantSlots ?? []
 
   function handleParse() {
-    const result = parseCampaignRecipeText(rawText)
-    setParsed(result)
-    if (!result.ok) {
-      setParseError(result.error)
-      return
-    }
-    // 解析成功 → 填入可编辑表单（这是「先确认再落库」的关键：不直接覆盖保存）
-    const next = toCampaignRecipeConfig(result)
-    if (!next) {
-      setParseError('解析出的配方卡缺少骨架或可用维度，请在下方手动补齐')
-      return
-    }
+    if (parsing) return
+    const text = rawText
+    setParsing(true)
     setParseError('')
-    // 这里不再拼「已识别 N 个维度、组合空间 M 条」的提示：
-    // 那些数字在下方「解析结果确认」区块里本来就有，细节在「查看解析结果」弹窗里，
-    // 外面再报一遍就是三处重复（加了弹窗就该把外面那层收掉）。
-    onChange(next)
-    onMetaChange?.({
-      ...(result.name ? { name: result.name } : {}),
-      ...(result.desc ? { desc: result.desc } : {}),
-      ...(result.dominantSlots.length > 0 ? { dominantSlots: result.dominantSlots } : {}),
-    })
+    // 先渲染一帧「解析中」再跑同步解析：大原文会把主线程卡住，
+    // 没有这一帧用户只会看到界面没反应（见 `parsing` 的注释）。
+    parseTimerRef.current = window.setTimeout(() => {
+      parseTimerRef.current = null
+      try {
+        const result = parseCampaignRecipeText(text)
+        setParsed(result)
+        setLastParsedText(text)
+        if (!result.ok) {
+          setParseError(result.error)
+          return
+        }
+        // 解析成功 → 填入可编辑表单（这是「先确认再落库」的关键：不直接覆盖保存）
+        const next = toCampaignRecipeConfig(result)
+        if (!next) {
+          setParseError('解析出的配方卡缺少骨架或可用维度，请到详情里手动补齐')
+          return
+        }
+        setParseError('')
+        // 这里不再拼「已识别 N 个维度、组合空间 M 条」的提示：
+        // 那些数字在下面的「内容概览」与详情弹窗里各有一次，外面再报一遍就是重复。
+        onChange(next)
+        onMetaChange?.({
+          ...(result.name ? { name: result.name } : {}),
+          ...(result.desc ? { desc: result.desc } : {}),
+          ...(result.dominantSlots.length > 0 ? { dominantSlots: result.dominantSlots } : {}),
+        })
+      } finally {
+        setParsing(false)
+      }
+    }, 0)
   }
+
+  useEffect(
+    () => () => {
+      if (parseTimerRef.current !== null) window.clearTimeout(parseTimerRef.current)
+    },
+    [],
+  )
 
   function handleClearInput() {
     setRawText('')
     setParsed(null)
     setParseError('')
+    setLastParsedText('')
     // 解析结果被清掉了，弹窗留在空态会让人以为「内容丢了」，直接关掉
     setParseResultOpen(false)
   }
+
   return (
     <section className="sop-recipe-panel" aria-label="配方卡引擎配置">
       <header className="sop-recipe-panel__header">
@@ -137,7 +208,8 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
             <span className="sop-recipe-import__hint">{rawText.trim().length} 字符</span>
             {/* 原文区域右下角的弹窗入口。放在字符数**之后** ⇒ 落在整栏最右端
                 （字符数自带 margin-left:auto，插在它前面会被挤到中间）。
-                没解析过时禁用并说明原因：给一个点了没反应的按钮比不给更糟。 */}
+                没解析过时禁用并说明原因：给一个点了没反应的按钮比不给更糟。
+                按钮上只报「有几条要留意」，细节一律进弹窗 —— 外面不重复铺内容。 */}
             <Button
               size="sm"
               variant="secondary"
@@ -155,22 +227,45 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
               {attentionCount > 0 ? `查看解析结果（${attentionCount} 条待注意）` : '查看解析结果'}
             </Button>
           </div>
+        </div>
+
+        {/* 内容概览（只读）：不打开详情就能看出「这个配方卡填了什么 / 解析到哪一步」。
+            状态、失败原因、骨架原文、维度规模都收在这一块里 ——
+            原来散在录入区里的成功提示与失败提示已删除，避免同一件事两处都说。
+            只读：编辑入口只有「查看解析结果」弹窗一个。 */}
+        <section className="sop-recipe-overview" aria-label="配方卡内容概览">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+            {attentionCount > 0 && <Badge tone="warning">{attentionCount} 条待注意</Badge>}
+            <span className="text-xs text-ds-muted dark:text-ds-muted">
+              {hasConfigContent
+                ? `${dimensions.length} 个维度 · ${summary.optionCount} 个候选值 · 组合空间 ${summary.combinationCount} 条`
+                : '尚未填写内容'}
+            </span>
+          </div>
 
           {parseError && (
             <p className="sop-recipe-panel__warning" role="alert">
               {parseError}
             </p>
           )}
-          {/* 只留「动作完成了」这一句即时反馈，**不带任何数字**：
-              维度数与组合空间在详情弹窗的维度池标题行里说，细节全在弹窗里，
-              这里再报一遍就是三处重复 —— 加了弹窗就该把外面那层收掉。
-              `!parseError` 是必须的：解析出了骨架/维度的失败分支同样会让 ok=true。
-              文案刻意不提「已填入」：解析成功但骨架/维度为空时，弹窗里会提示缺什么，
-              说「已填入」会与那提示自相矛盾。它只是「动作完成」的信号，不承诺结果完整。 */}
-          {parsed?.ok && !parseError && (
-            <p className="sop-recipe-panel__success">解析完成，点右侧「查看解析结果」核对并微调。</p>
+          {rawChangedAfterParse && !parsing && (
+            <p className="sop-recipe-panel__hint">录入框里的原文已改动，点「解析」更新下面这份内容。</p>
           )}
-        </div>
+
+          {hasConfigContent ? (
+            <>
+              <span className="text-xs text-ds-muted dark:text-ds-muted">当前骨架（配方卡原文）：</span>
+              <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-ds-lg border border-ds-border bg-ds-surface-subtle px-2 py-1.5 font-mono text-xs text-ds-text dark:border-ds-border dark:bg-ds-surface-subtle dark:text-ds-text">
+                {body.trim() || '（骨架为空，请到详情里补上）'}
+              </pre>
+            </>
+          ) : (
+            <p className="sop-recipe-panel__hint">
+              这个配方卡还没有内容：在上面粘贴原文后点「解析」，或进「查看解析结果」手动加骨架与维度。
+            </p>
+          )}
+        </section>
       </div>
 
       {/* 配方卡详情弹窗：解析结果的唯一查看与编辑处（骨架 / 维度池 / 预览 / 词表都在里面）。
