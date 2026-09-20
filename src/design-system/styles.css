@@ -2179,11 +2179,14 @@
   max-width: 64rem;
 }
 
-/* 后期处理工作区弹窗：占界面 80%，内容区铺满且不额外滚动（工作区内部自行滚动） */
+/* 后期处理工作区弹窗：宽占界面 80%、**高随内容**（上限 80dvh），
+   内容区铺满且不额外滚动（工作区内部自行滚动） */
 .ds-dialog--postprocess {
   width: 80vw;
   max-width: 80vw;
-  height: 80dvh;
+  /* 高度按内容自适应（2026-09-20 报障）：写死 80dvh 时，参数少的方向/全局默认
+     排不满就在底部留一大片空白。上限仍由 max-height 兜住，超高交给内容区自己滚。 */
+  height: auto;
   max-height: 80dvh;
 }
 
@@ -2193,9 +2196,11 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* 撑满 header 之后的剩余高度：没有 flex-grow 时内容区按固有高度渲染，
-     弹窗固定 80dvh 后底部会露出空白 */
-  flex: 1 1 0;
+  /* 撑满 header 之后的剩余高度：没有 flex-grow 时内容区按固有高度渲染，会露空白。
+     basis 必须是 auto 而不是 0 —— 弹窗高度改由内容决定后，basis 0 会让内容区
+     在固有尺寸计算里贡献 0，弹窗直接塌成「头 + 脚」（内容区 min-height 也是 0）。
+     auto 在两种情形都对：内容少时贴合内容，被 max-height 截住时仍能撑满并内部滚动。 */
+  flex: 1 1 auto;
 }
 
 .ds-dialog__header,
