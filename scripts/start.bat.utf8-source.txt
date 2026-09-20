@@ -1,0 +1,147 @@
+@echo off
+REM ============================================================
+REM [!] 编码约定（改这个文件前必读）
+REM   本文件必须以 **GBK(936) + CRLF** 落盘，且**不要**加 `chcp 65001`。
+REM   ① 编码：cmd.exe 按「当前活动代码页」（本机 936）读取整个批处理文件。
+REM      文件若是 UTF-8 无 BOM，中文被解成乱码；乱码字节里含引号/括号时，
+REM      cmd 会把碎片当命令执行（实测报 `'pansion' 不是内部或外部命令`）。
+REM   ② 行尾：**只有 LF 的 .bat 会让 cmd 把多行拼成一行** —— 症状同样是
+REM      满屏「'xxx' 不是内部或外部命令」，比编码问题更隐蔽。
+REM   ③ 反过来，若用 GBK 落盘却又 `chcp 65001`，切页之后的行照样乱码。
+REM   => 保持 936 原样，不切代码页；转码时 LF→CRLF 一起做。
+REM ============================================================
+REM 必须开延迟展开：for 循环体内要读「本轮刚 set 的变量」（!VAR!），
+REM 用 %VAR% 会按解析时的旧值展开，拿到空串。
+setlocal enabledelayedexpansion
+cd /d "%~dp0"
+
+echo ========================================
+echo    糖包 TANGBAO - 开发版启动
+echo ========================================
+echo.
+
+REM Node 版本硬性要求：vite build / 主进程的 DatabaseSync 需要 Node 24。
+REM Node 22 会在构建时报 "DatabaseSync is not exported"，dev 也可能受限。
+REM
+REM ?? 不能只 where node.exe 拿第一个 —— 本机 PATH 里同时装着
+REM    v22（WorkBuddy 托管：C:\Users\tt\.workbuddy\binaries\node\versions\22.22.2-2\）
+REM    和 v24（系统安装：C:\Program Files\nodejs\），而 **v22 排在前面**。
+REM    原逻辑拿到 v22 → vite.config.ts 的 MIN_NODE_MAJOR=24 守卫抛错 →
+REM    表现为「双击 start.bat 没反应 / 只闪一下报错」。
+REM
+REM 修法：遍历 `where node.exe` 的**每一行**，逐个数主版本，取第一个 >= 24 的。
+REM
+REM 为什么不用 %ProgramFiles% 拼候选目录：实测该变量在继承来的环境里可能是**空的**
+REM （cmd 里 %ProgramFiles% 展开成空串 → 拼出 `\nodejs\node.exe` → 永远选不中），
+REM 而 `for %%D in ("%VAR%\x")` 的括号内也不做变量展开。`where` 的输出最可靠。
+
+set "TANGBAO_NODE="
+set "TANGBAO_NPM="
+set "TANGBAO_NODE_DIR="
+set "TANGBAO_PATH_NODE_VERSION="
+
+REM 记录 PATH 里第一个 node 的版本，仅用于报错提示
+for /f "tokens=*" %%a in ('node --version 2^>nul') do (
+    if not defined TANGBAO_PATH_NODE_VERSION set "TANGBAO_PATH_NODE_VERSION=%%a"
+)
+
+REM 逐个候选验版本（where 的输出按 PATH 顺序，v22 往往在前，所以必须全遍历）
+for /f "tokens=*" %%a in ('where node.exe 2^>nul') do (
+    if not defined TANGBAO_NODE (
+        for /f "tokens=*" %%v in ('"%%a" --version 2^>nul') do (
+            call :checkVersion "%%v"
+            if not errorlevel 1 (
+                set "TANGBAO_NODE=%%a"
+                REM 由 exe 全路径推 npm 路径：直接做字符串替换。
+                REM ?? 别用 `for %%p in ("%%a") do %%~dp` —— 路径含空格（"Program Files"）
+                REM 时 %%~dp 会被截断成 "C:"（实测），拼出 "C:npm.cmd"。
+                set "TANGBAO_NODE_DIR=!TANGBAO_NODE:\node.exe=!\"
+                set "TANGBAO_NPM=!TANGBAO_NODE_DIR!npm.cmd"
+            )
+        )
+    )
+)
+
+if not defined TANGBAO_NODE (
+    echo [错误] 未找到 Node.js 24 或更高版本。
+    echo        当前 PATH 中第一个 node 的版本为：%TANGBAO_PATH_NODE_VERSION%（不满足要求）
+    echo        请安装 Node 24：https://nodejs.org/
+    echo.
+    echo        提示：若本机已装 v24，说明是 PATH 顺序问题，
+    echo        把 v24 所在目录提到 PATH 前面即可（或直接改 start.bat 里的候选逻辑）。
+    goto :failed
+)
+
+for /f "tokens=*" %%a in ('"%TANGBAO_NODE%" --version') do set "NODE_VERSION=%%a"
+echo [就绪] Node.js %NODE_VERSION%
+echo        路径：%TANGBAO_NODE%
+
+REM 由 TANGBAO_NODE 统一推出目录与 npm，避免再走 %%~dpD（含空格路径会被截断）
+if not defined TANGBAO_NODE_DIR set "TANGBAO_NODE_DIR=%TANGBAO_NODE:\node.exe=%\"
+if not defined TANGBAO_NPM set "TANGBAO_NPM=%TANGBAO_NODE_DIR%npm.cmd"
+if not exist "%TANGBAO_NPM%" (
+    echo [错误] 未找到 npm：%TANGBAO_NPM%
+    goto :failed
+)
+echo        npm：%TANGBAO_NPM%
+
+REM 把 Node 所在目录提到 PATH 最前，保证 npm run dev 派生的子进程（vite/electron）
+REM 也用同一个 v24，而不是又回落到 v22。
+set "PATH=%TANGBAO_NODE_DIR%;%PATH%"
+goto :nodeReady
+
+:checkVersion
+REM %~1 = 形如 v24.14.0 的版本串。主版本 >= 24 返回 0，否则返回 1。
+for /f "tokens=1 delims=." %%m in ("%~1") do set "TANGBAO_MAJOR=%%m"
+set "TANGBAO_MAJOR=%TANGBAO_MAJOR:v=%"
+if not defined TANGBAO_MAJOR exit /b 1
+if %TANGBAO_MAJOR% GEQ 24 exit /b 0
+exit /b 1
+
+:nodeReady
+
+REM 端口 41731 是糖包的固定预留：dev server + 单实例锁 + leveldb 独占都是排他资源。
+REM 已在运行时不重复启动，避免两个实例互相顶掉（同一仓库默认单写线）。
+netstat -ano | findstr /R /C:"127.0.0.1:41731 .*LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo.
+    echo [提示] 检测到 41731 端口已被占用 —— 糖包开发版可能已经在运行。
+    echo        如果窗口没看到，请在任务栏找一下；要强制重启请先关闭现有实例。
+    echo.
+    REM TANGBAO_ASSUME_YES=1 供自动化脚本用（自检时避免卡在交互上）
+    if defined TANGBAO_ASSUME_YES goto :portOk
+    set /p "TANGBAO_CONTINUE=仍要继续启动吗？（继续可能与前一个实例互相顶掉）[y/N] "
+    if /i not "%TANGBAO_CONTINUE%"=="y" goto :done
+)
+:portOk
+
+if not exist "node_modules\electron\package.json" (
+    echo [准备] 正在安装项目依赖，请稍候...
+    call "%TANGBAO_NPM%" install
+    if errorlevel 1 (
+        echo [错误] 项目依赖安装失败。
+        goto :failed
+    )
+)
+
+echo [启动] 正在启动糖包开发版...
+echo        关闭本窗口或按 Ctrl+C 即停止。
+echo.
+call "%TANGBAO_NPM%" run dev
+set "TANGBAO_EXIT_CODE=%ERRORLEVEL%"
+
+if not "%TANGBAO_EXIT_CODE%"=="0" (
+    echo.
+    echo [错误] 程序启动失败，退出代码：%TANGBAO_EXIT_CODE%
+    goto :failed
+)
+
+goto :done
+
+:failed
+if not defined TANGBAO_NO_PAUSE pause
+exit /b 1
+
+:done
+if not defined TANGBAO_NO_PAUSE pause
+exit /b 0

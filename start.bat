@@ -1,96 +1,97 @@
 @echo off
-setlocal
-chcp 65001 >nul
+REM ============================================================
+REM [!] ±àÂëÔ¼¶¨£¨¸ÄÕâ¸öÎÄ¼þÇ°±Ø¶Á£©
+REM   ±¾ÎÄ¼þ±ØÐëÒÔ **GBK(936) + CRLF** ÂäÅÌ£¬ÇÒ**²»Òª**¼Ó `chcp 65001`¡£
+REM   ¢Ù ±àÂë£ºcmd.exe °´¡¸µ±Ç°»î¶¯´úÂëÒ³¡¹£¨±¾»ú 936£©¶ÁÈ¡Õû¸öÅú´¦ÀíÎÄ¼þ¡£
+REM      ÎÄ¼þÈôÊÇ UTF-8 ÎÞ BOM£¬ÖÐÎÄ±»½â³ÉÂÒÂë£»ÂÒÂë×Ö½ÚÀïº¬ÒýºÅ/À¨ºÅÊ±£¬
+REM      cmd »á°ÑËéÆ¬µ±ÃüÁîÖ´ÐÐ£¨Êµ²â±¨ `'pansion' ²»ÊÇÄÚ²¿»òÍâ²¿ÃüÁî`£©¡£
+REM   ¢Ú ÐÐÎ²£º**Ö»ÓÐ LF µÄ .bat »áÈÃ cmd °Ñ¶àÐÐÆ´³ÉÒ»ÐÐ** ¡ª¡ª Ö¢×´Í¬ÑùÊÇ
+REM      ÂúÆÁ¡¸'xxx' ²»ÊÇÄÚ²¿»òÍâ²¿ÃüÁî¡¹£¬±È±àÂëÎÊÌâ¸üÒþ±Î¡£
+REM   ¢Û ·´¹ýÀ´£¬ÈôÓÃ GBK ÂäÅÌÈ´ÓÖ `chcp 65001`£¬ÇÐÒ³Ö®ºóµÄÐÐÕÕÑùÂÒÂë¡£
+REM   => ±£³Ö 936 Ô­Ñù£¬²»ÇÐ´úÂëÒ³£»×ªÂëÊ± LF¡úCRLF Ò»Æð×ö¡£
+REM ============================================================
+REM ±ØÐë¿ªÑÓ³ÙÕ¹¿ª£ºfor Ñ­»·ÌåÄÚÒª¶Á¡¸±¾ÂÖ¸Õ set µÄ±äÁ¿¡¹£¨!VAR!£©£¬
+REM ÓÃ %VAR% »á°´½âÎöÊ±µÄ¾ÉÖµÕ¹¿ª£¬ÄÃµ½¿Õ´®¡£
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ========================================
-echo    ç³–åŒ… TANGBAO - å¼€å‘ç‰ˆå¯åŠ¨
+echo    ÌÇ°ü TANGBAO - ¿ª·¢°æÆô¶¯
 echo ========================================
 echo.
 
-REM Node ç‰ˆæœ¬ç¡¬æ€§è¦æ±‚ï¼švite build / ä¸»è¿›ç¨‹çš„ DatabaseSync éœ€è¦ Node 24ã€‚
-REM Node 22 ä¼šåœ¨æž„å»ºæ—¶æŠ¥ "DatabaseSync is not exported"ï¼Œdev ä¹Ÿå¯èƒ½å—é™ã€‚
+REM Node °æ±¾Ó²ÐÔÒªÇó£ºvite build / Ö÷½ø³ÌµÄ DatabaseSync ÐèÒª Node 24¡£
+REM Node 22 »áÔÚ¹¹½¨Ê±±¨ "DatabaseSync is not exported"£¬dev Ò²¿ÉÄÜÊÜÏÞ¡£
 REM
-REM âš ï¸ ä¸èƒ½åª where node.exe â€”â€” æœ¬æœº PATH é‡Œå¯èƒ½åŒæ—¶è£…ç€ v22ï¼ˆWorkBuddy/ä¾¿æºç‰ˆï¼‰å’Œ v24
-REM    ï¼ˆç³»ç»Ÿå®‰è£…ç‰ˆï¼‰ï¼Œè€Œ v22 å¸¸æŽ’åœ¨å‰é¢ã€‚æ­¤æ—¶ where æ‰¾å¾—åˆ° nodeï¼Œä½†æ‹¿åˆ°çš„æ˜¯ v22ï¼Œ
-REM    vite.config.ts çš„ MIN_NODE_MAJOR å®ˆå«ä¼šç›´æŽ¥æŠ›é”™ï¼Œè¡¨çŽ°ä¸ºã€Œstart.bat ç‚¹äº†æ²¡ååº”ã€ã€‚
-REM    è¿™é‡Œæ”¹ä¸ºã€ŒæŒ‰ç‰ˆæœ¬æŒ‘ã€ï¼šå…ˆæ‰¾ v24+ï¼Œæ‰¾åˆ°å°±ç”¨å®ƒçš„ç»å¯¹è·¯å¾„ï¼›éƒ½ä¸æ»¡è¶³æ‰æŠ¥é”™é€€å‡ºã€‚
+REM ?? ²»ÄÜÖ» where node.exe ÄÃµÚÒ»¸ö ¡ª¡ª ±¾»ú PATH ÀïÍ¬Ê±×°×Å
+REM    v22£¨WorkBuddy ÍÐ¹Ü£ºC:\Users\tt\.workbuddy\binaries\node\versions\22.22.2-2\£©
+REM    ºÍ v24£¨ÏµÍ³°²×°£ºC:\Program Files\nodejs\£©£¬¶ø **v22 ÅÅÔÚÇ°Ãæ**¡£
+REM    Ô­Âß¼­ÄÃµ½ v22 ¡ú vite.config.ts µÄ MIN_NODE_MAJOR=24 ÊØÎÀÅ×´í ¡ú
+REM    ±íÏÖÎª¡¸Ë«»÷ start.bat Ã»·´Ó¦ / Ö»ÉÁÒ»ÏÂ±¨´í¡¹¡£
+REM
+REM ÐÞ·¨£º±éÀú `where node.exe` µÄ**Ã¿Ò»ÐÐ**£¬Öð¸öÊýÖ÷°æ±¾£¬È¡µÚÒ»¸ö >= 24 µÄ¡£
+REM
+REM ÎªÊ²Ã´²»ÓÃ %ProgramFiles% Æ´ºòÑ¡Ä¿Â¼£ºÊµ²â¸Ã±äÁ¿ÔÚ¼Ì³ÐÀ´µÄ»·¾³Àï¿ÉÄÜÊÇ**¿ÕµÄ**
+REM £¨cmd Àï %ProgramFiles% Õ¹¿ª³É¿Õ´® ¡ú Æ´³ö `\nodejs\node.exe` ¡ú ÓÀÔ¶Ñ¡²»ÖÐ£©£¬
+REM ¶ø `for %%D in ("%VAR%\x")` µÄÀ¨ºÅÄÚÒ²²»×ö±äÁ¿Õ¹¿ª¡£`where` µÄÊä³ö×î¿É¿¿¡£
 
 set "TANGBAO_NODE="
 set "TANGBAO_NPM="
+set "TANGBAO_NODE_DIR="
+set "TANGBAO_PATH_NODE_VERSION="
 
-REM â‘  ä¼˜å…ˆç”¨ PATH é‡Œçš„ node â€”â€” ä½†å¿…é¡»éªŒç‰ˆæœ¬ï¼ˆfor /f å–ç‰ˆæœ¬å·å†æ¯”è¾ƒä¸»ç‰ˆæœ¬ï¼‰
-for /f "tokens=*" %%a in ('node --version 2^>nul') do set "TANGBAO_PATH_NODE_VERSION=%%a"
-
-REM â‘¡ ä¾æ¬¡å°è¯•å¸¸è§å®‰è£…ä½ç½®ï¼ˆç³»ç»Ÿå®‰è£…ç‰ˆä¼˜å…ˆï¼‰
-for %%D in (
-    "%ProgramFiles%\nodejs"
-    "%ProgramFiles(x86)%\nodejs"
-    "%LOCALAPPDATA%\Programs\nodejs"
-    "%APPDATA%\nvm"
-) do (
-    if not defined TANGBAO_NODE if exist "%%~D\node.exe" (
-        call :tryNode "%%~D"
-    )
+REM ¼ÇÂ¼ PATH ÀïµÚÒ»¸ö node µÄ°æ±¾£¬½öÓÃÓÚ±¨´íÌáÊ¾
+for /f "tokens=*" %%a in ('node --version 2^>nul') do (
+    if not defined TANGBAO_PATH_NODE_VERSION set "TANGBAO_PATH_NODE_VERSION=%%a"
 )
 
-REM â‘¢ æœ€åŽå†è€ƒè™‘ PATH é‡Œçš„ï¼ˆç‰ˆæœ¬åˆè§„æ‰ç”¨ï¼‰
-if not defined TANGBAO_NODE (
-    if defined TANGBAO_PATH_NODE_VERSION (
-        call :checkVersion "%TANGBAO_PATH_NODE_VERSION%"
-        if not errorlevel 1 (
-            for /f "tokens=*" %%a in ('where node.exe 2^>nul') do (
-                if not defined TANGBAO_NODE set "TANGBAO_NODE=%%a"
-            )
-            for /f "tokens=*" %%a in ('where npm.cmd 2^>nul') do (
-                if not defined TANGBAO_NPM set "TANGBAO_NPM=%%a"
+REM Öð¸öºòÑ¡Ñé°æ±¾£¨where µÄÊä³ö°´ PATH Ë³Ðò£¬v22 ÍùÍùÔÚÇ°£¬ËùÒÔ±ØÐëÈ«±éÀú£©
+for /f "tokens=*" %%a in ('where node.exe 2^>nul') do (
+    if not defined TANGBAO_NODE (
+        for /f "tokens=*" %%v in ('"%%a" --version 2^>nul') do (
+            call :checkVersion "%%v"
+            if not errorlevel 1 (
+                set "TANGBAO_NODE=%%a"
+                REM ÓÉ exe È«Â·¾¶ÍÆ npm Â·¾¶£ºÖ±½Ó×ö×Ö·û´®Ìæ»»¡£
+                REM ?? ±ðÓÃ `for %%p in ("%%a") do %%~dp` ¡ª¡ª Â·¾¶º¬¿Õ¸ñ£¨"Program Files"£©
+                REM Ê± %%~dp »á±»½Ø¶Ï³É "C:"£¨Êµ²â£©£¬Æ´³ö "C:npm.cmd"¡£
+                set "TANGBAO_NODE_DIR=!TANGBAO_NODE:\node.exe=!\"
+                set "TANGBAO_NPM=!TANGBAO_NODE_DIR!npm.cmd"
             )
         )
     )
 )
 
 if not defined TANGBAO_NODE (
-    echo [é”™è¯¯] æœªæ‰¾åˆ° Node.js 24 æˆ–æ›´é«˜ç‰ˆæœ¬ã€‚
-    echo        å½“å‰ PATH ä¸­çš„ node ç‰ˆæœ¬ä¸ºï¼š%TANGBAO_PATH_NODE_VERSION%ï¼ˆä¸æ»¡è¶³è¦æ±‚ï¼‰
-    echo        è¯·å®‰è£… Node 24ï¼šhttps://nodejs.org/
+    echo [´íÎó] Î´ÕÒµ½ Node.js 24 »ò¸ü¸ß°æ±¾¡£
+    echo        µ±Ç° PATH ÖÐµÚÒ»¸ö node µÄ°æ±¾Îª£º%TANGBAO_PATH_NODE_VERSION%£¨²»Âú×ãÒªÇó£©
+    echo        Çë°²×° Node 24£ºhttps://nodejs.org/
     echo.
-    echo        æç¤ºï¼šæœ¬æœºè‹¥å·²è£… v24ï¼ˆå¦‚ "C:\Program Files\nodejs"ï¼‰ï¼Œ
-    echo        è¯´æ˜Žæ˜¯ PATH é¡ºåºé—®é¢˜ï¼ŒæŠŠ v24 ç›®å½•æåˆ° PATH å‰é¢å³å¯ã€‚
+    echo        ÌáÊ¾£ºÈô±¾»úÒÑ×° v24£¬ËµÃ÷ÊÇ PATH Ë³ÐòÎÊÌâ£¬
+    echo        °Ñ v24 ËùÔÚÄ¿Â¼Ìáµ½ PATH Ç°Ãæ¼´¿É£¨»òÖ±½Ó¸Ä start.bat ÀïµÄºòÑ¡Âß¼­£©¡£
     goto :failed
 )
 
 for /f "tokens=*" %%a in ('"%TANGBAO_NODE%" --version') do set "NODE_VERSION=%%a"
-echo [å°±ç»ª] Node.js %NODE_VERSION%
-echo        è·¯å¾„ï¼š%TANGBAO_NODE%
+echo [¾ÍÐ÷] Node.js %NODE_VERSION%
+echo        Â·¾¶£º%TANGBAO_NODE%
 
-if not defined TANGBAO_NPM (
-    for %%D in ("%TANGBAO_NODE%") do set "TANGBAO_NPM=%%~dpDnpm.cmd"
-)
+REM ÓÉ TANGBAO_NODE Í³Ò»ÍÆ³öÄ¿Â¼Óë npm£¬±ÜÃâÔÙ×ß %%~dpD£¨º¬¿Õ¸ñÂ·¾¶»á±»½Ø¶Ï£©
+if not defined TANGBAO_NODE_DIR set "TANGBAO_NODE_DIR=%TANGBAO_NODE:\node.exe=%\"
+if not defined TANGBAO_NPM set "TANGBAO_NPM=%TANGBAO_NODE_DIR%npm.cmd"
 if not exist "%TANGBAO_NPM%" (
-    echo [é”™è¯¯] æœªæ‰¾åˆ° npmï¼š%TANGBAO_NPM%
+    echo [´íÎó] Î´ÕÒµ½ npm£º%TANGBAO_NPM%
     goto :failed
 )
-echo        npmï¼š%TANGBAO_NPM%
+echo        npm£º%TANGBAO_NPM%
 
-REM æŠŠ Node æ‰€åœ¨ç›®å½•æåˆ° PATH æœ€å‰ï¼Œä¿è¯ npm run dev æ´¾ç”Ÿçš„å­è¿›ç¨‹ï¼ˆvite/electronï¼‰
-REM ä¹Ÿç”¨åŒä¸€ä¸ª v24ï¼Œè€Œä¸æ˜¯åˆå›žè½åˆ° v22ã€‚
-for %%D in ("%TANGBAO_NODE%") do set "PATH=%%~dpD;%PATH%"
+REM °Ñ Node ËùÔÚÄ¿Â¼Ìáµ½ PATH ×îÇ°£¬±£Ö¤ npm run dev ÅÉÉúµÄ×Ó½ø³Ì£¨vite/electron£©
+REM Ò²ÓÃÍ¬Ò»¸ö v24£¬¶ø²»ÊÇÓÖ»ØÂäµ½ v22¡£
+set "PATH=%TANGBAO_NODE_DIR%;%PATH%"
 goto :nodeReady
 
-:tryNode
-REM %~1 = å€™é€‰ç›®å½•
-if exist "%~1\node.exe" (
-    for /f "tokens=*" %%a in ('"%~1\node.exe" --version 2^>nul') do set "TANGBAO_CAND_VERSION=%%a"
-    call :checkVersion "%TANGBAO_CAND_VERSION%"
-    if not errorlevel 1 (
-        set "TANGBAO_NODE=%~1\node.exe"
-        set "TANGBAO_NPM=%~1\npm.cmd"
-    )
-)
-exit /b 0
-
 :checkVersion
-REM %~1 = å½¢å¦‚ v24.14.0 çš„ç‰ˆæœ¬ä¸²ã€‚ä¸»ç‰ˆæœ¬ >= 24 è¿”å›ž 0ï¼Œå¦åˆ™è¿”å›ž 1ã€‚
+REM %~1 = ÐÎÈç v24.14.0 µÄ°æ±¾´®¡£Ö÷°æ±¾ >= 24 ·µ»Ø 0£¬·ñÔò·µ»Ø 1¡£
 for /f "tokens=1 delims=." %%m in ("%~1") do set "TANGBAO_MAJOR=%%m"
 set "TANGBAO_MAJOR=%TANGBAO_MAJOR:v=%"
 if not defined TANGBAO_MAJOR exit /b 1
@@ -99,36 +100,39 @@ exit /b 1
 
 :nodeReady
 
-REM ç«¯å£ 41731 æ˜¯ç³–åŒ…çš„å›ºå®šé¢„ç•™ï¼šdev server + å•å®žä¾‹é” + leveldb ç‹¬å éƒ½æ˜¯æŽ’ä»–èµ„æºã€‚
-REM å·²åœ¨è¿è¡Œæ—¶ä¸é‡å¤å¯åŠ¨ï¼Œé¿å…ä¸¤ä¸ªå®žä¾‹äº’ç›¸é¡¶æŽ‰ï¼ˆåŒä¸€ä»“åº“é»˜è®¤å•å†™çº¿ï¼‰ã€‚
+REM ¶Ë¿Ú 41731 ÊÇÌÇ°üµÄ¹Ì¶¨Ô¤Áô£ºdev server + µ¥ÊµÀýËø + leveldb ¶ÀÕ¼¶¼ÊÇÅÅËû×ÊÔ´¡£
+REM ÒÑÔÚÔËÐÐÊ±²»ÖØ¸´Æô¶¯£¬±ÜÃâÁ½¸öÊµÀý»¥Ïà¶¥µô£¨Í¬Ò»²Ö¿âÄ¬ÈÏµ¥Ð´Ïß£©¡£
 netstat -ano | findstr /R /C:"127.0.0.1:41731 .*LISTENING" >nul 2>&1
 if not errorlevel 1 (
     echo.
-    echo [æç¤º] æ£€æµ‹åˆ° 41731 ç«¯å£å·²è¢«å ç”¨ â€”â€” ç³–åŒ…å¼€å‘ç‰ˆå¯èƒ½å·²ç»åœ¨è¿è¡Œã€‚
-    echo        å¦‚æžœçª—å£æ²¡çœ‹åˆ°ï¼Œè¯·åœ¨ä»»åŠ¡æ æ‰¾ä¸€ä¸‹ï¼›è¦å¼ºåˆ¶é‡å¯è¯·å…ˆå…³é—­çŽ°æœ‰å®žä¾‹ã€‚
+    echo [ÌáÊ¾] ¼ì²âµ½ 41731 ¶Ë¿ÚÒÑ±»Õ¼ÓÃ ¡ª¡ª ÌÇ°ü¿ª·¢°æ¿ÉÄÜÒÑ¾­ÔÚÔËÐÐ¡£
+    echo        Èç¹û´°¿ÚÃ»¿´µ½£¬ÇëÔÚÈÎÎñÀ¸ÕÒÒ»ÏÂ£»ÒªÇ¿ÖÆÖØÆôÇëÏÈ¹Ø±ÕÏÖÓÐÊµÀý¡£
     echo.
-    set /p "TANGBAO_CONTINUE=ä»è¦ç»§ç»­å¯åŠ¨å—ï¼Ÿï¼ˆç»§ç»­å¯èƒ½ä¸Žå‰ä¸€ä¸ªå®žä¾‹äº’ç›¸é¡¶æŽ‰ï¼‰[y/N] "
+    REM TANGBAO_ASSUME_YES=1 ¹©×Ô¶¯»¯½Å±¾ÓÃ£¨×Ô¼ìÊ±±ÜÃâ¿¨ÔÚ½»»¥ÉÏ£©
+    if defined TANGBAO_ASSUME_YES goto :portOk
+    set /p "TANGBAO_CONTINUE=ÈÔÒª¼ÌÐøÆô¶¯Âð£¿£¨¼ÌÐø¿ÉÄÜÓëÇ°Ò»¸öÊµÀý»¥Ïà¶¥µô£©[y/N] "
     if /i not "%TANGBAO_CONTINUE%"=="y" goto :done
 )
+:portOk
 
 if not exist "node_modules\electron\package.json" (
-    echo [å‡†å¤‡] æ­£åœ¨å®‰è£…é¡¹ç›®ä¾èµ–ï¼Œè¯·ç¨å€™...
+    echo [×¼±¸] ÕýÔÚ°²×°ÏîÄ¿ÒÀÀµ£¬ÇëÉÔºò...
     call "%TANGBAO_NPM%" install
     if errorlevel 1 (
-        echo [é”™è¯¯] é¡¹ç›®ä¾èµ–å®‰è£…å¤±è´¥ã€‚
+        echo [´íÎó] ÏîÄ¿ÒÀÀµ°²×°Ê§°Ü¡£
         goto :failed
     )
 )
 
-echo [å¯åŠ¨] æ­£åœ¨å¯åŠ¨ç³–åŒ…å¼€å‘ç‰ˆ...
-echo        å…³é—­æœ¬çª—å£æˆ–æŒ‰ Ctrl+C å³åœæ­¢ã€‚
+echo [Æô¶¯] ÕýÔÚÆô¶¯ÌÇ°ü¿ª·¢°æ...
+echo        ¹Ø±Õ±¾´°¿Ú»ò°´ Ctrl+C ¼´Í£Ö¹¡£
 echo.
 call "%TANGBAO_NPM%" run dev
 set "TANGBAO_EXIT_CODE=%ERRORLEVEL%"
 
 if not "%TANGBAO_EXIT_CODE%"=="0" (
     echo.
-    echo [é”™è¯¯] ç¨‹åºå¯åŠ¨å¤±è´¥ï¼Œé€€å‡ºä»£ç ï¼š%TANGBAO_EXIT_CODE%
+    echo [´íÎó] ³ÌÐòÆô¶¯Ê§°Ü£¬ÍË³ö´úÂë£º%TANGBAO_EXIT_CODE%
     goto :failed
 )
 

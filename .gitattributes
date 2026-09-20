@@ -1,1 +1,11 @@
 * text=auto eol=lf
+
+# Windows 批处理必须保持 **字节原样** 落盘，git 不许碰：
+#  ① 行尾须 CRLF —— cmd.exe 读 LF-only 的 .bat 会把多行拼成一行，
+#     症状是满屏 `'xxx' 不是内部或外部命令`（隐蔽，易误判成编码问题）；
+#  ② 编码须 GBK(936) —— 中文注释若被当 UTF-8 处理也会乱码。
+# 所以用 `-text`（= 二进制，不做行尾/编码转换），而不是 `text eol=crlf`
+# （后者仍会按文本处理，可能重写字节）。
+# 另见 docs/tangbao-ops-runbook.md §18。
+*.bat -text
+*.cmd -text

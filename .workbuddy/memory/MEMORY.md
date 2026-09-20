@@ -6,17 +6,17 @@
 
 ## 文档地图（先看这里）
 
-| 要什么                                                   | 去哪                                     |
-| -------------------------------------------------------- | ---------------------------------------- |
-| 现在交付什么、什么算完                                   | `docs/ROADMAP.md`                        |
-| 在做什么、卡在哪                                         | `docs/BACKLOG.md`                        |
-| 为什么不那么做                                           | `docs/adr/`                              |
-| 哪些坑不能踩（R/P/Q 分级）                               | `docs/RISK.md`                           |
-| **哪些设计勿改回**                                       | `docs/architecture-constraints.md`       |
-| 操作配方（持久化/验收/抓报错/推 GitHub/写 localStorage） | `docs/tangbao-ops-runbook.md`            |
-| 哪份文档还算数                                           | `docs/README.md`                         |
-| AI 开工/收工规范                                         | `AGENTS.md` 的「项目管理（开工前必读）」 |
-| 过程记录                                                 | 同日 `YYYY-MM-DD.md`                     |
+| 要什么                                                           | 去哪                                     |
+| ---------------------------------------------------------------- | ---------------------------------------- |
+| 现在交付什么、什么算完                                           | `docs/ROADMAP.md`                        |
+| 在做什么、卡在哪                                                 | `docs/BACKLOG.md`                        |
+| 为什么不那么做                                                   | `docs/adr/`                              |
+| 哪些坑不能踩（R/P/Q 分级）                                       | `docs/RISK.md`                           |
+| **哪些设计勿改回**                                               | `docs/architecture-constraints.md`       |
+| 操作配方（持久化/验收/抓报错/推 GitHub/写 localStorage/改 .bat） | `docs/tangbao-ops-runbook.md`            |
+| 哪份文档还算数                                                   | `docs/README.md`                         |
+| AI 开工/收工规范                                                 | `AGENTS.md` 的「项目管理（开工前必读）」 |
+| 过程记录                                                         | 同日 `YYYY-MM-DD.md`                     |
 
 ## 身份 · 构建 · 发布
 
@@ -36,6 +36,9 @@
 - **探针脚本一律写 `%TEMP%`，禁止落项目根**：根目录是 Electron 主进程 CWD，会被加载进主进程
   （本轮 `probe-api.cjs` 就因 `path.join(process.env.APPDATA,…)` 抛 `ERR_INVALID_ARG_TYPE`
   弹了「main process error」窗）。
+- **改 `.bat` 必须 GBK(936) + CRLF，且不要 `chcp 65001`** —— 缺一条就满屏
+  `'xxx' 不是内部或外部命令`；转换用 `iconv-lite`（PowerShell 转换实测静默失败），
+  且**只能对 UTF-8 源跑一次**（对 GBK 文件再跑会把中文全变成 `?`）。配方见 runbook §18。
 - `npm run verify` ≈ 3–4 分钟（tsc 双端 + lint + format + 全量测试）。
 - **改完源码必须 `npx prettier --write`**，否则 `format:check` 会挂（连 `AGENTS.md` 也要过 prettier）。
 - `release.yml` **勿**改回 `--publish always`（exe 超时）。
@@ -113,7 +116,7 @@
   症状 = 「窗口刚起来就自己消失」。对照实验：纯 `sleep` 后台任务能活满，Node 监听服务 40s 就没，
   且无报错、无 Crashpad 转储 → 起这两个服务要 `dangerouslyDisableSandbox: true`（或让杰哥自己终端跑）。
 - **窗口「点什么都没反应」先看是不是错误页**：`location.href === 'chrome-error://chromewebdata/'`
-  + `#root` 不存在 + 标题 = URL ⇒ 界面根本没加载（dev server 已死，**窗口不会自恢复**）；
-  正常时 `Get-Process electron | Select MainWindowTitle` = `糖包`。
+  - `#root` 不存在 + 标题 = URL ⇒ 界面根本没加载（dev server 已死，**窗口不会自恢复**）；
+    正常时 `Get-Process electron | Select MainWindowTitle` = `糖包`。
 - **门禁假象**：`noUnusedLocals/Parameters` 关着、`no-unused-vars` 仅 warn → 死 import 零告警
   （存量 116 处，见 `BACKLOG.md` TB-021）。

@@ -859,3 +859,128 @@ dev 主进程加载的是**构建产物** `dist-electron/main.js`，报错行号
 - 只有 `integrity_check` **非 ok** 时才走备份恢复流程；
 - 崩溃若**重启后未复现**，别急着定性为缺陷 —— 记进当日日志并标注「待复现」，
   下次复现时开 `ELECTRON_ENABLE_LOGGING=1 npm run dev` 抓完整输出再定根因。
+
+---
+
+## 十八、改 `start.bat` / 任何 `.bat` 的编码与行尾（2026-09-20 实测定稿）
+
+**触发场景**：双击 `start.bat` 没反应 / 一闪而过；或跑起来后满屏
+`'xxx' 不是内部或外部命令，也不是可运行的程序或批处理文件`
+（`xxx` 是中文注释里的碎片，如 `'pansion'`、`'TANGBAO_NODE_DIR'`）。
+
+### 1. 三条硬约束（缺一条就乱码，且症状很难认）
+
+| 约束                     | 为什么                                                     | 违反后的症状                                                                     |
+| ------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 文件以 **GBK(936)** 落盘 | `cmd.exe` 按**当前活动代码页**（本机 936）读整个批处理文件 | UTF-8 无 BOM 的中文被解成乱码；乱码字节里含引号/括号时，cmd 把碎片**当命令执行** |
+| 行尾必须是 **CRLF**      | **只有 LF 的 `.bat` 会让 cmd 把多行拼成一行**              | 症状与编码问题**几乎一样**（满屏 `'xxx' 不是内部或外部命令`），更难排查          |
+| **不要**加 `chcp 65001`  | 切到 UTF-8 后，后面所有 GBK 行照样乱码                     | 同上                                                                             |
+
+**这三条串起来的坑**：单独满足任一条都不够。实测踩过的顺序是
+「UTF-8 文件 + chcp 65001 → 前面的中文注释先崩」→「转 GBK 但行尾还是 LF → 依然崩」，
+每次症状都长得一样。
+
+### 2. 转换配方（Node + iconv-lite，项目已装）
+
+**不要用 PowerShell `WriteAllText` 做这种转换**（本轮实测静默失败、文件仍是 UTF-8）。
+用项目自带的 `iconv-lite`（jsdom 依赖，`node_modules/iconv-lite`）：
+
+```js
+// to-gbk.cjs —— 放到 %TEMP% 跑，别落项目根
+const fs = require('node:fs')
+const iconv = require('D:/AAA/TANGBAO/node_modules/iconv-lite')
+
+const file = 'D:/AAA/TANGBAO/start.bat'
+let text = fs.readFileSync(file, 'utf8')
+text = text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n') // ② 统一成 CRLF
+fs.writeFileSync(file, iconv.encode(text, 'gbk')) // ① 编码成 GBK
+```
+
+**⚠️ 幂等性**：这个脚本**只能对 UTF-8 源跑一次**。对已经是 GBK 的文件再跑，
+`readFileSync(…,'utf8')` 会把中文全解成 `?`（`0x3f`），**中文永久丢失**。
+⇒ 先把 UTF-8 源另存一份到 `%TEMP%`，反复转换时都从那份恢复。
+
+**emoji 会转失败**（`⚠️` → `??`）—— 批处理文件里别用 emoji，用 `[!]` 之类 ASCII 标记。
+
+### 3. 验收（不看这三项等于没验）
+
+```bash
+head -c 30 start.bat | xxd        # 行尾应为 0d0a；中文处应是 GBK 字节（如 b1e0 c2eb = "编码"）
+xxd start.bat | grep -c " 3f"     # 不该有 3f（? 残留 = 中文已丢）
+```
+
+再**真跑一次**（用 `execFileSync` 抓输出，避免 Bash 工具改写 `/` 路径 —— R-19）：
+
+```js
+// %TEMP%/run-start.cjs —— 探针一律写 %TEMP%，禁止落项目根（probe-api.cjs 事故）
+const { spawnSync } = require('node:child_process')
+const iconv = require('D:/AAA/TANGBAO/node_modules/iconv-lite')
+const r = spawnSync('cmd.exe', ['/c', 'set TANGBAO_ASSUME_YES=1&& set TANGBAO_NO_PAUSE=1&& start.bat'], {
+  cwd: 'D:/AAA/TANGBAO',
+  encoding: 'latin1', // 关键：别用 utf8 直读 GBK
+  timeout: 90000,
+})
+const dec = (s) => iconv.decode(Buffer.from(s || '', 'latin1'), 'gbk')
+console.log('exitCode =', r.status)
+console.log(dec(r.stdout))
+if ((r.stderr || '').trim()) console.log('--- stderr ---\n' + dec(r.stderr))
+```
+
+**判据**：
+
+- 输出**没有**任何 `不是内部或外部命令`；
+- `[就绪] Node.js` 后面是 **v24.x**，路径指向 `C:\Program Files\nodejs\node.exe`；
+- 退出码要**结合上下文读**：机器上**已有糖包实例在跑**时，会看到
+  `Port 41731 is already in use` 且退出码 `1` —— 这**不是脚本坏了**，是单实例保护正确生效。
+  先 `netstat -ano | findstr 41731` 找出 PID，再看它是不是杰哥手动开的糖包
+  （`tasklist /FI "PID eq <pid>" /FO LIST /V` 的**窗口标题 = 糖包** 即是）。
+
+> 用 Node 以 `encoding:'utf8'` 抓 GBK 输出时，**中文会显示成乱码/问号** ——
+> 那是**抓取侧的**编码问题，不代表脚本坏了。所以上面用 `latin1` 抓、再 `iconv` 解。
+
+### 4. 顺带：Node 版本探测（R-59）
+
+`start.bat` 现在**遍历 `where node.exe` 的每一行**、逐个验主版本、取第一个 ≥ 24 的。
+踩过的 cmd 坑，改这段前务必知道：
+
+| 坑                                                            | 现象                                         | 正解                                                         |
+| ------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------ |
+| `for %%D in ("%ProgramFiles%\nodejs")` 括号内**不做变量展开** | `%%~D` 展开成 `\nodejs`，永远匹配不上        | 别拼候选目录，用 `where` 的输出                              |
+| `%ProgramFiles%` 在继承环境里**可能为空**                     | 同上，实测 `C1=[\nodejs]`                    | 同上                                                         |
+| `%%~dpnpm.cmd`                                                | `dpn` 被当合法修饰符组合吃掉 n → `nodem.cmd` | 先 `set "DIR=%VAR:\node.exe=%\"` 再 `set "NPM=!DIR!npm.cmd"` |
+| `for %%p in ("含空格路径") do set X=%%~dp`                    | 截断成 `C:`，拼出 `C:npm.cmd`                | 用字符串替换                                                 |
+
+**并且**：找到 v24 后必须把它的目录**提到 `PATH` 最前** ——
+否则 `npm run dev` 派生的 vite/electron 子进程又会回落 v22
+（实测 `npm test` 阶段就栽在这）。
+
+### 5. 两个开关：让自检能无人值守跑完
+
+| 变量                 | 作用                                                        |
+| -------------------- | ----------------------------------------------------------- |
+| `TANGBAO_NO_PAUSE`   | 结尾不 `pause`（原本给双击用户看错误用）                    |
+| `TANGBAO_ASSUME_YES` | 端口 41731 被占用时**直接继续**，不卡在 `set /p` 交互提示上 |
+
+两个都是**只认「已定义」**（值随便），供 `spawnSync` 注入。少了 `TANGBAO_ASSUME_YES`，
+自检会挂死在 `请按任意键继续. . .` 直到 `timeout` 才被杀 —— 看起来像「脚本卡住」。
+
+### 6. 改完必做反向验证（否则自检是假的）
+
+`scripts/build-start-bat.mjs` 里那段「GBK 表达不了就报错」的闸门，
+**必须**用注入非法字符的方式确认它真的会拦。配方：
+
+```bash
+cp scripts/start.bat.utf8-source.txt /tmp/src.bak          # 备份
+# 注入真正 GBK 编码不了的字符（emoji / ⚠ / 😀）
+node -e "const f='scripts/start.bat.utf8-source.txt',fs=require('fs');let t=fs.readFileSync(f,'utf8');t=t.replace('REM [!]','REM [WARN] 测试 \u26a0 与 \ud83d\ude00');fs.writeFileSync(f,t,'utf8')"
+node scripts/build-start-bat.mjs; echo "EXIT=$?"           # 期望 EXIT=1 + 报出可疑字符
+cp /tmp/src.bak scripts/start.bat.utf8-source.txt          # 还原
+node scripts/build-start-bat.mjs                            # 期望 [ok] 恢复原字节数
+```
+
+**⚠️ `→` 不是合格探针**：实测 `→` 在 GBK 里是 `a1fa`，**能**正常往返，注入它不会报错。
+合格的探针是 `⚠`(U+26A0)、`😀`(U+1F600) 这类**真不在 GBK 字符集**里的字符 ——
+实测它们编码后都变成 `3f`(`?`)，`roundTrip !== withCrlf` 才成立。
+
+当前 `mb` 数基线：`start.bat` = **5719 bytes / 147 CRLF / 0 裸 LF / 0 个 `?` 污染行**。
+数字变了先怀疑编码，再怀疑逻辑。
