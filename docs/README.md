@@ -35,6 +35,7 @@
 | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---- |
 | [`ui-retrofit-plan.md`](ui-retrofit-plan.md)                                                                                 | 主工作台首屏改造方案（含已实施记录与验收证据）                            | 现行 |
 | [`postprocess-export-diagnosis.md`](postprocess-export-diagnosis.md)                                                         | **导出/后处理四问题定位报告**（含端到端复现证据，对应 `TB-049` / `R-62`） | 现行 |
+| [`config-centralization-assessment.md`](config-centralization-assessment.md)                                                 | **常量集中化评估报告**（177 常量实测归类 + 三档分层方案，对应 `TB-051`）  | 现行 |
 | [`postprocess-unify-on-hanling-plan.md`](postprocess-unify-on-hanling-plan.md)                                               | 后处理统一到瀚灵编排的完整方案（**当前主线**，第九节是实现要点）          | 现行 |
 | [`hanling-postprocess-replica-plan.md`](hanling-postprocess-replica-plan.md)                                                 | 复刻瀚灵后处理链路的原始方案                                              | 参考 |
 | [`output-location-import-2026-09-18.md`](output-location-import-2026-09-18.md)                                               | 《输出位置明细》导入记录 + 三条定案                                       | 现行 |
