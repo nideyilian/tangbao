@@ -8,6 +8,24 @@ import { normalizeDevProxyConfig } from './src/lib/devProxy'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 
+/**
+ * Node 大版本下限：`node:sqlite` 的 `DatabaseSync` 在 Node 22 下会被 Vite 当成
+ * 浏览器模块外部化（报 `"DatabaseSync" is not exported by
+ * "__vite-browser-external:node:sqlite"`），主进程拿到的 SQLite 是个空壳，
+ * 之后任何写库都报 `attempt to write a readonly database`——**看症状像数据层故障，
+ * 实际是启动 Node 版本不对**。这里直接拦住，把误导性报错换成明确指引。
+ */
+const MIN_NODE_MAJOR = 24
+const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '0', 10)
+if (nodeMajor < MIN_NODE_MAJOR) {
+  throw new Error(
+    `\n\n[糖包] Node 版本过低：当前 v${process.versions.node}，需要 v${MIN_NODE_MAJOR} 或更高。\n` +
+      `       否则主进程的 node:sqlite 会加载失败，症状是写库报 "readonly database"。\n` +
+      `       解决：用 Node ${MIN_NODE_MAJOR}+ 启动，例如\n` +
+      `         "C:\\Program Files\\nodejs\\node.exe" node_modules\\vite\\bin\\vite.js\n\n`,
+  )
+}
+
 function loadDevProxyConfig() {
   try {
     return normalizeDevProxyConfig(JSON.parse(readFileSync('./dev-proxy.config.json', 'utf-8')) as unknown)
