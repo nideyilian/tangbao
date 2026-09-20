@@ -6,7 +6,6 @@ import {
   DEFAULT_CONTROL_CONSOLE_SECTION,
   isGlobalScope,
   normalizeControlConsoleSection,
-  type ControlConsoleSectionId,
   type ConsoleScope,
 } from './lib/controlConsoleSections'
 import { ConsoleAssetTree } from './components/ConsoleAssetTree'
@@ -65,7 +64,18 @@ export default function CompositeWorkspace() {
   const showToast = useStore((state) => state.showToast)
   const { openConfirmDialog } = useAppDialog()
 
-  const [section, setSection] = useState<ControlConsoleSectionId>(DEFAULT_CONTROL_CONSOLE_SECTION)
+  /**
+   * 当前分区来自应用 store，而不是本工作区的局部 state。
+   *
+   * 原因：**外部要能指定落点**。「后处理」弹窗里的「去中控台改全局规格」只切工作区、
+   * 不带分区的话，用户会落在默认分区还得自己找（等于没跳）。
+   *
+   * 离开时归位默认（下面的 cleanup）：这样「从顶栏点进来」看到的仍是水印，
+   * 既有行为不变 —— 只有带目标分区的跳转才会落在别处。
+   */
+  const section = useStore((state) => state.controlConsoleSection)
+  const setControlConsoleSection = useStore((state) => state.setControlConsoleSection)
+  useEffect(() => () => setControlConsoleSection(DEFAULT_CONTROL_CONSOLE_SECTION), [setControlConsoleSection])
   /**
    * 作用域来自**全局上下文指针** `useAssetLibraryStore.scope`，不是本工作区的局部 state。
    *
@@ -272,7 +282,7 @@ export default function CompositeWorkspace() {
           <ConsoleToolbar
             section={section}
             onSectionChange={(next) => {
-              setSection(normalizeControlConsoleSection(next))
+              setControlConsoleSection(normalizeControlConsoleSection(next))
               // 切维度时回到卡片视图：否则从编辑器切走再切回来会停在编辑器，与工具栏筛选不一致
               setWatermarkView('cards')
             }}

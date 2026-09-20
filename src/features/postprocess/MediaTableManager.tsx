@@ -99,7 +99,10 @@ export default function MediaTableManager() {
                 />
                 <TextField
                   label=""
-                  className="flex-1"
+                  aria-label={`渠道名：${item.name}`}
+                  // ⚠️ 撑开宽度必须写 `containerClassName`：`className` 落到内层 `<input>` 上，
+                  // 外层 `.ds-field` 是 `display:grid`，写错位置输入框就按内容宽度定死、右侧留白。
+                  containerClassName="min-w-0 flex-1"
                   value={item.name}
                   disabled={item.id === PURE_MEDIA_ID}
                   onChange={(event) => renameMedia(item.id, event.target.value)}
@@ -186,7 +189,8 @@ export default function MediaTableManager() {
       <div className="flex items-center gap-2">
         <TextField
           label=""
-          className="flex-1"
+          aria-label="新渠道名称"
+          containerClassName="min-w-0 flex-1"
           placeholder="新渠道名称，如「抖音」"
           value={newName}
           onChange={(event) => setNewName(event.target.value)}

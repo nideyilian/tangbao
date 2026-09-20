@@ -1,52 +1,65 @@
 /**
- * 后处理设置面板（对应瀚灵的 `Nu()` 面板）。
+ * 后处理设置面板（输入栏「后处理」按钮打开）。
  *
- * **布局 = 80% 双栏工作区**（`ds-dialog--postprocess` + `ds-dialog-workspace--split`）：
- * - **左栏是纯粹的树状导航**：只展示层级节点名称、展开/收起、选中态，不承载任何参数控件，
- *   也不再有「点节点开参数弹窗」这类入口。树根固定是「全局默认」节点。
- * - **右栏是唯一的参数详情面板**：按左栏当前选中的节点，从 `paramSchema` 读字段列表渲染。
+ * ## 它是什么
  *
- * 参数定义只有一处（`features/postprocess/paramSchema.ts`）：左树只提供 `selectedNodeId`，
- * 右栏按作用域取字段，两侧都不再各自维护一份参数列表。
+ * **「当前方向的后处理参数」** —— 打开就落在你正在看的方向上，改完即可。
+ * 参数只有一份定义（`features/postprocess/paramSchema.ts`），面板按作用域取字段渲染，
+ * 两侧都不再各自维护一份参数列表。
  *
- * 原先的形态是「左栏勾选 + 每节点一个参数按钮开第三层弹窗 + 右栏六段硬编码」，
- * 同一个字段在三处出现（左栏开窗、弹窗表单、右栏硬编码段），改一处漏两处的风险一直都在。
+ * ## 作用范围从哪来（2026-09-20 定）
  *
- * 外壳交给设计系统的 `Dialog`：遮罩、ESC、焦点陷阱、滚动锁与焦点回归都由它统一接管
- * （走 `overlayManager` 的 overlay 栈，多层弹窗时只响应最上层）。
+ * 不做「本弹窗自己的选择态」，而是跟随项目里**唯一的上下文指针**
+ * `useAssetLibraryStore.scope` —— 中控台 / 素材库 / SOP 读的都是它，
+ * 所以「在任何地方打开都默认停在当前方向」自然成立，不需要各工作区各存一份再互相同步
+ * （见 `design-system/tangbao/pages/postprocess.md`）。
+ * 在这里换方向用 `setCollectionContextScope` 写回同一个指针，**不碰素材库的选中态**
+ * （`setScope` 会清空用户选中的图，那是「素材库内部切换范围」的语义）。
+ *
+ * **没有「全局默认」这个选项**：全局基线（渠道与尺寸、画面方向、命名模板、创作者、分发、
+ * 产出预览）在中控台各自的分区有唯一入口。同一个参数给两个入口，迟早出现
+ * 「在 A 改了、在 B 显示不一致」。所以本弹窗不显示全局、也不提供选全局。
+ * 指针没有指向任何节点时给引导态让用户选方向，**不回落全局**。
+ *
+ * ## 其他
+ *
+ * - **启用范围（哪些项目参与自动后处理）不在这个弹窗里配置** —— 入口在项目树工作区的
+ *   「后处理」列。这里只在节点不在启用范围内时给一句警告。
+ * - 外壳交给设计系统的 `Dialog`：遮罩、ESC、焦点陷阱、滚动锁与焦点回归都由它统一接管
+ *   （走 `overlayManager` 的 overlay 栈，多层弹窗时只响应最上层）。
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Dialog, DialogPane, DialogWorkspace, IconButton, SectionHeader } from '../design-system'
+import { useMemo } from 'react'
+import { Alert, Button, Dialog, DialogPane, DialogWorkspace, EmptyState, SelectField, Stack } from '../design-system'
 import { useAssetLibraryStore } from '../features/assetLibrary/store'
-import MediaTableManager from '../features/postprocess/MediaTableManager'
 import PostprocessParamPanel from '../features/postprocess/PostprocessParamPanel'
-import { GLOBAL_NODE_ID } from '../features/postprocess/paramSchema'
-import { mergePromotedGlobals, useProjectTreeParamsStore } from '../features/projectTree/storeProjectTreeParams'
-import { resolveNodeWatermarkBinding } from '../features/projectTree/params'
+import { usePostprocessGlobalConfig } from '../features/postprocess/usePostprocessGlobalConfig'
+import { useJumpToControlConsole } from '../features/composite/lib/useJumpToControlConsole'
+import { useProjectTreeParamsStore } from '../features/projectTree/storeProjectTreeParams'
+import {
+  resolveNodeWatermarkBinding,
+  resolveProjectNodeKind,
+  resolveProjectNodePathNames,
+} from '../features/projectTree/params'
+import { PROJECT_NODE_KIND_LABELS } from '../features/projectTree/types'
 import {
   buildPostprocessProjectTree,
   findMissingProjectCollectionIds,
+  flattenPostprocessProjectTree,
   resolvePostprocessProjectTargets,
 } from '../lib/postprocessProjectTree'
-import type { PostprocessProjectTreeNode } from '../lib/postprocessProjectTree'
-import {
-  buildPostprocessOutputName,
-  selectPostprocessOutputPlan,
-  usePostprocessMediaStore,
-} from '../storePostprocessMedia'
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, SlidersHorizontalIcon } from './icons'
+import { selectPostprocessOutputPlan, type PostprocessOutputSource } from '../storePostprocessMedia'
 
 interface Props {
-  /** 当前生成尺寸（如 `1024x1024`）；`auto` 或空表示无法预估，预览退化为示例尺寸 */
+  /** 当前生成尺寸（如 `1024x1024`）；`auto` 或空表示无法预估，产出数按示例尺寸估算 */
   sourceSize: string
   onClose: () => void
 }
 
-/** 方向不可预知时用于预览的示例尺寸，仅用于展示，不参与落盘。 */
-const FALLBACK_PREVIEW_SIZE = { width: 1024, height: 1024 }
+/** 方向不可预知时用于估算产出数的示例尺寸，仅用于展示，不参与落盘。 */
+const FALLBACK_PREVIEW_SIZE: PostprocessOutputSource = { width: 1024, height: 1024 }
 
-function parseSourceSize(size: string): { width: number; height: number } | null {
+function parseSourceSize(size: string): PostprocessOutputSource | null {
   const match = /^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/.exec(size ?? '')
   if (!match) return null
   const width = Number(match[1])
@@ -55,193 +68,110 @@ function parseSourceSize(size: string): { width: number; height: number } | null
   return { width, height }
 }
 
-/** 缩进用固定档位类名，不用内联 padding 以保持与设计系统一致。 */
-const INDENT_CLASS = ['pl-0', 'pl-4', 'pl-8', 'pl-12']
-
-/** 内嵌 chip：所在容器多为 surface（白），用下沉色 surface-subtle 保证可见。 */
-const chipClass =
-  'inline-flex items-center gap-1 rounded-ds-lg border border-ds-border bg-ds-surface-subtle px-1.5 py-0.5 text-xs text-ds-muted'
+/** 引导态：指针没指向任何方向时，让用户在这里选一个，而不是显示一份全局参数。 */
+function PickDirectionHint({ hasDirections }: { hasDirections: boolean }) {
+  return (
+    <EmptyState
+      title="还没有选中方向"
+      description={
+        hasDirections
+          ? '后处理参数按方向配置。在上面的「作用范围」里选一个方向，或到素材库 / 项目树里点一个方向 —— 三处读的是同一个「当前方向」。'
+          : '项目树里还没有方向。先到项目树工作区建「产品线 → 产品 → 方向」，再回来配参数。'
+      }
+    />
+  )
+}
 
 export default function PostprocessSettingsModal({ sourceSize, onClose }: Props) {
-  const media = usePostprocessMediaStore((state) => state.media)
-  const selectedMediaIds = usePostprocessMediaStore((state) => state.selectedMediaIds)
-  const selectedCollectionIds = usePostprocessMediaStore((state) => state.selectedCollectionIds)
-  const direction = usePostprocessMediaStore((state) => state.direction)
-  const outputDir = usePostprocessMediaStore((state) => state.outputDir)
-  const mediaOutputDirs = usePostprocessMediaStore((state) => state.mediaOutputDirs)
-  const namePattern = usePostprocessMediaStore((state) => state.namePattern)
-  const creator = usePostprocessMediaStore((state) => state.creator)
-  const watermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
-  const autoCompanionClean = usePostprocessMediaStore((state) => state.autoCompanionClean)
-  const distribution = usePostprocessMediaStore((state) => state.distribution)
+  /**
+   * 全局基线（单份组装，与中控台的产出预览共用同一个 hook）。
+   *
+   * 它在这个弹窗里只承担两件事：**作为继承来源**被面板解析（`resolveProjectPostprocessSlice`），
+   * 以及算当前方向的产出数。全局本身的编辑入口在中控台。
+   */
+  const globalConfig = usePostprocessGlobalConfig()
+  const selectedCollectionIds = globalConfig.selectedCollectionIds
+  const watermarkPresetIds = globalConfig.watermarkPresetIds
 
   const collections = useAssetLibraryStore((state) => state.collections)
+  const libraryScope = useAssetLibraryStore((state) => state.scope)
+  const setCollectionContextScope = useAssetLibraryStore((state) => state.setCollectionContextScope)
   const params = useProjectTreeParamsStore((state) => state.params)
-  const promotedGlobals = useProjectTreeParamsStore((state) => state.promotedGlobals)
+  const jumpToConsole = useJumpToControlConsole()
 
   /**
-   * 右栏参数面板读的全局基线（单份组装，避免面板里再拼一遍）。
+   * 当前方向 = 全局上下文指针解析出来的节点；指针不指向节点（「全部」）时为 `null`。
    *
-   * `mergePromotedGlobals`：把升级迁移时从节点上提升出来的旧值（R-63 / ADR-0011）
-   * 补进基线。**只补空缺**——基线已有值的字段以基线为准，迁移值不夺回控制权。
+   * 只认真实存在的 collection：指针可能在另一个窗口删了这个节点之后还留着旧 id，
+   * 那种情况按「没选方向」处理，而不是崩掉或显示已删除节点。
    */
-  const globalConfig = useMemo(
-    () =>
-      mergePromotedGlobals(
-        {
-          media,
-          selectedMediaIds,
-          selectedCollectionIds,
-          direction,
-          outputDir,
-          mediaOutputDirs,
-          namePattern,
-          creator,
-          watermarkPresetIds,
-          autoCompanionClean,
-          distribution,
-        },
-        promotedGlobals,
-      ),
-    [
-      media,
-      selectedMediaIds,
-      selectedCollectionIds,
-      direction,
-      outputDir,
-      mediaOutputDirs,
-      namePattern,
-      creator,
-      watermarkPresetIds,
-      autoCompanionClean,
-      distribution,
-      promotedGlobals,
-    ],
-  )
+  const selectedNodeId = useMemo(() => {
+    if (typeof libraryScope !== 'object' || libraryScope.kind !== 'collection') return null
+    return collections.some((item) => item.id === libraryScope.id) ? libraryScope.id : null
+  }, [libraryScope, collections])
 
+  /** 项目树：作用范围下拉的选项来源，与中控台的资产树读同一份 collections。 */
   const projectTree = useMemo(() => buildPostprocessProjectTree(collections), [collections])
-
-  const parsedSource = parseSourceSize(sourceSize)
-  const previewSource = parsedSource ?? FALLBACK_PREVIEW_SIZE
-
-  const projectTargets = useMemo(
-    () =>
-      resolvePostprocessProjectTargets(collections, selectedCollectionIds).map((target) => ({
-        ...target,
-        watermarkPresetIds: resolveNodeWatermarkBinding(collections, params, target.collectionId, watermarkPresetIds)
-          .presetIds,
-      })),
-    [collections, selectedCollectionIds, params, watermarkPresetIds],
-  )
+  const flatNodes = useMemo(() => flattenPostprocessProjectTree(projectTree), [projectTree])
 
   const missingProjectIds = useMemo(
     () => findMissingProjectCollectionIds(collections, selectedCollectionIds),
     [collections, selectedCollectionIds],
   )
 
-  const plan = useMemo(
-    () => selectPostprocessOutputPlan(globalConfig, previewSource, projectTargets, {}),
-    [globalConfig, previewSource, projectTargets],
-  )
-  const previewUnits = projectTargets.length > 0 ? plan.units : []
-  /** 产出预览只列前几条：这一屏是确认配置，不是逐条核对清单 */
-  const visibleUnits = previewUnits.slice(0, 6)
-
-  // ── 左栏：纯树导航态 ────────────────────────────────────────────────────
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
-  /** 选中的树节点 id；默认落在「全局默认」上，让右栏一开就有内容 */
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(GLOBAL_NODE_ID)
-
-  // 项目树首次可用时展开产品线（产品与方向默认折叠，否则 77 个节点会淹掉整块面板）。
-  // 只自动展开一次，之后完全尊重用户的折叠操作。
-  const treeInitializedRef = useRef(false)
-  useEffect(() => {
-    if (treeInitializedRef.current || projectTree.length === 0) return
-    treeInitializedRef.current = true
-    setExpandedIds(new Set(projectTree.filter((node) => node.children.length > 0).map((node) => node.id)))
-  }, [projectTree])
-
-  const toggleExpanded = (id: string) =>
-    setExpandedIds((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
-  /** 选中节点在树上的祖先链，用于把新建/已删节点的选中态补齐可见 */
-  useEffect(() => {
-    if (!selectedNodeId || selectedNodeId === GLOBAL_NODE_ID) return
-    if (!collections.some((item) => item.id === selectedNodeId)) return
-    setExpandedIds((current) => {
-      const next = new Set(current)
-      let cursor = collections.find((item) => item.id === selectedNodeId)?.parentId ?? null
-      while (cursor) {
-        next.add(cursor)
-        cursor = collections.find((item) => item.id === cursor)?.parentId ?? null
-      }
-      return next
-    })
-  }, [selectedNodeId, collections])
-
-  const footerStatus =
-    projectTargets.length === 0
-      ? '未满足启用条件：需同时勾选启用范围与媒体'
-      : previewUnits.length === 0
-        ? '当前选择产不出变体，请检查媒体与方向'
-        : `每张原图产出 ${previewUnits.length} 个文件`
+  /**
+   * 产出数：**只算当前方向**。
+   *
+   * 这一屏是「确认这个方向怎么产出」，算全量启用范围的产出数没有意义 ——
+   * 那是中控台「产出预览」的职责（按作用域展开文件名）。
+   */
+  const previewSource = parseSourceSize(sourceSize) ?? FALLBACK_PREVIEW_SIZE
+  const unitCount = useMemo(() => {
+    if (!selectedNodeId) return null
+    const targets = resolvePostprocessProjectTargets(collections, [selectedNodeId]).map((target) => ({
+      ...target,
+      watermarkPresetIds: resolveNodeWatermarkBinding(collections, params, target.collectionId, watermarkPresetIds)
+        .presetIds,
+    }))
+    if (targets.length === 0) return 0
+    return selectPostprocessOutputPlan(globalConfig, previewSource, targets, {}).units.length
+  }, [selectedNodeId, collections, params, watermarkPresetIds, globalConfig, previewSource])
 
   /**
-   * 树节点行：**只有展开箭头、名称、选中态**。
+   * 状态行（MASTER §5.9 的 Status 层）：这个方向到底会不会产出、产出几个文件。
    *
-   * 原先这里还有 Checkbox（启用范围）与「参数」IconButton（开第三层弹窗）——
-   * 一个把导航栏变成了表单，另一个让同一份参数有了两个入口。
-   * 现在启用范围改到右栏参数面板的「参与自动后处理」，参数编辑就是右栏本身。
+   * 只在参数面板之后出现**一次** —— 原先 footer 与面板各写一句同样的文案，是同一句说明出现两遍。
    */
-  const renderProjectNode = (node: PostprocessProjectTreeNode) => {
-    const expanded = expandedIds.has(node.id)
-    const indentClass = INDENT_CLASS[Math.min(node.depth, INDENT_CLASS.length - 1)]
-    const selected = selectedNodeId === node.id
-    const inScope = selectedCollectionIds.includes(node.id)
-    return (
-      <div key={node.id}>
-        <div className={`flex items-center gap-1 rounded-ds-lg ${indentClass}`}>
-          {node.children.length > 0 ? (
-            <IconButton
-              size="sm"
-              aria-label={expanded ? `收起 ${node.name}` : `展开 ${node.name}`}
-              aria-expanded={expanded}
-              icon={
-                expanded ? <ChevronDownIcon className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />
-              }
-              onClick={() => toggleExpanded(node.id)}
-            />
-          ) : (
-            <span className="h-4 w-4 shrink-0" />
-          )}
-          <button
-            type="button"
-            aria-current={selected ? 'true' : undefined}
-            data-testid={`postprocess-tree-node-${node.id}`}
-            className={`flex min-w-0 flex-1 items-center gap-1.5 rounded-ds-md px-1.5 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${
-              selected ? 'bg-ds-primary/10 font-medium text-ds-primary' : 'text-ds-text hover:bg-ds-surface'
-            }`}
-            onClick={() => setSelectedNodeId(node.id)}
-          >
-            <span className="min-w-0 flex-1 truncate" title={node.name}>
-              {node.name}
-            </span>
-            {node.depth === 0 && <span className={chipClass}>产品线</span>}
-            {node.depth === 1 && <span className={chipClass}>产品</span>}
-            {node.depth >= 2 && <span className={chipClass}>方向</span>}
-            {/* 启用范围只作为状态提示，不再是可点的控件——控件在右栏 */}
-            {inScope && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-ds-primary" />}
-          </button>
-        </div>
-        {expanded && node.children.map((child) => renderProjectNode(child))}
-      </div>
-    )
-  }
+  const statusLine = (() => {
+    if (!selectedNodeId) return ''
+    // 短句：这里只报状态，不写「怎么修」——「怎么修」是上面那条 Alert 的按钮。
+    if (selectedCollectionIds.length === 0) return '未启用后处理。'
+    if (unitCount === 0) return '产不出变体：检查中控台的渠道与尺寸。'
+    return `每张原图产出 ${unitCount} 个文件。`
+  })()
+
+  /**
+   * 作用范围下拉的选项：项目树上的每一层节点，**不含全局默认**。
+   *
+   * 标签写成「层级：路径」而不是靠缩进 —— 下拉里没有缩进可依，
+   * 只有路径（产品线 / 产品 / 方向）才能在几十个同名节点间消歧。
+   */
+  const scopeOptions = useMemo(
+    () => [
+      // 空值项是「尚未选方向」的占位：`SelectField` 会把 `placeholder` 透传到原生 select
+      // （无效属性），所以用一条禁用的空选项承担占位，而不是靠 placeholder prop。
+      { value: '', label: '请选择方向', disabled: true },
+      ...flatNodes.map((node) => {
+        const names = resolveProjectNodePathNames(collections, node.id)
+        const path = [names.line, names.product, names.direction].filter(Boolean).join(' / ')
+        const kind = PROJECT_NODE_KIND_LABELS[resolveProjectNodeKind(node.depth)]
+        return { value: node.id, label: `${kind}：${path || node.name}` }
+      }),
+    ],
+    [flatNodes, collections],
+  )
+
+  const directionCount = flatNodes.filter((node) => node.depth >= 2).length
 
   return (
     <Dialog
@@ -250,100 +180,68 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
         if (!next) onClose()
       }}
       title="后处理"
-      description="左侧选节点，右侧看它的参数。未单独设置的字段沿「方向 → 产品 → 产品线 → 全局默认」逐级继承。"
+      // 两句短句：继承规则 + 全局去哪改。规范要求「说明要能被读懂」，但不等于写得长。
+      description="留空的字段向上继承。全局设置在中控台。"
       className="ds-dialog--postprocess"
       footer={
+        // footer 只放动作（状态已经在参数区末尾说过一次）；`mr-auto` 让「去中控台」靠左、
+        // 完成靠右 —— `.ds-dialog__footer` 是右对齐的 flex（见 styles.css）。
         <>
-          <span className="self-center text-xs text-ds-muted">{footerStatus}</span>
+          <Button
+            variant="secondary"
+            className="mr-auto"
+            title="渠道与尺寸、画面方向、命名模板、创作者、分发、产出预览都在中控台配置"
+            onClick={() => jumpToConsole('media')}
+          >
+            去中控台改全局规格
+          </Button>
           <Button onClick={onClose}>完成</Button>
         </>
       }
     >
-      <DialogWorkspace layout="split" className="min-h-0 flex-1">
-        {/* 左栏：纯树导航。只有名称、展开箭头与选中态，没有任何参数控件 */}
-        <DialogPane as="aside" tone="sidebar" scroll={false} className="flex flex-col gap-2">
-          <SectionHeader title="节点" description="选中一个节点，右侧显示它的参数。" />
-          <div className="min-h-0 flex-1 overflow-y-auto rounded-ds-lg border border-ds-border bg-ds-surface p-1 custom-scrollbar">
-            {/* 树根固定是「全局默认」：所有节点的兜底值，媒体表这类全局规格也挂在它下面 */}
-            <button
-              type="button"
-              aria-current={selectedNodeId === GLOBAL_NODE_ID ? 'true' : undefined}
-              data-testid="postprocess-tree-node-global"
-              className={`flex w-full items-center gap-1.5 rounded-ds-md px-1.5 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${
-                selectedNodeId === GLOBAL_NODE_ID
-                  ? 'bg-ds-primary/10 font-medium text-ds-primary'
-                  : 'text-ds-text hover:bg-ds-surface-subtle'
-              }`}
-              onClick={() => setSelectedNodeId(GLOBAL_NODE_ID)}
-            >
-              <SlidersHorizontalIcon className="h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">全局默认</span>
-              <span className="shrink-0 text-xs text-ds-muted">{selectedCollectionIds.length} 个启用</span>
-            </button>
+      <DialogWorkspace className="min-h-0 flex-1">
+        <DialogPane tone="content" scroll={false} className="flex min-h-0 flex-col">
+          {/* 竖直间距走设计系统的 Stack（20px = --ds-space-5，MASTER 4.4「组间 20–32px」） */}
+          <Stack gap={5} className="min-h-0 flex-1">
+            <Stack gap={2} className="shrink-0">
+              <SelectField
+                label="作用范围"
+                options={scopeOptions}
+                value={selectedNodeId ?? ''}
+                onChange={(event) => setCollectionContextScope(event.target.value || null)}
+              />
+              {missingProjectIds.length > 0 && (
+                <Alert tone="warning">有 {missingProjectIds.length} 个已启用的节点不存在或已删除，将被跳过。</Alert>
+              )}
+            </Stack>
 
-            {projectTree.length === 0 ? (
-              <p className="px-1.5 py-2 text-xs text-ds-muted">还没有项目文件夹，树是空的。</p>
-            ) : (
-              <div className="mt-0.5">{projectTree.map((node) => renderProjectNode(node))}</div>
-            )}
-          </div>
-          {missingProjectIds.length > 0 && (
-            <Alert tone="warning">有 {missingProjectIds.length} 个已勾选的节点不存在或已删除，将被跳过。</Alert>
-          )}
-        </DialogPane>
-
-        {/* 右栏：唯一参数详情面板。字段与分组全部来自 paramSchema */}
-        <DialogPane tone="content" className="min-h-0">
-          <PostprocessParamPanel
-            selectedNodeId={selectedNodeId}
-            globalConfig={globalConfig}
-            enabledScopeIds={selectedCollectionIds}
-            outputUnitCount={projectTargets.length > 0 ? previewUnits.length : undefined}
-            renderMediaTable={() => <MediaTableManager />}
-            renderOutputPreview={() => <OutputPreview units={visibleUnits} config={globalConfig} />}
-          />
+            {/*
+             * 参数区：唯一编辑面，字段与分组全部来自 paramSchema。
+             *
+             * 「作用范围」固定在滚动区之外（用户随时能确认/切换在改哪个方向），
+             * 所以这里给一条 1px 上边界把固定区与滚动区分开 —— 否则滚动时内容会直接
+             * 贴着下拉框，看不出哪部分是「不会动的」。
+             */}
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto border-t border-ds-border pt-5 pr-1">
+              {selectedNodeId ? (
+                <Stack gap={6}>
+                  <PostprocessParamPanel
+                    selectedNodeId={selectedNodeId}
+                    globalConfig={globalConfig}
+                    enabledScopeIds={selectedCollectionIds}
+                    // 「去项目树启用」要离开这里：不关的话弹窗会叠在刚打开的项目树工作台上
+                    onRequestClose={onClose}
+                  />
+                  {/* 状态（MASTER §5.9 里的 Status 层）：只在面板之后出现一次，footer 不重复 */}
+                  <p className="text-xs text-ds-muted">{statusLine}</p>
+                </Stack>
+              ) : (
+                <PickDirectionHint hasDirections={directionCount > 0} />
+              )}
+            </div>
+          </Stack>
         </DialogPane>
       </DialogWorkspace>
     </Dialog>
-  )
-}
-
-/** 产出预览清单（只读）。 */
-function OutputPreview({
-  units,
-  config,
-}: {
-  units: ReturnType<typeof selectPostprocessOutputPlan>['units']
-  config: Parameters<typeof buildPostprocessOutputName>[0]
-}) {
-  if (units.length === 0) {
-    return (
-      <p className="text-xs text-ds-muted">
-        勾选启用范围与媒体后显示产出清单。统一输出 JPEG；比例与生成尺寸不一致时等比放大裁切填满。
-      </p>
-    )
-  }
-  return (
-    <ul className="space-y-1">
-      {units.map((unit, index) => (
-        <li
-          key={`${unit.project?.collectionId ?? 'none'}-${unit.sizeId}-${index}`}
-          className="flex items-center gap-2 rounded-ds-lg border border-ds-border bg-ds-surface-subtle px-3 py-1.5 text-xs"
-        >
-          <CheckIcon className="h-3.5 w-3.5 shrink-0 text-ds-muted" />
-          <span className="shrink-0 text-ds-muted">
-            {[unit.project?.line, unit.project?.product, unit.project?.direction].filter(Boolean).join(' / ') ||
-              '未归属'}{' '}
-            · {unit.width}x{unit.height}
-          </span>
-          <span
-            className="ml-auto min-w-0 truncate text-ds-text"
-            title={buildPostprocessOutputName(config, unit, unit.project ?? {}, index + 1)}
-          >
-            {buildPostprocessOutputName(config, unit, unit.project ?? {}, index + 1)}
-          </span>
-        </li>
-      ))}
-    </ul>
   )
 }

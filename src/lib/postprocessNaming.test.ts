@@ -12,6 +12,7 @@ import {
   insertPostprocessNameToken,
   listPostprocessNameTokens,
   renderPostprocessNamePattern,
+  validateNamePattern,
 } from './postprocessNaming'
 
 const SEPT_17_2026 = new Date(2026, 8, 17, 12, 0, 0).getTime()
@@ -197,5 +198,36 @@ describe('变量按钮的中文名', () => {
       // 短名是详细标签去括号后的前缀，两者不能各说各的
       expect(POSTPROCESS_NAME_TOKEN_LABELS[token].startsWith(short)).toBe(true)
     }
+  })
+})
+
+describe('validateNamePattern（模板校验）', () => {
+  // 校验与上面三个 find* 是同一件事的几半：模板 token 集改了，校验范围必须跟着改。
+  // 原先它挂在参数元数据表里，参数表收窄为方向级后随命名工具一起搬到这里。
+  it('全部通过时返回空数组', () => {
+    expect(validateNamePattern('{date}-{seq}', { unknown: [], missing: [], duplicated: [] })).toEqual([])
+  })
+
+  it('未知占位符是 error', () => {
+    const issues = validateNamePattern('{oops}', { unknown: ['oops'], missing: [], duplicated: [] })
+    expect(issues).toHaveLength(1)
+    expect(issues[0].tone).toBe('error')
+    expect(issues[0].message).toContain('{oops}')
+  })
+
+  it('缺少占位符是 error，并说明会互相覆盖', () => {
+    const issues = validateNamePattern('{date}', { unknown: [], missing: ['seq'], duplicated: [] })
+    expect(issues[0].tone).toBe('error')
+    expect(issues[0].message).toContain('覆盖')
+  })
+
+  it('重复占位符只是 warning', () => {
+    const issues = validateNamePattern('{size}-{size}', { unknown: [], missing: [], duplicated: ['size'] })
+    expect(issues[0].tone).toBe('warning')
+  })
+
+  it('多个问题同时报出，不互相盖掉', () => {
+    const issues = validateNamePattern('{oops}', { unknown: ['oops'], missing: ['seq'], duplicated: ['size'] })
+    expect(issues).toHaveLength(3)
   })
 })

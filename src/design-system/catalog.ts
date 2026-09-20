@@ -983,7 +983,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/OutputSection.tsx',
     responsibility:
-      '中控台「输出位置」分区：作用域由左树驱动（全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir）',
+      '中控台「输出位置」分区：作用域由左树驱动（全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir）；文件命名与产出预览也挂在这一区',
+    decision: 'compose',
+    targets: ['SectionHeader', 'Alert', 'Badge'],
+  },
+  {
+    module: 'src/features/composite/components/PostprocessOutputPreview.tsx',
+    responsibility: '后处理产出预览：按当前作用域展开「会产出哪些文件」（只读核对，源图尺寸按示例估算）',
     decision: 'compose',
     targets: ['SectionHeader', 'Alert', 'Badge'],
   },
@@ -1010,6 +1016,12 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     responsibility: '命名模板输入 + 变量按钮（中文名显示、按光标位置插入 token）',
     decision: 'compose',
     targets: ['TextField', 'Button'],
+  },
+  {
+    module: 'src/features/postprocess/PostprocessNamingFields.tsx',
+    responsibility: '后处理文件命名设置（命名模板 + 创作者；全局一套，挂在中控台「输出位置」分区）',
+    decision: 'compose',
+    targets: ['TextField', 'Button', 'Alert'],
   },
   {
     module: 'src/features/projectTree/ProjectTreeWorkbench.tsx',

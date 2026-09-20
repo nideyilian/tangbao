@@ -46,10 +46,9 @@ const chipClass =
 
 /** 启用勾选的悬停说明：把「为什么这格点不动」直接写在 title 里，省得用户去猜。 */
 function describeToggle(row: ProjectTreeTableRow): string {
-  if (row.postprocessEnabledInherited) {
-    return '由上级启用。要单独关掉这个方向，进「参数」关闭「参与自动后处理」'
-  }
-  return row.postprocessEnabled ? '已启用：归属该节点的图片会自动产出渠道变体' : '未启用：归属该节点的图片只保存原图'
+  // 短句（2026-09-20 反馈「说明又长又说不明白」）：一句结论 + 一句「去哪改」
+  if (row.postprocessEnabledInherited) return '继承上级；要单独改，去后处理面板'
+  return row.postprocessEnabled ? '已启用：归属图片会产出变体' : '未启用：只保存原图'
 }
 
 export default function ProjectTreeTable({

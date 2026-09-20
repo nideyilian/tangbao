@@ -5,6 +5,7 @@ import { CONTROL_CONSOLE_SECTIONS, DEFAULT_CONTROL_CONSOLE_SECTION } from './lib
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
+import { useStore } from '../../store'
 
 /**
  * 中控台装配测试。
@@ -74,6 +75,8 @@ describe('CompositeWorkspace', () => {
       ] as never,
     })
     useProjectTreeParamsStore.setState({ params: {} })
+    // 分区是 store 里的值：不重置会让「默认落水印」那条用例受上一条影响
+    useStore.setState({ controlConsoleSection: DEFAULT_CONTROL_CONSOLE_SECTION })
   })
 
   it('fills the viewport below the fixed application header', () => {
@@ -140,6 +143,42 @@ describe('CompositeWorkspace', () => {
         expect(renderer.root.findAllByProps({ children: other })).toHaveLength(0)
       }
     }
+  })
+
+  it('⭐ 外部带目标分区跳进来时直接落在那一个分区（不能只切工作区）', () => {
+    // 场景：别处（如「后处理」弹窗）点了「去中控台改全局规格」。
+    // 分区是应用 store 里的唯一真相源，所以跳转方直接写它即可，不需要额外握手协议。
+    useStore.setState({ controlConsoleSection: 'output' })
+
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    expect(renderer.root.findByProps({ children: 'output-screen' })).toBeTruthy()
+  })
+
+  it('⭐ 离开中控台后分区归位默认，所以「从顶栏进来」仍是水印（既有行为不变）', () => {
+    useStore.setState({ controlConsoleSection: 'distribution' })
+
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+    expect(renderer.root.findByProps({ children: 'distribution-screen' })).toBeTruthy()
+
+    act(() => renderer.unmount())
+    expect(useStore.getState().controlConsoleSection).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
+  })
+
+  it('没有指定分区时仍默认落水印', () => {
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    expect(renderer.root.findByProps({ children: 'preset-screen' })).toBeTruthy()
+    expect(renderer.root.findAllByProps({ children: 'output-screen' })).toHaveLength(0)
   })
 
   it('右区标题跟随左树选择的作用域', () => {

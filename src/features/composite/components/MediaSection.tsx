@@ -29,12 +29,17 @@
  * 粒度比「逐渠道」粗，这是那次收窄时明确做的取舍。
  *
  * 因此这里不挂作用域选择器：给了能选节点、选了却什么都不变的控件比不给更糟。
+ *
+ * **2026-09-20 追加「画面方向」**：它决定「每个渠道取用哪一组尺寸」，与渠道分组是同一件事的
+ * 两半。原先它挂在后处理弹窗的全局作用域里，弹窗收窄为方向级参数后搬到这里。
+ * 顺带改掉了原字段说明的自相矛盾（原文写「跟随源图方向自动判定，不提供手选覆盖」，
+ * 而界面上给的却是一个可手选的分段控件）。
  */
 
 import { useMemo, useState } from 'react'
-import { Badge, Button, Checkbox, EmptyState, SectionHeader } from '../../../design-system'
+import { Badge, Button, Checkbox, EmptyState, SectionHeader, SegmentedControl } from '../../../design-system'
 import { Layers3Icon } from '../../../design-system/icons'
-import { PURE_MEDIA_ID, resolveOutputDirection } from '../../../lib/postprocessMedia'
+import { DIRECTION_OPTIONS, PURE_MEDIA_ID, resolveOutputDirection } from '../../../lib/postprocessMedia'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import MediaTableManager from '../../postprocess/MediaTableManager'
 
@@ -49,6 +54,8 @@ export function MediaSection() {
   const selectedMediaIds = usePostprocessMediaStore((state) => state.selectedMediaIds)
   const toggleSelectedMedia = usePostprocessMediaStore((state) => state.toggleSelectedMedia)
   const [showSpecEditor, setShowSpecEditor] = useState(false)
+  const direction = usePostprocessMediaStore((state) => state.direction)
+  const setDirection = usePostprocessMediaStore((state) => state.setDirection)
 
   /**
    * 「已应用」= 这个渠道已经在产出范围里。纯净版是个特殊渠道（不产渠道变体，只产无水印原图），
@@ -64,7 +71,7 @@ export function MediaSection() {
       <div className="shrink-0 px-4 pt-3">
         <SectionHeader
           title="渠道与尺寸"
-          description="全局共享规格：每个渠道产出哪些尺寸、体积上限多少。勾选决定这个渠道是否参与产出。"
+          description="全局共享规格：每个渠道产出哪些尺寸、体积上限多少。勾选决定这个渠道是否参与产出，画面方向决定取用哪一组尺寸。"
           actions={
             <Button variant="ghost" size="sm" onClick={() => setShowSpecEditor((current) => !current)}>
               {showSpecEditor ? '收起规格编辑' : '编辑规格'}
@@ -74,6 +81,34 @@ export function MediaSection() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-3">
+        {/*
+         * 画面方向：它决定「每个渠道取用哪一组尺寸」，与下面的渠道分组是同一件事的两半，
+         * 所以放在最上面而不是另开分区。原先这个控件挂在后处理弹窗的全局作用域里
+         * （2026-09-20 弹窗收窄为方向级后搬到这里）。
+         * 默认「跟随尺寸」即按源图比例自动判，只有要整批强制横/竖时才需要动它。
+         */}
+        <section
+          data-layout="console-direction"
+          className="mb-3 rounded-ds-lg border border-ds-border bg-ds-surface px-3 py-2 dark:border-ds-border dark:bg-ds-scrim"
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-sm font-medium text-ds-text dark:text-ds-text">画面方向</p>
+              <p className="text-xs text-ds-muted dark:text-ds-muted">
+                决定每个渠道取用哪一组尺寸。默认按源图比例自动判，需要整批强制横 / 竖时在这里覆盖。
+              </p>
+            </div>
+            <div className="ml-auto shrink-0">
+              <SegmentedControl
+                aria-label="画面方向"
+                value={direction ?? 'auto'}
+                options={DIRECTION_OPTIONS}
+                onValueChange={(value) => setDirection(value === 'auto' ? null : value)}
+              />
+            </div>
+          </div>
+        </section>
+
         {media.length === 0 && (
           <EmptyState
             icon={<Layers3Icon className="h-5 w-5" />}

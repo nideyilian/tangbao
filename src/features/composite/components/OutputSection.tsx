@@ -11,6 +11,10 @@
  *
  * 保留的约束：节点覆盖仍写 `PostprocessNodeOverride.byMedia`（ADR-0011 收窄后的字段），
  * 并且同时摘掉旧的单值 `outputDir`，避免两个字段并存时「显示的」与「生效的」不一致。
+ *
+ * **2026-09-20 追加两块**（后处理弹窗收窄为「只显示方向级参数」后，全局参数在这里落脚）：
+ * - 「文件命名」：命名模板 + 创作者（全局一套，原先只在弹窗的全局作用域里能改）；
+ * - 「产出预览」：按作用域展开产出文件（原先同理）。
  */
 
 import { useMemo } from 'react'
@@ -19,10 +23,12 @@ import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import ChannelOutputDirs from '../../postprocess/ChannelOutputDirs'
+import PostprocessNamingFields from '../../postprocess/PostprocessNamingFields'
 import { useStore } from '../../../store'
 import { normalizeOutputDirList, type PostprocessNodeOverride } from '../../../lib/postprocessMedia'
 import { resolveCollectionPath } from '../../../lib/postprocessProjectTree'
 import { isGlobalScope, type ConsoleScope } from '../lib/controlConsoleSections'
+import PostprocessOutputPreview from './PostprocessOutputPreview'
 
 interface Props {
   scope: ConsoleScope
@@ -135,10 +141,7 @@ export function OutputSection({ scope }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="shrink-0 px-4 pt-3">
-        <SectionHeader
-          title="输出位置"
-          description="按渠道指定导出目录，一个渠道可以给两个位置（同一份产物各存一份）。留空 = 用默认输出位置。"
-        />
+        <SectionHeader title="输出位置" description="留空 = 用默认位置；给两个 = 双写。" />
       </div>
 
       <div className="shrink-0 space-y-3 px-4 pt-3">
@@ -179,13 +182,24 @@ export function OutputSection({ scope }: Props) {
           onClearDirs={handleClearDirs}
           onPickError={() => showToast('选择目录失败，请重试', 'error')}
           clearLabel={isGlobal ? '用默认' : '恢复继承'}
-          description={
-            <span>
-              留空 = 用默认输出位置。给第二个位置即<strong>双写</strong>
-              （同一份产物在两个位置各存一份）。
-            </span>
-          }
+          description="留空 = 用默认位置；给两个 = 双写。"
         />
+
+        {/*
+         * 下面两块是**全局一套**的参数（命名、产出预览），不随作用域切换而变。
+         * 原先它们在「后处理」弹窗的全局作用域里，2026-09-20 弹窗收窄为方向级后搬到这里 ——
+         * 中控台是全部参数的统一编辑入口，全局参数不该只剩一个已经删掉的入口。
+         */}
+        <div className="mt-5 border-t border-ds-border pt-4">
+          <SectionHeader title="文件命名" description="全局一套：产出文件名由模板拼出，不按方向分。" />
+          <div className="mt-3">
+            <PostprocessNamingFields />
+          </div>
+        </div>
+
+        <div className="mt-5 border-t border-ds-border pt-4">
+          <PostprocessOutputPreview scope={scope} />
+        </div>
       </div>
     </div>
   )

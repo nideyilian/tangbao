@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_POSTPROCESS_DISTRIBUTION } from './postprocessDistribution'
 import {
   DEFAULT_POSTPROCESS_MEDIA,
+  DIRECTION_OPTIONS,
   MAX_POSTPROCESS_OUTPUT_DIRS,
   PURE_MEDIA_ID,
   applyPostprocessOverride,
@@ -545,5 +546,21 @@ describe('导出位置：全局渠道表 + 双写', () => {
     const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
     applyPostprocessOverride(base, { byMedia: { baidu: { outputDirs: ['D:/节点'] } } }, 'baidu')
     expect(base.mediaOutputDirs.baidu).toEqual(['D:/全局百度'])
+  })
+})
+
+describe('DIRECTION_OPTIONS（画面方向选项的唯一来源）', () => {
+  // 原先这份常量在参数元数据表里，方向选择控件（中控台「渠道与尺寸」）与它同源。
+  // 参数表收窄为方向级后搬到这里，与 `OutputDirection` / `getOutputDirectionLabel` 同家。
+  it('取值与顺序固定：跟随尺寸在最前（默认）', () => {
+    expect(DIRECTION_OPTIONS.map((option) => option.value)).toEqual(['auto', 'landscape', 'portrait', 'square'])
+    expect(DIRECTION_OPTIONS[0].label).toBe('跟随尺寸')
+  })
+
+  it('除 auto 外的每个取值都是真实方向，且中文名与 getOutputDirectionLabel 一致', () => {
+    for (const option of DIRECTION_OPTIONS) {
+      if (option.value === 'auto') continue
+      expect(option.label).toBe(getOutputDirectionLabel(option.value))
+    }
   })
 })

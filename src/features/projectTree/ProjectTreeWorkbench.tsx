@@ -111,7 +111,17 @@ export default function ProjectTreeWorkbench({ onClose }: Props) {
   const setConfirmDialog = useStore((state) => state.setConfirmDialog)
   const showToast = useStore((state) => state.showToast)
 
-  const [keyword, setKeyword] = useState('')
+  /**
+   * 跳转焦点：外部把用户送到这儿时（「后处理」弹窗那条「这个方向不在启用范围内」的
+   * 「去项目树启用」按钮）会带上目标节点 id，用它**预填搜索**——
+   * 否则用户还得在几十行里自己翻出那一行，等于没跳。
+   *
+   * 只在首次挂载时取值：之后搜索框归用户自己管（他清空或改词都不该被拉回去）。
+   */
+  const focusId = useStore((state) => state.projectTreeWorkbench.focusId)
+  const [keyword, setKeyword] = useState(() =>
+    focusId ? (collections.find((item) => item.id === focusId)?.name ?? '') : '',
+  )
   const [adding, setAdding] = useState<{ parentId: string | null } | null>(null)
 
   const rows = useMemo(

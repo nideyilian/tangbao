@@ -15,6 +15,10 @@ import { isRecord } from './lib/typeGuards'
 // 静态 import 会把 features/postprocess → features/composite 整条链拉进 store.ts 的模块图，
 // 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
 import type { TaskPostprocessResult, TaskPostprocessSource } from './features/postprocess/taskPostprocess'
+import {
+  DEFAULT_CONTROL_CONSOLE_SECTION,
+  type ControlConsoleSectionId,
+} from './features/composite/lib/controlConsoleSections'
 import type {
   AgentConversation,
   AgentMessage,
@@ -2507,6 +2511,34 @@ interface AppState {
   // 模式
   appMode: AppMode
   setAppMode: (mode: AppMode) => void
+  /**
+   * 中控台**当前分区**（唯一真相源）。
+   *
+   * 放在应用 store 而不是工作区局部 state，是因为**外部要能指定落点**：
+   * 「后处理」弹窗里的「去中控台改全局规格」如果不带目标分区，用户跳过去会落在默认分区、
+   * 还得自己再找一遍（等于没跳）。
+   *
+   * 默认值必须是 `watermark`（`DEFAULT_CONTROL_CONSOLE_SECTION`，理由见
+   * `controlConsoleSections.ts`）；**离开中控台时由工作区把它归位默认**，
+   * 所以「从顶栏点进来」看到的仍是水印，行为不变。
+   */
+  controlConsoleSection: ControlConsoleSectionId
+  setControlConsoleSection: (section: ControlConsoleSectionId) => void
+  /**
+   * 项目树工作台的打开状态（唯一真相源，`null` = 关着）。
+   *
+   * 它原本是资产库工具栏里的局部 state，于是**别处没法把用户送过去** ——
+   * 「后处理」弹窗那条「这个方向不在启用范围内，请到项目树的『后处理』列勾选」
+   * 就只能干说一句、让人自己去翻（这正是杰哥 2026-09-20 报的那条）。
+   *
+   * `focusId`：跳过去时要让人一眼看到的那一行（工作台用它预填搜索关键词）。
+   * 与 `open` 放在同一个值里，避免出现「开着但带着上一次的焦点」这种不一致。
+   *
+   * 刻意**不落盘**（`getPersistedState` 是白名单）：它是「这一次跳转」的意图，不是偏好。
+   */
+  projectTreeWorkbench: { open: boolean; focusId: string | null }
+  openProjectTreeWorkbench: (focusId?: string | null) => void
+  closeProjectTreeWorkbench: () => void
   // 设置
   settings: AppSettings
   setSettings: (s: Partial<AppSettings>) => void
@@ -3190,6 +3222,11 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       // Mode
       appMode: 'gallery',
+      controlConsoleSection: DEFAULT_CONTROL_CONSOLE_SECTION,
+      setControlConsoleSection: (controlConsoleSection) => set({ controlConsoleSection }),
+      projectTreeWorkbench: { open: false, focusId: null },
+      openProjectTreeWorkbench: (focusId = null) => set({ projectTreeWorkbench: { open: true, focusId } }),
+      closeProjectTreeWorkbench: () => set({ projectTreeWorkbench: { open: false, focusId: null } }),
       setAppMode: (appMode) => {
         if (appMode === 'gallery') {
           const state = get()

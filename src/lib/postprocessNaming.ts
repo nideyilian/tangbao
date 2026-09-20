@@ -159,6 +159,42 @@ export function findDuplicatedPostprocessNameTokens(pattern: string): string[] {
   return duplicated
 }
 
+/** 命名模板的校验结果：空数组 = 通过。`tone` 用于决定界面上的提示是警告还是错误。 */
+export interface ParamIssue {
+  message: string
+  tone: 'warning' | 'error'
+}
+
+/**
+ * 命名模板校验。
+ *
+ * 与上面三个 `find*PostprocessNameTokens` 放在一起：它们与 `namePattern` 字段是同一件事的
+ * 几半 —— 模板支持的 token 改了，校验范围必须跟着改，分开写迟早对不上。
+ */
+export function validateNamePattern(
+  value: string,
+  checks: {
+    unknown: string[]
+    missing: string[]
+    duplicated: string[]
+  },
+): ParamIssue[] {
+  const issues: ParamIssue[] = []
+  if (checks.unknown.length > 0) {
+    issues.push({ message: `模板里有不认识的占位符：${checks.unknown.map((t) => `{${t}}`).join('、')}`, tone: 'error' })
+  }
+  if (checks.missing.length > 0) {
+    issues.push({
+      message: `模板缺少占位符：${checks.missing.map((t) => `{${t}}`).join('、')}，同名文件会互相覆盖`,
+      tone: 'error',
+    })
+  }
+  if (checks.duplicated.length > 0) {
+    issues.push({ message: `占位符重复出现：${checks.duplicated.map((t) => `{${t}}`).join('、')}`, tone: 'warning' })
+  }
+  return issues
+}
+
 function resolveTokenValue(token: string, context: PostprocessNameContext): string | null {
   switch (token) {
     case 'date':

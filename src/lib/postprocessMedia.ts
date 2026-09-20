@@ -131,6 +131,21 @@ export function getOutputDirectionLabel(direction: OutputDirection): string {
   return '方形'
 }
 
+/**
+ * 方向选择控件的取值域：`auto` 是「跟随源图尺寸」的显式取值，写到 store 时换算回 `null`。
+ *
+ * 与 `OutputDirection` 放在一起 —— 它是同一个字段的 UI 取值，不是第二套方向定义。
+ */
+export type DirectionValue = 'auto' | OutputDirection
+
+/** 画面方向选项。**只有这一份**，媒体分区与任何需要方向选择的地方都引用它。 */
+export const DIRECTION_OPTIONS: Array<{ value: DirectionValue; label: string }> = [
+  { value: 'auto', label: '跟随尺寸' },
+  { value: 'landscape', label: '横版' },
+  { value: 'portrait', label: '竖版' },
+  { value: 'square', label: '方形' },
+]
+
 /** 按 id 查媒体；不存在返回 undefined（调用方需自行决定如何提示）。 */
 export function findPostprocessMedia(
   media: PostprocessMedia[] | undefined,

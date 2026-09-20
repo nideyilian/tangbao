@@ -60,8 +60,13 @@ function formatUpdatedAt(value: number) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-/** 预设画布的实时预览。渲染失败时退化为尺寸占位块。 */
-function PresetCover({ preset }: { preset: CompositeV2Preset }) {
+/**
+ * 预设画布的实时预览。渲染失败时退化为尺寸占位块。
+ *
+ * 导出给「后处理」弹窗的水印摘要复用：那边要显示「这个方向会叠哪几套水印」，
+ * 只给名字看不出是哪一套，给封面才一眼认得出。
+ */
+export function PresetCover({ preset }: { preset: CompositeV2Preset }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [failed, setFailed] = useState(false)
   const target = coverTarget(preset.baseCanvas)

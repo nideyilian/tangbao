@@ -147,6 +147,14 @@
   旧工具类只减不增（`compliance.test.ts` 强制）。
 - **新增组件必须登记 `design-system/catalog.ts`**，否则 `catalog.test.ts` 的全等比较直接失败
   —— 这是**刻意的棘轮**，不是 bug（R-48）。
+- **`TextField` 撑开宽度必须写 `containerClassName`，不是 `className`**（2026-09-20 实测）：
+  `className` 落到内层 `<input>`，外层 `.ds-field` 是 `display:grid` 的 flex 子项 ——
+  写成 `className="flex-1"` 时容器按内容宽度定死，**输入框只占 ~200px，右侧留一大片空白**，
+  且没有任何报错。正确写法 `containerClassName="min-w-0 flex-1"`。
+  ⚠️ 同一坑在 `MediaTableManager` / `ChannelOutputDirs` 各有一处，已一并修；
+  **写新表单行时先 `grep 'containerClassName="min-w-0 flex-1"'` 抄现成的**。
+- **`.ds-switch` 是 `justify-content: space-between` 的 flex**：直接放进撑满宽度的容器里，
+  状态文字在最左、开关被甩到最右，中间留一大片空。行式布局里要**外面套一层 `w-fit`**。
 
 ## 七·五、新增可编辑字段 → 三处「静默失效」清单（必逐项过）
 

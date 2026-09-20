@@ -58,7 +58,7 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
   {
     id: 'output',
     label: '输出位置',
-    description: '按渠道指定导出目录（可双写）。切换作用域可分别设置全局默认与单个节点。',
+    description: '按渠道指定导出目录（可双写）、产出文件命名模板，以及这个作用域的产出预览。',
   },
   {
     id: 'distribution',

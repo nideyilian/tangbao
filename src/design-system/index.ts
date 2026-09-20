@@ -42,10 +42,24 @@ export type {
   SwitchProps,
 } from './forms'
 
-export { Container, Divider, Grid, Inline, ScrollArea, SplitPane, Stack } from './layout'
+export {
+  Container,
+  Divider,
+  FormGrid,
+  FormGridControl,
+  FormGridFull,
+  FormGridLabel,
+  Grid,
+  Inline,
+  ScrollArea,
+  SplitPane,
+  Stack,
+} from './layout'
 export type {
   ContainerProps,
   DividerProps,
+  FormGridProps,
+  FormGridSlotProps,
   GridProps,
   InlineProps,
   ScrollAreaProps,

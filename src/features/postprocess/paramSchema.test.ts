@@ -1,19 +1,18 @@
 /**
  * 参数元数据表的契约。
  *
- * 这里的断言都是「防重复定义」这一目标本身的可测形式：
- * 键唯一、分组都能落到、作用域分明、方向选项只有这一份。
+ * 断言都是「防重复定义」这一目标本身的可测形式：
+ * 键唯一、分组都能落到、没有死分组、组说明不与字段说明重复，
+ * 以及**全局独有参数不在这张表里**（它们在中控台分区有唯一入口，本表只管方向级）。
  */
 
 import { describe, expect, it } from 'vitest'
 import {
-  DIRECTION_OPTIONS,
   GLOBAL_NODE_ID,
   PARAM_GROUPS,
   POSTPROCESS_PARAM_FIELDS,
   selectParamFields,
   selectParamFieldsByGroup,
-  validateNamePattern,
 } from './paramSchema'
 
 describe('paramSchema · 单一来源约束', () => {
@@ -34,85 +33,42 @@ describe('paramSchema · 单一来源约束', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('方向选项只有这一份，且顺序固定', () => {
-    expect(DIRECTION_OPTIONS.map((option) => option.value)).toEqual(['auto', 'landscape', 'portrait', 'square'])
-    expect(DIRECTION_OPTIONS[0].label).toBe('跟随尺寸')
-  })
-
   it('全局节点 id 是哨兵值，不会与真实 collection id 混淆', () => {
     expect(GLOBAL_NODE_ID).toMatch(/^__/)
   })
 })
 
-describe('paramSchema · 作用域', () => {
-  it('全局作用域排除只属于节点的字段', () => {
-    const controls = selectParamFields('global').map((field) => field.control)
-    expect(controls).not.toContain('enabled')
-    expect(controls).toContain('media')
-    expect(controls).toContain('mediaTable')
-    expect(controls).toContain('outputPreview')
+describe('paramSchema · 只描述方向级参数', () => {
+  it('表里只有方向级可覆盖字段；全局独有参数一律不在（它们在中控台分区）', () => {
+    // 全局独有参数：渠道与尺寸、画面方向、命名模板、创作者、分发、纯净版伴随、产出预览。
+    // 它们一旦回到这张表，就又变成「同一参数两个入口」，那正是这次收窄要消除的重复。
+    expect(selectParamFields().map((field) => field.control)).toEqual(['enabled', 'outputDir', 'watermarkBinding'])
   })
 
-  it('节点作用域排除只属于全局的字段', () => {
-    const controls = selectParamFields('node').map((field) => field.control)
-    expect(controls).toContain('enabled')
-    expect(controls).not.toContain('mediaTable')
-    expect(controls).not.toContain('outputPreview')
+  it('分组顺序即操作顺序：先决定参不参与，再决定产出放哪，最后是水印', () => {
+    expect(PARAM_GROUPS.map((group) => group.id)).toEqual(['participation', 'output', 'watermark'])
   })
 
-  it('两种作用域共用同一批 both 字段', () => {
-    const globalKeys = new Set(selectParamFields('global').map((field) => field.key))
-    const nodeKeys = new Set(selectParamFields('node').map((field) => field.key))
-    for (const field of POSTPROCESS_PARAM_FIELDS.filter((item) => item.scope === 'both')) {
-      expect(globalKeys.has(field.key)).toBe(true)
-      expect(nodeKeys.has(field.key)).toBe(true)
+  it('分组选择器不返回空分组，也不丢字段', () => {
+    for (const entry of selectParamFieldsByGroup()) {
+      expect(entry.fields.length).toBeGreaterThan(0)
     }
+    const total = selectParamFieldsByGroup().reduce((sum, entry) => sum + entry.fields.length, 0)
+    expect(total).toBe(selectParamFields().length)
   })
 
-  it('分组选择器不返回空分组（避免全局节点上出现空的「参与方式」）', () => {
-    for (const scope of ['global', 'node'] as const) {
-      for (const entry of selectParamFieldsByGroup(scope)) {
-        expect(entry.fields.length).toBeGreaterThan(0)
-      }
-      // 两种作用域覆盖的字段集合应等于该作用域的全部字段
-      const total = selectParamFieldsByGroup(scope).reduce((sum, entry) => sum + entry.fields.length, 0)
-      expect(total).toBe(selectParamFields(scope).length)
-    }
-  })
-
-  it('每个分组在至少一种作用域下有字段，不会出现死分组', () => {
+  it('每个分组都有字段，不会出现死分组', () => {
     const used = new Set(POSTPROCESS_PARAM_FIELDS.map((field) => field.group))
     for (const group of PARAM_GROUPS) {
       expect(used.has(group.id), `分组 ${group.id} 没有任何字段`).toBe(true)
     }
   })
-})
 
-describe('paramSchema · 命名模板校验', () => {
-  it('全部通过时返回空数组', () => {
-    expect(validateNamePattern('{date}-{seq}', { unknown: [], missing: [], duplicated: [] })).toEqual([])
-  })
-
-  it('未知占位符是 error', () => {
-    const issues = validateNamePattern('{oops}', { unknown: ['oops'], missing: [], duplicated: [] })
-    expect(issues).toHaveLength(1)
-    expect(issues[0].tone).toBe('error')
-    expect(issues[0].message).toContain('{oops}')
-  })
-
-  it('缺少占位符是 error，并说明会互相覆盖', () => {
-    const issues = validateNamePattern('{date}', { unknown: [], missing: ['seq'], duplicated: [] })
-    expect(issues[0].tone).toBe('error')
-    expect(issues[0].message).toContain('覆盖')
-  })
-
-  it('重复占位符只是 warning', () => {
-    const issues = validateNamePattern('{size}-{size}', { unknown: [], missing: [], duplicated: ['size'] })
-    expect(issues[0].tone).toBe('warning')
-  })
-
-  it('多个问题同时报出，不互相盖掉', () => {
-    const issues = validateNamePattern('{oops}', { unknown: ['oops'], missing: ['seq'], duplicated: ['size'] })
-    expect(issues).toHaveLength(3)
+  it('组说明不与任何字段说明重复（同一句说明只能出现一处）', () => {
+    const helps = new Set(POSTPROCESS_PARAM_FIELDS.map((field) => field.help).filter(Boolean))
+    for (const group of PARAM_GROUPS) {
+      if (!group.description) continue
+      expect(helps.has(group.description), `分组 ${group.id} 的说明与某个字段的 help 逐字重复`).toBe(false)
+    }
   })
 })
