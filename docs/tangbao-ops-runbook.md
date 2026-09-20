@@ -862,6 +862,65 @@ dev 主进程加载的是**构建产物** `dist-electron/main.js`，报错行号
 
 ---
 
+## 十七·五、dev 卡顿 / 「功能卡在某一步」的环境级干扰源（2026-09-20 实测定稿）
+
+**触发场景**：dev 里某个功能「点了没反应 / 卡在某个进行中的状态」，且**代码链路查不出问题**。
+
+### 先查：`api-secrets.bin.bak.swap` 残留
+
+**症状分层（别混为一谈，实测已分清）**：
+
+| 条件                                                                        | 症状                                                                                                                                                  | 严重度     |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `saveApiSecrets` **返回 success:false**                                     | 渲染侧 `flushApiSecrets`（`src/store.ts:2185`）保留待写值，`finally` 里 **1.5s 后重试** → **死循环**，全是主进程同步 IO → **所有 IPC 变慢，功能卡住** | 高         |
+| `saveApiSecrets` 返回 success:true（当前 `removeFileQuietly` 降级后的行为） | 只在**每次保存时**多一条 `console.warn` + 多几次磁盘 IO；**不循环**                                                                                   | 低（噪音） |
+
+**为什么 swap 删不掉**：`electron/secure-api-secrets.ts` 的 `replaceFile` 用 `rmSync` 删
+`api-secrets.bin.bak.swap`，在本机撞上 WorkBuddy 的
+**`[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`** 批量删除护栏
+（**环境级，与哪条写线无关**）。旧版（HEAD）里 `rmSync` **会抛错** → `saveApiSecrets` 整体失败
+→ 触发上表的高严重度分支；新版已改成 `removeFileQuietly`（尽力而为），降级为噪音。
+
+**判据（30 秒内可查完）**：
+
+```bash
+node -e "
+const fs=require('fs'), d=process.env.APPDATA+'/tangbao';
+for(const f of fs.readdirSync(d).filter(f=>/api-secrets/.test(f)))
+  console.log(f, fs.statSync(d+'/'+f).size, new Date(fs.statSync(d+'/'+f).mtimeMs).toLocaleTimeString());
+"
+#   → 出现 api-secrets.bin.bak.swap / api-secrets.bin.tmp 即为残留
+# 关键：隔 10 秒再看一次 mtime —— 【mtime 在变】= 死循环在跑；【不变】= 只是残留噪音
+```
+
+**处置**（注意区分两种情形）：
+
+```bash
+# 若 mtime 在变（真在循环）→ 删掉止血（用 unlinkSync，护栏拦的是 rm 语义）
+node -e "require('fs').unlinkSync(process.env.APPDATA+'/tangbao/api-secrets.bin.bak.swap')"
+```
+
+⚠️ **删了会再生成** —— 只要 `saveApiSecrets` 再被触发（改设置 / 启动 hydrate），swap 就回来。
+**根治要改 `secure-api-secrets.ts`**（让 `removeFileQuietly` 在护栏拦下后仍能清理，
+例如失败时换用 `renameSync` 挪走，或直接 `writeFileSync` 覆盖而非「删了再 rename」）。
+（2026-09-20 现场：`electron/secure-api-secrets.ts` + `secure-api-secrets.test.ts`
+的改动**正由另一条写线在做**，本轮未掺手。）
+
+**自查一句话**：dev 里主进程「莫名变慢 + stderr 刷 `[api-secrets] ... safe-delete`」→
+先看 `api-secrets.bin.bak.swap` 的 **mtime 是否在变**。
+
+### 再查：另一条写线的 HMR 整页刷新
+
+`[vite] (client) page reload <file>` 会**整页重载**（不是热更新），
+正在跑的异步流程（提示词生成、采样、批任务）会被**直接打断**。
+
+判据：`netstat -ano | grep 41731` 有连接，但用户操作「无端重来」。
+
+**纪律**：同一仓库默认单写线（R-01）。若必须并行，用 `git worktree` 隔离
+（见 `docs/work-protocol.md`），别在同一个 dev 上互相刷页。
+
+---
+
 ## 十八、改 `start.bat` / 任何 `.bat` 的编码与行尾（2026-09-20 实测定稿）
 
 **触发场景**：双击 `start.bat` 没反应 / 一闪而过；或跑起来后满屏

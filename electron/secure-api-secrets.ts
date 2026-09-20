@@ -20,20 +20,41 @@ const EMPTY_SECRETS: StoredApiSecrets = {
   agentProfiles: {},
 }
 
+/**
+ * 原子替换：写入临时文件 → 把旧文件挪成备份 → 临时文件改名就位 → 清掉备份。
+ *
+ * **只有最后那步改名是不可失败的**；其余都是尽力而为的清理动作。Windows 上
+ * `rmSync` 会因为杀软/索引器短暂占用文件抛 `EPERM`/`EBUSY`，一旦让这种失败冒到
+ * 调用方，`saveApiSecrets` 就会整体失败 → 渲染层 `[api-secrets] 写入失败，将自动重试`
+ * 每 1.5 秒重试一次且永远不成功（密钥再也存不进去）。所以清理动作一律降级为告警。
+ */
+function removeFileQuietly(filePath: string): void {
+  try {
+    rmSync(filePath, { force: true })
+  } catch (error) {
+    console.warn('[api-secrets] 清理临时文件失败，已忽略', filePath, error)
+  }
+}
+
 function replaceFile(filePath: string, content: string | Buffer): void {
   const tempPath = `${filePath}.tmp`
   const backupPath = `${filePath}.bak.swap`
   writeFileSync(tempPath, content)
-  rmSync(backupPath, { force: true })
-  if (existsSync(filePath)) renameSync(filePath, backupPath)
+  removeFileQuietly(backupPath)
+  try {
+    if (existsSync(filePath)) renameSync(filePath, backupPath)
+  } catch (error) {
+    // 备份失败不致命：旧文件仍在原位，下面的改名在 Windows 上会直接覆盖它。
+    console.warn('[api-secrets] 备份旧密钥文件失败，将直接覆盖', error)
+  }
   try {
     renameSync(tempPath, filePath)
-    rmSync(backupPath, { force: true })
+    removeFileQuietly(backupPath)
   } catch (error) {
     if (existsSync(backupPath) && !existsSync(filePath)) renameSync(backupPath, filePath)
     throw error
   } finally {
-    rmSync(tempPath, { force: true })
+    removeFileQuietly(tempPath)
   }
 }
 
