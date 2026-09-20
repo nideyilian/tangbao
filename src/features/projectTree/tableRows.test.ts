@@ -153,7 +153,7 @@ describe('filterProjectTreeTableRows', () => {
 
 describe('summarizeProjectTreeRows', () => {
   it('统计各级数量、已配参数节点数、启用范围内节点数', () => {
-    const params: ProjectNodeParamsMap = { [LINE_A]: { postprocess: { creator: '设计组' } } }
+    const params: ProjectNodeParamsMap = { [LINE_A]: { postprocess: { outputDir: 'D:/设计组' } } }
     const rows = buildProjectTreeTableRows(COLLECTIONS, params)
     expect(summarizeProjectTreeRows(rows)).toEqual({
       total: 7,

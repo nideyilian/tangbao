@@ -414,15 +414,18 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
     expect(baidu.watermarkPresetIds).toEqual([])
   })
 
-  it('渠道覆盖只作用于这两项，其余字段照旧走通用值', () => {
-    const override: PostprocessNodeOverride = {
+  it('⭐ 节点层不再能改已收归全局的字段（ADR-0011）', () => {
+    // `creator` / `namePattern` 等已从 `PostprocessNodeOverride` 移除，节点只影响目录与水印。
+    // 用 `as` 绕过类型（模拟旧数据 / JS 调用方），验证运行期也不会被采纳。
+    const legacyOverride = {
       creator: '通用',
       namePattern: '{product}',
       byMedia: { baidu: { outputDir: '百度目录' } },
-    }
-    const baidu = applyPostprocessOverride(baseConfig(), override, 'baidu')
-    expect(baidu.creator).toBe('通用')
-    expect(baidu.namePattern).toBe('{product}')
+    } as unknown as PostprocessNodeOverride
+    const baidu = applyPostprocessOverride(baseConfig(), legacyOverride, 'baidu')
+    // 基线值原样保留，节点上的同名字段被忽略
+    expect(baidu.creator).toBe(baseConfig().creator)
+    expect(baidu.namePattern).toBe(baseConfig().namePattern)
   })
 
   it('不修改基线配置（纯函数）', () => {
@@ -534,7 +537,7 @@ describe('导出位置：全局渠道表 + 双写', () => {
 
   it('节点没表态时全局渠道表照旧生效', () => {
     const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
-    const merged = applyPostprocessOverride(base, { creator: '某某' }, 'baidu')
+    const merged = applyPostprocessOverride(base, { enabled: true }, 'baidu')
     expect(resolvePostprocessOutputDirs(merged, 'baidu')).toEqual(['D:/全局百度'])
   })
 

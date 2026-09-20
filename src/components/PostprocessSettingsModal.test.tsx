@@ -72,15 +72,6 @@ function selectDirectionNode() {
   selectTreeNode('direction-a')
 }
 
-/** 勾/取消勾某个媒体：媒体是 Checkbox（label 文本），不是 button。 */
-function toggleMedia(label: string) {
-  const input = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
-    (node) => node.closest('label')?.querySelector('.ds-check__label')?.textContent === label,
-  )
-  if (!input) throw new Error(`未找到媒体复选框：${label}`)
-  act(() => input.click())
-}
-
 /** 展开「默认输出目录」下的按渠道设置区（节点上默认收起）。 */
 function expandChannelDirs() {
   const toggle = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((node) =>
@@ -224,7 +215,9 @@ describe('PostprocessSettingsModal — 右栏参数详情面板', () => {
     expect(text()).not.toContain('全局编排')
     expect(text()).toContain('参与方式')
     expect(text()).toContain('参与自动后处理')
-    expect(text()).toContain('产出规格')
+    expect(text()).toContain('输出与命名')
+    // ⭐ 收窄后（ADR-0011）：节点上不再有「产出规格」——媒体与方向都收归全局了
+    expect(text()).not.toContain('产出规格')
   })
 
   it('全局默认节点上的方向按钮写 store 基线', () => {
@@ -239,55 +232,43 @@ describe('PostprocessSettingsModal — 右栏参数详情面板', () => {
     expect(usePostprocessMediaStore.getState().direction).toBeNull()
   })
 
-  it('节点上的方向按钮写覆盖切片，而不是改全局基线', () => {
+  it('⭐ 节点上不再出现「画面方向」控件（已收归全局，ADR-0011）', () => {
     render()
     selectDirectionNode()
-    act(() => {
-      findButton('竖版').click()
-    })
-    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.direction).toBe('portrait')
-    // 全局基线不动
-    expect(usePostprocessMediaStore.getState().direction).toBeNull()
+    const body = text()
+    // 全局节点上该控件仍在（见上一条用例）；节点上不该有它的标签
+    expect(body).not.toContain('画面方向')
+    expect(body).not.toContain('跟随尺寸')
   })
 
-  it('已编辑的参数在切换节点后仍然保留（写回节点数据）', () => {
+  it('⭐ 节点上不再出现命名模板 / 创作者 / 参与媒体 / 分发（已收归全局）', () => {
     render()
     selectDirectionNode()
-    act(() => {
-      findButton('竖版').click()
-    })
-    // 切到另一个节点再切回来
-    selectTreeNode('line-a')
-    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.direction).toBe('portrait')
-    selectTreeNode('direction-a')
-    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.direction).toBe('portrait')
+    const body = text()
+    expect(body).not.toContain('命名模板')
+    expect(body).not.toContain('创作者')
+    expect(body).not.toContain('纯净版自动伴随')
+    // 分发 section 的标题
+    expect(body).not.toContain('按天把产出分散到日期目录')
   })
 
-  it('节点上未覆盖的字段标出来源，覆盖过的标「本级自定义」并提供恢复继承', () => {
+  it('⭐ 节点上仍可出现与方向直接相关的「输出目录」，并带来源标记与恢复继承', () => {
     render()
     selectDirectionNode()
+    expect(text()).toContain('输出目录')
     expect(text()).toContain('继承自全局默认')
+
+    // 写一条目录覆盖 → 标「本级自定义」
     act(() => {
-      findButton('竖版').click()
+      useProjectTreeParamsStore.getState().setPostprocessOverride('direction-a', { outputDir: 'D:/方向级' })
     })
     expect(text()).toContain('本级自定义')
+    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.outputDir).toBe('D:/方向级')
+
     act(() => {
       findButton('恢复继承').click()
     })
-    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.direction).toBeUndefined()
-  })
-
-  it('媒体勾选在全局写基线、在节点写覆盖', () => {
-    render()
-    toggleMedia('广点通')
-    expect(usePostprocessMediaStore.getState().selectedMediaIds).toContain('gdt')
-
-    selectDirectionNode()
-    toggleMedia('百度')
-    const override = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess
-    expect(override?.selectedMediaIds).toContain('baidu')
-    // 全局仍然只有 gdt（节点覆盖不回流到基线）
-    expect(usePostprocessMediaStore.getState().selectedMediaIds).not.toContain('baidu')
+    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.outputDir).toBeUndefined()
   })
 
   it('命名模板的未知/缺失占位符会给出提示', () => {

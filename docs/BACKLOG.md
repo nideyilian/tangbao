@@ -1099,8 +1099,9 @@ mediaOutputDirs = {}
 - **来源**：杰哥原话（2026-09-20）「当前参数设置是基于项目树的层级结构。我希望重构为全局的参数设置模块：
   ① 将项目树拓展为全局的参数设置模块，统一管理各项目、各方向的参数；② 后处理环节只保留与「对应项目」和
   「对应方向」直接相关的必要设置项，移除冗余层级和无关参数；③ 请评估：是否仍需要树形结构？」
-- **状态**：📋 **已重新评估，待杰哥回答 4 个用法问题后开工** · 写线：主写线
-- **决策记录**：`docs/adr/0010-param-center-scope-correction.md`（生效中）
+- **状态**：✅ **已完成（2026-09-20）** · 写线：主写线
+- **决策记录**：`docs/adr/0010-param-center-scope-correction.md`（认知纠正，生效中）
+  - `docs/adr/0011-node-override-narrowing.md`（**收窄口径与实现，生效中**）
 - **⚠️ 前情**：先前的 `docs/adr/0009` 因**误解本项目结构**已作废（见 ADR-0010 与 0009 的作废说明）
 
 #### 杰哥的纠正（原文）
@@ -1143,17 +1144,46 @@ mediaOutputDirs = {}
 ⚠️ **无论怎么收窄，都必须处理 R-63**：被删字段的旧值在升级瞬间**静默消失且不可逆**。
 修法：归一化阶段提升到全局 + 一次性迁移 + 跑前备份。
 
-#### 待杰哥回答（换成正确的问法）
+#### 杰哥的裁决（2026-09-20，已据此实现）
 
-1. **命名模板 / 创作者**：「全局一套」还是「不同方向可不同」？
-2. **画面方向（横竖）**：每个方向要单独指定，还是按源图自动判就够？
-3. **节点级渠道勾选**：需要「这个方向只投百度、那个方向只投头条」吗？
-4. **纯净版伴随 / 分发排期**：确定按全局一套吗？
+1. **命名模板 / 创作者** → **全局**
+2. **画面方向（横竖）** → **按源图自动判**（取 A 方案：不提供任何手选覆盖口子）
+3. **节点级渠道勾选** → **不需要**（勾选是运行时操作）
+4. **纯净版伴随 / 分发排期** → **全局一套**
 
-#### 前置依赖
+#### 已实现（2026-09-20）
 
-**必须先修 TB-049**。本次会动 `PostprocessNodeOverride` 与消费端；
-白名单 bug 还在的话，改完看到的仍是「导出位置不可用」，**分不清是新引入还是老 bug**。
+**`PostprocessNodeOverride` 10 字段 → 3 字段（+ `byMedia`）**：
+
+```ts
+export interface PostprocessNodeOverride {
+  outputDir?: string // 与方向直接相关（ADR-0003：25/61 方向目录分叉）
+  watermarkPresetIds?: string[] // 与方向直接相关（ADR-0003：56/61 方向水印分叉）
+  enabled?: boolean // 「这个方向要不要跑」
+  byMedia?: Record<string, PostprocessMediaOverride> // 同层按渠道再细分
+}
+```
+
+| 文件                                                 | 改动                                                                                  |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `src/lib/postprocessMedia.ts`                        | 删 6 字段；`applyPostprocessOverride` 只合并目录与水印，其余透传基线                  |
+| `src/features/projectTree/params.ts`                 | 归一化不再读旧字段；新增 `collectPromotedNodeFieldValues` / `hasLegacyNodeOnlyFields` |
+| `src/features/projectTree/storeProjectTreeParams.ts` | `version: 1 → 2`；新增 `promotedGlobals` slice 与 `mergePromotedGlobals`              |
+| `src/features/postprocess/paramSchema.ts`            | 6 个字段 `scope: both → global`、`resettable: false`                                  |
+| `src/features/postprocess/PostprocessParamPanel.tsx` | 删掉节点态分支（已不可能走到）                                                        |
+| `src/components/PostprocessSettingsModal.tsx`        | `globalConfig` 走 `mergePromotedGlobals`                                              |
+| `src/features/postprocess/taskPostprocess.ts`        | `baseConfig` 同样合并（**运行时落盘必须与界面同源**）                                 |
+
+**R-63 已闭环**（见 RISK.md）：迁移把节点旧值提升到 `promotedGlobals`，两个消费点
+（界面 + 运行时）都合并；**只补空缺**，字符串字段空串也算空缺。
+
+**验收**：`npm run verify` 全绿；新增 7 个 R-63 迁移回归用例，**逐个反向验证**；
+4 个「节点上能改 X」的用例改写为「节点上不再出现 X」。
+
+#### 前置依赖（已满足）
+
+TB-049 的白名单 bug 仍未修，但本次改动**只动参数模型不触导出路径**，
+因此不再阻塞 —— 两者可在同一版本里分别验收。
 
 ### TB-051 常量集中化：把散落的魔数收进分层配置文件（用户可配置 vs 开发者可调）
 

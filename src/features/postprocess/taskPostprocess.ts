@@ -32,6 +32,7 @@ import {
   usePostprocessMediaStore,
 } from '../../storePostprocessMedia'
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
+import { mergePromotedGlobals, useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 import type { ProjectNodeParamsMap } from '../projectTree/types'
 import { renderWithMaxKb } from './renderVariant'
 import { resolveBucketOutputRoots } from './outputRoots'
@@ -122,7 +123,12 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   const result = emptyResult()
   if (!isElectron() || input.imageIds.length === 0) return result
 
-  const baseConfig = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
+  // 迁移提升值要并进基线，否则「升级前配在方向上的命名模板 / 分发排期」在产出时读不到 ——
+  // 界面显示的是合并后的值，落盘用的是未合并的值，会出现「看着对、产出错」。
+  const baseConfig = mergePromotedGlobals(
+    getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
+    useProjectTreeParamsStore.getState().promotedGlobals,
+  )
   const params = input.projectParams ?? {}
   if (baseConfig.selectedCollectionIds.length === 0) return result
 

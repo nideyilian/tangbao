@@ -22,7 +22,7 @@ import { useAssetLibraryStore } from '../features/assetLibrary/store'
 import MediaTableManager from '../features/postprocess/MediaTableManager'
 import PostprocessParamPanel from '../features/postprocess/PostprocessParamPanel'
 import { GLOBAL_NODE_ID } from '../features/postprocess/paramSchema'
-import { useProjectTreeParamsStore } from '../features/projectTree/storeProjectTreeParams'
+import { mergePromotedGlobals, useProjectTreeParamsStore } from '../features/projectTree/storeProjectTreeParams'
 import { resolveNodeWatermarkBinding } from '../features/projectTree/params'
 import {
   buildPostprocessProjectTree,
@@ -77,22 +77,32 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
 
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
+  const promotedGlobals = useProjectTreeParamsStore((state) => state.promotedGlobals)
 
-  /** 右栏参数面板读的全局基线（单份组装，避免面板里再拼一遍） */
+  /**
+   * 右栏参数面板读的全局基线（单份组装，避免面板里再拼一遍）。
+   *
+   * `mergePromotedGlobals`：把升级迁移时从节点上提升出来的旧值（R-63 / ADR-0011）
+   * 补进基线。**只补空缺**——基线已有值的字段以基线为准，迁移值不夺回控制权。
+   */
   const globalConfig = useMemo(
-    () => ({
-      media,
-      selectedMediaIds,
-      selectedCollectionIds,
-      direction,
-      outputDir,
-      mediaOutputDirs,
-      namePattern,
-      creator,
-      watermarkPresetIds,
-      autoCompanionClean,
-      distribution,
-    }),
+    () =>
+      mergePromotedGlobals(
+        {
+          media,
+          selectedMediaIds,
+          selectedCollectionIds,
+          direction,
+          outputDir,
+          mediaOutputDirs,
+          namePattern,
+          creator,
+          watermarkPresetIds,
+          autoCompanionClean,
+          distribution,
+        },
+        promotedGlobals,
+      ),
     [
       media,
       selectedMediaIds,
@@ -105,6 +115,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
       watermarkPresetIds,
       autoCompanionClean,
       distribution,
+      promotedGlobals,
     ],
   )
 

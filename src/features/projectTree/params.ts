@@ -7,7 +7,10 @@
  */
 
 import type { AssetCollection } from '../../types'
-import { normalizePostprocessDistributionConfig } from '../../lib/postprocessDistribution'
+import {
+  normalizePostprocessDistributionConfig,
+  type PostprocessDistributionConfig,
+} from '../../lib/postprocessDistribution'
 import {
   applyPostprocessOverride,
   normalizeOutputDirList,
@@ -269,23 +272,10 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
   const input = raw as Record<string, unknown>
   const result: PostprocessNodeOverride = {}
 
-  if (Array.isArray(input.selectedMediaIds)) {
-    const ids: string[] = []
-    for (const item of input.selectedMediaIds) {
-      if (typeof item !== 'string') continue
-      const trimmed = item.trim()
-      if (!trimmed || ids.includes(trimmed)) continue
-      ids.push(trimmed)
-    }
-    result.selectedMediaIds = ids
-  }
-  if (input.direction === null) result.direction = null
-  else if (input.direction === 'landscape' || input.direction === 'portrait' || input.direction === 'square') {
-    result.direction = input.direction
-  }
+  // 已收归全局的字段（`selectedMediaIds` / `direction` / `namePattern` / `creator` /
+  // `autoCompanionClean` / `distribution`）在这里**刻意不读**：它们不再是节点可覆盖项（ADR-0011）。
+  // 旧数据里的值由 `collectPromotedNodeFieldValues` 在 migrate 阶段先接住，不会丢。
   if (typeof input.outputDir === 'string') result.outputDir = input.outputDir
-  if (typeof input.namePattern === 'string' && input.namePattern.trim()) result.namePattern = input.namePattern.trim()
-  if (typeof input.creator === 'string') result.creator = input.creator
   // 空数组是**显式**「这个方向不加水印」，必须与「没表态」（undefined）区分，所以数组照收不误。
   // 旧版单值字段（`watermarkPresetId`）一并迁移，否则升级后用户已配的水印会消失。
   if (Array.isArray(input.watermarkPresetIds)) {
@@ -295,18 +285,84 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
   } else if (input.watermarkPresetId === null) {
     result.watermarkPresetIds = []
   }
-  if (typeof input.autoCompanionClean === 'boolean') result.autoCompanionClean = input.autoCompanionClean
-  // 分发是**整份**配置：缺字段按默认值补齐，不做「部分继承」。
-  // 排期由「起始日期 + 天数」共同决定，混着继承会拼出「天数取全局 7、起始日期是新填的」这类
-  // 无法从界面上推理出来的组合。要改就整套写在同一个节点上。
-  if (input.distribution && typeof input.distribution === 'object') {
-    result.distribution = normalizePostprocessDistributionConfig(input.distribution)
-  }
   if (typeof input.enabled === 'boolean') result.enabled = input.enabled
   const byMedia = normalizeByMediaOverride(input.byMedia)
   if (byMedia) result.byMedia = byMedia
 
   return Object.keys(result).length > 0 ? result : undefined
+}
+
+/** 已收归全局的字段（ADR-0011）。旧数据里它们可能还挂在节点上，迁移时需提升到全局。 */
+export interface PromotedNodeFieldValues {
+  /** 值为 `undefined` 表示该节点没写过这个字段 */
+  namePattern?: string
+  creator?: string
+  autoCompanionClean?: boolean
+  distribution?: PostprocessDistributionConfig
+}
+
+/**
+ * 从**原始（未归一化）**节点参数表里，为已收归全局的字段各挑一个旧值（R-63 的一次性迁移）。
+ *
+ * **为什么需要它**：`PostprocessNodeOverride` 从 10 字段收到 3 字段（ADR-0011）后，
+ * 旧数据里挂在节点上的 `namePattern` / `creator` / `autoCompanionClean` / `distribution`
+ * 会被 `normalizePostprocessNodeOverride` 直接丢弃 —— 用户**已经配好的值凭空消失、
+ * 界面上不报任何错**，且不可逆。这是 R-63 记的场景，所以升级时必须先把值接住、提升到全局基线。
+ *
+ * **必须吃原始数据**：归一化后这些字段已经没了，从归一化结果里收集只会得到空对象。
+ *
+ * **取谁的值**：按 `collectionId` 字典序扫（`Object.keys` 顺序不可依赖，必须显式排序），
+ * 第一个写了该字段的节点胜出。**刻意不用「层级最深优先」** —— 迁移发生在 `persist.migrate`
+ * 里，那里拿不到 `collections`（它是另一个 store）算不了深度。多值并存时按 id 稳定取一个，
+ * 保证同一份数据每次迁移结果一致；剩下的值用户到全局层重配即可。
+ *
+ * 返回空对象表示「没有任何节点写过这些字段」，调用方跳过迁移即可。
+ */
+export function collectPromotedNodeFieldValues(rawParams: unknown): PromotedNodeFieldValues {
+  if (!rawParams || typeof rawParams !== 'object' || Array.isArray(rawParams)) return {}
+  const source = rawParams as Record<string, unknown>
+  const promoted: PromotedNodeFieldValues = {}
+  for (const collectionId of Object.keys(source).sort()) {
+    const record = source[collectionId]
+    if (!record || typeof record !== 'object') continue
+    const input = (record as Record<string, unknown>).postprocess
+    if (!input || typeof input !== 'object') continue
+    const fields = input as Record<string, unknown>
+    if (promoted.namePattern === undefined && typeof fields.namePattern === 'string' && fields.namePattern.trim()) {
+      promoted.namePattern = fields.namePattern.trim()
+    }
+    if (promoted.creator === undefined && typeof fields.creator === 'string') {
+      promoted.creator = fields.creator
+    }
+    if (promoted.autoCompanionClean === undefined && typeof fields.autoCompanionClean === 'boolean') {
+      promoted.autoCompanionClean = fields.autoCompanionClean
+    }
+    if (promoted.distribution === undefined && fields.distribution && typeof fields.distribution === 'object') {
+      promoted.distribution = normalizePostprocessDistributionConfig(fields.distribution)
+    }
+  }
+  return promoted
+}
+
+/** 原始节点参数表里是否还残留着已收归全局的字段（迁移标记用）。 */
+export function hasLegacyNodeOnlyFields(rawParams: unknown): boolean {
+  if (!rawParams || typeof rawParams !== 'object' || Array.isArray(rawParams)) return false
+  const source = rawParams as Record<string, unknown>
+  for (const record of Object.values(source)) {
+    if (!record || typeof record !== 'object') continue
+    const input = (record as Record<string, unknown>).postprocess
+    if (!input || typeof input !== 'object') continue
+    const fields = input as Record<string, unknown>
+    if (
+      fields.namePattern !== undefined ||
+      fields.creator !== undefined ||
+      fields.autoCompanionClean !== undefined ||
+      fields.distribution !== undefined
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 /** 归一化整张参数表；坏条目逐条丢弃，不整份回退（保住用户其余编辑）。 */

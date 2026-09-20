@@ -322,7 +322,21 @@ export function resolvePostprocessOutputDirs(
 /**
  * 某个项目树节点（产品线 / 产品 / 方向）对后处理参数的**局部覆盖**。
  *
- * 与 `PostprocessMediaConfig` 的差别：只允许覆盖「逐方向可变」的字段——
+ * 只保留「与这个项目 / 这个方向直接相关」的字段（口径见 ADR-0011）：
+ *
+ * | 字段                | 为什么留在节点上                                           |
+ * | ------------------- | ---------------------------------------------------------- |
+ * | `outputDir`         | 实测 25/61 个方向的交付目录不同（ADR-0003）                |
+ * | `watermarkPresetIds`| 实测 56/61 个方向的合规水印不同（ADR-0003）                |
+ * | `enabled`           | 「这个方向要不要跑」是节点自有语义                         |
+ *
+ * **刻意收窄掉的字段**（原 10 字段 → 现 3 + `byMedia`）：`selectedMediaIds` / `direction` /
+ * `namePattern` / `creator` / `autoCompanionClean` / `distribution`。理由是它们**不是**方向维度：
+ * - `selectedMediaIds`：勾哪些渠道是**运行时操作**，不需要落成逐方向配置；
+ * - `direction`：画面方向**按源图自动判**（见 `resolveOutputDirection`），不提供手选口子；
+ * - `namePattern` / `creator`：命名规则**全局一套**，逐方向配只会让文件名口径分散；
+ * - `autoCompanionClean` / `distribution`：属于「全局怎么跑」，无任何逐方向差异证据。
+ *
  * 渠道字典（`media`）是全局共享规格表，产出目标（`selectedCollectionIds`）在自动匹配模式下
  * 由图片归属推导，两者都**不该**被节点覆盖。
  *
@@ -333,19 +347,10 @@ export function resolvePostprocessOutputDirs(
  * 而不是继续往父节点找。否则「方向级写了百度、产品级写了通用」会拼出无法从界面上推理的组合。
  */
 export interface PostprocessNodeOverride {
-  /** 该方向启用的媒体 id（含 `clean`）；undefined = 继承 */
-  selectedMediaIds?: string[]
-  /** 手选方向；`null` = 按源图尺寸自动判定 */
-  direction?: OutputDirection | null
   /** 输出目录（绝对路径）；空串 = 用默认输出位置 */
   outputDir?: string
-  namePattern?: string
-  creator?: string
   /** 水印预设 id 列表；`[]` = 该方向不加水印（显式覆盖），`undefined` = 继承 */
   watermarkPresetIds?: string[]
-  autoCompanionClean?: boolean
-  /** 分发配置；`undefined` = 继承。**整份替换**而非字段合并，要单独关掉写 `{ enabled: false }` */
-  distribution?: PostprocessDistributionConfig
   /** 该方向是否参与自动后处理；false = 归属此方向的图片不产出变体 */
   enabled?: boolean
   /**
@@ -359,6 +364,9 @@ export interface PostprocessNodeOverride {
 
 /**
  * 把节点覆盖叠加到基线配置上（纯函数，不改写入参）。
+ *
+ * 节点层只可能改到 `outputDir` / `watermarkPresetIds`（+ `byMedia` 的渠道再细分），
+ * 其余字段一律透传基线 —— 它们已经收归全局（ADR-0011），节点上不再有覆盖入口。
  *
  * `enabled` 是节点自有概念、不属于 `PostprocessMediaConfig`，故不参与合并，由调用方单独读取。
  *
@@ -391,18 +399,17 @@ export function applyPostprocessOverride(
   }
   return {
     media: base.media,
-    selectedMediaIds: override.selectedMediaIds ?? base.selectedMediaIds,
+    selectedMediaIds: base.selectedMediaIds,
     selectedCollectionIds: base.selectedCollectionIds,
-    direction: override.direction === undefined ? base.direction : override.direction,
+    direction: base.direction,
     // 用 `??` 而不是 `||`：空串是「用默认输出位置」、空数组是「这个渠道不加水印」，都是有效值
     outputDir: perMedia?.outputDir ?? override.outputDir ?? base.outputDir,
     mediaOutputDirs,
-    namePattern: override.namePattern ?? base.namePattern,
-    creator: override.creator ?? base.creator,
+    namePattern: base.namePattern,
+    creator: base.creator,
     watermarkPresetIds: perMedia?.watermarkPresetIds ?? override.watermarkPresetIds ?? base.watermarkPresetIds,
-    autoCompanionClean: override.autoCompanionClean ?? base.autoCompanionClean,
-    // 分发是整份配置对象：只读使用，不做深拷贝
-    distribution: override.distribution ?? base.distribution,
+    autoCompanionClean: base.autoCompanionClean,
+    distribution: base.distribution,
   }
 }
 

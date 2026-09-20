@@ -4,6 +4,8 @@ import { resolvePostprocessOutputDirs, type PostprocessMediaConfig } from '../..
 import type { AssetCollection } from '../../types'
 import {
   buildProjectNodeParams,
+  collectPromotedNodeFieldValues,
+  hasLegacyNodeOnlyFields,
   mergePostprocessNodeOverride,
   normalizePostprocessNodeOverride,
   normalizeProjectNodeParamsMap,
@@ -15,6 +17,8 @@ import {
   resolveProjectOverrideChain,
   resolveProjectPostprocessSlice,
 } from './params'
+import { mergePromotedGlobals } from './storeProjectTreeParams'
+import type { PromotedNodeFieldValues } from './params'
 import type { ProjectNodeParamsMap } from './types'
 
 function collection(id: string, name: string, parentId: string | null = null, order = 0): AssetCollection {
@@ -92,24 +96,23 @@ describe('resolveProjectPostprocessSlice —— 逐级继承', () => {
 
   it('产品线上配一次，整条线下的方向都继承到', () => {
     const params: ProjectNodeParamsMap = {
-      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'], creator: '设计组' } },
+      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'], outputDir: 'D:/投放' } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig())
     expect(slice.config.watermarkPresetIds).toEqual(['preset-line'])
-    expect(slice.config.creator).toBe('设计组')
+    expect(slice.config.outputDir).toBe('D:/投放')
     expect(slice.sourcedFrom).toBe(LINE)
     expect(slice.sourcedDepth).toBe(0)
   })
 
   it('中间层只覆盖自己声明的字段，其余仍继承自上层', () => {
     const params: ProjectNodeParamsMap = {
-      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'], creator: '设计组' } },
-      [PRODUCT]: { postprocess: { namePattern: '{product}-{seq}' } },
+      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line'], outputDir: 'D:/投放' } },
+      [PRODUCT]: { postprocess: { outputDir: 'D:/产品级' } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, params, DIRECTION, baseConfig())
-    expect(slice.config.namePattern).toBe('{product}-{seq}')
+    expect(slice.config.outputDir).toBe('D:/产品级')
     expect(slice.config.watermarkPresetIds).toEqual(['preset-line'])
-    expect(slice.config.creator).toBe('设计组')
     expect(slice.sourcedFrom).toBe(PRODUCT)
   })
 
@@ -160,18 +163,23 @@ describe('resolveProjectPostprocessSlice —— 逐级继承', () => {
   it('节点不存在时不抛错，退回全局默认', () => {
     const slice = resolveProjectPostprocessSlice(
       COLLECTIONS,
-      { ghost: { postprocess: { creator: 'x' } } },
+      { ghost: { postprocess: { outputDir: 'D:/幽灵' } } },
       'ghost',
       baseConfig(),
     )
-    expect(slice.config.creator).toBe('')
+    expect(slice.config.outputDir).toBe('')
     expect(slice.sourcedFrom).toBeNull()
   })
 
   it('不修改传入的基线配置（纯函数）', () => {
     const base = baseConfig()
-    resolveProjectPostprocessSlice(COLLECTIONS, { [LINE]: { postprocess: { creator: '改掉了' } } }, DIRECTION, base)
-    expect(base.creator).toBe('')
+    resolveProjectPostprocessSlice(
+      COLLECTIONS,
+      { [LINE]: { postprocess: { outputDir: 'D:/改掉了' } } },
+      DIRECTION,
+      base,
+    )
+    expect(base.outputDir).toBe('')
   })
 })
 
@@ -198,42 +206,49 @@ describe('pickDeepestCollectionId —— 图片归属方向的选取', () => {
 describe('normalizeProjectNodeParamsMap', () => {
   it('丢弃坏条目，保留合法条目（不整份回退）', () => {
     const result = normalizeProjectNodeParamsMap({
-      good: { postprocess: { creator: '设计组' } },
+      good: { postprocess: { outputDir: 'D:/投放' } },
       badId: { postprocess: null },
-      '': { postprocess: { creator: '空 id' } },
+      '': { postprocess: { outputDir: 'D:/空 id' } },
       notObject: 42,
     })
     expect(Object.keys(result)).toEqual(['good'])
-    expect(result.good.postprocess?.creator).toBe('设计组')
+    expect(result.good.postprocess?.outputDir).toBe('D:/投放')
   })
 
-  it('剔除非法枚举与非字符串字段', () => {
+  it('⭐ 收窄后：节点上已收归全局的字段被丢弃（ADR-0011）', () => {
+    // 这四者移到了全局层，节点上再写也不再被读取 —— 只有 `collectPromotedNodeFieldValues`
+    // 会在 normalize **之前**把它们接住（R-63 的迁移），这里验证「读不回来」
     const result = normalizeProjectNodeParamsMap({
-      node: { postprocess: { direction: 'diagonal', creator: 123, autoCompanionClean: 'yes' } },
+      node: {
+        postprocess: {
+          namePattern: '{product}-{seq}',
+          creator: '设计组',
+          autoCompanionClean: false,
+          distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true },
+        },
+      },
     })
     expect(result.node).toBeUndefined()
   })
 
-  it('保留 null 语义（不带水印）与 false 语义', () => {
-    const result = normalizeProjectNodeParamsMap({
-      node: { postprocess: { watermarkPresetIds: [], autoCompanionClean: false } },
-    })
-    expect(result.node.postprocess).toEqual({ watermarkPresetIds: [], autoCompanionClean: false })
+  it('⭐ 收窄后：节点上的 direction / selectedMediaIds 同样被丢弃', () => {
+    expect(normalizeProjectNodeParamsMap({ node: { postprocess: { direction: 'landscape' } } }).node).toBeUndefined()
+    expect(normalizeProjectNodeParamsMap({ node: { postprocess: { selectedMediaIds: ['gdt'] } } }).node).toBeUndefined()
   })
 
-  it('去除 selectedMediaIds 里的空串与重复项', () => {
+  it('保留 null 语义（不带水印）与 enabled=false 语义', () => {
     const result = normalizeProjectNodeParamsMap({
-      node: { postprocess: { selectedMediaIds: ['clean', ' ', 'clean', 'gdt'] } },
+      node: { postprocess: { watermarkPresetIds: [], enabled: false } },
     })
-    expect(result.node.postprocess?.selectedMediaIds).toEqual(['clean', 'gdt'])
+    expect(result.node.postprocess).toEqual({ watermarkPresetIds: [], enabled: false })
   })
 })
 
 describe('mergePostprocessNodeOverride', () => {
-  it('undefined 的字段表示恢复继承（从记录里删除），null 是有效值', () => {
+  it('undefined 的字段表示恢复继承（从记录里删除），空数组是有效值', () => {
     const merged = mergePostprocessNodeOverride(
-      { creator: '设计组', watermarkPresetIds: ['p1'] },
-      { creator: undefined },
+      { outputDir: 'D:/投放', watermarkPresetIds: ['p1'] },
+      { outputDir: undefined },
     )
     expect(merged).toEqual({ watermarkPresetIds: ['p1'] })
 
@@ -242,18 +257,18 @@ describe('mergePostprocessNodeOverride', () => {
   })
 
   it('字段被全部清空时返回 undefined', () => {
-    expect(mergePostprocessNodeOverride({ creator: '设计组' }, { creator: undefined })).toBeUndefined()
+    expect(mergePostprocessNodeOverride({ outputDir: 'D:/投放' }, { outputDir: undefined })).toBeUndefined()
   })
 })
 
 describe('buildProjectNodeParams', () => {
   it('正常写入并带上时间戳', () => {
-    const result = buildProjectNodeParams(undefined, { creator: '设计组' }, 1234)
-    expect(result).toEqual({ postprocess: { creator: '设计组' }, updatedAt: 1234 })
+    const result = buildProjectNodeParams(undefined, { outputDir: 'D:/投放' }, 1234)
+    expect(result).toEqual({ postprocess: { outputDir: 'D:/投放' }, updatedAt: 1234 })
   })
 
   it('覆盖被清空时返回 null，由调用方删除该键（避免留下「已配置」的空壳）', () => {
-    expect(buildProjectNodeParams({ postprocess: { creator: '设计组' } }, { creator: undefined })).toBeNull()
+    expect(buildProjectNodeParams({ postprocess: { outputDir: 'D:/投放' } }, { outputDir: undefined })).toBeNull()
   })
 })
 
@@ -274,66 +289,35 @@ describe('normalizePostprocessNodeOverride —— 水印预设多值与旧字段
   })
 
   it('新旧字段都没有时该键不出现（保持「缺省 = 继承」）', () => {
-    expect(normalizePostprocessNodeOverride({ creator: '设计组' })?.watermarkPresetIds).toBeUndefined()
+    expect(normalizePostprocessNodeOverride({ outputDir: 'D:/投放' })?.watermarkPresetIds).toBeUndefined()
   })
 })
 
-describe('节点分发配置 —— 整份替换而非逐字段继承', () => {
-  it('归一化补齐缺失字段并挡住非法枚举值', () => {
+describe('分发配置已收归全局（ADR-0011）—— 节点上不再可覆盖', () => {
+  it('⭐ 节点写 distribution 会被归一化丢弃', () => {
     const normalized = normalizePostprocessNodeOverride({
       distribution: { enabled: true, startDate: '20260901', days: 7, mode: 'delete', renameMode: 'uuid' },
     })
-    expect(normalized?.distribution?.mode).toBe('copy')
-    expect(normalized?.distribution?.renameMode).toBe('date')
-    expect(normalized?.distribution?.skipWeekends).toBe(false)
+    // 整条记录没有任何可保留字段 → undefined（不再是「保留一份整份配置」）
+    expect(normalized).toBeUndefined()
   })
 
-  it('方向级整份替换上层，不把两者的字段混起来', () => {
+  it('⭐ 语义变化前：node.creator 会压掉全局值；收窄后沿用到全局基线', () => {
     const chain: ProjectNodeParamsMap = {
-      [LINE]: {
-        postprocess: {
-          distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, startDate: '20260901', days: 30 },
-        },
-      },
-      [DIRECTION]: {
-        postprocess: {
-          distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, startDate: '20261201', days: 3 },
-        },
-      },
+      [DIRECTION]: { postprocess: { outputDir: 'D:/方向' } },
     }
-
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
-
-    // 天数取的是方向级的 3 而不是产品线的 30：排期由两者共同决定，混着继承会拼出推理不出的组合
-    expect(slice.config.distribution.startDate).toBe('20261201')
-    expect(slice.config.distribution.days).toBe(3)
-  })
-
-  it('没写 distribution 的节点沿用上层值', () => {
-    const chain: ProjectNodeParamsMap = {
-      [LINE]: {
-        postprocess: { distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, startDate: '20260901' } },
-      },
-      [DIRECTION]: { postprocess: { creator: '设计组' } },
-    }
-
-    const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
-    expect(slice.config.distribution.startDate).toBe('20260901')
-  })
-
-  it('传 undefined 可把本级分发摘掉，恢复继承', () => {
-    const current = {
-      postprocess: { distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, days: 5 } },
-    }
-    expect(mergePostprocessNodeOverride(current.postprocess, { distribution: undefined })).toBeUndefined()
+    // 分发固定取全局基线的值，节点层无法再改
+    expect(slice.config.distribution).toEqual(baseConfig().distribution)
+    expect(slice.config.outputDir).toBe('D:/方向')
   })
 })
 
 describe('resolveProjectOverrideChain —— 共用的继承链', () => {
   it('只收写了参数的节点，根在前、自身在最后', () => {
     const chain: ProjectNodeParamsMap = {
-      [LINE]: { postprocess: { creator: '整条线' } },
-      [DIRECTION]: { postprocess: { namePattern: '{seq}' } },
+      [LINE]: { postprocess: { outputDir: 'D:/整条线' } },
+      [DIRECTION]: { postprocess: { watermarkPresetIds: ['p-dir'] } },
       // PRODUCT 没配 → 不出现在链上
     }
     expect(resolveProjectOverrideChain(COLLECTIONS, chain, DIRECTION).map((entry) => entry.collectionId)).toEqual([
@@ -346,12 +330,12 @@ describe('resolveProjectOverrideChain —— 共用的继承链', () => {
   it('无归属（null）与空参数都返回空链，不抛错', () => {
     expect(resolveProjectOverrideChain(COLLECTIONS, {}, null)).toEqual([])
     expect(resolveProjectOverrideChain(COLLECTIONS, {}, DIRECTION)).toEqual([])
-    expect(resolveProjectOverrideChain([], { [LINE]: { postprocess: { creator: 'x' } } }, DIRECTION)).toEqual([])
+    expect(resolveProjectOverrideChain([], { [LINE]: { postprocess: { outputDir: 'D:/x' } } }, DIRECTION)).toEqual([])
   })
 
   it('链上参数与全字段合并在同一个字段上给出同一个来源', () => {
     const chain: ProjectNodeParamsMap = {
-      [PRODUCT]: { postprocess: { creator: '中间层' } },
+      [PRODUCT]: { postprocess: { outputDir: 'D:/中间层' } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
     const last = resolveProjectOverrideChain(COLLECTIONS, chain, DIRECTION).at(-1)
@@ -400,7 +384,7 @@ describe('resolveNodeWatermarkBinding —— 某方向到底用哪些水印', ()
 
     const inherit: ProjectNodeParamsMap = {
       [LINE]: { postprocess: { watermarkPresetIds: ['line-w'] } },
-      [DIRECTION]: { postprocess: { creator: '只改了别的字段' } },
+      [DIRECTION]: { postprocess: { outputDir: 'D:/只改了别的字段' } },
     }
     expect(resolveNodeWatermarkBinding(COLLECTIONS, inherit, DIRECTION, GLOBAL).presetIds).toEqual(['line-w'])
   })
@@ -584,8 +568,8 @@ describe('byMedia 的合并 —— 逐渠道，不是整份替换', () => {
   })
 
   it('byMedia: undefined 表示把「按渠道覆盖」整份恢复继承，其余字段不动', () => {
-    const current = { byMedia: { baidu: { outputDir: '百度' } }, creator: '设计组' }
-    expect(mergePostprocessNodeOverride(current, { byMedia: undefined })).toEqual({ creator: '设计组' })
+    const current = { byMedia: { baidu: { outputDir: '百度' } }, outputDir: 'D:/投放' }
+    expect(mergePostprocessNodeOverride(current, { byMedia: undefined })).toEqual({ outputDir: 'D:/投放' })
   })
 })
 
@@ -626,7 +610,7 @@ describe('byMedia 的两个导出位置（双写）', () => {
     const global: PostprocessMediaConfig = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/一', 'D:/二'] } }
     const slice = resolveProjectPostprocessSlice(
       COLLECTIONS,
-      { [LINE]: { postprocess: { creator: '某某' } } },
+      { [LINE]: { postprocess: { enabled: true } } },
       LINE,
       global,
       'baidu',
@@ -659,5 +643,79 @@ describe('byMedia 的两个导出位置（双写）', () => {
       [DIRECTION]: { postprocess: { byMedia: { baidu: { outputDirs: ['D:/一', 'D:/二'] } } } },
     })
     expect(map[DIRECTION]?.postprocess?.byMedia?.baidu?.outputDirs).toEqual(['D:/一', 'D:/二'])
+  })
+})
+
+describe('R-63 迁移：节点上已收归全局的旧值必须被接住（ADR-0011）', () => {
+  const LEGACY_PAYLOAD = {
+    [DIRECTION]: {
+      postprocess: {
+        creator: '方向级创作者',
+        namePattern: '{product}-{seq}',
+        autoCompanionClean: false,
+        distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, days: 30 },
+      },
+    },
+  }
+
+  it('hasLegacyNodeOnlyFields：认得出旧数据里的残留字段', () => {
+    expect(hasLegacyNodeOnlyFields(LEGACY_PAYLOAD)).toBe(true)
+    // 已经迁干净的（只剩保留字段）不算残留
+    expect(hasLegacyNodeOnlyFields({ x: { postprocess: { outputDir: 'D:/a' } } })).toBe(false)
+    // 坏形状不抛错
+    expect(hasLegacyNodeOnlyFields(null)).toBe(false)
+    expect(hasLegacyNodeOnlyFields(42)).toBe(false)
+  })
+
+  it('⭐ collectPromotedNodeFieldValues：把节点上的旧值提升出来，不让它消失', () => {
+    const promoted = collectPromotedNodeFieldValues(LEGACY_PAYLOAD)
+    expect(promoted.creator).toBe('方向级创作者')
+    expect(promoted.namePattern).toBe('{product}-{seq}')
+    expect(promoted.autoCompanionClean).toBe(false)
+    expect(promoted.distribution?.days).toBe(30)
+  })
+
+  it('⭐ 必须吃原始数据 —— 归一化结果里这些字段已经没了', () => {
+    const normalized = normalizeProjectNodeParamsMap(LEGACY_PAYLOAD)
+    // 归一化把整条记录丢了（没有可保留字段），所以从它里面收集只能是空
+    expect(normalized[DIRECTION]).toBeUndefined()
+    expect(collectPromotedNodeFieldValues(normalized)).toEqual({})
+  })
+
+  it('多个节点都写过同一字段时，按 collectionId 稳定取一个（结果可复现）', () => {
+    const payload = {
+      'zzz-node': { postprocess: { creator: 'Z' } },
+      'aaa-node': { postprocess: { creator: 'A' } },
+    }
+    expect(collectPromotedNodeFieldValues(payload).creator).toBe('A')
+    // 键顺序换了也要拿到同一个
+    expect(
+      collectPromotedNodeFieldValues({ 'aaa-node': payload['aaa-node'], 'zzz-node': payload['zzz-node'] }).creator,
+    ).toBe('A')
+  })
+
+  it('没有任何残留时返回空对象（调用方据此跳过迁移）', () => {
+    expect(collectPromotedNodeFieldValues({ x: { postprocess: { outputDir: 'D:/a' } } })).toEqual({})
+  })
+
+  it('⭐ mergePromotedGlobals：只补空缺，基线已有值时以基线为准', () => {
+    const baseline: PromotedNodeFieldValues = { namePattern: '{line}-{seq}', creator: '' }
+    const promoted: PromotedNodeFieldValues = {
+      namePattern: '{product}-{seq}',
+      creator: '迁移来的',
+      autoCompanionClean: false,
+    }
+    const merged = mergePromotedGlobals(baseline, promoted)
+    // 基线已有 namePattern → 不被迁移值覆盖
+    expect(merged.namePattern).toBe('{line}-{seq}')
+    // 基线 creator 是空串（= 没设过）→ 迁移值补上
+    expect(merged.creator).toBe('迁移来的')
+    // 基线没这个字段 → 迁移值补上
+    expect(merged.autoCompanionClean).toBe(false)
+  })
+
+  it('空迁移值不改变基线', () => {
+    const baseline: PromotedNodeFieldValues = { namePattern: 'x', creator: 'y' }
+    expect(mergePromotedGlobals(baseline, {})).toEqual(baseline)
   })
 })

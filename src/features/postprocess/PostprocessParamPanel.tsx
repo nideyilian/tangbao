@@ -299,8 +299,7 @@ export default function PostprocessParamPanel({
                   const next = has
                     ? effective.selectedMediaIds.filter((id) => id !== item.id)
                     : [...effective.selectedMediaIds, item.id]
-                  if (isGlobal) setSelectedMediaIds(next)
-                  else apply({ selectedMediaIds: next })
+                  setSelectedMediaIds(next)
                 }}
                 label={item.name}
               />
@@ -312,8 +311,7 @@ export default function PostprocessParamPanel({
                 const next = has
                   ? effective.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)
                   : [PURE_MEDIA_ID, ...effective.selectedMediaIds]
-                if (isGlobal) setSelectedMediaIds(next)
-                else apply({ selectedMediaIds: next })
+                setSelectedMediaIds(next)
               }}
               label="纯净版（无渠道）"
             />
@@ -326,21 +324,14 @@ export default function PostprocessParamPanel({
             aria-label="画面方向"
             value={effective.direction ?? 'auto'}
             options={DIRECTION_OPTIONS}
-            onValueChange={(value) => {
-              const next = value === 'auto' ? null : value
-              if (isGlobal) setDirection(next)
-              else apply({ direction: next })
-            }}
+            onValueChange={(value) => setDirection(value === 'auto' ? null : value)}
           />
         )
 
       case 'namePattern':
         return (
           <div className="space-y-2">
-            <NamePatternField
-              value={effective.namePattern}
-              onChange={(next) => (isGlobal ? setNamePattern(next) : apply({ namePattern: next }))}
-            />
+            <NamePatternField value={effective.namePattern} onChange={setNamePattern} />
             {nameIssues.map((issue) => (
               <Alert key={issue.message} tone={issue.tone === 'error' ? 'danger' : 'warning'}>
                 {issue.message}
@@ -350,13 +341,7 @@ export default function PostprocessParamPanel({
         )
 
       case 'creator':
-        return (
-          <TextField
-            label=""
-            value={effective.creator}
-            onChange={(event) => (isGlobal ? setCreator(event.target.value) : apply({ creator: event.target.value }))}
-          />
-        )
+        return <TextField label="" value={effective.creator} onChange={(event) => setCreator(event.target.value)} />
 
       case 'outputDir':
         return (
@@ -404,9 +389,7 @@ export default function PostprocessParamPanel({
         return (
           <Switch
             checked={effective.autoCompanionClean}
-            onCheckedChange={(checked) =>
-              isGlobal ? setAutoCompanionClean(checked) : apply({ autoCompanionClean: checked })
-            }
+            onCheckedChange={setAutoCompanionClean}
             label="勾了任一渠道时额外产一份无水印原图"
           />
         )
@@ -415,10 +398,7 @@ export default function PostprocessParamPanel({
         return (
           <PostprocessDistributionFields
             config={effective.distribution}
-            onChange={(patch) => {
-              if (isGlobal) patchDistribution(patch)
-              else apply({ distribution: { ...effective.distribution, ...patch } })
-            }}
+            onChange={patchDistribution}
             onPickError={() => showToast('选择分发目录失败，请重试', 'error')}
           />
         )
