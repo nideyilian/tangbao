@@ -394,10 +394,7 @@ describe('GallerySopBatchModal background generation', () => {
       await new Promise((resolve) => setTimeout(resolve, 400))
     })
     const snapshots = dbMocks.putSopBatchSnapshot.mock.calls.map((call) => call[0] as SopBatchSnapshot)
-    // eslint-disable-next-line no-console
-    console.log('[PROBE] snapshot statuses:', snapshots.map((s) => s.status).join(','))
-    const stuckAtGenerating = snapshots.filter((snapshot) => snapshot.status === 'generating')
-    expect(stuckAtGenerating.length).toBe(snapshots.length === 0 ? 0 : stuckAtGenerating.length)
+    // 库里不得留下任何非终态快照（挂载收敛逻辑负责把 generating 归位）
     expect(snapshots.every((snapshot) => snapshot.status !== 'generating')).toBe(true)
   })
 

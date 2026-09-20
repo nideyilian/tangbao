@@ -973,4 +973,24 @@ describe('callImageApi', () => {
     const body = JSON.parse(String((init as RequestInit).body)) as { tools: Array<{ size?: string }> }
     expect(body.tools[0].size).toBe('auto')
   })
+
+  // 空 Key 以前会照常发出 `Authorization: Bearer `，服务端回 401。
+  // 用户看到「请求失败/未授权」，根本不知道真正原因是本地没填 Key
+  // （R-03 副作用：Key 被 stripApiSecrets 剥离后若 safeStorage 还原失败，
+  // profile 看起来是配好的，实际 apiKey 是空串）。
+  it('API Key 为空时在发请求前就抛出可读错误，而不是发出去换回 401', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }))
+
+    await expect(
+      callImageApi({
+        settings: { ...DEFAULT_SETTINGS, apiKey: '', apiMode: 'images' },
+        prompt: 'prompt',
+        params: { ...DEFAULT_PARAMS },
+        inputImageDataUrls: [],
+      }),
+    ).rejects.toThrow(/未配置 API Key/)
+
+    // 关键：根本没发出去 —— 不能把空 Key 的请求打到服务端
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })

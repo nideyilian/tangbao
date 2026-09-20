@@ -109,7 +109,9 @@ export default function App() {
         .showToast(
           namespace === 'localImage'
             ? '图片保存到本地失败，请检查磁盘空间或目录权限'
-            : '本地状态保存失败，程序正在自动重试',
+            : namespace === 'apiSecretsUnavailable'
+              ? '系统密钥库不可用，已保存的 API Key 无法读取，请在「设置 → 模型接口」重新填写'
+              : '本地状态保存失败，程序正在自动重试',
           'error',
         )
     }

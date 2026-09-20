@@ -2158,6 +2158,18 @@ function notifyApiSecretsPersistError() {
   window.dispatchEvent(new CustomEvent('tangbao:persist-error', { detail: { namespace: 'apiSecrets' } }))
 }
 
+/**
+ * 系统密钥库不可用（`safeStorage.isEncryptionAvailable() === false`）。
+ *
+ * 与 `apiSecrets`（写入失败、会自动重试）不同：这种情况**读不回来也写不下去**，
+ * 已保存的 Key 已经拿不到了，重试没有意义。必须给一条能让用户自己动手的文案，
+ * 否则表现就是「昨天还能生图，今天所有 Key 都空了」而界面一个字都不说。
+ */
+function notifyApiSecretsUnavailable() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('tangbao:persist-error', { detail: { namespace: 'apiSecretsUnavailable' } }))
+}
+
 async function flushApiSecrets(): Promise<void> {
   if (apiSecretsPersisting || !pendingApiSecrets) return
   const api = typeof window !== 'undefined' ? window.electronAPI : undefined
@@ -2194,7 +2206,14 @@ export async function hydrateDesktopApiSecrets(): Promise<void> {
   if (!api?.loadApiSecrets || !api.saveApiSecrets) return
   try {
     const loaded = await api.loadApiSecrets()
-    if (!loaded.available) return
+    if (!loaded.available) {
+      // 密钥库不可用：读不回已存的 Key，这时**不要**继续往下走（下面会把空 secrets
+      // 写回去，等于把唯一的一份真值覆盖掉），也**不能**静默 return —— 用户会看到
+      // 所有 API Key 变空却没有任何解释。这里显式上报，交给 App.tsx 出 Toast。
+      console.error('[api-secrets] 系统密钥库不可用，无法还原已保存的 API Key')
+      notifyApiSecretsUnavailable()
+      return
+    }
     if (loaded.error) console.warn('[api-secrets] 读取安全存储失败，将使用当前配置', loaded.error)
     const current = normalizeSettings(useStore.getState().settings)
     const settings = normalizeSettings(applyApiSecrets(current, loaded.secrets))

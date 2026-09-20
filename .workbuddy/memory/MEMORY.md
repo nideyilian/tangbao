@@ -98,5 +98,11 @@
 - **任务数量不一致** = 落盘不完整（`tasks` vs `assets`），**别去查加载链**。
 - **`InputBar` 的 prompt 是双写**：程序性改写必须先 `isUserInputRef.current = false`。
 - **抓渲染进程报错**：`ELECTRON_ENABLE_LOGGING=1 npm run dev`。
+- **`npm run dev` / `mock:api` 必须出沙箱**：默认沙箱会**无声回收监听端口的进程（~40s）**，
+  症状 = 「窗口刚起来就自己消失」。对照实验：纯 `sleep` 后台任务能活满，Node 监听服务 40s 就没，
+  且无报错、无 Crashpad 转储 → 起这两个服务要 `dangerouslyDisableSandbox: true`（或让杰哥自己终端跑）。
+- **窗口「点什么都没反应」先看是不是错误页**：`location.href === 'chrome-error://chromewebdata/'`
+  + `#root` 不存在 + 标题 = URL ⇒ 界面根本没加载（dev server 已死，**窗口不会自恢复**）；
+  正常时 `Get-Process electron | Select MainWindowTitle` = `糖包`。
 - **门禁假象**：`noUnusedLocals/Parameters` 关着、`no-unused-vars` 仅 warn → 死 import 零告警
   （存量 116 处，见 `BACKLOG.md` TB-021）。

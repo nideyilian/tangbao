@@ -103,6 +103,25 @@ function createRequestHeaders(profile: ApiProfile): Record<string, string> {
   }
 }
 
+/**
+ * OpenAI 兼容接口的**空 Key 前置校验**。
+ *
+ * 原实现无条件拼 `Bearer ${profile.apiKey}`：Key 为空时会照常发出
+ * `Authorization: Bearer `，服务端回 401 —— 用户看到的只是「请求失败/未授权」，
+ * 根本不知道真正原因是**本地没填 Key**（R-03 的副作用：密钥被 `stripApiSecrets`
+ * 剥离后若 `safeStorage` 还原失败，界面上 profile 看起来是配置好的，Key 却是空的）。
+ * 这里提前抛出可读文案，把「401」翻译成用户能直接动手的信息。
+ *
+ * ⚠️ 只给 **OpenAI 官方两条路径**（images / responses）调用。不能塞进
+ * `createRequestHeaders` —— 那个函数还被 `submitCustomRequest` / `pollCustomTaskResult`
+ * 复用，自定义 provider 的鉴权方式由用户在映射里自己配，Bearer 未必适用，
+ * 在共用函数里加闸门会误伤自定义 provider（有既有测试锁定这一点）。
+ */
+function assertOpenAICompatibleApiKey(profile: ApiProfile): void {
+  if (profile.apiKey.trim()) return
+  throw new Error(`模型接口「${profile.name || profile.id}」未配置 API Key，请在「设置 → 模型接口」填写`)
+}
+
 function isEventStreamResponse(response: Response): boolean {
   return response.headers.get('Content-Type')?.toLowerCase().includes('text/event-stream') ?? false
 }
@@ -535,6 +554,7 @@ async function callImagesApiSingle(
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
+  assertOpenAICompatibleApiKey(profile)
   const requestHeaders = createRequestHeaders(profile)
   const paths = createOpenAICompatiblePaths(customProvider)
 
@@ -1024,6 +1044,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
       inputImageDataUrls.reduce((sum, dataUrl) => sum + getDataUrlEncodedByteSize(dataUrl), 0) +
         (opts.maskDataUrl ? getDataUrlEncodedByteSize(opts.maskDataUrl) : 0),
     )
+    assertOpenAICompatibleApiKey(profile)
 
     const body: Record<string, unknown> = {
       model: profile.model,

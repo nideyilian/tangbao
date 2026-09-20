@@ -353,6 +353,7 @@ import {
   updateTasksFavoriteCollections,
   ensureImageThumbnailCached,
   enqueueLocalImageSave,
+  hydrateDesktopApiSecrets,
   getCachedThumbnail,
   subscribeImageThumbnail,
   GRID_THUMBNAIL_VARIANT,
@@ -5155,6 +5156,76 @@ describe('本地写盘队列的失败语义', () => {
         throw new Error('只读目录')
       }),
     ).resolves.toBeUndefined()
+  })
+})
+
+// 密钥库不可用（safeStorage.isEncryptionAvailable() === false）时，原实现是裸 `return`：
+// 用户看到所有 API Key 变空，界面**一个字都不提示**，只能猜。这里锁定「必须上报」。
+// 注意与 apiSecrets（写入失败、会自动重试）区分：那种重试有用，这种重试无用，
+// 所以用独立的 namespace，让 App.tsx 能给出「请重新填写」这种可执行文案。
+describe('hydrateDesktopApiSecrets 在密钥库不可用时的可见性', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('密钥库不可用时上报 apiSecretsUnavailable，而不是静默 return', async () => {
+    const received: Array<{ namespace?: string } | undefined> = []
+    const saveApiSecrets = vi.fn()
+    vi.stubGlobal('window', {
+      dispatchEvent: (event: Event) => {
+        received.push((event as CustomEvent<{ namespace?: string }>).detail)
+        return true
+      },
+      electronAPI: {
+        loadApiSecrets: async () => ({
+          available: false,
+          secrets: { version: 1, imageProfiles: {}, agentProfiles: {} },
+        }),
+        saveApiSecrets,
+      },
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await hydrateDesktopApiSecrets()
+
+    expect(received).toEqual([{ namespace: 'apiSecretsUnavailable' }])
+    // 关键：不可用时**不能**把（空的）secrets 写回去 —— 那会把唯一一份真值覆盖掉
+    expect(saveApiSecrets).not.toHaveBeenCalled()
+  })
+
+  it('密钥库可用时不上报，正常还原并回写', async () => {
+    // hydrateDesktopApiSecrets 读的是**真实 store** 的 settings（不是 mock 进来的），
+    // 所以必须先把 settings 铺成合法形态，否则 applyApiSecrets 会在
+    // settings.profiles.map 上炸 —— 那是用例自身没准备好，会误报成「代码有 bug」。
+    useStore.setState((state) => ({ settings: normalizeSettings(state.settings) }))
+
+    const received: Array<{ namespace?: string } | undefined> = []
+    const saveApiSecrets = vi.fn(async (_secrets: { version?: number }) => ({ success: true }))
+    vi.stubGlobal('window', {
+      dispatchEvent: (event: Event) => {
+        received.push((event as CustomEvent<{ namespace?: string }>).detail)
+        return true
+      },
+      electronAPI: {
+        loadApiSecrets: async () => ({
+          available: true,
+          secrets: { version: 1, imageProfiles: {}, agentProfiles: {} },
+        }),
+        saveApiSecrets,
+      },
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await hydrateDesktopApiSecrets()
+
+    expect(received).toEqual([])
+    // 至少回写一次。注意可能多于一次：setState({ settings }) 后会经 zustand persist
+    // 的 scheduleApiSecretsPersist 再落一次盘，那是正常链路，不是重复写入 bug。
+    expect(saveApiSecrets).toHaveBeenCalled()
+    const written = saveApiSecrets.mock.calls[0]?.[0] as { version?: number } | undefined
+    expect(written?.version).toBe(1)
   })
 })
 
