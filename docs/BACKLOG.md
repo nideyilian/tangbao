@@ -956,21 +956,140 @@
 
 ### 落地（2026-09-20 全部完成）
 
-| # | 改动 | 文件 |
-| - | ---- | ---- |
-| ① | 重入闸加显式反馈（`setStatusMessage` + toast） | `GallerySopBatchModal.tsx` ~1880 |
-| ② | 新增 `orphanRunsToFlush` ref：挂载时收敛库里残留的 `generating` 孤儿快照 | 同上 ~580 |
-| ③ | `applyPromptRun` 恢复时**就地净化**残留模型名并立即回写；同时接住收敛结果再落盘 | 同上 ~1007-1055 |
-| ④ | 挂载 effect 收敛 `generating` 快照 + 兜底 flush | 同上 ~1066 / ~1169 |
-| ⑤ | **R-58（新发现的真根因）**：`SopBatchSnapshot['sop']` 补 `campaignRecipe?` / `executionMode?`，`buildPromptRunSnapshot` 原样带上 | `types.ts` / `GallerySopBatchModal.tsx` ~883 |
+| #   | 改动                                                                                                                             | 文件                                         |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| ①   | 重入闸加显式反馈（`setStatusMessage` + toast）                                                                                   | `GallerySopBatchModal.tsx` ~1880             |
+| ②   | 新增 `orphanRunsToFlush` ref：挂载时收敛库里残留的 `generating` 孤儿快照                                                         | 同上 ~580                                    |
+| ③   | `applyPromptRun` 恢复时**就地净化**残留模型名并立即回写；同时接住收敛结果再落盘                                                  | 同上 ~1007-1055                              |
+| ④   | 挂载 effect 收敛 `generating` 快照 + 兜底 flush                                                                                  | 同上 ~1066 / ~1169                           |
+| ⑤   | **R-58（新发现的真根因）**：`SopBatchSnapshot['sop']` 补 `campaignRecipe?` / `executionMode?`，`buildPromptRunSnapshot` 原样带上 | `types.ts` / `GallerySopBatchModal.tsx` ~883 |
 
 **⑤ 是关键**：快照的 `sop` 原本只存 `id/name/description/content`，
 而读取侧的本地引擎判定要靠 `campaignRecipe` / `executionMode` →
 **判定恒为 false，R-54 的整套修复从落地起就是失效的**。这也是「模型名每次打开都复活」的真正机制。
 
 **验收证据**（`npm run verify` 全绿 + 反向验证）：
+
 - 新增 4 个回归用例（R-57 闸门反馈 / R-57 挂载收敛 / R-54 净化 / R-58 快照保真），
   **逐个做过反向验证**（把修复临时改回旧行为 → 对应用例确实失败，再恢复）。
 - 全量：**230 文件 / 2616 用例通过**。
 - ⚠️ 测试陷阱（已写进 R-58）：mock 的 `putSopBatchSnapshot` 若透传引用、不过序列化边界，
   写盘侧漏字段读回后**依然存在** → 用例假绿。第一版 R-58 用例就是这样被反向验证抓出来的。
+
+### TB-049 导出/后处理四问题：主进程白名单打死产出 + 按渠道目录看不见 + 命名无预览 + 入口分散
+
+- **来源**：杰哥报障（2026-09-20）「使用导出/后处理功能时」，附截图
+  「没有产出文件：导出位置不可用，已跳过这批产出（请检查路径是否可达）」，
+  并列了 4 条诉求：① 后处理完全不可用；② 无法按渠道设置导出位置；
+  ③ 命名模板没有预览；④ 设置入口分散混乱。明确要求「优先说明结论和定位依据」。
+- **状态**：📋 **已定位，待修**（本轮只做只读取证 + 方案，未改代码）· 写线：主写线
+  · 风险登记 **R-62**（白名单与业务需求冲突，最严重）
+- **完整诊断报告**：`docs/postprocess-export-diagnosis.md`（含端到端复现输出）
+
+#### 结论：4 条里只有 1 条是「真做不了」，另外 3 条性质各不相同
+
+| #   | 报障                   | 真实根因                                                                                                                                                                | 性质               |
+| --- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| 1   | 后处理完全不可用       | **主进程路径白名单**拒绝路径。只有桌面/文档/下载/图片/userData 放行；`D:/…`、`E:/…` 一律拒。且**手输路径永不被授权**，只有走「选择…」对话框才行，而这个授权**重启就丢** | **真 bug（R-62）** |
+| 2   | 无法按渠道设置导出位置 | **功能已完整实现**（三层继承 + 双写 + 节点覆盖 + 兼容旧单值），但 UI 折叠在「输出目录」下方，且被问题 1 一并打死                                                        | 已实现，入口问题   |
+| 3   | 命名模板没有预览       | 确认缺失。但 `renderPostprocessNamePattern` / `buildPostprocessOutputName` 早已存在，**接线即可**                                                                       | 真缺失（改动极小） |
+| 4   | 设置入口分散           | 「本地保存目录」在 `SettingsModal`，后处理配置在 `InputBar` 弹窗，**两处互不知情**，而它们语义强相关                                                                    | 信息架构           |
+
+#### 决定性证据
+
+**① 报错文案的出处**：`src/features/postprocess/outputRoots.ts:47`。
+
+**② 完整失败链路（逐跳有据）**：
+
+```
+outputRoots.ts:47   warnOnce('导出位置不可用…')     ← 你截图那句
+  ↑ roots.length === 0
+outputRoots.ts:42   root = await resolveRoot(dir) → null
+taskPostprocess.ts:347  getExplicitImageSaveDirectory(trimmed)
+localSave.ts:607-608    ok = await api.ensureDir(trimmed); return ok ? trimmed : null
+electron/ipc-handlers.ts:1197  handleChecked('fs:ensure-dir')
+electron/ipc-handlers.ts:1199  assertAllowedPath(dirPath)  ← 抛错
+electron/ipc-handlers.ts:1202  catch → console.error + return false   ← ★异常被吞
+electron/ipc-handlers.ts:264   throw new Error('Path is outside allowed application directories')
+electron/ipc-handlers.ts:241-253  getAllowedRoots()
+   = userData / desktop / documents / downloads / pictures
+     + sessionAllowedRoots（内存 Set，**重启清空**）
+     + readLocalSettings().localSavePath
+```
+
+**③ 白名单准入实测**（复刻 `assertAllowedPath` 跑的）：
+
+```
+[拒绝] D:/投放大图                    [允许] C:/Users/tt/Desktop/输出
+[拒绝] D:/工作/投放/2026/百度         [允许] C:/Users/tt/Documents/投放
+[拒绝] E:/素材交付                    [允许] C:/Users/tt/Pictures/投放
+[拒绝] C:/Users/Public/Pictures       [允许] …\tangbao\local-saves\postprocess
+```
+
+**④ 端到端复现**（真实代码逻辑，非猜测）：
+
+```
+场景 A：outputDir = D:/投放大图（手输）→ 产出目录 = (空)，提示「导出位置不可用…」
+场景 B：mediaOutputDirs.baidu = D:/百度交付 → 产出目录 = (空)，同样提示
+场景 C：完全没配 → 产出目录 = …\local-saves\postprocess              ← 只有这条能出图
+场景 D：outputDir = 桌面\输出 → 产出目录 = C:/Users/tt/Desktop/输出   ← 白名单内能出图
+对照：同 D:/投放大图，但本会话用「选择…」选过 → 产出目录 = D:/投放大图 ← 能出图！
+```
+
+**关键不对称**（这就是「我明明设置好了」的来源）：
+
+| 配置方式                        | 当次会话        | 重启后                                   |
+| ------------------------------- | --------------- | ---------------------------------------- |
+| 「选择…」对话框选 `D:/投放大图` | ✅ 能产出       | ❌ **失效**（`addAllowedRoot` 只在内存） |
+| 输入框手敲 `D:/投放大图`        | ❌ **当场失效** | ❌ 失效                                  |
+
+**⑤ 真实落盘数据**（SQLite 只读）：
+
+```
+namespace = postprocessMedia / state
+updated_at      = 2026-09-19 13:15:07   ← 近 22h 未再写入
+outputDir       = ""
+mediaOutputDirs = {}
+```
+
+而 `zustand/state` 今日 03:40 仍有写入 → **持久化通道本身是好的**，问题不在「存不住」。
+
+#### 三处「静默/误导」，是这个问题难查的根本原因
+
+1. `ipc-handlers.ts:1202`：`assertAllowedPath` 的异常被 `catch` 成 `return false`，
+   只 `console.error`（渲染进程看不到）→ **渲染侧只拿到布尔值，丢失失败原因**。
+2. `outputRoots.ts:47` 文案「请检查路径是否可达」**把人往错方向引**：
+   `D:/投放大图` 在资源管理器里明明打得开，真因是「不在白名单里」。
+3. 配置面板**不做事前校验**：填了不可用的目录，当场零提示，要跑完任务才从 toast 知道。
+
+#### 修法（按优先级）
+
+| 序  | 内容                                                                                                               | 位置                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| 1   | **A. 把「用户显式配置的输出目录」纳入白名单**（与现有 `localSavePath` 同样处理，`ipc-handlers.ts:251` 已在这么做） | `electron/ipc-handlers.ts` `getAllowedRoots()` |
+| 2   | **B. 保留失败原因**：`fs:ensure-dir` 不再 catch 成 false，让错误传到渲染侧并区分「不在白名单」vs「不可写」         | 同上                                           |
+| 3   | C. 输出目录控件加**实时可用性校验**                                                                                | `PostprocessParamPanel.tsx`                    |
+| 4   | 问题 2：`ChannelOutputDirs` 默认展开 + 显性化继承来源                                                              | 同上                                           |
+| 5   | 问题 3：`NamePatternField` 加预览（复用 `renderPostprocessNamePattern`）                                           | `NamePatternField.tsx`                         |
+| 6   | D. 白名单授权持久化到 `local-settings.json`（消除「重启失效」）                                                    | `electron/ipc-handlers.ts`                     |
+| 7   | 问题 4：IA 归置（`paramSchema` 输出组补「本地保存根目录」只读项 + 跳转）                                           | `paramSchema.ts` / 两处 UI                     |
+
+**安全口径**（已向杰哥确认）：不是拆掉白名单，而是把「用户显式配置过的目录」升级为受信根 ——
+与 `localSavePath` 完全一致的处理方式；用户仍不能写任意路径。
+
+#### 兼容性（零迁移成本）
+
+`outputDir` / `mediaOutputDirs` / 节点 `byMedia[].outputDirs` / 旧单值 `outputDir` /
+`namePattern` / `creator` / `localSavePath` **全部不变语义**。
+持久化 `version: 2` **不需要 bump**（无字段增删）。
+唯一新增持久化的是「白名单授权目录」→ 放 `local-settings.json`，**不动 zustand store**。
+
+⚠️ 若日后要动 `storePostprocessMedia` 字段，必须同步三处：
+① `partialize` 白名单 ② `getPostprocessMediaConfigSnapshot` ③ 排序键还要改桌面端 SQL；
+**且 `version` 必须 bump**，否则 zustand 不触发 `migrate`、旧字段被静默丢弃（见该文件 434-437 行注释）。
+
+#### 剩余待确认（需杰哥补充）
+
+1. **你设的输出位置的具体路径是什么？是在「后处理设置」弹窗里填的，还是「设置 → 本地保存」？**
+2. 期望的导出根目录（用于修复后的验收用例）。
+3. 是否接受「在设置里显式填过的目录即视为受信」这个口径。
