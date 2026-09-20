@@ -263,8 +263,10 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
           {/* 只留「动作完成了」这一句即时反馈，**不带任何数字**：
               维度数与组合空间在下方「解析结果确认」区块里本来就有，细节在弹窗里，
               这里再报一遍就是三处重复 —— 加了弹窗就该把外面那层收掉。
-              `!parseError` 是必须的：解析出了骨架/维度的失败分支同样会让 ok=true。 */}
-          {parsed?.ok && !parseError && <p className="sop-recipe-panel__success">解析完成，已填入下方表单，请核对。</p>}
+              `!parseError` 是必须的：解析出了骨架/维度的失败分支同样会让 ok=true。
+              文案刻意不提「已填入」：解析成功但骨架/维度为空时，下方会提示缺什么，
+              说「已填入」会与那提示自相矛盾。它只是「动作完成」的信号，不承诺结果完整。 */}
+          {parsed?.ok && !parseError && <p className="sop-recipe-panel__success">解析完成，请核对下方结果。</p>}
         </div>
 
         {/* ---- 解析结果确认与微调 ---- */}
