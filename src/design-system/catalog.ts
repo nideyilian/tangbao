@@ -437,6 +437,17 @@ export const componentSpecs: ComponentSpec[] = [
     accessibility: '保留原生 table 结构；容器可键盘滚动',
   },
   {
+    name: 'DataGrid',
+    category: 'data-display',
+    purpose: '就地编辑结构化数据（中控台数据面的统一读写口）',
+    useWhen:
+      '同一组字段有多条记录、需要批量核对或批量改（渠道与尺寸、输出位置、方向参数、水印归属、分发）；列定义同时驱动界面编辑与 Excel 表头映射',
+    avoidWhen: '只读展示用 Table；单条记录的表单用 Stack + TextField；内容以缩略图为主',
+    variants: ['text', 'number', 'switch', 'select', 'tags', 'path', 'readonly'],
+    accessibility:
+      '原生 table 语义与 scope=col 表头；单元格编辑器是原生 input/select，键盘全程可操作（Enter 提交、Esc 撤回、Tab 移动）；校验失败用 aria-invalid 与行内文案，不用 toast；行主键由调用方提供，禁用数组下标',
+  },
+  {
     name: 'Dialog',
     category: 'overlay',
     purpose: '保护需要集中注意的短任务',

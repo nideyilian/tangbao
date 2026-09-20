@@ -42,6 +42,10 @@ export type {
   SwitchProps,
 } from './forms'
 
+export { DataGrid, parseTagList } from './data-grid'
+
+export type { DataGridColumn, DataGridEditorKind, DataGridProps } from './data-grid'
+
 export {
   Container,
   Divider,

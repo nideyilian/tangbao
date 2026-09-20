@@ -2697,6 +2697,198 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * 数据表格（DataGrid）
+ *
+ * 形态对齐 Excel：表头吸顶、首列冻结、单元格内联编辑（输入框平时无边框、聚焦才显形）。
+ * 于是「读」的时候它是一张干净的表，「改」的时候点哪格改哪格 —— 这正是不再需要
+ * 每个数据面各写一套卡片式编辑器的理由。
+ *
+ * 三个不能省的细节：
+ * ① **吸顶表头与冻结首列必须用不透明背景**：`position: sticky` 的元素背景透明时，
+ *    滚动期间下层内容会从它底下穿过去，看着像重影。
+ * ② **悬停/选中态要同时覆盖 sticky 单元格**，否则滚动时首列的颜色与其余列不一致。
+ * ③ 表头 × 首列那个交叉角要再高一档 z-index（表头 20 → 角 21），
+ *    否则横向滚动时首列会盖住表头。
+ *
+ * 行高由组件注入 `--ds-data-grid-row-height`（虚拟滚动按 JS 侧的同一个数算窗口，
+ * 两边写死两个值迟早会飘）。
+ * ------------------------------------------------------------------------ */
+
+.ds-data-grid__viewport {
+  background-color: hsl(var(--ds-color-surface));
+  border: 1px solid hsl(var(--ds-color-border));
+  border-radius: var(--ds-radius-lg);
+  overflow: auto;
+}
+
+.ds-data-grid__viewport--empty {
+  padding: var(--ds-space-6);
+}
+
+.ds-data-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--ds-font-size-sm);
+  width: 100%;
+}
+
+.ds-data-grid__head-cell {
+  position: sticky;
+  top: 0;
+  z-index: var(--ds-z-sticky);
+  background-color: hsl(var(--ds-color-surface-subtle));
+  border-bottom: 1px solid hsl(var(--ds-color-border-strong));
+  color: hsl(var(--ds-color-text-muted));
+  font-weight: var(--ds-font-weight-semibold);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ds-data-grid__head-cell--end {
+  text-align: right;
+}
+
+.ds-data-grid__head-cell--select,
+.ds-data-grid__cell--select {
+  padding-left: var(--ds-space-3);
+  padding-right: var(--ds-space-1);
+  width: 2.5rem;
+}
+
+.ds-data-grid__head-label {
+  display: block;
+}
+
+/* 字段键：平时不显示，核对待导出的表头时打开 */
+.ds-data-grid__field-key {
+  color: hsl(var(--ds-color-text-subtle));
+  display: block;
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-font-size-xs);
+  font-weight: var(--ds-font-weight-regular);
+  line-height: var(--ds-line-height-tight);
+}
+
+.ds-data-grid__row {
+  height: var(--ds-data-grid-row-height, 34px);
+}
+
+.ds-data-grid__cell {
+  border-bottom: 1px solid hsl(var(--ds-color-border));
+  padding: 0 var(--ds-space-2);
+  vertical-align: middle;
+}
+
+.ds-data-grid__cell--end {
+  text-align: right;
+}
+
+/* 冻结首列：不透明背景是硬要求（见头注 ①） */
+.ds-data-grid__cell--sticky {
+  background-color: hsl(var(--ds-color-surface));
+  left: 0;
+  position: sticky;
+  z-index: var(--ds-z-base);
+}
+
+/* 交叉角：表头 + 首列同时命中时抬高一档（见头注 ③） */
+.ds-data-grid__head-cell.ds-data-grid__cell--sticky {
+  z-index: calc(var(--ds-z-sticky) + 1);
+}
+
+.ds-data-grid__row:hover .ds-data-grid__cell {
+  background-color: hsl(var(--ds-color-surface-subtle));
+}
+
+.ds-data-grid__row[data-selected] .ds-data-grid__cell {
+  background-color: hsl(var(--ds-color-selection-surface));
+}
+
+.ds-data-grid__row[data-selected] .ds-data-grid__cell--sticky {
+  background-color: hsl(var(--ds-color-selection-surface));
+}
+
+/* 单元格内的输入框：平时无边框、无底色，让表格看起来是「表」而不是「一堆输入框」 */
+.ds-data-grid__editor-wrap {
+  align-items: center;
+  display: flex;
+  gap: var(--ds-space-1);
+  position: relative;
+  width: 100%;
+}
+
+.ds-data-grid__editor.ds-input {
+  background-color: transparent;
+  border-color: transparent;
+  height: var(--ds-control-sm);
+  min-width: 0;
+  padding: 0 var(--ds-space-2);
+  width: 100%;
+}
+
+.ds-data-grid__editor.ds-input:focus {
+  background-color: hsl(var(--ds-color-surface-raised));
+  border-color: hsl(var(--ds-color-border-strong));
+}
+
+.ds-data-grid__editor--end {
+  text-align: right;
+}
+
+.ds-data-grid__readonly {
+  color: hsl(var(--ds-color-text-muted));
+  display: block;
+  padding: 0 var(--ds-space-2);
+}
+
+.ds-data-grid__switch {
+  display: flex;
+  justify-content: center;
+}
+
+/* 路径列的选择按钮：只在需要时占位，平时不抢视觉 */
+.ds-data-grid__path-button {
+  background-color: transparent;
+  border: 1px solid hsl(var(--ds-color-border));
+  border-radius: var(--ds-radius-sm);
+  color: hsl(var(--ds-color-text-muted));
+  cursor: pointer;
+  flex: none;
+  font-size: var(--ds-font-size-xs);
+  height: var(--ds-control-sm);
+  padding: 0 var(--ds-space-2);
+}
+
+.ds-data-grid__path-button:hover:not(:disabled) {
+  border-color: hsl(var(--ds-color-border-strong));
+  color: hsl(var(--ds-color-text));
+}
+
+.ds-data-grid__path-button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/*
+ * 校验失败留在单元格里，不用 toast（见组件头注）。
+ * 绝对定位 + 不让它撑高行：错误文案出现时行高不变，表格不会因为一处报错整体跳一下。
+ */
+.ds-data-grid__cell-error {
+  background-color: hsl(var(--ds-color-danger-subtle));
+  border-radius: var(--ds-radius-sm);
+  bottom: -0.25rem;
+  color: hsl(var(--ds-color-danger));
+  font-size: var(--ds-font-size-xs);
+  left: var(--ds-space-2);
+  pointer-events: none;
+  position: absolute;
+  transform: translateY(100%);
+  white-space: nowrap;
+  z-index: var(--ds-z-dropdown);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ds-button,
   .ds-icon-button,
