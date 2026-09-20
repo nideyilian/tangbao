@@ -16,6 +16,7 @@ import {
   type CampaignRecipeDimension,
 } from './campaignRecipe'
 import { parseCampaignRecipeText, toCampaignRecipeConfig, type ParsedCampaignRecipe } from './campaignRecipeImport'
+import SopCampaignRecipeParseResultDialog from './SopCampaignRecipeParseResultDialog'
 import type { SopCampaignRecipeConfig } from './types'
 
 /**
@@ -66,6 +67,13 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
   const [parseError, setParseError] = useState('')
   const [parseNotice, setParseNotice] = useState('')
   const [parsed, setParsed] = useState<ParsedCampaignRecipe | null>(null)
+  /**
+   * 「解析结果」弹窗是否打开。与 `parsed` 分开存：
+   * 关闭弹窗**不清空**解析结果 —— 用户常要「看一眼 → 关掉 → 改两笔 → 再看一眼」，
+   * 关掉就丢会让入口变成一次性的。
+   */
+  const [parseResultOpen, setParseResultOpen] = useState(false)
+
 
   const body = config.body ?? ''
   // config 每次编辑都是新对象，直接进 useMemo 依赖会让派生计算每次重算；
@@ -141,6 +149,8 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
     setParsed(null)
     setParseError('')
     setParseNotice('')
+    // 解析结果被清掉了，弹窗留在空态会让人以为「内容丢了」，直接关掉
+    setParseResultOpen(false)
   }
 
   function updateDimension(index: number, patch: Partial<CampaignRecipeDimension>) {
@@ -233,6 +243,19 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
               清空
             </Button>
             <span className="sop-recipe-import__hint">{rawText.trim().length} 字符</span>
+            {/* 原文区域右下角的弹窗入口。放在字符数**之后** ⇒ 落在整栏最右端
+                （字符数自带 margin-left:auto，插在它前面会被挤到中间）。
+                没解析过时禁用并说明原因：给一个点了没反应的按钮比不给更糟。 */}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setParseResultOpen(true)}
+              disabled={!parsed}
+              title={parsed ? '查看这次解析读到的全部内容' : '先粘贴原文并点「解析」'}
+              leadingIcon={<Eye size={14} />}
+            >
+              查看解析结果
+            </Button>
           </div>
 
           {parseError && (
@@ -421,6 +444,9 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
           <p>{CAMPAIGN_RECIPE_FORBIDDEN_TERMS.join(' · ')}</p>
         </details>
       </div>
+      {/* 解析结果弹窗：只读呈现解析器读到的东西（原资产信息 / 维度池 / 骨架 / 告警）。
+          关闭方式四处都走既有约定：右上 X、底部「关闭」、Esc、点遮罩。 */}
+      <SopCampaignRecipeParseResultDialog open={parseResultOpen} onOpenChange={setParseResultOpen} parsed={parsed} />
     </section>
   )
 }

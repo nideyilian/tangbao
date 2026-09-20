@@ -1094,6 +1094,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['TextArea', 'Badge', 'Button', 'IconButton'],
   },
   {
+    module: 'src/features/strategy/SopCampaignRecipeParseResultDialog.tsx',
+    responsibility:
+      '配方卡「解析结果」弹窗（只读）：原资产信息 / 维度池候选值全文 / 骨架 / 缺失池 / 解析告警 / 元信息；关闭走 X、底部按钮、Esc、点遮罩',
+    decision: 'compose',
+    targets: ['Dialog', 'Badge', 'Button', 'Card'],
+  },
+  {
     module: 'src/features/strategy/SopGenerateTab.tsx',
     responsibility: 'SOP 管理中心智能生成标签页（生成表单与状态/历史面板）',
     decision: 'compose',
