@@ -31,27 +31,28 @@
 
 ## 方案 / 设计（糖包时期）
 
-| 文件                                                                                                                         | 作用                                                             | 状态 |
-| ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---- |
-| [`ui-retrofit-plan.md`](ui-retrofit-plan.md)                                                                                 | 主工作台首屏改造方案（含已实施记录与验收证据）                   | 现行 |
-| [`postprocess-unify-on-hanling-plan.md`](postprocess-unify-on-hanling-plan.md)                                               | 后处理统一到瀚灵编排的完整方案（**当前主线**，第九节是实现要点） | 现行 |
-| [`hanling-postprocess-replica-plan.md`](hanling-postprocess-replica-plan.md)                                                 | 复刻瀚灵后处理链路的原始方案                                     | 参考 |
-| [`output-location-import-2026-09-18.md`](output-location-import-2026-09-18.md)                                               | 《输出位置明细》导入记录 + 三条定案                              | 现行 |
-| [`sop-image-generation-interaction-redesign.md`](sop-image-generation-interaction-redesign.md)                               | SOP 生图交互改版                                                 | 参考 |
-| [`sop-management-center-features.md`](sop-management-center-features.md)                                                     | SOP 管理中心功能设计                                             | 参考 |
-| [`sop-prompt-to-image-full-flow.md`](sop-prompt-to-image-full-flow.md)                                                       | SOP 提示词到出图全链路                                           | 现行 |
-| [`sop-parameters-editor-layout-analysis.md`](sop-parameters-editor-layout-analysis.md)                                       | SOP 参数编辑器布局分析                                           | 参考 |
-| [`strategy-workspace-migration.md`](strategy-workspace-migration.md)                                                         | 策略工作区迁移                                                   | 归档 |
-| [`ordering-workspace-migration.md`](ordering-workspace-migration.md)                                                         | 下单工作区迁移                                                   | 归档 |
-| [`requirement-ordering-local-prototype-prd.md`](requirement-ordering-local-prototype-prd.md)                                 | 需求下单原型 PRD（1742 行）                                      | 参考 |
-| [`requirement-ordering-local-prototype-implementation-plan.md`](requirement-ordering-local-prototype-implementation-plan.md) | 上文实施计划                                                     | 归档 |
-| [`gallery-sop-batch-task-card-implementation.md`](gallery-sop-batch-task-card-implementation.md)                             | 批次任务卡实施记录                                               | 归档 |
-| [`word-library-quick-panel-spec.md`](word-library-quick-panel-spec.md)                                                       | 词库快捷面板规格                                                 | 参考 |
-| [`merge-feasibility-variable-prompt.md`](merge-feasibility-variable-prompt.md)                                               | 变量提示词合并可行性                                             | 参考 |
-| [`prompt-library-modal-optimization.md`](prompt-library-modal-optimization.md)                                               | 提示词库弹窗优化                                                 | 归档 |
-| [`store-split-plan.md`](store-split-plan.md)                                                                                 | store 拆分计划（**未执行**，见 TB-022）                          | 参考 |
-| [`eagle-interaction-gap-analysis.md`](eagle-interaction-gap-analysis.md)                                                     | Eagle 交互差距分析                                               | 参考 |
-| [`analysis-doupao-liangnianban.md`](analysis-doupao-liangnianban.md)                                                         | 竞品分析                                                         | 参考 |
+| 文件                                                                                                                         | 作用                                                                      | 状态 |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---- |
+| [`ui-retrofit-plan.md`](ui-retrofit-plan.md)                                                                                 | 主工作台首屏改造方案（含已实施记录与验收证据）                            | 现行 |
+| [`postprocess-export-diagnosis.md`](postprocess-export-diagnosis.md)                                                         | **导出/后处理四问题定位报告**（含端到端复现证据，对应 `TB-049` / `R-62`） | 现行 |
+| [`postprocess-unify-on-hanling-plan.md`](postprocess-unify-on-hanling-plan.md)                                               | 后处理统一到瀚灵编排的完整方案（**当前主线**，第九节是实现要点）          | 现行 |
+| [`hanling-postprocess-replica-plan.md`](hanling-postprocess-replica-plan.md)                                                 | 复刻瀚灵后处理链路的原始方案                                              | 参考 |
+| [`output-location-import-2026-09-18.md`](output-location-import-2026-09-18.md)                                               | 《输出位置明细》导入记录 + 三条定案                                       | 现行 |
+| [`sop-image-generation-interaction-redesign.md`](sop-image-generation-interaction-redesign.md)                               | SOP 生图交互改版                                                          | 参考 |
+| [`sop-management-center-features.md`](sop-management-center-features.md)                                                     | SOP 管理中心功能设计                                                      | 参考 |
+| [`sop-prompt-to-image-full-flow.md`](sop-prompt-to-image-full-flow.md)                                                       | SOP 提示词到出图全链路                                                    | 现行 |
+| [`sop-parameters-editor-layout-analysis.md`](sop-parameters-editor-layout-analysis.md)                                       | SOP 参数编辑器布局分析                                                    | 参考 |
+| [`strategy-workspace-migration.md`](strategy-workspace-migration.md)                                                         | 策略工作区迁移                                                            | 归档 |
+| [`ordering-workspace-migration.md`](ordering-workspace-migration.md)                                                         | 下单工作区迁移                                                            | 归档 |
+| [`requirement-ordering-local-prototype-prd.md`](requirement-ordering-local-prototype-prd.md)                                 | 需求下单原型 PRD（1742 行）                                               | 参考 |
+| [`requirement-ordering-local-prototype-implementation-plan.md`](requirement-ordering-local-prototype-implementation-plan.md) | 上文实施计划                                                              | 归档 |
+| [`gallery-sop-batch-task-card-implementation.md`](gallery-sop-batch-task-card-implementation.md)                             | 批次任务卡实施记录                                                        | 归档 |
+| [`word-library-quick-panel-spec.md`](word-library-quick-panel-spec.md)                                                       | 词库快捷面板规格                                                          | 参考 |
+| [`merge-feasibility-variable-prompt.md`](merge-feasibility-variable-prompt.md)                                               | 变量提示词合并可行性                                                      | 参考 |
+| [`prompt-library-modal-optimization.md`](prompt-library-modal-optimization.md)                                               | 提示词库弹窗优化                                                          | 归档 |
+| [`store-split-plan.md`](store-split-plan.md)                                                                                 | store 拆分计划（**未执行**，见 TB-022）                                   | 参考 |
+| [`eagle-interaction-gap-analysis.md`](eagle-interaction-gap-analysis.md)                                                     | Eagle 交互差距分析                                                        | 参考 |
+| [`analysis-doupao-liangnianban.md`](analysis-doupao-liangnianban.md)                                                         | 竞品分析                                                                  | 参考 |
 
 ## AI / Agent 相关
 
