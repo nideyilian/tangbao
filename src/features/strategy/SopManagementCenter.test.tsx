@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, create, type ReactTestInstance } from 'react-test-renderer'
 import SopManagementCenter from './SopManagementCenter'
+import { useAssetLibraryStore } from '../assetLibrary/store'
 import type { GenerateSop } from './sopGeneration'
 import type { SopGroup, SopLibraryItem, SopMetaInstruction, SopVersion } from './types'
 import type { SopGenerationRecord } from '../../types'
@@ -1540,6 +1541,58 @@ describe('SopManagementCenter campaign recipe SOPs', () => {
 
     // 选中项仍是配方卡（未被静默换成第一条），编辑器不消失
     expect(result.renderer.root.findAllByProps({ 'aria-label': '配方卡引擎配置' })).toHaveLength(1)
+    result.renderer.unmount()
+  })
+})
+
+describe('初始分组跟随全局上下文指针（当前方向）', () => {
+  afterEach(() => {
+    // 这个文件里其他用例默认「全部」，别让本组的指针泄漏出去
+    useAssetLibraryStore.setState({ scope: 'all' })
+  })
+
+  it('指针指向某个方向时，打开即停在该方向对应的分组（不是「全部」）', () => {
+    const moonItem: SopLibraryItem = { ...item, id: 'sop-moon', name: '月亮专用 SOP', groupId: 'g-moon' }
+    const otherItem: SopLibraryItem = { ...item2, id: 'sop-other', name: '别的分组 SOP', groupId: 'g-other' }
+    const groups: SopGroup[] = [
+      { id: 'g-moon', name: '月亮', collectionId: 'c-moon', createdAt: 1, updatedAt: 1 },
+      { id: 'g-other', name: '别的', collectionId: 'c-other', createdAt: 1, updatedAt: 1 },
+    ]
+    useAssetLibraryStore.setState({
+      scope: { kind: 'collection', id: 'c-moon' },
+      collections: [
+        { id: 'c-moon', name: '月亮', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'c-other', name: '别的', parentId: null, order: 1, createdAt: 0, updatedAt: 0 },
+      ] as never,
+    })
+
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ groups, items: [moonItem, otherItem] })
+    })
+    const text = textContent(result.renderer.root)
+    // 只列出该分组的条目 ⇒ 说明初始分组被定位到了「月亮」
+    expect(text).toContain('月亮专用 SOP')
+    expect(text).not.toContain('别的分组 SOP')
+    result.renderer.unmount()
+  })
+
+  it('指针不是具体方向时停在「全部」，两个分组的条目都能看到', () => {
+    const moonItem: SopLibraryItem = { ...item, id: 'sop-moon', name: '月亮专用 SOP', groupId: 'g-moon' }
+    const otherItem: SopLibraryItem = { ...item2, id: 'sop-other', name: '别的分组 SOP', groupId: 'g-other' }
+    const groups: SopGroup[] = [
+      { id: 'g-moon', name: '月亮', collectionId: 'c-moon', createdAt: 1, updatedAt: 1 },
+      { id: 'g-other', name: '别的', collectionId: 'c-other', createdAt: 1, updatedAt: 1 },
+    ]
+    useAssetLibraryStore.setState({ scope: 'favorites' })
+
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ groups, items: [moonItem, otherItem] })
+    })
+    const text = textContent(result.renderer.root)
+    expect(text).toContain('月亮专用 SOP')
+    expect(text).toContain('别的分组 SOP')
     result.renderer.unmount()
   })
 })

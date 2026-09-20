@@ -34,6 +34,8 @@ import SopPromptRunsDialog from './SopPromptRunsDialog'
 import SopVersionHistoryDialog from './SopVersionHistoryDialog'
 import SopGenerationDetailOverlay from './SopGenerationDetailOverlay'
 import type { SopGroup, SopLibraryItem, SopMetaInstruction, SopVersion } from './types'
+import { resolveInitialSopGroupId } from './sopInitialGroup'
+import { useAssetLibraryStore } from '../assetLibrary/store'
 import { isModalBackdropEvent } from '../../lib/modalBackdrop'
 import { useAppDialog } from '../../hooks/useAppDialog'
 import { LARGE_MODAL_SIZE_STYLE, useLargeModalMode } from '../../hooks/useLargeModalMode'
@@ -165,7 +167,18 @@ export default function SopManagementCenter({
   const { openConfirmDialog } = useAppDialog()
   const { largeView, toggleLargeView } = useLargeModalMode(SOP_MANAGEMENT_MODAL_MODE_STORAGE_KEY)
   const [tab, setTab] = useState<CenterTab>('library')
-  const [selectedGroupId, setSelectedGroupId] = useState<string>('all')
+  /**
+   * 初始分组跟随**全局上下文指针**（当前方向）——「在任何地方打开都默认停在当前方向」。
+   *
+   * 只在挂载时取一次（`useState` 惰性初始化）：之后用户在 SOP 里换分组是 SOP 自己的浏览行为，
+   * **不回写**全局指针。反过来也不跟随 —— 这里不是双向绑定，是「打开就定位」。
+   * 用 `getState()` 取快照而不是订阅：初始化只关心「打开那一刻看的是哪个方向」，
+   * 订阅会让「别处换了方向」把用户正看的分组顶掉。
+   */
+  const [selectedGroupId, setSelectedGroupId] = useState<string>(() => {
+    const { scope, collections } = useAssetLibraryStore.getState()
+    return resolveInitialSopGroupId({ groups, collections, scope })
+  })
   const [search, setSearch] = useState('')
   const initiallySelectedItem = items.find((item) => item.id === selectedSopId) ?? items[0]
   const [selectedItemId, setSelectedItemId] = useState(initiallySelectedItem?.id ?? '')
