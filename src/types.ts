@@ -2,6 +2,7 @@
 
 import type { CompositeV2PersistedSnapshot } from './features/composite/lib/compositeV2Types'
 import type { AssistantActionPreferences } from './features/assistantActions/types'
+import type { SopCampaignRecipeConfig, SopExecutionMode } from './features/strategy/types'
 import type { PostprocessMediaConfig } from './lib/postprocessMedia'
 
 export type ApiMode = 'images' | 'responses'
@@ -426,6 +427,14 @@ export interface SopBatchSnapshot {
     name: string
     description: string
     content: string
+    /**
+     * 本地引擎判定所需的字段（R-54 / R-58）：快照里的 sop 是**历史副本**，
+     * 只留 id/name/description/content 会让「配方卡 / 变量提示词」判定在读取侧恒为 false
+     * （content 骨架不以 `{` 开头时，内联 JSON 兜底也命中不了），
+     * 于是模型名挡板与残留净化全部失效。必须原样带上这两个字段。
+     */
+    campaignRecipe?: SopCampaignRecipeConfig
+    executionMode?: SopExecutionMode
   }
   brief: string
   referenceImageIds: string[]

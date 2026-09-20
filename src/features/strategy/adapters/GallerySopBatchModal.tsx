@@ -579,6 +579,12 @@ export default function GallerySopBatchModal({
    */
   const generateInFlightRef = useRef(false)
   const componentActiveRef = useRef(true)
+  /**
+   * 挂载时收敛掉的「历史非终态快照」（R-57）：库里残留的 `generating` 快照
+   * 不可能有对应的在途生成（在途状态都在内存 ref 里），就地改成 `ready` 并登记到这里，
+   * 等它被真正应用（applyPromptRun）时再写回，避免无谓的落盘。
+   */
+  const orphanRunsToFlush = useRef(new Map<string, SopBatchSnapshot>())
   /** 批次提交期间的取消信号：用于中断「等待组内首图」的锚定等待。 */
   const submissionAbortRef = useRef<AbortController | null>(null)
   const modalRef = useRef<HTMLDivElement>(null)
@@ -879,6 +885,10 @@ export default function GallerySopBatchModal({
         name: snapshotSop.name,
         description: snapshotSop.description,
         content: snapshotSop.content,
+        // 必须带上：读取侧要靠它判定「本地引擎」，否则配方卡会被误判成普通 SOP，
+        // 模型名挡板与残留净化一起失效（R-54 / R-58）。
+        campaignRecipe: snapshotSop.campaignRecipe,
+        executionMode: snapshotSop.executionMode,
       },
       brief: effectiveBrief.trim(),
       referenceImageIds: patch.referenceImageIds ?? referenceImageIds,
@@ -994,7 +1004,13 @@ export default function GallerySopBatchModal({
         : []
 
       setCurrentRunId(run.id, run.status === 'submitted' || Boolean(run.batchId))
-      activePromptGenerationModelRef.current = run.promptGenerationModel ?? ''
+      // R-54 残留清洗：本地引擎（配方卡 / 变量提示词）的 run 快照永远不该带文本模型名。
+      // 旧版本（R-54 修复前）写进去的脏值会被这里「恢复 → 再回写」，于是光改 ref 洗不掉：
+      // 每开一次弹窗它都会复活。恢复时就地净化，并标记回写，做到「打开即洗干净」。
+      const runIsLocalGeneration = isLocalGenerationSopForSop(run.sop)
+      const stalePromptGenerationModel = runIsLocalGeneration && Boolean(run.promptGenerationModel?.trim())
+      activePromptGenerationModelRef.current = stalePromptGenerationModel ? '' : (run.promptGenerationModel ?? '')
+      if (stalePromptGenerationModel) run.promptGenerationModel = undefined
       setRunTitle(getPromptRunTitle(run))
       setPromptCount(
         run.promptCount ||
@@ -1014,6 +1030,28 @@ export default function GallerySopBatchModal({
       setError('')
       setStatusMessage(message)
       writeRunPointer(run.id, restoredPrompts, autoGenerateRef.current, run.brief, run.promptCount, run.imagesPerPrompt)
+      // 净化过的脏快照要立刻把清洗结果落盘，否则下次开弹窗又从库里读出旧值复活（R-54）。
+      if (stalePromptGenerationModel) {
+        const purified = { ...run, updatedAt: Date.now() }
+        await flushPromptRunSnapshot(purified)
+        updateRecentRun(purified)
+      }
+      // 挂载时被收敛掉的历史非终态快照：应用它的同时把「已收敛」这一事实写回库里，
+      // 否则重启后又被读成 generating，界面继续显示「生成中」（R-57）。
+      //
+      // ⚠️ 收敛登记表里存的是「候选列表」那条记录，这里是「按 activeRunId 单独读回」的另一条记录。
+      // 真实链路里两者是同一条库记录、但**被反序列化成两个互不相干的 JS 对象**，就地改一个不影响另一个。
+      // 所以这里必须先把上面的净化结果带过来再落盘，否则会用脏 model 覆盖掉刚净化好的快照，
+      // 让 R-54 残留「每次打开都复活」（这正是残留洗不掉的真正机制）。
+      const convergedOrphan = orphanRunsToFlush.current.get(run.id)
+      if (convergedOrphan) {
+        orphanRunsToFlush.current.delete(run.id)
+        const converged = stalePromptGenerationModel
+          ? { ...convergedOrphan, promptGenerationModel: undefined, updatedAt: Date.now() }
+          : convergedOrphan
+        await putSopBatchSnapshot(converged)
+        updateRecentRun(converged)
+      }
       if (restoreGenerationContext && restoredImages.length !== run.referenceImageIds.length) {
         showToast(
           `已加载提示词，但有 ${run.referenceImageIds.length - restoredImages.length} 张历史参考图不可用`,
@@ -1034,6 +1072,16 @@ export default function GallerySopBatchModal({
     void (async () => {
       const allRuns = await getAllSopBatchSnapshots()
       if (!active) return
+      // 收敛历史遗留的非终态快照（R-57）：历史上有过「生成被静默挡下 / 中途挂掉」的情况，
+      // 会在库里留下 status='generating' 且不再推进的孤儿快照，界面就永久停在
+      // 「生成中 · 0 条提示词」。宿主的活跃生成全部存在内存 ref 里，弹窗挂载时不可能有在途生成，
+      // 因此挂载时把这类快照就地收敛成 'ready'，并在下方真正应用它时写回。
+      for (const run of allRuns) {
+        if (run.status !== 'generating') continue
+        run.status = 'ready'
+        run.updatedAt = Date.now()
+        orphanRunsToFlush.current.set(run.id, run)
+      }
       const sortedRuns = sortPromptRunsNewestFirst(allRuns)
       setRecentRuns(sortedRuns)
 
@@ -1130,6 +1178,19 @@ export default function GallerySopBatchModal({
         setStatus('idle')
         setStatusMessage('提示词列表为空，可新建或从 SOP 生成')
         writeRunPointer(newRunId, [], autoGenerateRef.current, initialBrief, initialPromptCount, initialImagesPerPrompt)
+      }
+      // 未被应用（即没走 applyPromptRun）的收敛快照在这里补写，保证库里不留 `generating` 孤儿。
+      if (orphanRunsToFlush.current.size > 0) {
+        const remaining = [...orphanRunsToFlush.current.values()]
+        orphanRunsToFlush.current.clear()
+        for (const orphan of remaining) {
+          try {
+            await putSopBatchSnapshot(orphan)
+            updateRecentRun(orphan)
+          } catch {
+            // 收敛失败不应阻断弹窗打开：下次挂载会再试
+          }
+        }
       }
       if (active) setRestoreComplete(true)
     })().catch((cause) => {
@@ -1810,7 +1871,14 @@ export default function GallerySopBatchModal({
     }
     // 同步重入闸：本函数开头会 abort 掉上一轮生成，而被 abort 的那一轮会留下一个
     // 永远不会被收尾的 `generating` 孤儿快照（界面显示成「生成中 · 0 条提示词」）。见 R-56。
-    if (generateInFlightRef.current) return
+    //
+    // ⚠️ 闸门**不能静默 return**（R-57）：挡下时必须给用户明确反馈，否则点击被吞掉，
+    // 界面就停在上一轮留下的「生成中 · 0 条提示词」上，用户判断成「生成坏了」。
+    if (generateInFlightRef.current) {
+      setStatusMessage('上一轮提示词生成尚未结束，请稍候或先取消当前生成')
+      showToast('上一轮提示词生成尚未结束，请稍候', 'info')
+      return
+    }
     generateInFlightRef.current = true
     try {
       await runGenerateForSources(retrySourceId, freshRun, generateImagesForNewPrompts)

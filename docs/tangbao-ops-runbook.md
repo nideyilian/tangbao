@@ -707,6 +707,13 @@ for (const it of d.state.sopLibrary) {
 
 **看 `Object.keys(item)` 是最有用的**：字段在不在、有没有被裁掉，一目了然。
 
+**⭐ 镜像教训（R-58）**：**读回侧的判定依赖哪些字段，写盘侧就必须保留哪些字段。**
+2026-09-20 的 `promptGenerationModel` 残留查不出根因，就是因为只看「读回侧」的清洗逻辑，
+没去看「写盘侧」是否把判定所需的字段裁掉了 —— `buildPromptRunSnapshot` 写快照时
+`sop` 只留 `id/name/description/content`，而 `isLocalGenerationSopForSop` 要靠
+`campaignRecipe` / `executionMode`，于是**判定恒为 false，整套修复静默失效**。
+遇到「改了没效果 / 每次打开都复活」这类现象，先查这个字段在落盘后的 `Object.keys()` 里还在不在。
+
 ### 4. 命名速查（本仓库）
 
 | 要看什么                                       | namespace / id                       |
@@ -719,6 +726,13 @@ for (const it of d.state.sopLibrary) {
 | 提示词仓库（SOP 批量历史）                     | `sopBatchSnapshots` / `sop-run-<id>` |
 | 迁移标记                                       | `meta` / `*-v1`                      |
 
+**⚠️ 别按「独立 namespace」的直觉去找 SOP 库**（2026-09-20 实测踩到）：
+`app_data_records` 里**没有 `sopLibrary` 这个 `record_id`**。
+SOP 库是并进 **`requirementPrototype`（旧名）/ `zustand`（新名）的 `state` 对象里**的
+一个数组字段。查 `WHERE record_id='sopLibrary'` 必然 `NO ROW` —— 这是**正常的**，
+**不代表数据丢失**，不要据此下「SOP 库空 / 被清空」的结论。
+要先 `SELECT json` 出 `state`，再 `Object.keys(d.state)` 看有没有 `sopLibrary` 字段。
+
 ### 5. 探针脚本的写法与清理
 
 - **必须用 Write 落盘再 `node` 执行**（Bash 会吃 `\\` / `\${}`，R-19）；
@@ -730,6 +744,15 @@ for (const it of d.state.sopLibrary) {
 
 静默失效类的修复，测试很容易写成"假绿"（断言写错方向也会过）。**逐个把修复临时改回
 `if (false)` 或还原旧条件，确认测试真的会失败**，再改回来。本次 3 个回归测试全部这样验过。
+
+**两个专门制造假绿的坑（都在 2026-09-20 踩过）**：
+
+1. **mock 透传引用，不过序列化边界**。`putSopBatchSnapshot` 的 mock 若直接把收到的对象存进
+   `mock.calls`，写盘侧漏掉的字段在读回后**依然存在** → 测不出「裁剪导致判定失效」。
+   要么在断言前 `structuredClone`（防后续就地修改），要么让 mock 忠实模拟 put/get 边界。
+2. **断言读的是「引用」，断言时值已被后续代码改过**。同一个对象在 `put` 时干净、之后被就地
+   改脏，拿引用去断言会读到「未来」的状态 —— 现象是「探针打印 undefined，断言却说有值」。
+   一律 `structuredClone` 后再断言。
 
 ### 7. ⚠️ 本方法**取代**不了什么：`GallerySopBatchModal.tsx` 的诊断盲区
 

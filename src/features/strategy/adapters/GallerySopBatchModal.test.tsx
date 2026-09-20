@@ -39,8 +39,30 @@ const requirementState = vi.hoisted(() => {
     createdAt: 5,
     updatedAt: 5,
   }
+  // 完整形态的配方卡 SOP：快照里的 `sop` 字段是**整份库项**，
+  // 本地引擎判定（isLocalGenerationSopForSop）要靠 campaignRecipe / executionMode 才能命中。
+  // 手写精简版会漏掉这两个字段，把配方卡误判成普通 SOP（R-54 净化/收敛测试都会因此假绿）。
+  const recipeSop = {
+    id: 'sop-recipe',
+    name: '双十一配方卡',
+    description: '本地引擎批量组合',
+    content: '{{主视觉}}，主体是{{主体}}',
+    kind: 'campaign-recipe' as const,
+    campaignRecipe: {
+      body: '{{主视觉}}，主体是{{主体}}',
+      dimensions: [
+        { name: '主视觉', options: ['产品特写', '手持使用', '使用场景'] },
+        { name: '主体', options: ['咖啡杯', '保温杯', '玻璃杯'] },
+      ],
+    },
+    source: 'manual' as const,
+    createdBy: 'user-1',
+    createdAt: 4,
+    updatedAt: 4,
+  }
   return {
     recipeJsonSop,
+    recipeSop,
     sopLibrary: [
       {
         id: 'sop-1',
@@ -74,24 +96,7 @@ const requirementState = vi.hoisted(() => {
         createdAt: 3,
         updatedAt: 3,
       },
-      {
-        id: 'sop-recipe',
-        name: '双十一配方卡',
-        description: '本地引擎批量组合',
-        content: '{{主视觉}}，主体是{{主体}}',
-        kind: 'campaign-recipe' as const,
-        campaignRecipe: {
-          body: '{{主视觉}}，主体是{{主体}}',
-          dimensions: [
-            { name: '主视觉', options: ['产品特写', '手持使用', '使用场景'] },
-            { name: '主体', options: ['咖啡杯', '保温杯', '玻璃杯'] },
-          ],
-        },
-        source: 'manual',
-        createdBy: 'user-1',
-        createdAt: 4,
-        updatedAt: 4,
-      },
+      recipeSop,
       // 手工资产形态：没有 campaignRecipe 字段，配方配置直接放在 content 的 JSON 里。
       // 引擎侧有同款兜底解析，弹窗分流也必须认得（见 R-53）。
       recipeJsonSop,
@@ -150,6 +155,15 @@ vi.mock('./storeSopGeneration', () => generateMocks)
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const mountedRenderers: Array<ReturnType<typeof create>> = []
+
+/**
+ * 模拟「落盘 → 读回」边界（R-58）：真实 put/get 走 JSON 序列化，
+ * 未声明的字段会丢。这里按结构化克隆过一遍，保证测试断言拿到的是
+ * 「真正能落盘的形态」，而不是内存里的引用。
+ */
+function throughPersistedBoundary(snapshot: SopBatchSnapshot): SopBatchSnapshot {
+  return structuredClone(snapshot)
+}
 
 function createPromptRun(id: string, title: string, promptGroup?: SopBatchSnapshot['promptGroup']): SopBatchSnapshot {
   return {
@@ -460,6 +474,247 @@ describe('GallerySopBatchModal background generation', () => {
 
     // 全程只允许一次生成调用：多出来的那次会 abort 前一次并留下孤儿 generating 快照
     expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells the user instead of silently swallowing a click while generating (R-57)', async () => {
+    // 回归 R-57：重入闸挡下时必须给明确反馈。否则点击被静默吞掉，
+    // 界面停在上一轮留下的「生成中 · 0 条提示词」上，用户会判断成「生成坏了」。
+    //
+    // 触发方式是**同一 tick 内连点两次**「再次生成」按钮：
+    // 重入闸读同步 ref，第一次点击同步置 true；第二次点击在 React 尚未重渲染、
+    // 异步 `running` 还没翻成 true 的窗口里进来，异步守卫挡不住，只有 ref 闸门能挡。
+    // 这也是唯一能真正走到闸门分支的路径 —— 一旦 `running` 变 true，按钮就整组不渲染了。
+    let resolveRecipe!: (value: string[]) => void
+    generateMocks.generateCampaignRecipePromptsFromStore.mockImplementation(
+      () =>
+        new Promise<string[]>((resolve) => {
+          resolveRecipe = resolve
+        }),
+    )
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe"
+          initialPromptCount={2}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    // 先造出一份已就绪的提示词列表，让「再次生成」按钮进入树（未生成时该按钮不渲染）。
+    const findLabel = (pattern: RegExp) => {
+      const nodes = renderer!.root.findAll((node) => {
+        const label = node.props?.['aria-label']
+        return typeof label === 'string' && pattern.test(label)
+      })
+      if (nodes.length === 0) {
+        throw new Error(
+          `未找到匹配 ${pattern} 的按钮；当前可见：${JSON.stringify(
+            renderer!.root
+              .findAll((node) => typeof node.props?.['aria-label'] === 'string')
+              .map((node) => node.props['aria-label']),
+          )}`,
+        )
+      }
+      return nodes[0]
+    }
+    await act(async () => {
+      findLabel(/^生成 \d+ 条 SOP 提示词$/).props.onClick?.()
+      await Promise.resolve()
+    })
+    const firstRun = resolveRecipe
+    await act(async () => {
+      firstRun(['第一条', '第二条'])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledTimes(1)
+
+    // 第二轮改成永不 resolve，制造「在途」状态。
+    generateMocks.generateCampaignRecipePromptsFromStore.mockImplementation(
+      () => new Promise<string[]>(() => undefined),
+    )
+    storeState.showToast.mockClear()
+
+    const againButton = findLabel(/^再次生成 \d+ 条 SOP 提示词$/)
+    await act(async () => {
+      // 同一 tick 连点两次：第二次必然命中重入闸。
+      againButton.props.onClick?.()
+      againButton.props.onClick?.()
+      await Promise.resolve()
+    })
+
+    // 闸门挡下：只允许一次真实生成，并且必须留下明确提示（不能静默吞掉）。
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledTimes(2)
+    expect(storeState.showToast).toHaveBeenCalledWith(expect.stringContaining('尚未结束'), 'info')
+  })
+
+  it('cleans a stale AI model name off a local-engine run when opening it (R-54)', async () => {
+    // 回归 R-54 残留：旧版本写进快照的文本模型名会被弹窗「恢复 → 再回写」，
+    // 光改 ref 洗不掉 —— 每开一次弹窗它都会复活，界面显示成「文本模型 gemini-…」。
+    // 打开时就必须就地净化并落盘。
+    const dirtyRun: SopBatchSnapshot = {
+      ...createPromptRun('run-dirty', '旧配方卡批次'),
+      status: 'generating',
+      promptCount: 0,
+      prompts: [],
+      sop: requirementState.recipeSop,
+      promptGenerationModel: 'gemini-3.1-pro-preview',
+    }
+    // 真实链路里「列表查询」和「按 id 查询」是同一条库记录被**各反序列化一次**，
+    // 得到两个互不相干的 JS 对象。这里用 clone 还原这个语义 ——
+    // 共用同一引用会掩盖「就地改一个不影响另一个」导致的覆盖 bug。
+    dbMocks.getAllSopBatchSnapshots.mockResolvedValue([throughPersistedBoundary(dirtyRun)])
+    dbMocks.getSopBatchSnapshot.mockResolvedValue(throughPersistedBoundary(dirtyRun))
+    // key 必须与 getGallerySopPromptRunStorageKey('tab-a') 一致，否则挂载 effect 读不到指针，
+    // 会跳过 applyPromptRun 走兜底分支 —— 那样测的就不是净化路径了。
+    window.localStorage.setItem(
+      'tangbao.gallery-sop-prompt-run.tab-a',
+      JSON.stringify({ version: 4, activeRunId: 'run-dirty', selectedSopId: 'sop-recipe' }),
+    )
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe"
+          initialPromptCount={1}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    // 必须深拷贝成快照：mock 收到的是**引用**，后续代码可能就地把同一个对象改成别的值，
+    // 直接拿引用断言会读到「未来」的状态（这里踩过一次：两条都显示 undefined 却断言失败）。
+    const persisted = dbMocks.putSopBatchSnapshot.mock.calls.map((call) => structuredClone(call[0] as SopBatchSnapshot))
+    // 净化结果必须真的写回库里，否则下次打开又复活
+    expect(persisted.some((snapshot) => snapshot.id === 'run-dirty')).toBe(true)
+    // 落盘的最后一份必须是干净的：中间那次写回若带脏 model，下次打开就会复活
+    const lastWrite = persisted.filter((snapshot) => snapshot.id === 'run-dirty').at(-1)
+    expect(lastWrite?.promptGenerationModel).toBeUndefined()
+    expect(JSON.stringify(persisted)).not.toContain('gemini-3.1-pro-preview')
+  })
+
+  it('keeps the recipe config inside the persisted snapshot so local-engine detection survives a reload (R-58)', async () => {
+    // 回归 R-58：快照 `sop` 若只留 id/name/description/content，
+    // 读回侧的本地引擎判定（isLocalGenerationSopForSop）就恒为 false ——
+    // content 骨架不以 `{` 开头时，内联 JSON 兜底也命中不了。
+    // 后果是模型名挡板与残留净化一起失效，配方卡一直显示「文本模型 gemini-…」。
+    const recipeRun: SopBatchSnapshot = {
+      ...createPromptRun('run-recipe', '配方卡批次'),
+      sop: requirementState.recipeSop,
+      // 带上脏模型名：保证净化路径必然回写一次（回写出去的形态 = 真实落盘形态）。
+      promptGenerationModel: 'gemini-3.1-pro-preview',
+    }
+    // 让弹窗打开时把这条 run 收成活跃快照，并由净化/收敛路径回写一次 ——
+    // 回写出去的形态就是真实落盘形态，用来验证 sop 是否还带得动本地引擎判定。
+    dbMocks.getAllSopBatchSnapshots.mockResolvedValue([throughPersistedBoundary(recipeRun)])
+    dbMocks.getSopBatchSnapshot.mockResolvedValue(throughPersistedBoundary(recipeRun))
+    window.localStorage.setItem(
+      'tangbao.gallery-sop-prompt-run.tab-a',
+      JSON.stringify({ version: 4, activeRunId: 'run-recipe', selectedSopId: 'sop-recipe' }),
+    )
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe"
+          initialPromptCount={1}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    // 必须走 `buildPromptRunSnapshot` 这条**构造新快照**的路径去写盘，
+    // 因为 R-58 的裁剪就发生在那里（收敛透传的对象不经过裁剪，测不到）。
+    dbMocks.putSopBatchSnapshot.mockClear()
+    generateMocks.generateCampaignRecipePromptsFromStore.mockResolvedValue(['一条', '两条'])
+    const findLabel = (pattern: RegExp) => {
+      const nodes = renderer!.root.findAll((node) => {
+        const label = node.props?.['aria-label']
+        return typeof label === 'string' && pattern.test(label)
+      })
+      if (nodes.length === 0) {
+        throw new Error(
+          `未找到匹配 ${pattern} 的按钮；当前可见：${JSON.stringify(
+            renderer!.root
+              .findAll((node) => typeof node.props?.['aria-label'] === 'string')
+              .map((node) => node.props['aria-label']),
+          )}`,
+        )
+      }
+      return nodes[0]
+    }
+    await act(async () => {
+      findLabel(/^再次生成 \d+ 条 SOP 提示词$/).props.onClick?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const persisted = dbMocks.putSopBatchSnapshot.mock.calls.map((call) => structuredClone(call[0] as SopBatchSnapshot))
+    expect(persisted.length).toBeGreaterThan(0)
+    // 判定所需的字段必须随快照一起落盘，否则重启后配方卡被判成普通 SOP，
+    // 模型名挡板与残留净化一起失效（R-54 会因此复活）。
+    const withSop = persisted.find((snapshot) => snapshot.sop.id === 'sop-recipe')
+    expect(withSop).toBeDefined()
+    expect(withSop?.sop.campaignRecipe?.dimensions?.length).toBeGreaterThan(0)
+  })
+
+  it('converges historical generating snapshots on mount so the UI leaves「生成中」(R-57)', async () => {
+    // 回归 R-57：历史遗留的孤儿快照停在 status='generating' 后不再推进，
+    // run 头部就永久显示「生成中 · 0 条提示词」。弹窗挂载时不可能有在途生成
+    // （在途状态都在内存 ref 里），必须就地收敛成 ready 并写回。
+    const orphan: SopBatchSnapshot = {
+      ...createPromptRun('run-orphan', '卡住的批次'),
+      status: 'generating',
+      promptCount: 0,
+      prompts: [],
+      sop: requirementState.recipeSop,
+    }
+    dbMocks.getAllSopBatchSnapshots.mockResolvedValue([structuredClone(orphan)])
+    dbMocks.getSopBatchSnapshot.mockResolvedValue(structuredClone(orphan))
+    // 同上：用真实 key，确保走 applyPromptRun 的收敛回写路径而不是兜底分支。
+    window.localStorage.setItem(
+      'tangbao.gallery-sop-prompt-run.tab-a',
+      JSON.stringify({ version: 4, activeRunId: 'run-orphan', selectedSopId: 'sop-recipe' }),
+    )
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe"
+          initialPromptCount={1}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    const persisted = dbMocks.putSopBatchSnapshot.mock.calls.map((call) => call[0] as SopBatchSnapshot)
+    const converged = persisted.find((snapshot) => snapshot.id === 'run-orphan')
+    expect(converged).toBeDefined()
+    expect(converged!.status).toBe('ready')
   })
 
   it('uses the latest input requirement when a mounted modal starts another run', async () => {

@@ -908,36 +908,69 @@
 
 - **来源**：杰哥报障「为什么提示词引擎无法生成提示词，你是不是一开始就搞错什么了」
   （2026-09-20 上午，截图显示 · 0 条提示词 · **生成中** · `gemini-3.1-pro-preview`）
-- **状态**：R-54 残留已修；R-57 待修 · 写线：主写线
+- **状态**：✅ **已完成**（2026-09-20）· 写线：主写线 · 风险登记 R-54 / R-57 / R-58 均已 MITIGATED
 - **排查手法**：SQLite 只读探查（runbook 第十六节），**决定性证据在 `sopBatchSnapshots`**。
-  ⚠️ 本次修正了此前的一个判断偏差：`app_data_records` 里 **没有 `sopLibrary` 这个 record_id**
-  —— SOP 库不在独立 namespace，而是并进 **`zustand` / `state` 的 `...state` 字段里**；
-  run 快照另有 `sopBatchSnapshots` namespace（`record_id = sop-run-xxx`）。查 `sopLibrary` 查不到
-  是正常的，不代表数据丢失。
+  ⚠️ 本次修正了两个此前记录里的**事实错误**：
+  ① `app_data_records` 里 **没有 `sopLibrary` 这个 `record_id`** —— SOP 库不是独立 namespace，
+  而是并进 `requirementPrototype` / `zustand` 的 `state` 对象里；
+  ② 此前 BACKLOG 里「SOP 库只有 1 条预置普通 SOP」与本次实测不符 —— 实际 **2 条**，
+  其中 1 条就是「未命名配方卡」（`sop-mu96iez8-4y7cho`），且类型正确。
 
-- **已修：R-54 残留快照没被清洗（**已修**）**
-  - **证据**：两条 run 快照（10:10:36 / 10:25:52）**同一个 `id`**
-    （`sop-run-mu972k2g-3yyu96`）、`sop.id` 都是 `sop-mu96iez8-4y7cho`（「未命名配方卡」），
-    `status: 'generating'`、`promptCount: 0`、`prompts: []`；
-    **10:10 那条带 `promptGenerationModel: 'gemini-3.1-pro-preview'`**（10:25 新代码已写 `undefined`）。
-  - **根因**：R-54 的第一版修复**只改了「新写入」**，挡不住这个「已存在」的残留。
-    写模型名用的是 `activePromptGenerationModelRef`，而弹窗挂载时会从快照把它恢复回来
+- **结论先行：配方卡引擎本身是健康的，报障的真实成因在「弹窗状态机」，不在引擎**
+
+  实测（只读取样，2026-09-20 10:29）：
+  - `zustand/state` 的 `sopLibrary` 里确有一张配方卡 `sop-mu96iez8-4y7cho`（「未命名配方卡」），
+    `content` 为空 —— 这是**合法形态**（骨架在 `campaignRecipe` 字段），R-51 的修复生效了；
+  - 最新两条 run 快照（10:10:36 / 10:25:52）**共用同一个 id** `sop-run-mu972k2g-3yyu96`、
+    同一个 `sop.id`，两条都是 `status: 'generating'` / `promptCount: 0` / `prompts: []` /
+    `taskIds: []`；**10:10 那条带 `promptGenerationModel: 'gemini-3.1-pro-preview'`**，
+    10:25 那条已无（说明 R-54 的新写入修法已生效）；
+  - 到 10:41（报障时）**再无任何写入，`updated_at` 停在 10:25:52** → 该 run 卡死不前进。
+
+  → **报障截图里那行「生成中 · 0 条提示词 · gemini-3.1-pro-preview」，是
+  「一个卡死的孤儿快照」+「一条未清洗的历史模型名」叠加的显示结果，不是引擎没在跑。**
+  顺带排除了「本地引擎慢」：`isLocalGenerationSop` → `maxBatchSize = undefined` →
+  本地一次返回全部（快照里 `重掷 9`、5 条互异，实测量级是毫秒），根本来不及显示「生成中」。
+
+- **修法 ①（R-54 残留清洗不完整）**
+  - **证据**：见上，10:10 那条快照留下了模型名。
+  - **根因**：R-54 的第一版修复**只改了「新写入」**，挡不住这个**已存在**的残留。
+    写模型名用的是 `activePromptGenerationModelRef`，而弹窗挂载时会从快照把它**恢复**回来
     （`applyPromptRun` 第 997 行 `= run.promptGenerationModel ?? ''`）→ 残留值再经
-    `buildPromptRunSnapshot` 回写。于是「只改 ref 洗不掉」的问题从「同一次会话内」变成了
-    「每次打开弹窗都复活」。
-  - **修法（本次）**：清洗时机前移到**弹窗恢复 run 的那一刻** —— applyPromptRun 里读到
-    `run.promptGenerationModel` 且该基准 SOP 已判为本地引擎时，先把脏值置空再落盘回写，
-    使「点开弹窗」即刻生效，不必等下一次生成。
-  - **验收**：`npm run verify` 全绿 + DB 回读确认该 run 快照已无 `promptGenerationModel`。
+    `buildPromptRunSnapshot` 回写。于是「只改 ref 洗不掉」从「同一次会话内」升级成
+    「**每次打开弹窗都复活**」。
+  - **修法**：清洗时机前移到**恢复 run 的那一刻** —— `applyPromptRun` 里读 `run.promptGenerationModel`
+    且该 SOP 判为本地引擎（`isLocalGenerationSopForSop`）时置空并回写，
+    做到「点开弹窗即净化」，不必等下一次生成。
+  - **验收**：DB 回读该 run 快照不再有 `promptGenerationModel`；补回归用例。
 
-- **未修：R-57 `generateForSources` 同步重入闸留下的 `generating` 孤儿快照（OPEN）**
-  - **证据**：10:25:52 那条快照 `status: 'generating'` / `promptCount: 0` / `prompts: []`，
-    但到 10:41（报障时）仍无后续写入 → 该 run 停在「生成中」不再前进。
-    10:10 与 10:25 两条**共用同一个 run id**，是同一份快照被反复改写。
-  - **根因（待确证）**：`if (generateInFlightRef.current) return`（第 1809 行）**是静默 return** ——
-    上一轮还在飞时直接挡下，不报错、不提示、**不落终止态快照**，
-    于是界面停在上一轮留下的 `generating` 状态，表现为「点了没反应 / 一直生成中」。
-    与 10:10 那条带模型名的快照叠加，就成了报障截图里那一行。
-  - **待办**：① 确证被挡下时确实没有终止态快照（不能留 `generating` 孤儿）；
-    ② 挡下时给用户明确反馈而不是静默返回；③ 补回归测试
-    （复用 R-54 的「按 `status==='generating'` + `promptCount===0` 扫库」探针做验收）。
+- **修法 ②（R-57 静默重入把用户点击吞掉）**
+  - **证据**：快照停在 `generating` 后 15 分钟无推进。
+  - **根因**：`if (generateInFlightRef.current) return`（第 1809 行）**是静默 return** ——
+    上一轮还在飞时直接挡下，不报错、不 toast、**不落终止态快照**，
+    界面就停在上一轮留下的 `generating` 上。用户看到的现象即「点了生成没反应 / 一直生成中」。
+  - **修法**：① 被挡下时给明确反馈（toast「上一轮生成尚未结束」或复用进行中的轮次）；
+    ② **非终态快照必须能收敛** —— 若该 run 已停止推进，收尾成 `failed` / `ready`；
+    ③ 补回归测试。
+  - **通用防线**：任何「ref 重入闸 + 非终态落盘」的组合，闸门分支都要能收敛到终止态。
+
+### 落地（2026-09-20 全部完成）
+
+| # | 改动 | 文件 |
+| - | ---- | ---- |
+| ① | 重入闸加显式反馈（`setStatusMessage` + toast） | `GallerySopBatchModal.tsx` ~1880 |
+| ② | 新增 `orphanRunsToFlush` ref：挂载时收敛库里残留的 `generating` 孤儿快照 | 同上 ~580 |
+| ③ | `applyPromptRun` 恢复时**就地净化**残留模型名并立即回写；同时接住收敛结果再落盘 | 同上 ~1007-1055 |
+| ④ | 挂载 effect 收敛 `generating` 快照 + 兜底 flush | 同上 ~1066 / ~1169 |
+| ⑤ | **R-58（新发现的真根因）**：`SopBatchSnapshot['sop']` 补 `campaignRecipe?` / `executionMode?`，`buildPromptRunSnapshot` 原样带上 | `types.ts` / `GallerySopBatchModal.tsx` ~883 |
+
+**⑤ 是关键**：快照的 `sop` 原本只存 `id/name/description/content`，
+而读取侧的本地引擎判定要靠 `campaignRecipe` / `executionMode` →
+**判定恒为 false，R-54 的整套修复从落地起就是失效的**。这也是「模型名每次打开都复活」的真正机制。
+
+**验收证据**（`npm run verify` 全绿 + 反向验证）：
+- 新增 4 个回归用例（R-57 闸门反馈 / R-57 挂载收敛 / R-54 净化 / R-58 快照保真），
+  **逐个做过反向验证**（把修复临时改回旧行为 → 对应用例确实失败，再恢复）。
+- 全量：**230 文件 / 2616 用例通过**。
+- ⚠️ 测试陷阱（已写进 R-58）：mock 的 `putSopBatchSnapshot` 若透传引用、不过序列化边界，
+  写盘侧漏字段读回后**依然存在** → 用例假绿。第一版 R-58 用例就是这样被反向验证抓出来的。
