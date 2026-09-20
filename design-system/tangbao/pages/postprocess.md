@@ -1,13 +1,15 @@
-# 后期/合成工作台（postprocess）
+# 中控台（postprocess）
 
 > 只记录与 `../MASTER.md` 不同的规则。没有差异的章节删除。
 
 ## 页面
 
-- 名称：后期/合成工作台（CompositeWorkspace）
-- 用户主任务：用预设图层批量合成图像并导出，管理预设与图层
-- 主行动：批量导出（`BatchExportTab`）；预设画布编辑（`PresetCanvasEditor`）
-- 进入条件：`appMode === 'postprocess'`（Header `SegmentedControl`）；App 对其禁用 `app-shell-with-docked-panels` 留白
+- 名称：中控台（CompositeWorkspace）
+- 用户主任务：配置水印归属与图层式水印预设；中控台是各配置功能的统一入口
+- 主行动：水印分区内预设画布编辑（`PresetCanvasEditor`）；工作区顶部「切换中控台功能」分区导航
+- 进入条件：`appMode === 'postprocess'`（Header `SegmentedControl` 显示为「中控台」）；App 对其禁用 `app-shell-with-docked-panels` 留白
+- 形态口径：对齐「灵境 · 资产中心」——水印不是独立页面，而是中控台里的**一个功能分区**，
+  与后续的渠道规格 / 输出位置平级。`CONTROL_CONSOLE_SECTIONS` 是唯一的分区注册表。
 
 ## 必须覆盖的全局规则
 
@@ -20,16 +22,16 @@
 | 6.5 右键/更多                | `FloatingLayerToolbar`（文字/图片/LOGO）仅选中预设时可添加图层；命令均有菜单/按钮等价                                                                                                           | 图层操作                                 | —            |
 | 6.6 媒体查看链路             | 预览为 `<canvas>` 实时合成，非缩略图链路；`MaskEditorModal` 全局可用                                                                                                                            | 实时渲染                                 | —            |
 | 4.6 数据隔离                 | 独立 `useCompositeV2Store`，与 `tasks` 隔离                                                                                                                                                     | 合成数据域                               | —            |
-| 7.3 队列与长任务             | `BatchExportTab` 运行控制（暂停/继续/取消）+ `ExportResultsPanel` 成功/失败汇总，遵循 MASTER 7.3                                                                                                | 批量导出为长任务                         | —            |
+| 7.3 队列与长任务             | 编排（批量导出 / 分发排期 / 输出规则 / 历史）已统一到后处理，本工作区不再持有长任务                                                                                                             | 单一入口                                 | —            |
 
 ## 页面状态
 
-- 初始：默认 `batch` 视图（批量导出）；需先选原图文件夹与预设。
-- 加载：文件夹加载、合成渲染显示 `Spinner`/状态提示。
-- 空：未选文件夹/预设显示 `EmptyState` 引导。
-- 成功：导出结果经 `ExportResultsPanel` 区分成功/失败数与重试入口。
-- 可恢复错误：单图失败标记可重试，不整批重跑。
-- 不可用：非 Electron 环境下部分系统能力受限，给出说明。
+- 初始：默认落在「水印」分区（`watermark`），三栏装配（归属树 / 水印库 / 画布编辑）。
+- 加载：无远端加载；LOGO 资产按需取 object URL。
+- 空：水印库为空显示 `EmptyState` 引导（右上角 + 新建）。
+- 成功：编辑即写 `useCompositeV2Store`，持久化到 `tangbao-composite-v2-workspace-storage`。
+- 可恢复错误：导入非预设文件时给出明确对话框说明，不猜测导入。
+- 不可用：非 Electron 环境下选本地文件夹受限，给出说明。
 
 ## 响应式差异
 

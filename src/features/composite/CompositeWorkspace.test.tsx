@@ -21,14 +21,26 @@ describe('CompositeWorkspace', () => {
     expect(workspace.props.className).toContain('overflow-hidden')
   })
 
-  it('renders the preset editor without any orchestration tab', () => {
-    // 编排（批量导出/分发/输出规则/历史）已归后处理，这里不再有 tab 可分。
+  it('renders the watermark section as the default console function', () => {
+    // 编排（批量导出/分发/输出规则/历史）已归后处理；中控台里水印只是首个分区。
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
     expect(renderer.root.findByProps({ children: 'preset-screen' })).toBeTruthy()
+    // 中控台自带功能分区导航，与素材库/Agent 的顶栏 tab 不是一回事
     expect(renderer.root.findAllByType('nav')).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'aria-label': '切换中控台功能' })).toBeTruthy()
+  })
+
+  it('labels the console as 中控台 rather than 水印预设', () => {
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    const main = renderer.root.findByType('main')
+    expect(main.props['aria-label']).toBe('中控台工作区')
   })
 })

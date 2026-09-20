@@ -927,7 +927,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/components/PresetManagementTab.tsx',
-    responsibility: '水印预设工作区三栏装配（归属树 / 水印库 / 画布编辑）',
+    responsibility: '中控台「水印」分区三栏装配（归属树 / 水印库 / 画布编辑）',
     decision: 'retain',
     targets: ['Tabs', 'Panel', 'ListRow', 'Menu', 'EmptyState'],
   },
@@ -940,9 +940,9 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/CompositeWorkspace.tsx',
-    responsibility: '水印预设工作区装配（图层式水印编辑，编排已归后处理）',
+    responsibility: '中控台工作区装配：功能分区 SegmentedControl（水印为首个分区）+ 撤销栈',
     decision: 'retain',
-    targets: ['SplitPane', 'Panel', 'Toolbar'],
+    targets: ['SplitPane', 'Panel', 'Toolbar', 'Tabs'],
   },
   {
     module: 'src/features/postprocess/PostprocessDistributionFields.tsx',
@@ -1210,9 +1210,9 @@ export const pageCoverage: PageCoverage[] = [
   },
   {
     id: 'postprocess',
-    workspace: '水印预设工作区',
+    workspace: '中控台工作区',
     entry: "appMode==='postprocess'（顶栏第三个 tab，与素材库 / Agent 同级）",
-    differences: ['与素材库/Agent 同级 tab', '图层拖拽编辑', 'Ctrl+Z 撤销'],
+    differences: ['工作区顶部功能分区（水印为首个分区）', '水印分区内图层拖拽编辑', 'Ctrl+Z 撤销'],
     document: 'design-system/tangbao/pages/postprocess.md',
   },
 ]
