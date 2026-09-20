@@ -730,3 +730,86 @@ for (const it of d.state.sopLibrary) {
 
 静默失效类的修复，测试很容易写成"假绿"（断言写错方向也会过）。**逐个把修复临时改回
 `if (false)` 或还原旧条件，确认测试真的会失败**，再改回来。本次 3 个回归测试全部这样验过。
+
+---
+
+## 十七、dev 崩溃 / SQLite 报错的处置顺序（2026-09-20 实测定稿）
+
+**触发场景**：长跑中的 `npm run dev` 挂掉，日志里出现
+`attempt to write a readonly database`、`SQLITE_BUSY`、`database is locked`，
+或 `[main-unhandledRejection]` 之类的主进程未捕获拒绝。
+
+### 1. 先分清「进程挂了」和「数据坏了」
+
+这两件事经常被混为一谈。**报错在 SQLite ≠ 库损坏** ——
+`attempt to write a readonly database` 说的是**权限/句柄状态**，不是文件结构。
+先按下面顺序验，**不要一上来就动库**。
+
+### 2. 三步走：进程 → 库结构 → 数据量
+
+**第一步：确认进程真的退干净**（否则重启会撞单实例锁 / 端口占用）
+
+```bash
+netstat -ano 2>/dev/null | grep 41731          # 端口应无 LISTENING
+tasklist 2>/dev/null | grep -i electron        # 应无残留
+```
+
+**第二步：只读体检库结构**（`readOnly: true` 是铁律，R-06）
+
+必查四项：
+
+1. `PRAGMA integrity_check` → 必须是 `ok`；
+2. `PRAGMA journal_mode` → 正常是 `wal`；
+3. `SELECT name FROM sqlite_master WHERE type='table'` → 表是否齐全；
+4. `PRAGMA wal_checkpoint` → `busy:0` + `log:0` 表示 WAL 已合并干净。
+
+**第三步：核对数据量对不对**
+
+拿**已知正确的期望值**去比，而不是看个数量级就放过。例如内置项目结构应恒为
+**3 产品线 + 13 产品 + 61 方向 = 77 行 `collections`**；
+`assets` 为 0 在纯开发环境是正常的（没存过图）。
+
+`app_data_records` 的**分布**比总数更有信息量：
+
+```sql
+SELECT namespace, COUNT(*) AS n FROM app_data_records GROUP BY namespace ORDER BY n DESC;
+```
+
+`meta`（8 条）和 `sopBatchSnapshots` 通常占大头，风格类 store 各 1 条 —— 与预期一致即无碍。
+
+### 3. 库路径速查
+
+| 场景                 | userData                                               |
+| -------------------- | ------------------------------------------------------ |
+| dev（`npm run dev`） | `%APPDATA%\tangbao\local-saves\db\asset-kernel.sqlite` |
+| 正式安装版           | `%APPDATA%\糖包\local-saves\db\asset-kernel.sqlite`    |
+
+⚠️ 两个目录**互不干扰**；`糖包` 目录在只跑过 dev 的机器上**根本不存在**，这不是异常。
+
+### 4. 本机取路径的两个坑
+
+- **`$APPDATA` 在 Git Bash 里是空的** → `ls "$APPDATA/..."` 静默失败（同 R-19）。
+- **PowerShell 工具在本机曾返回 exit 1 + 零输出**（读 `$env:APPDATA` 那次）。
+- **稳妥做法**：用 `Write` 落盘一个 `.cjs` 探针，内部用
+  `process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')`，
+  再 `node "D:/AAA/TANGBAO/scripts/tmp-*.cjs"` 执行；验完 `rm` 掉。
+
+### 5. 最可能的成因（先怀疑这个）
+
+**长跑 dev + 同时跑全量测试** → 两边真读写同一个 `asset-kernel.sqlite`，
+一侧拿到只读句柄或触发锁降级。R-06 那条铁律描述的就是这个场景。
+
+→ **纪律：要跑 `npm test` / `npm run verify`，先把 dev 关掉。**
+发版流程（tag + CI）不碰本地库，可以带 dev 跑；**跑测试不行**。
+
+### 6. 报错栈落在 `dist-electron/` 里怎么办
+
+dev 主进程加载的是**构建产物** `dist-electron/main.js`，报错行号是产物行号，
+对着源码找意义有限。要么先重建产物让行号对齐，要么按报错文案 + 调用方特征反推源码位置。
+
+### 7. 收尾
+
+- 确认库健康 → 直接 `npm run dev` 重启（**不需要**恢复备份）；
+- 只有 `integrity_check` **非 ok** 时才走备份恢复流程；
+- 崩溃若**重启后未复现**，别急着定性为缺陷 —— 记进当日日志并标注「待复现」，
+  下次复现时开 `ELECTRON_ENABLE_LOGGING=1 npm run dev` 抓完整输出再定根因。
