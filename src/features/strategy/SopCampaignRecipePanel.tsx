@@ -16,7 +16,7 @@ import {
   type CampaignRecipeDimension,
 } from './campaignRecipe'
 import { parseCampaignRecipeText, toCampaignRecipeConfig, type ParsedCampaignRecipe } from './campaignRecipeImport'
-import SopCampaignRecipeParseResultDialog from './SopCampaignRecipeParseResultDialog'
+import SopCampaignRecipeParseResultDialog, { countParsedRecipeAttention } from './SopCampaignRecipeParseResultDialog'
 import type { SopCampaignRecipeConfig } from './types'
 
 /**
@@ -65,7 +65,6 @@ function extractPlaceholders(body: string): string[] {
 export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaChange }: SopCampaignRecipePanelProps) {
   const [rawText, setRawText] = useState('')
   const [parseError, setParseError] = useState('')
-  const [parseNotice, setParseNotice] = useState('')
   const [parsed, setParsed] = useState<ParsedCampaignRecipe | null>(null)
   /**
    * 「解析结果」弹窗是否打开。与 `parsed` 分开存：
@@ -73,7 +72,6 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
    * 关掉就丢会让入口变成一次性的。
    */
   const [parseResultOpen, setParseResultOpen] = useState(false)
-
 
   const body = config.body ?? ''
   // config 每次编辑都是新对象，直接进 useMemo 依赖会让派生计算每次重算；
@@ -122,20 +120,18 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
     setParsed(result)
     if (!result.ok) {
       setParseError(result.error)
-      setParseNotice('')
       return
     }
     // 解析成功 → 填入可编辑表单（这是「先确认再落库」的关键：不直接覆盖保存）
     const next = toCampaignRecipeConfig(result)
     if (!next) {
       setParseError('解析出的配方卡缺少骨架或可用维度，请在下方手动补齐')
-      setParseNotice('')
       return
     }
     setParseError('')
-    setParseNotice(
-      `已识别 ${next.dimensions.length} 个维度、组合空间 ${next.dimensions.reduce((total, item) => total * item.options.length, 1)} 条。请核对下方内容后保存。`,
-    )
+    // 这里不再拼「已识别 N 个维度、组合空间 M 条」的提示：
+    // 那些数字在下方「解析结果确认」区块里本来就有，细节在「查看解析结果」弹窗里，
+    // 外面再报一遍就是三处重复（加了弹窗就该把外面那层收掉）。
     onChange(next)
     onMetaChange?.({
       ...(result.name ? { name: result.name } : {}),
@@ -148,11 +144,9 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
     setRawText('')
     setParsed(null)
     setParseError('')
-    setParseNotice('')
     // 解析结果被清掉了，弹窗留在空态会让人以为「内容丢了」，直接关掉
     setParseResultOpen(false)
   }
-
   function updateDimension(index: number, patch: Partial<CampaignRecipeDimension>) {
     onChange({
       ...config,
@@ -192,6 +186,9 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
     if (missing.length === 0) return
     onChange({ ...config, dimensions: [...dimensions, ...missing.map((name) => ({ name, options: [''] }))] })
   }
+
+  /** 入口按钮上只报「有几条要留意」，细节进弹窗（外面不重复铺内容） */
+  const attentionCount = countParsedRecipeAttention(parsed)
 
   const unusedDimensions = dimensions.filter(
     (dimension) => dimension.name.trim() && !placeholders.includes(dimension.name),
@@ -254,7 +251,7 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
               title={parsed ? '查看这次解析读到的全部内容' : '先粘贴原文并点「解析」'}
               leadingIcon={<Eye size={14} />}
             >
-              查看解析结果
+              {attentionCount > 0 ? `查看解析结果（${attentionCount} 条待注意）` : '查看解析结果'}
             </Button>
           </div>
 
@@ -263,18 +260,11 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
               {parseError}
             </p>
           )}
-          {parseNotice && <p className="sop-recipe-panel__success">{parseNotice}</p>}
-          {parsed?.ok && parsed.warnings.length > 0 && (
-            <p className="sop-recipe-panel__hint" role="status">
-              {parsed.warnings.join('；')}
-            </p>
-          )}
-          {parsed?.ok && (parsed.meta.model || parsed.meta.forbidden?.length) && (
-            <p className="sop-recipe-panel__hint">
-              原资产元信息：{parsed.meta.model ? `模型 ${parsed.meta.model}` : ''}
-              {parsed.meta.forbidden?.length ? ` · 禁用词 ${parsed.meta.forbidden.length} 项（本引擎不自动套用）` : ''}
-            </p>
-          )}
+          {/* 只留「动作完成了」这一句即时反馈，**不带任何数字**：
+              维度数与组合空间在下方「解析结果确认」区块里本来就有，细节在弹窗里，
+              这里再报一遍就是三处重复 —— 加了弹窗就该把外面那层收掉。
+              `!parseError` 是必须的：解析出了骨架/维度的失败分支同样会让 ok=true。 */}
+          {parsed?.ok && !parseError && <p className="sop-recipe-panel__success">解析完成，已填入下方表单，请核对。</p>}
         </div>
 
         {/* ---- 解析结果确认与微调 ---- */}

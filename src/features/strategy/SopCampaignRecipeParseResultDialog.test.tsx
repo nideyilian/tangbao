@@ -17,7 +17,10 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import SopCampaignRecipeParseResultDialog, { summarizeParsedRecipe } from './SopCampaignRecipeParseResultDialog'
+import SopCampaignRecipeParseResultDialog, {
+  countParsedRecipeAttention,
+  summarizeParsedRecipe,
+} from './SopCampaignRecipeParseResultDialog'
 import { __resetOverlayManager } from '../../design-system/overlayManager'
 import type { ParsedCampaignRecipe } from './campaignRecipeImport'
 
@@ -87,6 +90,14 @@ describe('summarizeParsedRecipe', () => {
 
   it('没有维度时组合空间是 0（不是 1）', () => {
     expect(summarizeParsedRecipe([]).combinationCount).toBe(0)
+  })
+})
+
+describe('countParsedRecipeAttention', () => {
+  it('告警 + 缺失池都算「要留意」（入口按钮上只报这个数，不铺内容）', () => {
+    expect(countParsedRecipeAttention(makeParsed())).toBe(2) // 1 条 warning + 1 个 missingPool
+    expect(countParsedRecipeAttention(makeParsed({ warnings: [], missingPools: [] }))).toBe(0)
+    expect(countParsedRecipeAttention(null)).toBe(0)
   })
 })
 

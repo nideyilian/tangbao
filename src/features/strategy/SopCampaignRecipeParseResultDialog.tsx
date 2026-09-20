@@ -49,6 +49,17 @@ const SOURCE_LABEL: Record<ParsedCampaignRecipe['source'], string> = {
   text: '自由排版',
 }
 
+/**
+ * 解析结果里「需要用户留意」的条数 = 告警 + 缺失池。
+ *
+ * 给外面那个入口按钮用：**外面不铺细节，只报「有几条要留意」**，
+ * 让人知道「弹窗里有没有事要看」，但不把内容再抄一遍到界面上。
+ */
+export function countParsedRecipeAttention(parsed: ParsedCampaignRecipe | null): number {
+  if (!parsed) return 0
+  return parsed.warnings.length + parsed.missingPools.length
+}
+
 /** 一行「标签：值」；值缺失时显示占位词，体现「解析器只填能确定的字段」 */
 function Field({ label, value }: { label: string; value: string }) {
   return (
