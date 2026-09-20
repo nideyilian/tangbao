@@ -82,9 +82,49 @@ export const SOP_PROMPT_GENERATOR_INSTRUCTION = `你是图像生成提示词编�
 
 最终只输出请求指定的 JSON 传输封装，不要输出 Markdown、标题、编号、解释或自检记录。`
 
-function throwIfSopPromptGenerationAborted(signal?: AbortSignal) {
+export function throwIfSopPromptGenerationAborted(signal?: AbortSignal) {
   if (!signal?.aborted) return
   throw signal.reason instanceof Error ? signal.reason : new DOMException('提示词生成已取消', 'AbortError')
+}
+
+/**
+ * 让一个「自身不响应取消」的长任务与取消信号竞速。
+ *
+ * 存在意义：渐进派发会在 onBatch 里 `await 提交生图任务`，而提交链路（写库 + 建任务）
+ * 不接受 AbortSignal。不竞速的话，用户点「取消」后整条 `generateSopPromptBatches` 会
+ * 卡在这一句 await 上，取消分支永远走不到 —— 界面停在「正在取消提示词生成」，
+ * 取消按钮不消失，表现为「点了取消没反应」。
+ *
+ * 取消时立刻 reject 取消原因，**不等待**任务真正结束（原始 promise 被丢在后台自行收尾，
+ * 其失败/成功都不再影响本次流程）。signal 未提供时保持原样透传，不做额外包装。
+ */
+export function raceWithCancellation<T>(task: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return task
+  if (signal.aborted) {
+    // 已经取消：不能把 task 的结果当成功返回，但仍要挂一个兜底 catch，避免未处理拒绝告警。
+    void task.catch(() => {})
+    return Promise.reject(
+      signal.reason instanceof Error ? signal.reason : new DOMException('提示词生成已取消', 'AbortError'),
+    )
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      // 取消后放弃对 task 的等待：它照旧在后台跑完，这里只接管本流程的走向。
+      void task.catch(() => {})
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException('提示词生成已取消', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    task.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
 }
 
 function normalizeSopPromptCount(value: number) {

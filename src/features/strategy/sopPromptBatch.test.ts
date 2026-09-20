@@ -12,6 +12,7 @@ import {
   getSopTotalImageCount,
   parseSopPromptBatchResponse,
   parseSopSeriesPromptBatchResponse,
+  raceWithCancellation,
   selectSopPromptSources,
   SOP_PROGRESSIVE_PROMPT_BATCH_SIZE,
   SOP_PROMPT_GENERATOR_INSTRUCTION,
@@ -757,5 +758,54 @@ describe('渐进派发批次单位', () => {
 
   it('系列图一次只生成 1 组（一条含 3 段的内容拆成 3 条成员提示词）', () => {
     expect(SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE).toBe(1)
+  })
+})
+
+/**
+ * 取消竞速：渐进派发的「提交生图任务」不接受 AbortSignal，必须靠竞速把取消立刻传出去，
+ * 否则整条批次循环卡在这句 await 上，取消分支永远走不到（R-63）。
+ */
+describe('raceWithCancellation', () => {
+  it('在任务完成前取消时立即以取消原因拒绝，不等任务收尾', async () => {
+    let settle!: (value: string) => void
+    const task = new Promise<string>((resolve) => {
+      settle = resolve
+    })
+    const controller = new AbortController()
+    const aborted = new DOMException('提示词生成已取消', 'AbortError')
+
+    const raced = raceWithCancellation(task, controller.signal)
+    controller.abort(aborted)
+
+    await expect(raced).rejects.toBe(aborted)
+    // 任务本身照旧在后台跑完，不应产生未处理拒绝
+    settle('晚到的任务')
+  })
+
+  it('未取消时透传任务结果，不做额外包装', async () => {
+    const controller = new AbortController()
+    await expect(raceWithCancellation(Promise.resolve('task-1'), controller.signal)).resolves.toBe('task-1')
+  })
+
+  it('传入已取消的信号时直接拒绝，不去等一个永远不返回的任务', async () => {
+    const controller = new AbortController()
+    controller.abort(new DOMException('提示词生成已取消', 'AbortError'))
+    let settled = false
+    const never = new Promise<string>(() => {}).finally(() => {
+      settled = true
+    })
+
+    await expect(raceWithCancellation(never, controller.signal)).rejects.toThrow('提示词生成已取消')
+    expect(settled).toBe(false)
+  })
+
+  it('未提供信号时保持原样透传，不引入额外等待', async () => {
+    await expect(raceWithCancellation(Promise.resolve(42))).resolves.toBe(42)
+  })
+
+  it('任务自身失败时透传原始错误，不被取消逻辑替换', async () => {
+    const controller = new AbortController()
+    const failure = new Error('图片接口暂时不可用')
+    await expect(raceWithCancellation(Promise.reject(failure), controller.signal)).rejects.toBe(failure)
   })
 })

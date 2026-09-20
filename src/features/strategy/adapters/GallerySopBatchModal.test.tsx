@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 import { act, create } from 'react-test-renderer'
 import { DEFAULT_PARAMS, type SopBatchSnapshot, type TaskRecord } from '../../../types'
-import GallerySopBatchModal, { getGallerySopPromptRunStorageKey } from './GallerySopBatchModal'
+import GallerySopBatchModal, {
+  collectOutcomeFailureReason,
+  collectSourceFailureReason,
+  getGallerySopPromptRunStorageKey,
+} from './GallerySopBatchModal'
 import { SOP_PROGRESSIVE_PROMPT_BATCH_SIZE, SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE } from '../sopPromptBatch'
 import { SOP_SERIES_ANCHOR_INSTRUCTION } from '../../../lib/sopSeriesAnchor'
 
@@ -205,6 +209,69 @@ afterEach(() => {
   storeState.inputImages = []
   storeState.tasks = []
   vi.clearAllMocks()
+})
+
+describe('collectSourceFailureReason', () => {
+  it('原样带出失败参考图的报错，不做转述', () => {
+    expect(
+      collectSourceFailureReason([
+        {
+          status: 'failed',
+          error: '分组 专用gemini 下模型 gemini-3.1-pro-preview 的可用渠道不存在（retry）',
+        },
+      ]),
+    ).toBe('分组 专用gemini 下模型 gemini-3.1-pro-preview 的可用渠道不存在（retry）')
+  })
+
+  it('跳过成功项与空报错，只汇总失败原因', () => {
+    expect(
+      collectSourceFailureReason([
+        { status: 'completed', error: undefined },
+        { status: 'failed', error: '   ' },
+        { status: 'failed', error: '模型不可用' },
+      ]),
+    ).toBe('模型不可用')
+  })
+
+  it('多个参考图报同一原因时只保留一条', () => {
+    expect(
+      collectSourceFailureReason([
+        { status: 'failed', error: '渠道不存在' },
+        { status: 'failed', error: '渠道不存在' },
+      ]),
+    ).toBe('渠道不存在')
+  })
+
+  it('没有失败项时返回空串', () => {
+    expect(collectSourceFailureReason([{ status: 'completed' }, { status: 'partial' }])).toBe('')
+  })
+})
+
+describe('collectOutcomeFailureReason', () => {
+  it('带出提交失败项的原始报错', () => {
+    expect(collectOutcomeFailureReason([{ error: new Error('输出目录不在允许范围内') }])).toBe(
+      '输出目录不在允许范围内。',
+    )
+  })
+
+  it('跳过成功项，多个失败原因并列且去重', () => {
+    expect(
+      collectOutcomeFailureReason([
+        { taskId: 'task-1' },
+        { error: new Error('模型不可用') },
+        { error: new Error('模型不可用') },
+        { error: '输出目录不可写' },
+      ]),
+    ).toBe('模型不可用；输出目录不可写。')
+  })
+
+  it('失败但不带原因时给出可读占位，不产出空句子', () => {
+    expect(collectOutcomeFailureReason([{ error: undefined }])).toBe('未知原因。')
+  })
+
+  it('全部成功时返回空串', () => {
+    expect(collectOutcomeFailureReason([{ taskId: 'task-1' }, { taskId: 'task-2' }])).toBe('')
+  })
 })
 
 describe('GallerySopBatchModal background generation', () => {
@@ -940,6 +1007,95 @@ describe('GallerySopBatchModal background generation', () => {
       selectedSopId: 'sop-1',
       availablePrompts: 0,
     })
+  })
+
+  // 渐进派发（自动生成开）时，生图任务提交是挂在 onBatch 里的 await 上。
+  // 用户点「取消」后必须在「当前这一条还没提交完」时也能立刻收口，不能卡在
+  // 「正在取消提示词生成」上等图片接口自己回来。
+  it('cancels the progressive run while an image dispatch is still in flight', async () => {
+    let dispatchResolve: ((taskId: string) => void) | null = null
+    generateMocks.generatePromptsFromSopStore.mockImplementation(async (_sop, _quantity, _brief, options) => {
+      await options.onBatch?.(['第一条提示词'], 1, 2)
+      await options.onBatch?.(['第二条提示词'], 2, 2)
+      return ['第一条提示词', '第二条提示词']
+    })
+    // 第一张图的提交挂住不返回：模拟图片接口迟迟不回（用户在此时点取消）。
+    storeMocks.submitTaskWithData.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          dispatchResolve = resolve
+        }),
+    )
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-1"
+          initialPromptCount={2}
+          initialAutoGenerate
+          autoStart
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(storeMocks.submitTaskWithData).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'aria-label': '取消提示词生成' }).props.onClick()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // 取消后必须回到可用状态：取消按钮消失，且不再卡在「正在取消」文案上。
+    expect(renderer!.root.findAllByProps({ 'aria-label': '取消提示词生成' })).toHaveLength(0)
+    expect(
+      renderer!.root.findAllByType('p').some((node) => String(node.children.join('')).includes('正在取消提示词生成')),
+    ).toBe(false)
+
+    // 收尾：让挂住的提交回来，不应把状态又推回生成中。
+    await act(async () => {
+      dispatchResolve?.('task-late')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '取消提示词生成' })).toHaveLength(0)
+
+    // 晚到的提交在后台自行收尾，不再产生状态更新
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(renderer!.root.findAllByProps({ 'aria-label': '取消提示词生成' })).toHaveLength(0)
+  })
+
+  it('surfaces the model error verbatim when prompt generation fails outright', async () => {
+    // 用户亲历场景：Agent 模型在服务商侧无可用渠道。界面必须显示这句原文，
+    // 否则用户只能看到「生成中断」，无法判断是配置问题还是程序坏了（R-63）。
+    generateMocks.generatePromptsFromSopStore.mockRejectedValue(
+      new Error('分组 专用gemini 下模型 gemini-3.1-pro-preview 的可用渠道不存在（retry）'),
+    )
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal workspaceTabId="tab-a" initialSopId="sop-1" autoStart onClose={vi.fn()} />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    const alerts = renderer!.root.findAllByProps({ role: 'alert' })
+    expect(
+      alerts.some((node) => String(node.children.join('')).includes('分组 专用gemini 下模型 gemini-3.1-pro-preview')),
+    ).toBe(true)
   })
 
   it('aborts the previous SOP request when a keyed workbench switches SOPs', async () => {

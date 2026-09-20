@@ -53,10 +53,12 @@ import {
   getSopTotalImageCount,
   MAX_SOP_IMAGES_PER_PROMPT,
   normalizeSopPromptCandidates,
+  raceWithCancellation,
   selectSopPromptSources,
   SOP_HIGH_VOLUME_WARNING_THRESHOLD,
   SOP_PROGRESSIVE_PROMPT_BATCH_SIZE,
   SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE,
+  throwIfSopPromptGenerationAborted,
 } from '../sopPromptBatch'
 import { normalizeSeriesConfig } from '../sopGeneration'
 import type { SopLibraryItem, SopSeriesConfig } from '../types'
@@ -111,6 +113,43 @@ type PromptDraft = {
   edited?: boolean
   deleted?: boolean
   series?: { groupIndex: number; seriesIndex: number; seriesCount: number }
+}
+
+/**
+ * 汇总失败参考图的原始报错，供界面直接展示真因。
+ *
+ * 每个参考图的失败原因由 `generatePromptsFromSopStore` 原样存进 `SourceRun.error`，
+ * 这里只做去重与拼接，**不改写措辞** —— 服务端返回的「分组 xxx 下模型 xxx 的可用渠道不存在」
+ * 这类信息是排查的唯一线索，任何转述都会把它降级成「生成失败」。
+ */
+export function collectSourceFailureReason(sources: Array<{ status: SourceStatus; error?: string }>) {
+  const reasons: string[] = []
+  for (const source of sources) {
+    if (source.status !== 'failed') continue
+    const reason = source.error?.trim()
+    if (reason && !reasons.includes(reason)) reasons.push(reason)
+  }
+  return reasons.join('；')
+}
+
+/**
+ * 汇总批量提交失败项的原始报错。只在确实有失败项时产出一段可读文本，
+ * 空结果返回空串，让调用方拼出的句子不会出现「失败项：请检查…」这种断裂。
+ */
+export function collectOutcomeFailureReason(outcomes: Array<{ taskId?: string; error?: unknown }>) {
+  const reasons: string[] = []
+  for (const outcome of outcomes) {
+    if (typeof outcome.taskId === 'string' && outcome.taskId) continue
+    const reason =
+      outcome.error instanceof Error
+        ? outcome.error.message
+        : typeof outcome.error === 'string'
+          ? outcome.error
+          : '未知原因'
+    const trimmed = reason.trim()
+    if (trimmed && !reasons.includes(trimmed)) reasons.push(trimmed)
+  }
+  return reasons.length ? `${reasons.join('；')}。` : ''
 }
 
 type PersistedSopPromptRun = {
@@ -1844,7 +1883,8 @@ export default function GallerySopBatchModal({
     if (successCount === 0) {
       setStatus('error')
       setStatusMessage('没有任务成功提交')
-      setError('请检查图片 API 配置或输出参数后重试。')
+      // 带出真实提交报错：只写「请检查 API 配置」会把「输出目录不在白名单」这类真因盖掉。
+      setError(`提交失败：${collectOutcomeFailureReason(outcomes)}请检查图片 API 配置或输出参数后重试。`)
       showToast('SOP 生图任务提交失败', 'error')
       return
     }
@@ -1854,7 +1894,9 @@ export default function GallerySopBatchModal({
         ? `部分提交完成：成功 ${successCount} 个，失败 ${failCount} 个`
         : `已并发提交 ${successCount} 个 SOP 生图任务`,
     )
-    setError(failCount > 0 ? '失败项未创建任务卡，请检查 API 配置后重新提交。' : '')
+    setError(
+      failCount > 0 ? `失败项未创建任务卡：${collectOutcomeFailureReason(outcomes)}请检查 API 配置后重新提交。` : '',
+    )
     showToast(
       failCount > 0 ? `SOP 批量任务部分提交失败：${failCount} 个` : `已提交 ${successCount} 个 SOP 生图任务`,
       failCount > 0 ? 'error' : 'success',
@@ -2032,38 +2074,41 @@ export default function GallerySopBatchModal({
     ): Promise<string | null> => {
       const submitStartedAt = Date.now()
       try {
-        const taskId = await submitTaskWithData(
-          {
-            prompt: seriesAnchorImage ? buildSopSeriesAnchoredPrompt(item.promptText) : item.promptText.trim(),
-            inputImages: seriesAnchorImage ? [seriesAnchorImage] : fallbackInputImages,
-            inputImageFolder: null,
-            params: { ...params, n: targetImagesPerPrompt, reference_mode: 'cycle' },
-            maskDraft: null,
-            targetTabId: targetWorkspaceTabId,
-            scheduledOutputPath: customOutputPath.trim() || undefined,
-            scheduledOutputSubFolder: activeTab?.name,
-            defaultCollectionId: batchDefaultCollectionIdRef.current,
-            sopBatch: {
-              batchId: progressiveBatchId,
-              snapshotId: progressiveSnapshotId,
-              sopId: selectedSop.id,
-              sopName: selectedSop.name,
-              promptId: item.id,
-              promptIndex,
-              promptCount: targetCount,
-              imagesPerPrompt: targetImagesPerPrompt,
-              series: item.series
-                ? {
-                    seriesId: `${progressiveSnapshotId}-${item.series.groupIndex}`,
-                    groupIndex: item.series.groupIndex + 1,
-                    groupCount: Math.ceil(targetCount / item.series.seriesCount),
-                    seriesIndex: item.series.seriesIndex + 1,
-                    seriesCount: item.series.seriesCount,
-                  }
-                : undefined,
+        const taskId = await raceWithCancellation(
+          submitTaskWithData(
+            {
+              prompt: seriesAnchorImage ? buildSopSeriesAnchoredPrompt(item.promptText) : item.promptText.trim(),
+              inputImages: seriesAnchorImage ? [seriesAnchorImage] : fallbackInputImages,
+              inputImageFolder: null,
+              params: { ...params, n: targetImagesPerPrompt, reference_mode: 'cycle' },
+              maskDraft: null,
+              targetTabId: targetWorkspaceTabId,
+              scheduledOutputPath: customOutputPath.trim() || undefined,
+              scheduledOutputSubFolder: activeTab?.name,
+              defaultCollectionId: batchDefaultCollectionIdRef.current,
+              sopBatch: {
+                batchId: progressiveBatchId,
+                snapshotId: progressiveSnapshotId,
+                sopId: selectedSop.id,
+                sopName: selectedSop.name,
+                promptId: item.id,
+                promptIndex,
+                promptCount: targetCount,
+                imagesPerPrompt: targetImagesPerPrompt,
+                series: item.series
+                  ? {
+                      seriesId: `${progressiveSnapshotId}-${item.series.groupIndex}`,
+                      groupIndex: item.series.groupIndex + 1,
+                      groupCount: Math.ceil(targetCount / item.series.seriesCount),
+                      seriesIndex: item.series.seriesIndex + 1,
+                      seriesCount: item.series.seriesCount,
+                    }
+                  : undefined,
+              },
             },
-          },
-          { silentSuccess: true },
+            { silentSuccess: true },
+          ),
+          generationController.signal,
         )
         submitTimings.push(Date.now() - submitStartedAt)
         if (typeof taskId === 'string' && taskId) {
@@ -2073,9 +2118,13 @@ export default function GallerySopBatchModal({
         }
         progressiveFailureCount += 1
         return null
-      } catch {
+      } catch (cause) {
+        // 取消必须向上抛：这里若当作普通提交失败吞掉，批次循环会继续跑下一轮，
+        // 取消分支永远走不到，界面就停在「正在取消提示词生成」（见 R-63）。
+        throwIfSopPromptGenerationAborted(generationController.signal)
         submitTimings.push(Date.now() - submitStartedAt)
         progressiveFailureCount += 1
+        void cause
         return null
       }
     }
@@ -2439,7 +2488,9 @@ export default function GallerySopBatchModal({
       )
       setError(
         [
-          failed ? '提示词生成中断，可重试缺口。' : '',
+          // 提示词生成失败时把模型/接口的原始报错带出来：只显示「生成中断」会把真因
+          // （如「分组 xxx 下模型 xxx 的可用渠道不存在」）永久丢掉，用户只能靠猜。
+          failed ? `提示词生成中断：${collectSourceFailureReason(nextSources) || '可重试缺口。'}` : '',
           progressiveFailureCount ? '部分提示词未创建生图任务。' : '',
           progressivePersistenceError ? `运行记录保存失败：${progressivePersistenceError}` : '',
         ]
@@ -2462,7 +2513,16 @@ export default function GallerySopBatchModal({
           ? `提示词列表部分完成：当前可用 ${available} 条，缺口 ${missing} 条`
           : `提示词列表已生成：当前可用 ${available} 条`,
       )
-      setError(failed || missing ? '请选择“补充缺口”保留已有提示词，或“重新生成全部”创建一份新的完整列表。' : '')
+      setError(
+        failed || missing
+          ? [
+              failed ? `提示词生成失败：${collectSourceFailureReason(nextSources) || '可重试缺口。'}` : '',
+              '请选择“补充缺口”保留已有提示词，或“重新生成全部”创建一份新的完整列表。',
+            ]
+              .filter(Boolean)
+              .join(' ')
+          : '',
+      )
     }
   }
   generateForSourcesRef.current = generateForSources
