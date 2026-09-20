@@ -37,6 +37,7 @@ import { useCloseOnEscape } from '../../hooks/useCloseOnEscape'
 import { useStore } from '../../store'
 import type { TaskRecord } from '../../types'
 import type { SopGroup, SopLibraryItem } from './types'
+import { isCampaignRecipeSop } from './campaignRecipe'
 import { buildSopGroupTree, flattenSopGroupTree } from './sopGroupTree'
 import SopCampaignRecipePanel from './SopCampaignRecipePanel'
 import SopImageStack from './SopImageStack'
@@ -48,20 +49,9 @@ const SOP_GROUP_COLLAPSED_STORAGE_KEY = 'tangbao.sop-group-collapsed'
 /** 分组树每一级的缩进像素，配合展开箭头体现层级。 */
 const SOP_GROUP_INDENT = 14
 
-/**
- * 配方卡引擎 SOP 的判定：带 campaignRecipe 字段，或 executionMode 显式标记。
- *
- * 与 `storeSopGeneration.isCampaignRecipeSop` 是同一规则，这里刻意内联而不 import：
- * 生成模块被测试整体 mock（见 R-46），从 UI 层引用会把 UI 测试和生成模块耦死。
- * 这是纯数据判定，重复成本远低于耦合成本。
- */
-function isCampaignRecipeItem(item: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode'>): boolean {
-  return Boolean(item.campaignRecipe) || item.executionMode === 'campaign-recipe'
-}
-
 /** 配方卡 SOP 的名称即可保存，内容非空由配方卡编辑器自己的校验负责。 */
 function hasSavableContent(item: SopLibraryItem): boolean {
-  if (isCampaignRecipeItem(item)) return true
+  if (isCampaignRecipeSop(item)) return true
   return Boolean(item.content.trim())
 }
 
@@ -418,14 +408,22 @@ export default function SopLibraryTab({
                   }}
                   title="单击编辑；Ctrl/⌘ 点击切换多选；Shift 点击连续选择；拖到左侧分组移动；双击选择封面"
                 />
-                {item.kind === 'series' && (
-                  <Badge
-                    tone="info"
-                    title={`系列 SOP · ${item.seriesConfig?.imageCount ?? 3} 图`}
-                    className="sop-center-sop-series-badge"
-                  >
-                    系列 {item.seriesConfig?.imageCount ?? 3} 图
-                  </Badge>
+                {/*
+                 * 右上角「类型角标」区：系列 / 变量提示词 / 配方卡引擎。
+                 * 这三个都是**资产类型**标识，统一放在卡片右上角，与右侧操作按钮列错开。
+                 * 原先它们（或其中一部分）混在下方参数行里 —— 参数行宽度不足时会换行，
+                 * 把内容整体抬高并顶出卡片下边界（2026-09-20 反馈的徽章跑出卡片）。
+                 */}
+                {(item.kind === 'series' || item.executionMode === 'variable-prompt' || isCampaignRecipeSop(item)) && (
+                  <span className="sop-center-sop-badges">
+                    {item.kind === 'series' && (
+                      <Badge tone="info" title={`系列 SOP · ${item.seriesConfig?.imageCount ?? 3} 图`}>
+                        系列 {item.seriesConfig?.imageCount ?? 3} 图
+                      </Badge>
+                    )}
+                    {item.executionMode === 'variable-prompt' && <Badge tone="info">变量提示词</Badge>}
+                    {isCampaignRecipeSop(item) && <Badge tone="info">配方卡引擎</Badge>}
+                  </span>
                 )}
                 <button
                   type="button"
@@ -434,12 +432,10 @@ export default function SopLibraryTab({
                   aria-pressed={selectedIds.has(item.id)}
                   className="sop-center-sop-main"
                 >
-                  <span className="block min-w-0 w-full truncate text-sm font-semibold">{item.name}</span>
+                  <span className="sop-center-sop-title">{item.name}</span>
                   <span className="sop-center-sop-description">{item.description.trim() || '暂无说明'}</span>
                   <span className="sop-center-sop-params" aria-label="SOP 参数">
                     <span>{groupName}</span>
-                    {item.executionMode === 'variable-prompt' && <Badge tone="info">变量提示词</Badge>}
-                    {isCampaignRecipeItem(item) && <Badge tone="info">配方卡引擎</Badge>}
                     {selectedSopId === item.id && <Badge tone="success">使用中</Badge>}
                   </span>
                 </button>
@@ -635,7 +631,7 @@ export default function SopLibraryTab({
             {/* 配方卡引擎不显示普通 SOP 的正文编辑窗口。
                 它的「正文」是骨架（在「配方卡详情」弹窗里），content 本来就该是空的 ——
                 留一个空的正文明细框只会让人以为配方卡也要写正文，还容易误判成「内容丢了」。 */}
-            {!isCampaignRecipeItem(itemDraft) && (
+            {!isCampaignRecipeSop(itemDraft) && (
               <SopTextEditor
                 documentId={itemDraft.id}
                 value={itemDraft.content}
@@ -650,7 +646,7 @@ export default function SopLibraryTab({
                 }
               />
             )}
-            {isCampaignRecipeItem(itemDraft) && (
+            {isCampaignRecipeSop(itemDraft) && (
               <SopCampaignRecipePanel
                 config={itemDraft.campaignRecipe ?? { body: '', dimensions: [] }}
                 meta={{ name: itemDraft.name, desc: itemDraft.description, dominantSlots: itemDraft.dominantSlots }}

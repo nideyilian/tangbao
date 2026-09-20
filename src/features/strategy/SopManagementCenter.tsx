@@ -34,6 +34,7 @@ import SopPromptRunsDialog from './SopPromptRunsDialog'
 import SopVersionHistoryDialog from './SopVersionHistoryDialog'
 import SopGenerationDetailOverlay from './SopGenerationDetailOverlay'
 import type { SopGroup, SopLibraryItem, SopMetaInstruction, SopVersion } from './types'
+import { isCampaignRecipeSop } from './campaignRecipe'
 import { resolveInitialSopGroupId } from './sopInitialGroup'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { isModalBackdropEvent } from '../../lib/modalBackdrop'
@@ -90,17 +91,6 @@ function readImage(file: File) {
 function generationStepsBefore(step: GenerationStepId) {
   const stepIndex = SOP_GENERATION_STEPS.findIndex((item) => item.id === step)
   return SOP_GENERATION_STEPS.slice(0, Math.max(0, stepIndex)).map((item) => item.id)
-}
-
-/**
- * 配方卡引擎 SOP 的判定：带 campaignRecipe 字段，或 executionMode 显式标记。
- *
- * 与 `SopLibraryTab.isCampaignRecipeItem` 同规则，刻意各自内联：
- * 两边都要在「保存/自动保存门槛」上用，抽成共享模块反而会让
- * 管理中心与 SOP 库互相 import，成本高于这 3 行重复（同样理由见 R-46）。
- */
-function isCampaignRecipeSop(item: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode'>): boolean {
-  return Boolean(item.campaignRecipe) || item.executionMode === 'campaign-recipe'
 }
 
 function getGenerationErrorMessage(error: unknown) {

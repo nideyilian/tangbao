@@ -194,6 +194,30 @@ function stripSopPromptListLabel(value: string) {
     .trim()
 }
 
+/**
+ * 残留占位符模式：`{{名字}}` 或 `{名字}`。
+ *
+ * 配方卡（renderRecipeBody）与变量提示词（renderBody）在替换时都采取「对不上就原样保留」
+ * 的策略，避免静默丢信息。代价是**未定义的占位符会一路流到生图模型** ——
+ * 用户看到的只是「出图莫名其妙」，没有任何提示。这里作为链路的最后一道拦网。
+ *
+ * 只匹配「字母 / 中文 / 数字 / 下划线」组成的短标记，避免把正文里成对的合法花括号
+ * （如 JSON 片段、代码块）误判成占位符。
+ */
+const SOP_PROMPT_PLACEHOLDER_PATTERN = /\{\{\s*[\p{L}\p{N}_]{1,40}\s*\}\}|\{\s*[\p{L}\p{N}_]{1,40}\s*\}/gu
+
+/** 提取提示词里残留的占位符（已去重、保序），无残留时返回空数组。 */
+export function findResidualPromptPlaceholders(prompt: string): string[] {
+  const found = prompt.match(SOP_PROMPT_PLACEHOLDER_PATTERN)
+  if (!found) return []
+  return [...new Set(found)]
+}
+
+/** 单条提示词是否仍有未替换的占位符。 */
+export function hasResidualPromptPlaceholder(prompt: string): boolean {
+  return findResidualPromptPlaceholders(prompt).length > 0
+}
+
 function getSopPromptDeduplicationKey(value: string) {
   return stripSopPromptListLabel(value)
     .normalize('NFKC')

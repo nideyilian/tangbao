@@ -3,12 +3,16 @@ import {
   CAMPAIGN_RECIPE_FORBIDDEN_TERMS,
   computeBatchMinDistance,
   deriveUsedSignatures,
+  describeCampaignRecipeSize,
   farthestPointSample,
   findCampaignRecipeViolations,
   generateCampaignRecipeBatch,
   isCampaignRecipeCompliant,
   parseCampaignRecipeConfig,
+  pickDominantIndices,
   renderCampaignRecipePrompts,
+  resolveCampaignRecipeSeriesFixedDimensions,
+  resolveEffectiveDominantSlots,
   sanitizeCampaignRecipeConfig,
   validateCampaignRecipeConfig,
   type CampaignRecipeConfig,
@@ -95,6 +99,246 @@ describe('campaignRecipe 合规红线', () => {
     expect(config.body).toBe('')
     expect(removed.some((item) => item.includes('骨架'))).toBe(true)
   })
+
+  // 回归用例（2026-09-20）：清洗曾经用 `{ name, options }` 重建维度，把 weight 丢掉，
+  // 导致 pickDominantIndices 恒返回 undefined —— 界面上「主控槽」整片消失，
+  // 引擎内部则因 `dominantIndices ?? 全槽` 的兜底把主控槽约束退化成全槽约束，
+  // 多样性策略被静默改写。清洗只应删候选值，不得改动维度的元数据。
+  it('清洗保留维度的 weight（曾因重建对象而丢失，导致主控槽全线失效）', () => {
+    const { config } = sanitizeCampaignRecipeConfig({
+      body: '{{主视觉}}，{{主体}}',
+      dimensions: [
+        { name: '主视觉', options: ['日赚稳定', '侧脸特写'], weight: 3 },
+        { name: '主体', options: ['耳机', '耳机'], weight: 2 },
+      ],
+    })
+    expect(config.dimensions.map((item) => item.weight)).toEqual([3, 2])
+    // 端到端：清洗后仍能推导出主控槽，且指向 weight 最高的「主视觉」
+    expect(pickDominantIndices(config.dimensions)).toEqual([0])
+  })
+})
+
+describe('campaignRecipe 内置变量（尺寸注入 {比例} / {方向} / {尺寸}）', () => {
+  it('describeCampaignRecipeSize：常见画幅查表 + 方向判定', () => {
+    expect(describeCampaignRecipeSize('1280x720')).toEqual({
+      比例: '16:9',
+      方向: 'horizontal',
+      尺寸: '1280x720',
+    })
+    expect(describeCampaignRecipeSize('720x1280')?.比例).toBe('9:16')
+    expect(describeCampaignRecipeSize('720x1280')?.方向).toBe('vertical')
+    expect(describeCampaignRecipeSize('1024x1024')).toMatchObject({ 比例: '1:1', 方向: 'square' })
+    // 非常见画幅退回 gcd 约分；解析失败返回 undefined（调用方不注入，占位符按既有约定保留）
+    expect(describeCampaignRecipeSize('640x480')?.比例).toBe('4:3')
+    expect(describeCampaignRecipeSize('auto')).toBeUndefined()
+    expect(describeCampaignRecipeSize('')).toBeUndefined()
+    expect(describeCampaignRecipeSize('abc')).toBeUndefined()
+  })
+
+  it('骨架里的 {比例} {方向} 被当前尺寸替换（2026-09-20：配方卡比例曾只能写死，与界面选择脱节）', () => {
+    const prompts = renderCampaignRecipePrompts(
+      {
+        body: '主体是{{主视觉}}，{方向} {比例} photo',
+        dimensions: [{ name: '主视觉', options: ['产品特写', '使用场景'] }],
+      },
+      { count: 2, seed: 's', builtinValues: describeCampaignRecipeSize('1280x720') },
+    )
+    expect(prompts).toContain('主体是产品特写，horizontal 16:9 photo')
+    expect(prompts).toContain('主体是使用场景，horizontal 16:9 photo')
+  })
+
+  it('未提供 builtinValues 时占位符原样保留（被既有占位符检查拦下，不静默）', () => {
+    const prompts = renderCampaignRecipePrompts(
+      {
+        body: '主体是{{主视觉}}，{比例} photo',
+        dimensions: [{ name: '主视觉', options: ['产品特写'] }],
+      },
+      { count: 1, seed: 's' },
+    )
+    expect(prompts[0]).toBe('主体是产品特写，{比例} photo')
+  })
+
+  it('维度池同名优先：骨架里的 {{比例}} 若定义了维度，不被内置变量覆盖', () => {
+    // 注意：用 {{双花括号}} 引用维度 —— {单花括号} 的中文引用受既有 ASCII 正则限制，
+    // 不参与维度替换（同名时被内置替换跳过后会保留残留，由占位符检查拦下）。
+    const prompts = renderCampaignRecipePrompts(
+      {
+        body: '主体是{{主视觉}}，画面比例是{{比例}}',
+        dimensions: [
+          { name: '主视觉', options: ['产品特写'] },
+          { name: '比例', options: ['竖版'] },
+        ],
+      },
+      { count: 1, seed: 's', builtinValues: describeCampaignRecipeSize('1280x720') },
+    )
+    expect(prompts[0]).toBe('主体是产品特写，画面比例是竖版')
+  })
+})
+
+describe('campaignRecipe 写死画幅自动归一（一切以输入框尺寸为准）', () => {
+  const hardcodedRecipe: CampaignRecipeConfig = {
+    // 真实资产常见写法：画幅写死在骨架里
+    body: '主体是{{主视觉}}, vertical 9:16 photo, no brand logo',
+    dimensions: [{ name: '主视觉', options: ['产品特写'] }],
+  }
+
+  const render = (size: string) =>
+    renderCampaignRecipePrompts(hardcodedRecipe, {
+      count: 1,
+      seed: 's',
+      builtinValues: describeCampaignRecipeSize(size),
+    })[0]
+
+  it('骨架里写死的 vertical 9:16 跟随输入框尺寸（横版尺寸 → horizontal 16:9）', () => {
+    expect(render('1280x720')).toBe('主体是产品特写, horizontal 16:9 photo, no brand logo')
+  })
+
+  it('方形尺寸 → square 1:1，非常见画幅 → 约分比例', () => {
+    expect(render('1024x1024')).toBe('主体是产品特写, square 1:1 photo, no brand logo')
+    expect(render('832x1216')).toBe('主体是产品特写, vertical 13:19 photo, no brand logo')
+  })
+
+  it('尺寸非法（auto）时不动作，写死值原样保留', () => {
+    expect(render('auto')).toBe('主体是产品特写, vertical 9:16 photo, no brand logo')
+  })
+
+  it('不误伤非画幅的冒号数字（时间 12:30、非画幅比 5:7 都不在画幅表内）', () => {
+    const prompts = renderCampaignRecipePrompts(
+      { body: 'at 12:30, ratio 5:7, {{主体}}', dimensions: [{ name: '主体', options: ['杯子'] }] },
+      { count: 1, seed: 's', builtinValues: describeCampaignRecipeSize('1280x720') },
+    )
+    expect(prompts[0]).toBe('at 12:30, ratio 5:7, 杯子')
+  })
+})
+
+describe('campaignRecipe 系列模式（组内一致 / 组间不同）', () => {
+  // 维度名刻意混搭「风格类」与「内容类」，并在多个维度上重复取值 —— 便于断言组内一致性。
+  const seriesRecipe: CampaignRecipeConfig = {
+    body: '{{画风}}风格的{{主体}}，{{动作}}，{{背景}}，{{光线}}',
+    dimensions: [
+      { name: '画风', options: ['日系', '3D', '扁平'], weight: 3 },
+      { name: '光线', options: ['暖光', '冷光', '柔光'] },
+      { name: '主体', options: ['女孩', '男孩'] },
+      { name: '动作', options: ['笑', '跳', '挥手', '鼓掌', '点头', '回头'] },
+      { name: '背景', options: ['室内', '街头', '公园'] },
+    ],
+  }
+
+  it('缺省固定维度：风格/形式类保留，内容类剔除（含排除优先）', () => {
+    const fixed = resolveCampaignRecipeSeriesFixedDimensions([
+      { name: 'S9风格', options: ['a'] },
+      { name: 'S1人物风格', options: ['a'] },
+      { name: 'S6光线', options: ['a'] },
+      { name: 'S12布局', options: ['a'] },
+      { name: 'S5背景氛围', options: ['a'] }, // 含「背景」→ 必须判为变化，尽管也可能被误判
+      { name: 'S2动作', options: ['a'] },
+      { name: 'S11标题', options: ['a'] },
+      { name: 'M', options: ['a'], weight: 3 }, // 主控槽，即使名字无关键词也固定
+    ])
+    expect(fixed).toContain('S9风格')
+    expect(fixed).toContain('S1人物风格')
+    expect(fixed).toContain('S6光线')
+    expect(fixed).toContain('S12布局')
+    expect(fixed).toContain('M')
+    expect(fixed).not.toContain('S5背景氛围')
+    expect(fixed).not.toContain('S2动作')
+    expect(fixed).not.toContain('S11标题')
+  })
+
+  it('组内：固定维度取值一致、变化维度拉开差异', () => {
+    const samples = generateCampaignRecipeBatch(seriesRecipe, {
+      count: 6,
+      seed: 's',
+      usedSignatures: new Set(),
+      seriesGroupSize: 3,
+    }).samples
+    expect(samples).toHaveLength(6)
+    for (const group of [samples.slice(0, 3), samples.slice(3, 6)]) {
+      expect(new Set(group.map((s) => s.values['画风'])).size).toBe(1)
+      expect(new Set(group.map((s) => s.values['光线'])).size).toBe(1)
+      // 内容类维度在组内必须出现差异（否则不成系列）
+      expect(new Set(group.map((s) => s.values['动作'])).size).toBeGreaterThan(1)
+    }
+  })
+
+  it('组间：固定维度取值不同（组合空间充足时）', () => {
+    const samples = generateCampaignRecipeBatch(seriesRecipe, {
+      count: 6,
+      seed: 's',
+      usedSignatures: new Set(),
+      seriesGroupSize: 3,
+    }).samples
+    const first = `${samples[0].values['画风']}|${samples[0].values['光线']}`
+    const second = `${samples[3].values['画风']}|${samples[3].values['光线']}`
+    expect(first).not.toBe(second)
+  })
+
+  it('显式指定组内固定维度时以传入为准', () => {
+    const samples = generateCampaignRecipeBatch(seriesRecipe, {
+      count: 4,
+      seed: 's',
+      usedSignatures: new Set(),
+      seriesGroupSize: 2,
+      seriesFixedDimensions: ['主体'],
+    }).samples
+    expect(new Set(samples.slice(0, 2).map((s) => s.values['主体'])).size).toBe(1)
+    // 「画风」不在固定名单里 → 组内允许变化（这里只断言它不再被强制固定）
+    expect(samples).toHaveLength(4)
+  })
+
+  it('seriesGroupSize ≤ 1 时行为与单图模式完全一致（默认关闭）', () => {
+    const plain = generateCampaignRecipeBatch(seriesRecipe, { count: 6, seed: 's', usedSignatures: new Set() })
+    const withOne = generateCampaignRecipeBatch(seriesRecipe, {
+      count: 6,
+      seed: 's',
+      usedSignatures: new Set(),
+      seriesGroupSize: 1,
+    })
+    expect(withOne.samples.map((s) => s.prompt)).toEqual(plain.samples.map((s) => s.prompt))
+  })
+})
+
+describe('campaignRecipe 单花括号占位符名的字符范围', () => {
+  // 回归用例（2026-09-20）：「快手短剧_信息流」这张真实资产用 `{S9风格}` / `{S11标题}`
+  // 这类「编号 + 中文」的写法，而单花括号正则当时限定纯 ASCII（`[A-Za-z][A-Za-z0-9_]{0,15}`），
+  // 一律替换不到 → 提示词带着花括号占位符 → 被链路的占位符检查拦下，表现为「无法生成提示词」。
+  it('支持「编号 + 中文」的占位符名', () => {
+    const prompts = renderCampaignRecipePrompts(
+      {
+        body: '{M}. {S9风格} illustration, 大字"{S11标题}" {S12布局}',
+        dimensions: [
+          { name: 'M', options: ['M1人物插画+大字'] },
+          { name: 'S9风格', options: ['日系动漫风'] },
+          { name: 'S11标题', options: ['耳机一戴谁也不爱'] },
+          { name: 'S12布局', options: ['左上角竖排'] },
+        ],
+      },
+      { count: 1, seed: 's' },
+    )
+    expect(prompts[0]).toBe('M1人物插画+大字. 日系动漫风 illustration, 大字"耳机一戴谁也不爱" 左上角竖排')
+  })
+
+  it('支持纯中文占位符名（维度池有同名维度时按维度替换）', () => {
+    const prompts = renderCampaignRecipePrompts(
+      {
+        body: '画面是{场景}，主体是{{主体}}',
+        dimensions: [
+          { name: '场景', options: ['地铁'] },
+          { name: '主体', options: ['耳机'] },
+        ],
+      },
+      { count: 1, seed: 's' },
+    )
+    expect(prompts[0]).toBe('画面是地铁，主体是耳机')
+  })
+
+  it('对不上的花括号原样保留（正文里的合法花括号不丢信息）', () => {
+    const prompts = renderCampaignRecipePrompts(
+      { body: '返回 {未定义项} 与 {{也未知}}，主体是{{主体}}', dimensions: [{ name: '主体', options: ['杯子'] }] },
+      { count: 1, seed: 's' },
+    )
+    expect(prompts[0]).toBe('返回 {未定义项} 与 {{也未知}}，主体是杯子')
+  })
 })
 
 describe('campaignRecipe 结构校验', () => {
@@ -142,7 +386,7 @@ describe('campaignRecipe 最远点采样（双层硬约束）', () => {
     }
   })
 
-  it('主控槽参与约束：全槽最小差异明显高于主控槽最小差异（重掷优先落在主控槽）', () => {
+  it('主控槽参与约束：全槽差异被拉到高位（8 维池实测下界 6 个槽不同）', () => {
     const dimensions = Array.from({ length: 8 }, (_, index) => ({
       name: `D${index}`,
       options: Array.from({ length: 6 }, (_, k) => `v${index}_${k}`),
@@ -156,10 +400,61 @@ describe('campaignRecipe 最远点采样（双层硬约束）', () => {
         minAll = Math.min(minAll, selections[i].filter((value, slot) => value !== selections[j][slot]).length)
       }
     }
-    // 主控槽是「重掷优先目标」而非硬保证：maxAttempt/guard 用尽时仍可能落到差异 0。
-    // 但整体差异必须被拉到显著水平（实测全槽 ≥ 5），否则说明约束完全没生效。
-    expect(minAll).toBeGreaterThanOrEqual(5)
-    expect(minDom).toBeGreaterThanOrEqual(0)
+    // 全槽差异必须被拉到高水平。数字是**实测值不是猜测**：8 维 × 6 选项、10 条、
+    // dominantIndices=[0,1] 时下界为 6（原先写 >= 5，过于宽松，测不出退化）。
+    // 原先这里还有一句 `expect(minDom).toBeGreaterThanOrEqual(0)` —— **恒真，等于没测**，
+    // 掩盖了「主控槽下限可能恒不满足」这一行为（详见下方专门的回归用例）。
+    expect(minAll).toBeGreaterThanOrEqual(6)
+    // 主控槽也必须被照顾到：2 个主控槽至少 1 个不同（同样是有信息的真断言）
+    expect(minDom).toBeGreaterThanOrEqual(1)
+  })
+
+  /**
+   * 行为钉住用例：把「主控槽数 < minDom 时约束恒不满足」这一**已测量过的取舍**固定下来。
+   *
+   * 为什么必须写：这个行为看起来像 bug（重掷次数恒定虚高），任何人顺手「修」成
+   * `min(2, 主控槽数)` 都会通过全部既有测试 —— 因为原来的断言是恒真的。
+   * 反向验证实测该「修复」会让全槽最小差异从 7.00 掉到 3.10（-56%），是净亏。
+   * 本用例的作用就是：谁再动这块，立刻看到代价（测试会红，并指向对照表）。
+   *
+   * 详见 `campaignRecipe.ts` 里 `farthestPointSample` 的 JSDoc 对照表。
+   */
+  it('钉住行为：单主控槽时重掷打满预算，且全槽差异反而被拉满', () => {
+    const dimensions = Array.from({ length: 7 }, (_, index) => ({
+      name: `D${index}`,
+      /**
+       * 注意这里不能用 8 维：`minTotalNear` 默认 7，维度数不足 7 时「总槽差异 ≥ 7」
+       * 本身也恒不满足，会把重掷打满的原因混在一起、失去诊断价值。
+       * 用 7 维（总槽下限刚好可达）＋ 8 个候选值，确保打满的唯一原因就是主控槽约束。
+       */
+      options: Array.from({ length: 8 }, (_, k) => `v${index}_${k}`),
+    }))
+    // 单主控槽：domDiff 上限 = 1 < minDom(Near|Far) = 2 → 约束恒不满足
+    const single = farthestPointSample(dimensions, 10, { seed: 'pin', dominantIndices: [0] })
+    // 10 条 × maxAttempt(120) = 1200；实测恒定 1081（首条无窗口可比重掷 0 次，其余 9 条打满）
+    expect(single.totalAttempts).toBe(1081)
+
+    // 约束虽「报失败」，产出质量却在高位：任意两条 7 个槽全不同
+    let minAll = Infinity
+    for (let i = 0; i < single.selections.length; i++) {
+      for (let j = i + 1; j < single.selections.length; j++) {
+        minAll = Math.min(
+          minAll,
+          single.selections[i].filter((value, slot) => value !== single.selections[j][slot]).length,
+        )
+      }
+    }
+    expect(minAll).toBe(7)
+  })
+
+  it('对照：主控槽数 ≥ minDom 时重掷预算不会被恒不满足地打满', () => {
+    const dimensions = Array.from({ length: 7 }, (_, index) => ({
+      name: `D${index}`,
+      options: Array.from({ length: 8 }, (_, k) => `v${index}_${k}`),
+    }))
+    // 2 个主控槽：domDiff 上限 = 2，约束「可达」→ 不会恒定打满
+    const double = farthestPointSample(dimensions, 10, { seed: 'pin', dominantIndices: [0, 1] })
+    expect(double.totalAttempts).toBeLessThan(1081)
   })
 
   it('同种子结果可复现，换种子结果不同', () => {
@@ -294,5 +589,142 @@ describe('campaignRecipe 跨批次签名推导（从历史文本反推）', () =
   it('空输入与空白历史安全返回空集合', () => {
     expect(deriveUsedSignatures(recipe, []).size).toBe(0)
     expect(deriveUsedSignatures(recipe, ['   ', '']).size).toBe(0)
+  })
+})
+
+describe('campaignRecipe 取消贯穿（signal 直达采样内部）', () => {
+  /**
+   * 这组用例直接打 generateCampaignRecipeBatch，**不经过 generateSopPromptBatches**。
+   *
+   * 起因：最初把取消用例写在 storeSopGeneration 层，反向验证（关掉引擎内的 abort 检查）
+   * 后发现测试**依然全绿** —— 因为取消是被外层竞速拦下的，引擎里那两处检查根本没被走到。
+   * 探针没打中目标，测试等于没测。这里改从引擎入口直接验，才能覆盖到采样与渲染循环。
+   */
+  const bigRecipe: CampaignRecipeConfig = {
+    body: '{{大池}}，{{主体}}',
+    dimensions: [
+      { name: '大池', options: Array.from({ length: 400 }, (_, index) => `选项${index}`) },
+      { name: '主体', options: ['咖啡杯', '保温杯'] },
+    ],
+  }
+
+  it('signal 已中止时，采样完成后立即抛 AbortError 而不返回样本', () => {
+    const controller = new AbortController()
+    controller.abort(new DOMException('提示词生成已取消', 'AbortError'))
+
+    expect(() => generateCampaignRecipeBatch(bigRecipe, { count: 50, signal: controller.signal })).toThrow(/取消/)
+  })
+
+  it('抛的是 AbortError，让上层的 isAbortError 判定能识别', () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    const error = (() => {
+      try {
+        generateCampaignRecipeBatch(bigRecipe, { count: 20, signal: controller.signal })
+        return null
+      } catch (err) {
+        return err
+      }
+    })()
+
+    expect(error).toBeInstanceOf(DOMException)
+    expect((error as DOMException).name).toBe('AbortError')
+  })
+
+  it('signal.reason 带原始错误时优先抛出原始错误（保留真实取消原因）', () => {
+    const controller = new AbortController()
+    const reason = new Error('用户切走了工作台')
+    controller.abort(reason)
+
+    expect(() => generateCampaignRecipeBatch(bigRecipe, { count: 20, signal: controller.signal })).toThrow(
+      '用户切走了工作台',
+    )
+  })
+
+  it('未中止的 signal 不影响正常生成', () => {
+    const controller = new AbortController()
+    const { samples } = generateCampaignRecipeBatch(bigRecipe, { count: 5, signal: controller.signal })
+    expect(samples).toHaveLength(5)
+  })
+
+  it('不传 signal 时行为与修复前一致（向后兼容）', () => {
+    const { samples } = generateCampaignRecipeBatch(bigRecipe, { count: 5 })
+    expect(samples).toHaveLength(5)
+  })
+})
+
+describe('campaignRecipe 主控槽口径（展示必须跟随实际权重）', () => {
+  /**
+   * 背景：`dominantSlots`（SopLibraryItem 顶层，供 UI 展示）与 `dimensions[].weight`
+   * （真正参与采样）是同一语义的两个家。导入资产时两者被同时写入，但用户之后在界面上
+   * 增删权重时 `dominantSlots` 不会跟着变 → 界面还标着「主控槽」，引擎已按新权重要跑，
+   * 出现「界面说 A、执行做 B」。
+   *
+   * 修法：界面改为从 weight 实时推导（`resolveEffectiveDominantSlots`），
+   * `dominantSlots` 退化为「原资产怎么声明的」这一来源说明。
+   */
+  it('按权重推导主控槽名', () => {
+    const dimensions = [
+      { name: '主视觉', options: ['a'], weight: 3 },
+      { name: '主体', options: ['b'], weight: 2 },
+      { name: '背景', options: ['c'] },
+    ]
+    expect(resolveEffectiveDominantSlots(dimensions)).toEqual(['主视觉'])
+  })
+
+  it('权重并列时全部入选', () => {
+    const dimensions = [
+      { name: '甲', options: ['a'], weight: 3 },
+      { name: '乙', options: ['b'], weight: 3 },
+      { name: '丙', options: ['c'] },
+    ]
+    expect(resolveEffectiveDominantSlots(dimensions)).toEqual(['甲', '乙'])
+  })
+
+  it('没有任何权重时返回空数组（不是全部维度）', () => {
+    const dimensions = [
+      { name: '甲', options: ['a'] },
+      { name: '乙', options: ['b'] },
+    ]
+    expect(resolveEffectiveDominantSlots(dimensions)).toEqual([])
+  })
+
+  it('全部维度权重相等时不算主控（避免把全部槽都算主控）', () => {
+    const dimensions = [
+      { name: '甲', options: ['a'], weight: 2 },
+      { name: '乙', options: ['b'], weight: 2 },
+    ]
+    expect(resolveEffectiveDominantSlots(dimensions)).toEqual([])
+  })
+
+  it('用户删掉权重后，主控槽随之失效（这是修复前会不一致的场景）', () => {
+    // 导入时：主视觉 weight 3、主体 weight 2 → 主控槽 = 主视觉
+    const imported = [
+      { name: '主视觉', options: ['a'], weight: 3 },
+      { name: '主体', options: ['b'], weight: 2 },
+      { name: '背景', options: ['c'] },
+    ]
+    expect(resolveEffectiveDominantSlots(imported)).toEqual(['主视觉'])
+
+    // 用户把「主视觉」的权重清掉（改成与主体并列）→ 界面必须跟着变
+    const edited = [
+      { name: '主视觉', options: ['a'] },
+      { name: '主体', options: ['b'], weight: 2 },
+      { name: '背景', options: ['c'] },
+    ]
+    expect(resolveEffectiveDominantSlots(edited)).toEqual(['主体'])
+  })
+
+  it('推导结果与引擎实际使用的主控槽一致（pickDominantIndices 同一口径）', () => {
+    const dimensions = [
+      { name: '甲', options: ['a'], weight: 3 },
+      { name: '乙', options: ['b'] },
+      { name: '丙', options: ['c'] },
+    ]
+    const indices = pickDominantIndices(dimensions)
+    const names = resolveEffectiveDominantSlots(dimensions)
+    expect(names).toEqual((indices ?? []).map((index) => dimensions[index].name))
+    expect(names).toEqual(['甲'])
   })
 })

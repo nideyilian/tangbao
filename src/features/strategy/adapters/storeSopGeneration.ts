@@ -26,6 +26,7 @@ import {
 import {
   buildSopPromptBatchRequest,
   generateSopPromptBatches,
+  findResidualPromptPlaceholders,
   parseSopPromptBatchResponse,
   parseSopSeriesPromptBatchResponse,
   SOP_PROMPT_GENERATOR_INSTRUCTION,
@@ -38,13 +39,15 @@ import { VISUAL_PROFILE_INSTRUCTION, buildProfileSummary, parseVisualProfiles } 
 import {
   deriveUsedSignatures,
   generateCampaignRecipeBatch,
-  parseCampaignRecipeConfig,
+  isCampaignRecipeSop as isCampaignRecipeSopShared,
+  MAX_DIMENSION_OPTIONS,
+  parseCampaignRecipeConfigFromContent,
   sanitizeCampaignRecipeConfig,
   validateCampaignRecipeConfig,
   type CampaignRecipeConfig,
 } from '../campaignRecipe'
 import { getAllSopBatchSnapshots } from '../../../lib/db'
-import type { SopCampaignRecipeConfig, SopLibraryItem } from '../types'
+import type { SopLibraryItem } from '../types'
 
 /** Agent 配置未提供有效超时时的兜底值（秒）。 */
 const TEXT_REQUEST_TIMEOUT_FALLBACK_SECONDS = DEFAULT_API_TIMEOUT
@@ -666,7 +669,11 @@ export async function generateVariablePromptsFromSopStore(
   return generateSopPromptBatches(
     unitCount,
     async () => {
-      return renderVariablePromptBatch(template, combinationLimit, seed)
+      const prompts = renderVariablePromptBatch(template, combinationLimit, seed)
+      // 与配方卡同源的问题：renderBody 对未命中的 `{{X}}` 原样保留，
+      // 不拦就会带着占位符直接出图。变量提示词是纯本地展开，残留必然是名称写错。
+      assertNoResidualPlaceholders(prompts, '变量提示词')
+      return prompts
     },
     {
       exact: options.exact,
@@ -806,19 +813,32 @@ async function expandSopVariablePromptOptions(
 /**
  * 判定一个 SOP 是否走「配方卡引擎」本地生成分支。
  *
- * 触发条件有两条，命中任一即成立（字段优先，便于旧数据只补 executionMode 也能生效）：
- * 1. 带 campaignRecipe 字段（新资产的标准形态）；
- * 2. executionMode 显式为 'campaign-recipe'。
- *
- * 该判定与「普通 SOP」严格互斥：普通 SOP 走 generatePromptsFromSopStore（调 AI），
- * 配方卡走 generateCampaignRecipePromptsFromStore（纯本地算法，不产生任何网络请求）。
+ * **实现已收口到 `campaignRecipe.ts` 的 `isCampaignRecipeSop`**（全应用唯一实现），
+ * 此处保留同名导出仅为兼容既有调用点。**不要再在此处派生新口径** ——
+ * 判定分叉会导致「引擎能认出、界面认不出」的展示与执行割裂（R-53 / R-54 的病根）。
  */
-export function isCampaignRecipeSop(
-  sop: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode'> | null | undefined,
-): boolean {
-  if (!sop) return false
-  if (sop.campaignRecipe) return true
-  return sop.executionMode === 'campaign-recipe'
+export const isCampaignRecipeSop = isCampaignRecipeSopShared
+
+/**
+ * 本地生成分支（配方卡 / 变量提示词）的最后一道拦网：提示词里不允许残留占位符。
+ *
+ * 为什么只拦本地分支、不在 normalizeSopPromptCandidates 里统一拦：AI 分支的模型输出
+ * 可能天然包含成对花括号（描述 JSON 结构、代码片段），统一拦会误伤正常提示词。
+ * 而本地分支的提示词是由「骨架 + 维度替换」机械拼出来的，出现残留必然是骨架里的
+ * 维度名与维度定义对不上（典型：骨架写 `{{场景}}`、维度定义成 `场景名`），一定是 bug。
+ *
+ * 抛错而不是静默过滤：静默过滤会让「生成 10 条」变成「生成 7 条」，
+ * 用户只会看到数量不对，永远不知道是占位符没替换。
+ */
+function assertNoResidualPlaceholders(prompts: string[], source: string) {
+  for (const prompt of prompts) {
+    const placeholders = findResidualPromptPlaceholders(prompt)
+    if (placeholders.length === 0) continue
+    throw new Error(
+      `${source}生成失败：提示词里存在未替换的占位符 ${placeholders.join('、')}。` +
+        `请检查骨架中的占位符写法与可变项名称是否完全一致（区分大小写）。`,
+    )
+  }
 }
 
 /**
@@ -850,6 +870,19 @@ export async function generateCampaignRecipePromptsFromStore(
     outputUnitSize?: number
     /** 历史签名集合（跨批次去重）；不传时自动从本张配方的历史记录推导 */
     usedSignatures?: Set<string>
+    /**
+     * 候选值池被截断时回调（维度名列表）。
+     * 截断是静默发生的（超出 MAX_DIMENSION_OPTIONS 的候选值被丢弃），不透出的话
+     * 用户只会发现「生成数量比预期少」，无法定位到是池子被砍。
+     */
+    onTruncated?: (dimensions: string[]) => void
+    /**
+     * 合规红线剔除候选值时回调（可读的剔除说明列表）。
+     * 剔除本身是正确行为，但用户需要知道「我写的值被系统丢了」，否则会误以为程序漏读。
+     */
+    onSanitized?: (removed: string[]) => void
+    /** 内置变量（{比例} / {方向} / {尺寸}），由调用方按界面当前尺寸注入；见 describeCampaignRecipeSize。 */
+    builtinValues?: Record<string, string>
   } = {},
 ) {
   const rawConfig = sop.campaignRecipe ?? parseCampaignRecipeConfigFromContent(sop.content)
@@ -858,9 +891,18 @@ export async function generateCampaignRecipePromptsFromStore(
   }
 
   // 合规红线内置且不可关闭：命中红线的候选值在生成前剔除，避免脏数据进入出图链路。
-  const { config, removed } = sanitizeCampaignRecipeConfig(rawConfig)
+  const { config, removed, bodyRemoved } = sanitizeCampaignRecipeConfig(rawConfig)
   if (removed.length > 0) {
     console.warn(`[配方卡引擎] 已剔除命中合规红线的候选值：${removed.join('；')}`)
+    options.onSanitized?.(removed)
+  }
+  // body 被清空时的报错必须点名真因：否则下游 validateCampaignRecipeConfig 只会说
+  // 「缺少提示词骨架 body」，用户去检查骨架却发现它明明在，排查方向被彻底带偏。
+  if (bodyRemoved) {
+    throw new Error(
+      `配方卡提示词骨架命中合规红线，已被整段移除。请在「配方卡」页检查骨架文案，` +
+        `移除违规表述后重试（命中项：${removed.filter((item) => item.startsWith('提示词骨架')).join('；')}）。`,
+    )
   }
   const errors = validateCampaignRecipeConfig(config)
   if (errors.length > 0) throw new Error(`配方卡格式有误：${errors[0]}`)
@@ -873,18 +915,32 @@ export async function generateCampaignRecipePromptsFromStore(
   // 跨批次去重：签名集合优先用调用方传入的；否则从「本张配方的历史记录」自动推导。
   // 历史以文本形式落库在 SopBatchSnapshot.prompts[].text，这里按配方卡结构反推签名，
   // 于是「关掉弹窗重开、重启应用」之后跨批次去重依然有效。
+  // 诊断打点（临时）：区分「卡在读历史 IPC」vs「卡在采样计算」。
+  console.info(
+    `[诊-配方卡] 引擎入口 quantity=${quantity} unitSize=${outputUnitSize} exact=${options.exact}` +
+      ` signal.aborted=${options.signal?.aborted ?? '(无signal)'} signal.reason=${String(options.signal?.reason ?? '-')}`,
+  )
+  const sigStart = Date.now()
   const usedSignatures =
     options.usedSignatures ?? (await loadCampaignRecipeUsedSignatures(sop.id, config, options.existingPrompts ?? []))
-
+  console.info(`[诊-配方卡] 读历史签名完成 ${usedSignatures.size} 个（${Date.now() - sigStart}ms）`)
+  const batchStart = Date.now()
   return generateSopPromptBatches(
     quantity,
     async (batchQuantity, existingPrompts) => {
       const batchTarget = batchQuantity * outputUnitSize
-      const { samples, exhausted } = generateCampaignRecipeBatch(config, {
+      const { samples, exhausted, truncatedDimensions } = generateCampaignRecipeBatch(config, {
         count: batchTarget,
         seed,
         existingPrompts,
         usedSignatures,
+        // 本地采样是同步长任务，不接 signal 的话「取消」按钮点了要等它跑完才生效。
+        signal: options.signal,
+        // 界面选中的尺寸注入 {比例} / {方向} / {尺寸} 内置变量（维度池同名时维度优先）
+        builtinValues: options.builtinValues,
+        // 系列模式：outputUnitSize = 每组画面数。>1 时启用组内约束（组内固定主控槽、
+        // 组间不重样）—— 否则系列图会退化成 N 条互不相干的独立采样，看起来不成套。
+        seriesGroupSize: outputUnitSize,
       })
       // 本批已选签名回写，同一轮多次校验批次之间也不会重复
       for (const sample of samples) usedSignatures.add(sample.signature)
@@ -896,7 +952,19 @@ export async function generateCampaignRecipePromptsFromStore(
           `[配方卡引擎] 候选组合不足以覆盖请求数量（组合空间 ${samples.length} 条可用 / 请求 ${batchTarget} 条），已返回不重复的部分。`,
         )
       }
-      return samples.map((sample) => sample.prompt)
+      // 截断提示：truncateOversizedDimensions 静默砍掉超出上限的候选值，
+      // 若不透出，用户只会看到「生成数量不够」却不知道是池子被截了。
+      if (truncatedDimensions.length > 0) {
+        console.warn(
+          `[配方卡引擎] 维度候选值超过上限已截断：${truncatedDimensions.join('、')}（每维最多保留 ${MAX_DIMENSION_OPTIONS} 条）`,
+        )
+        options.onTruncated?.(truncatedDimensions)
+      }
+      const prompts = samples.map((sample) => sample.prompt)
+      // 占位符残留 = 骨架写的维度名与维度定义对不上。renderRecipeBody 有意原样保留
+      // 以便暴露问题，但若不在此拦下，带 `{{未定义}}` 的提示词会直接送去生图。
+      assertNoResidualPlaceholders(prompts, '配方卡')
+      return prompts
     },
     {
       exact: options.exact,
@@ -911,6 +979,19 @@ export async function generateCampaignRecipePromptsFromStore(
       isRetryable: (error) => !(error instanceof Error && /候选组合已耗尽/.test(error.message)),
     },
   )
+    .then((prompts) => {
+      console.info(`[诊-配方卡] 批次循环完成 ${prompts.length} 条（${Date.now() - batchStart}ms）`)
+      return prompts
+    })
+    .catch((error) => {
+      console.warn(
+        `[诊-配方卡] 批次循环失败（${Date.now() - batchStart}ms）:` +
+          ` name=${error instanceof Error ? error.name : typeof error}` +
+          ` message=${error instanceof Error ? error.message : String(error)}` +
+          ` signal.aborted=${options.signal?.aborted ?? '-'} signal.reason=${String(options.signal?.reason ?? '-')}`,
+      )
+      throw error
+    })
 }
 
 /**
@@ -943,19 +1024,10 @@ export async function loadCampaignRecipeUsedSignatures(
 /**
  * 从纯文本正文反解配方卡配置。
  *
- * 兼容「用 JSON 正文存配方卡」的手工资产形态：content 直接放一段
- * {"body":"...","dimensions":[{"name":"...","options":["..."]}]} 即可被执行分支识别，
- * 不需要额外迁移脚本。解析失败返回 null，由调用方报「配置缺失」。
+ * **实现已收口到 `campaignRecipe.ts`**，此处保留同名导出仅为兼容既有调用点 ——
+ * 弹窗分流需要同一口径探测（见 `isCampaignRecipeSop`），而弹窗不能 import 本模块（R-46）。
  */
-export function parseCampaignRecipeConfigFromContent(content: string): SopCampaignRecipeConfig | null {
-  const text = content?.trim()
-  if (!text || !text.startsWith('{')) return null
-  try {
-    return parseCampaignRecipeConfig(JSON.parse(text) as unknown)
-  } catch {
-    return null
-  }
-}
+export { parseCampaignRecipeConfigFromContent }
 
 // ---------------------------------------------------------------------------
 // 两阶段衍生：阶段一视觉档案 → 阶段二模板生成（带质量校验与重试）

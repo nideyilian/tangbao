@@ -1435,6 +1435,13 @@ describe('SopManagementCenter campaign recipe SOPs', () => {
     expect(textContent(result.renderer.root)).toContain('配方卡引擎')
     expect(result.renderer.root.findByProps({ 'aria-label': '配方卡引擎配置' })).toBeTruthy()
 
+    // 类型角标（配方卡引擎 / 变量提示词 / 系列）必须落在右上角角标区，而不是下方参数行。
+    // 放参数行时，窄列下徽章会换到第二行、把内容顶出卡片下边界（2026-09-20 的布局回归）。
+    const badges = result.renderer.root.findByProps({ className: 'sop-center-sop-badges' })
+    expect(textContent(badges)).toContain('配方卡引擎')
+    const params = result.renderer.root.findByProps({ className: 'sop-center-sop-params' })
+    expect(textContent(params)).not.toContain('配方卡引擎')
+
     // 骨架 / 维度池已收进「配方卡详情」弹窗（弹窗走 portal，react-test-renderer 触达不了），
     // 所以这里锁「外面能看到的东西 + 编辑器入口可用」；编辑行为由
     // SopCampaignRecipeParseResultDialog.test.tsx 在 jsdom 下覆盖。

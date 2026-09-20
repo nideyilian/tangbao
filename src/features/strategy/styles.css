@@ -300,9 +300,15 @@ button.sop-center-group-tree-toggle:hover {
   display: grid;
   gap: 0.75rem;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  height: 6.25rem;
-  max-height: 6.25rem;
-  min-height: 5.5rem;
+  /*
+   * 行高必须自适应，不能写死。
+   * 参数行（分组名 + 配方卡引擎 + 使用中）在窄列下会换到第二行，
+   * 固定 6.25rem + max-height 会把内容顶出卡片下边界 —— 卡片没有 overflow 裁切，
+   * 徽章就可见地飘在卡片外面（2026-09-20 反馈的「位置和层级都出错」）。
+   * 用 6.25rem 作下限：内容少时视觉高度与原设计一致，内容多时自然变高。
+   */
+  height: auto;
+  min-height: 6.25rem;
   padding: 0.625rem 0.75rem;
   position: relative;
   transition:
@@ -348,14 +354,6 @@ button.sop-center-group-tree-toggle:hover {
   flex: none;
   justify-content: center;
   padding: 0;
-}
-
-.sop-center-sop-series-badge {
-  position: absolute;
-  right: 0.5rem;
-  top: 0.375rem;
-  white-space: nowrap;
-  z-index: var(--ds-z-sticky);
 }
 
 .sop-center-sop-cover:focus-visible,
@@ -415,9 +413,17 @@ button.sop-center-group-tree-toggle:hover {
   width: 3.75rem;
 }
 
+/*
+ * 展开幅度收敛为 0.3rem/张（原为 1rem/张）。
+ *
+ * 原值下 5 张层叠卡片累计偏移 4rem(64px)，加卡片宽 3.75rem(60px) 共 124px，
+ * 而壳宽只有 4.5rem(72px) —— 横向溢出约 52px，直接压住右侧 SOP 标题；
+ * 再叠加下面的 z-index 提升，缩略图会盖到相邻行上方。
+ * 收敛后最多偏移 1.2rem(19px)、总宽 79px，溢出量落在行内 0.75rem 的列间距里，不再压字。
+ */
 .sop-center-sop-stack-button:hover .sop-center-sop-stack__layer,
 .sop-center-sop-stack-button:focus-visible .sop-center-sop-stack__layer {
-  left: calc(var(--sop-stack-index) * 1rem);
+  left: calc(var(--sop-stack-index) * 0.3rem);
   box-shadow: var(--ds-shadow-sm);
   transform: translateY(-0.125rem) rotate(var(--sop-stack-hover-rotation));
 }
@@ -432,9 +438,14 @@ button.sop-center-group-tree-toggle:hover {
   transform: translate(0.125rem, -0.125rem) rotate(var(--sop-stack-hover-rotation));
 }
 
+/*
+ * 只抬到「本行之上」，不要提到 dropdown(40) 层。
+ * 原值让展开的缩略图盖住相邻行、并压到弹窗内其它内容（层级出错）。
+ * sticky(20) 已高于同一行内的兄弟列，足以保证缩略图不被后绘制的元素遮挡。
+ */
 .sop-center-sop-stack-button:hover,
 .sop-center-sop-stack-button:focus-visible {
-  z-index: var(--ds-z-dropdown);
+  z-index: var(--ds-z-sticky);
 }
 
 .sop-center-sop-main {
@@ -451,6 +462,52 @@ button.sop-center-group-tree-toggle:hover {
   text-align: left;
 }
 
+/*
+ * 右上角「类型角标」区：系列 / 变量提示词 / 配方卡引擎。
+ *
+ * 位置对齐操作按钮列的上方空白 —— 按钮列垂直居中（卡片 6.25rem 高，按钮约占中间 1.75rem），
+ * 上方正好空着，角标放这里既在「卡片右上角」，又不会和四个按钮抢位。
+ * 宽度上限 9rem 与操作列同量级：单个标签（≈5rem）完全落在按钮列上方，
+ * 不会压到中间列的标题；万一同时出现两个标签则换行，仍在按钮列宽度内。
+ */
+.sop-center-sop-badges {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  justify-content: flex-end;
+  /*
+   * 宽度上限贴合操作按钮列（四个 sm 图标 + 间距 ≈ 7.9rem），不要再大：
+   * 角标从卡片右侧起算，只要不超过按钮列宽，就不会压到中间列的标题 ——
+   * 因此**不需要**给标题预留 padding（曾加过 5.5rem 预留，直接把标题挤成「未…」）。
+   */
+  max-width: 8rem;
+  position: absolute;
+  right: 0.75rem;
+  top: 0.5rem;
+  z-index: var(--ds-z-sticky);
+}
+
+/*
+ * 标题：单行 + 省略号。等价于原先的 `block min-w-0 w-full truncate text-sm font-semibold`。
+ * 不设 padding-right —— 角标只占按钮列上方的空白，不侵占标题宽度。
+ */
+.sop-center-sop-title {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 说明文案：最多两行，超出用省略号截断。
+ * `-webkit-line-clamp` 自带省略号，不需要额外的 text-overflow 声明；
+ * max-height 按 (0.75rem × 1.35 × 2) 精确取值，防止行高被父级拉伸后多显示一行。
+ */
 .sop-center-sop-description {
   color: hsl(var(--ds-color-text-muted));
   display: -webkit-box;
@@ -478,6 +535,10 @@ button.sop-center-group-tree-toggle:hover {
   align-items: center;
   display: inline-flex;
   min-width: 0;
+  /* 分组名过长时截断，而不是把后续徽章挤到第二行（换行会抬高内容、与固定行高冲突）。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sop-center-sop-actions {

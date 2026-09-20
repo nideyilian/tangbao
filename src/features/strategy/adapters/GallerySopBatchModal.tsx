@@ -61,7 +61,8 @@ import {
   throwIfSopPromptGenerationAborted,
 } from '../sopPromptBatch'
 import { normalizeSeriesConfig } from '../sopGeneration'
-import type { SopLibraryItem, SopSeriesConfig } from '../types'
+import { describeCampaignRecipeSize, isCampaignRecipeSop, isLocalGenerationSop } from '../campaignRecipe'
+import type { SopSeriesConfig } from '../types'
 import {
   buildSopSeriesAnchoredPrompt,
   getSopSeriesAnchorImageId,
@@ -188,38 +189,13 @@ function isAbortError(error: unknown) {
 /**
  * 本地算法生成分支判定：配方卡与变量提示词都不调用 AI 文本模型。
  *
- * 关键：这个口径必须与 `generateForSources` 里的三分支分流**逐条对齐**，
- * 否则会出现「判定走 AI、但引擎其实能认出配方卡」的割裂（R-53），
- * 或者「本地引擎跑出来的 run 快照带着一个文本模型名」（R-54）。
+ * 判定实现已收口到 `campaignRecipe.ts` 的 `isCampaignRecipeSop` / `isLocalGenerationSop`
+ * —— 本组件、SOP 库列表、管理中心、生成引擎四处共用同一份实现，杜绝口径分叉（R-53 / R-54）。
  *
- * 配方卡三条触发条件（与 generateCampaignRecipePromptsFromStore 的取配置口径一致）：
- * 1. 带 campaignRecipe 字段（新资产的标准形态）；
- * 2. executionMode 显式标记；
- * 3. content 是一段含 body/dimensions 的 JSON（手工资产的旧形态，引擎侧有同款兜底）。
- *
- * 这里内联判定而不调用 storeSopGeneration 的辅助函数，避免弹窗对生成模块产生
- * 「非生成」依赖（该模块在测试中常被整体 mock，见 R-46）。
+ * 注意这里 import 的是 `campaignRecipe`（纯数据模块，只依赖 type）而不是
+ * `storeSopGeneration` —— 后者在本文件测试里被 `vi.mock` 整体替换，从它导入
+ * 任何函数都会踩 R-46（mock 未覆盖时一次性弄挂全部生成相关用例）。
  */
-function isCampaignRecipeSopForLocalCheck(
-  item: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode' | 'content'>,
-): boolean {
-  if (item.campaignRecipe || item.executionMode === 'campaign-recipe') return true
-  const text = item.content?.trim() ?? ''
-  if (!text.startsWith('{')) return false
-  try {
-    const parsed = JSON.parse(text) as { body?: unknown; dimensions?: unknown } | null
-    return Boolean(parsed && typeof parsed.body === 'string' && Array.isArray(parsed.dimensions))
-  } catch {
-    return false
-  }
-}
-
-/** 该 SOP 是否由本地算法生成提示词（配方卡 / 变量提示词），即：不调用 AI 文本模型。 */
-function isLocalGenerationSopForSop(
-  item: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode' | 'content'>,
-): boolean {
-  return isCampaignRecipeSopForLocalCheck(item) || item.executionMode === 'variable-prompt'
-}
 
 function getRunUpdatedAt(run: SopBatchSnapshot) {
   return run.updatedAt ?? run.createdAt
@@ -572,11 +548,35 @@ export default function GallerySopBatchModal({
   const [autoGenerate, setAutoGenerate] = useState(initialAutoGenerate)
   const [secondReference, setSecondReference] = useState(initialSecondReference)
   const [seriesAnchor, setSeriesAnchor] = useState(initialSeriesAnchor)
-  const [sources, setSources] = useState<SourceRun[]>([])
-  const [prompts, setPrompts] = useState<PromptDraft[]>([])
-  const [status, setStatus] = useState<BatchStatus>('idle')
-  const [statusMessage, setStatusMessage] = useState('提示词列表为空，可新建或从 SOP 生成')
-  const [error, setError] = useState('')
+  const [sources, setSourcesRaw] = useState<SourceRun[]>([])
+  const [prompts, setPromptsRaw] = useState<PromptDraft[]>([])
+  const [status, setStatusRaw] = useState<BatchStatus>('idle')
+  const [statusMessage, setStatusMessageRaw] = useState('提示词列表为空，可新建或从 SOP 生成')
+  const [error, setErrorRaw] = useState('')
+  // 诊断打点（临时）：无限渲染循环排查 —— 用 console.count 看哪个 setter 在狂调。
+  const diagCount = (name: string, value: unknown) => {
+    console.count(`[诊-set] ${name}=${typeof value === 'string' ? value : typeof value}`)
+  }
+  const setSources = (value: Parameters<typeof setSourcesRaw>[0]) => {
+    diagCount('setSources', value)
+    setSourcesRaw(value)
+  }
+  const setPrompts = (value: Parameters<typeof setPromptsRaw>[0]) => {
+    diagCount('setPrompts', value)
+    setPromptsRaw(value)
+  }
+  const setStatus = (value: Parameters<typeof setStatusRaw>[0]) => {
+    diagCount('setStatus', value)
+    setStatusRaw(value)
+  }
+  const setStatusMessage = (value: Parameters<typeof setStatusMessageRaw>[0]) => {
+    diagCount('setStatusMessage', value)
+    setStatusMessageRaw(value)
+  }
+  const setError = (value: Parameters<typeof setErrorRaw>[0]) => {
+    diagCount('setError', value)
+    setErrorRaw(value)
+  }
   const [activeRunId, setActiveRunId] = useState(promptRunId)
   const [recentRuns, setRecentRuns] = useState<SopBatchSnapshot[]>([])
   const [runTitle, setRunTitle] = useState('')
@@ -819,6 +819,9 @@ export default function GallerySopBatchModal({
   const cancelPromptGeneration = () => {
     const controller = generationAbortRef.current
     if (!controller) return
+    // 诊断打点（临时）：现场只有这里会发出「提示词生成已取消」的 abort，
+    // 但用户没点取消按钮却被 abort —— 打出调用栈定位真凶。
+    console.warn('[诊-取消] cancelPromptGeneration 被调用', new Error('调用栈').stack)
     generationPausedRef.current = false
     releasePauseWaiters()
     controller.abort(new DOMException('提示词生成已取消', 'AbortError'))
@@ -898,7 +901,7 @@ export default function GallerySopBatchModal({
     // 这里额外挡掉 `previous?.promptGenerationModel` 的粘性回退：历史 run 若曾被
     // 误写过模型名，只改 activePromptGenerationModelRef 是洗不掉的 —— 不加这道闸，
     // 用户会一直看到「文本模型 gemini-…」并误判成走了 AI（R-54）。
-    const snapshotIsLocalGeneration = isLocalGenerationSopForSop(snapshotSop)
+    const snapshotIsLocalGeneration = isLocalGenerationSop(snapshotSop)
     const promptGenerationModel = snapshotIsLocalGeneration
       ? undefined
       : patch.promptGenerationModel?.trim() ||
@@ -1046,7 +1049,7 @@ export default function GallerySopBatchModal({
       // R-54 残留清洗：本地引擎（配方卡 / 变量提示词）的 run 快照永远不该带文本模型名。
       // 旧版本（R-54 修复前）写进去的脏值会被这里「恢复 → 再回写」，于是光改 ref 洗不掉：
       // 每开一次弹窗它都会复活。恢复时就地净化，并标记回写，做到「打开即洗干净」。
-      const runIsLocalGeneration = isLocalGenerationSopForSop(run.sop)
+      const runIsLocalGeneration = isLocalGenerationSop(run.sop)
       const stalePromptGenerationModel = runIsLocalGeneration && Boolean(run.promptGenerationModel?.trim())
       activePromptGenerationModelRef.current = stalePromptGenerationModel ? '' : (run.promptGenerationModel ?? '')
       if (stalePromptGenerationModel) run.promptGenerationModel = undefined
@@ -1271,16 +1274,22 @@ export default function GallerySopBatchModal({
     onCountsChange?.({ promptCount, imagesPerPrompt, autoGenerate, secondReference, seriesMode, seriesImageCount })
   }, [autoGenerate, imagesPerPrompt, onCountsChange, promptCount, secondReference, seriesImageCount, seriesMode])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // ⚠️ 挂载时必须把 active 标志置回 true —— 只靠 useRef(true) 的初始值不够。
+    // React 18+ 的 StrictMode（dev）会把 effect 挂载→清理→再挂载，而 useRef 对象**不重建**：
+    // 若清理只把 false 写进去、重挂载没人写回 true，整个组件生命周期里这个标志恒为 false，
+    // onBatch 的「已卸载」守卫就会把每次生成在第一条就误杀（抛「提示词生成已取消」），
+    // 而取消收尾又被同一个标志拦下直接 return —— status 永久停在 'generating'，界面卡死
+    // （2026-09-20「配方卡卡在写入提示词管理」的根因，dev 下 100% 复现）。
+    componentActiveRef.current = true
+    return () => {
       componentActiveRef.current = false
       submissionAbortRef.current?.abort()
       if (snapshotTimerRef.current != null) window.clearTimeout(snapshotTimerRef.current)
       const pending = pendingSnapshotRef.current
       if (pending) void putSopBatchSnapshot(pending)
-    },
-    [],
-  )
+    }
+  }, [])
 
   const toggleAutoGenerate = (nextAutoGenerate: boolean) => {
     autoGenerateRef.current = nextAutoGenerate
@@ -1934,12 +1943,24 @@ export default function GallerySopBatchModal({
     freshRun = false,
     generateImagesForNewPrompts = false,
   ) => {
-    if (!selectedSop) return
+    if (!selectedSop) {
+      return
+    }
+    // 诊断打点（临时，定位「配方卡生成卡死」用，定位后删除）：
+    // 日志停在哪一行，就卡在哪个 await。⏱ 打点自带耗时。
+    const diagTag = `[诊-生成 ${selectedSop.name || selectedSop.id}]`
+    const diagStart = Date.now()
+    const diag = (step: string, extra = '') =>
+      console.info(`${diagTag} ${step} (+${Date.now() - diagStart}ms)${extra ? ' ' + extra : ''}`)
+    diag(
+      '入口',
+      `retry=${retrySourceId ?? '-'} fresh=${freshRun} 目标=${effectivePromptTarget} seriesMode=${activeSeriesMode}`,
+    )
     captureBatchDefaultCollectionId()
     // 只在真正调用 AI 文本模型时才记录模型名。配方卡 / 变量提示词是纯本地算法，
     // 用不到文本模型 —— 无条件记录会让 run 快照带上一个「本次未使用的模型名」，
     // 界面显示成「文本模型 gemini-…」，用户会误判成走了 AI（见 R-54）。
-    activePromptGenerationModelRef.current = isLocalGenerationSopForSop(selectedSop)
+    activePromptGenerationModelRef.current = isLocalGenerationSop(selectedSop)
       ? ''
       : getSopPromptGenerationModelFromStore()
     const currentSources = freshRun ? [] : sources
@@ -2014,6 +2035,10 @@ export default function GallerySopBatchModal({
       )
     setSources(plannedSources)
     setStatus('generating')
+    diag(
+      '⓪入场写库前',
+      `planned=${plannedSources.length} requested=[${requestedCounts.join(',')}] autoGenerate=${autoGenerate}`,
+    )
     setStatusMessage(
       generateImagesForNewPrompts
         ? `正在补充 ${supplementPromptCount} 条提示词并生成 ${supplementPromptCount * targetImagesPerPrompt} 张图片`
@@ -2156,7 +2181,12 @@ export default function GallerySopBatchModal({
         continue
       }
       try {
+        diag(
+          `ⓐ[${sourceRun.source.label || sourceRun.source.id}] loadSourceInputImage 前`,
+          `deficit=${deficit} count=${generationCount}`,
+        )
         const sourceImage = await loadSourceInputImage(sourceRun.source)
+        diag(`ⓑ loadSourceInputImage 后`, sourceImage ? `img=${sourceImage.id}` : '无图')
         const referenceImageIds = sourceImage ? [sourceImage.id] : []
         const generationInputImages =
           progressiveDispatch && secondReferenceRef.current && sourceImage ? [sourceImage] : []
@@ -2165,14 +2195,18 @@ export default function GallerySopBatchModal({
           (item) => !item.deleted && item.promptText.trim() && promptBelongsToSource(item, sourceRun.source),
         ).length
         const isVariablePromptSop = selectedSop.executionMode === 'variable-prompt'
-        // 配方卡 / 变量提示词的判定统一收口到模块级 isLocalGenerationSopForSop，
+        // 配方卡 / 变量提示词的判定统一收口到模块级 isLocalGenerationSop，
         // 避免「分流用一份口径、模型名记录用另一份口径」再次漂移（R-53 / R-54）。
-        const isCampaignRecipe = isCampaignRecipeSopForLocalCheck(selectedSop)
+        const isCampaignRecipe = isCampaignRecipeSop(selectedSop)
         // 配方卡与变量提示词都是本地一次算完全部结果，不能走 AI 渐进式「逐单位请求」的批量方式。
-        const isLocalGenerationSop = isLocalGenerationSopForSop(selectedSop)
+        const useLocalGeneration = isLocalGenerationSop(selectedSop)
         const generationOptions: NonNullable<Parameters<typeof generatePromptsFromSopStore>[3]> & {
           outputUnitSize?: number
+          builtinValues?: Record<string, string>
         } = {
+          // 配方卡骨架可用 {比例} / {方向} / {尺寸} 注入界面当前选中的尺寸 ——
+          // 否则 body 里的比例只能写死（如 vertical 9:16 photo），跟界面选择脱节。
+          builtinValues: describeCampaignRecipeSize(params.size ?? ''),
           context: {
             sourceLabel: sourceImage ? sourceRun.source.label : undefined,
             sourceIndex: sourceImage ? sourcePosition : undefined,
@@ -2188,7 +2222,7 @@ export default function GallerySopBatchModal({
           // 普通 SOP 一次 1 条提示词；系列图一次 1 组（一条含 3 段的内容拆成 3 条成员提示词）。
           // 普通场景批量会丢逐条粒度，系列场景批量会让多组共抢一次组间规划、并拖住母图锚定。
           maxBatchSize:
-            !isLocalGenerationSop && progressiveDispatch
+            !useLocalGeneration && progressiveDispatch
               ? activeSeriesMode
                 ? SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE
                 : SOP_PROGRESSIVE_PROMPT_BATCH_SIZE
@@ -2354,6 +2388,10 @@ export default function GallerySopBatchModal({
         // - campaign-recipe（配方卡）：纯本地最远点采样组合维度池，不发任何 AI 请求。
         // - variable-prompt（变量提示词）：本地展开模板组合，组合不足时才调 AI 扩词条。
         // - 其余（普通 SOP / 系列图）：调 AI 文本模型逐条编写提示词。
+        diag(
+          '①引擎调用前',
+          `isRecipe=${isCampaignRecipe} count=${generationCount} unitSize=${generationOptions.outputUnitSize}`,
+        )
         const generated = isCampaignRecipe
           ? await generateCampaignRecipePromptsFromStore(
               selectedSop,
@@ -2364,6 +2402,7 @@ export default function GallerySopBatchModal({
           : isVariablePromptSop
             ? await generateVariablePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
             : await generatePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
+        diag('②引擎返回', `${generated?.length ?? '(非数组)'} 条`)
         if (generationController.signal.aborted) {
           throw generationController.signal.reason instanceof Error
             ? generationController.signal.reason
@@ -2387,6 +2426,7 @@ export default function GallerySopBatchModal({
           batchSeriesCursor += 1
           return series
         }
+        diag('②·5 候选归一化完成', `candidates=${candidates.length} deficit=${deficit}`)
         nextPrompts.push(
           ...candidates.map((prompt) => ({
             id: promptItemId(sourceRun.source.id),
@@ -2397,6 +2437,7 @@ export default function GallerySopBatchModal({
             series: nextBatchSeries(),
           })),
         )
+        diag('③ prompts 已并入', `nextPrompts=${nextPrompts.length}`)
         const generatedCount =
           nextPrompts.filter(
             (item) => !item.deleted && item.promptText.trim() && promptBelongsToSource(item, sourceRun.source),
@@ -2438,7 +2479,9 @@ export default function GallerySopBatchModal({
       await Promise.allSettled(pendingAnchorDispatches)
     }
 
-    if (!componentActiveRef.current) return
+    if (!componentActiveRef.current) {
+      return
+    }
     if (generationCancelled) {
       for (let index = 0; index < nextSources.length; index += 1) {
         if (nextSources[index].status === 'running') {
@@ -2505,9 +2548,13 @@ export default function GallerySopBatchModal({
       )
       if (!hasProblems) resetCompletedRun()
     } else {
+      diag('④收尾 persistPromptRun 前', `available=${available} failed=${failed} missing=${missing}`)
       persistPromptRun(nextPrompts, nextSources, autoGenerate, failed && available === 0 ? 'failed' : 'ready')
+      diag('⑤persistPromptRun 返回，开始 flushPromptRunSnapshot')
       await flushPromptRunSnapshot()
+      diag('⑥写库完成')
       setStatus(failed || missing ? 'error' : 'ready')
+      diag('⑦status 已复位 —— 流程结束')
       setStatusMessage(
         missing
           ? `提示词列表部分完成：当前可用 ${available} 条，缺口 ${missing} 条`
@@ -3328,7 +3375,7 @@ export default function GallerySopBatchModal({
                   {activeRun ? getRunStatusLabel(activeRun) : '编辑中'}
                   {activeRun?.promptGenerationModel
                     ? ` · ${activeRun.promptGenerationModel}`
-                    : selectedSop && isLocalGenerationSopForSop(selectedSop)
+                    : selectedSop && isLocalGenerationSop(selectedSop)
                       ? ' · 本地引擎（不调用 AI）'
                       : ''}
                 </p>
@@ -3917,7 +3964,7 @@ export default function GallerySopBatchModal({
                             条提示词 · {activeRun ? getRunStatusLabel(activeRun!) : '编辑中'}
                             {activeRun?.promptGenerationModel
                               ? ` · 文本模型 ${activeRun.promptGenerationModel}`
-                              : selectedSop && isLocalGenerationSopForSop(selectedSop)
+                              : selectedSop && isLocalGenerationSop(selectedSop)
                                 ? ' · 本地引擎（不调用 AI）'
                                 : ''}
                             {activeRun ? ` · ${new Date(getRunUpdatedAt(activeRun!)).toLocaleString()}` : ''}

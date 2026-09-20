@@ -6,6 +6,7 @@ import SopCampaignRecipeParseResultDialog, {
   countParsedRecipeAttention,
   summarizeParsedRecipe,
 } from './SopCampaignRecipeParseResultDialog'
+import { resolveEffectiveDominantSlots } from './campaignRecipe'
 import type { CampaignRecipeDimension } from './campaignRecipe'
 import type { SopCampaignRecipeConfig } from './types'
 
@@ -36,6 +37,33 @@ export type SopCampaignRecipePanelProps = {
   meta?: { name?: string; desc?: string; dominantSlots?: string[] }
   onChange: (config: SopCampaignRecipeConfig) => void
   onMetaChange?: (meta: { name?: string; desc?: string; dominantSlots?: string[] }) => void
+}
+
+/**
+ * 组合空间大小：各维度**有效**候选值数量之积（空串不算）。
+ *
+ * 抽成模块级函数是为了让「解析提示条」与「面板展示」用同一口径 ——
+ * 两边分别手算过一次，其中一边漏了空值过滤，提示的数字比实际能跑出来的大。
+ * 导出的目的是可被测试直接覆盖（面板组件本身没有测试文件）。
+ */
+export function computeRecipeCombinationCount(dimensions: CampaignRecipeDimension[]): number {
+  return dimensions.reduce(
+    (total, dimension) => {
+      const size = (dimension.options ?? []).filter((option) => option.trim()).length
+      return total * Math.max(0, size)
+    },
+    dimensions.length > 0 ? 1 : 0,
+  )
+}
+
+/**
+ * 解析结果里带英文描述的候选值总数。
+ *
+ * `englishByOption` 只用于导入期识别，不参与采样（它没有对应的 config 字段），
+ * 但用户需要知道「解析器读到了 en 字段」，否则会以为被漏掉了。
+ */
+export function countRecipeEnglishOptions(dimensions: Array<{ englishByOption?: Record<string, string> }>): number {
+  return dimensions.reduce((total, dimension) => total + Object.keys(dimension.englishByOption ?? {}).length, 0)
 }
 
 export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaChange }: SopCampaignRecipePanelProps) {
@@ -103,8 +131,8 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
    */
   const hasConfigContent = (config.body ?? '').trim().length > 0 || (config.dimensions ?? []).length > 0
   const canOpenDetail = Boolean(parsed) || hasConfigContent
-  /** 主控槽展示口径：用解析出的声明（引擎侧的权重推导落地后可换成按权重算） */
-  const dominantSlotsForDisplay = meta?.dominantSlots ?? []
+  // 主控槽按「当前权重」推导（执行口径即唯一真相），解析声明只作为来源说明
+  const dominantSlotsForDisplay = resolveEffectiveDominantSlots(config.dimensions ?? [])
 
   function handleParse() {
     if (parsing) return
