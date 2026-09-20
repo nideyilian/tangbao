@@ -985,6 +985,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Card', 'Thumbnail', 'Badge', 'Checkbox', 'Button', 'Popover', 'Menu'],
   },
   {
+    module: 'src/features/composite/components/ConsoleDirectionTables.tsx',
+    responsibility:
+      '中控台「方向」分区的两张表：方向结构（名称 / 层级 / 上级 / 子项 / 增删，含成环保护）+ 方向级参数（参与产出 / 输出目录 / 水印 / 设置来源）',
+    decision: 'compose',
+    targets: ['DataGrid', 'SectionHeader', 'Alert', 'Button', 'IconButton', 'TextField'],
+  },
+  {
     module: 'src/features/composite/components/ConsoleMediaTables.tsx',
     responsibility:
       '中控台「渠道与尺寸」分区的表格本体：渠道表（含参与产出勾选与尺寸计数）+ 尺寸表（含跨渠道移动），规格增删改就地完成',

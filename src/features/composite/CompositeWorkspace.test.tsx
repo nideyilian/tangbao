@@ -17,6 +17,9 @@ import { useStore } from '../../store'
  * 分区内容各自 mock 成占位文本：这里锁的是**分区注册表 → 渲染分支**的对应关系，
  * 以及「树 → 作用域 → 右区标题」这条链 —— 不是各分区内部的业务逻辑。
  */
+vi.mock('./components/ConsoleDirectionTables', () => ({
+  ConsoleDirectionTables: () => <div>directions-screen</div>,
+}))
 vi.mock('./components/ConsolePresetGrid', () => ({
   ConsolePresetGrid: () => <div>preset-screen</div>,
 }))
@@ -125,6 +128,7 @@ describe('CompositeWorkspace', () => {
 
     const expectations: Record<string, string> = {
       watermark: 'preset-screen',
+      directions: 'directions-screen',
       media: 'media-screen',
       output: 'output-screen',
       distribution: 'distribution-screen',

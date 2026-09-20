@@ -9,6 +9,7 @@ import {
   type ConsoleScope,
 } from './lib/controlConsoleSections'
 import { ConsoleAssetTree } from './components/ConsoleAssetTree'
+import { ConsoleDirectionTables } from './components/ConsoleDirectionTables'
 import { ConsolePresetGrid } from './components/ConsolePresetGrid'
 import { ConsoleToolbar, type ConsoleBindingFilter, type ConsoleViewMode } from './components/ConsoleToolbar'
 import { DistributionSection } from './components/DistributionSection'
@@ -349,6 +350,7 @@ export default function CompositeWorkspace() {
             </div>
           )}
 
+          {section === 'directions' && <ConsoleDirectionTables />}
           {section === 'media' && <MediaSection />}
           {section === 'output' && <OutputSection scope={scope} />}
           {section === 'distribution' && <DistributionSection />}

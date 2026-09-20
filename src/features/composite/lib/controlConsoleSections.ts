@@ -16,6 +16,11 @@
  * 可覆盖字段时才消费作用域** —— `PostprocessNodeOverride` 目前只有 `outputDir` /
  * `byMedia` / `watermarkPresetIds` / `enabled`，所以「渠道与尺寸」「分发」是纯全局分区。
  * 给了作用域却什么都不变，比不给更糟。详见 `design-system/tangbao/pages/postprocess.md`。
+ *
+ * **2026-09-21 表格化（TB-060）新增「方向」分区**：方向（`AssetCollection` 树）是数据本体的骨架，
+ * 但它原先只能通过左树导航与「新建方向」按钮间接管理 —— 改名、改归属、删层级，以及每个方向的
+ * 参与方式与输出目录，都没有一个集中的编辑入口。这一区把「方向结构」与「方向级参数」两张表
+ * 摆在一起，补上的正是上面那条「不设断层」的约束。
  */
 
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
@@ -31,7 +36,7 @@ export function isGlobalScope(scope: ConsoleScope): boolean {
   return scope === GLOBAL_NODE_ID
 }
 
-export type ControlConsoleSectionId = 'watermark' | 'media' | 'output' | 'distribution'
+export type ControlConsoleSectionId = 'watermark' | 'directions' | 'media' | 'output' | 'distribution'
 
 export interface ControlConsoleSection {
   id: ControlConsoleSectionId
@@ -64,6 +69,11 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
     id: 'distribution',
     label: '分发',
     description: '全局一套：按天把产出分散到日期目录，以及纯净版原图是否伴随产出。',
+  },
+  {
+    id: 'directions',
+    label: '方向',
+    description: '产品线 / 产品 / 方向的层级与归属，以及每个方向参不参与产出、产出到哪。',
   },
 ]
 
