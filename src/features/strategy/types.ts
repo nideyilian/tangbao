@@ -112,7 +112,41 @@ export interface SopGroup {
   updatedAt: number
 }
 
-export type SopKind = 'single' | 'series'
+/**
+ * SOP 类型：
+ * - single           单条提示词：交给 AI 逐条编写
+ * - series           系列图：一组内固定块 + 多条成员提示词，交给 AI 生成
+ * - campaign-recipe  配方卡引擎：不调 AI，用本地最远点采样从维度池批量组合出提示词
+ */
+export type SopKind = 'single' | 'series' | 'campaign-recipe'
+
+/**
+ * SOP 执行方式（触发本地/远端分支的依据）：
+ * - prompt-generator   调 AI 文本模型生成提示词（默认）
+ * - variable-prompt    本地展开变量模板组合，组合不足时用 AI 扩词条
+ * - campaign-recipe    配方卡引擎：纯本地最远点采样，完全不调 AI
+ */
+export type SopExecutionMode = 'prompt-generator' | 'variable-prompt' | 'campaign-recipe'
+
+/**
+ * 配方卡单个维度：一个维度名 + 一组候选值。
+ * 候选值命中合规红线的会在入库/生成前被剔除。
+ */
+export interface SopCampaignRecipeDimension {
+  name: string
+  options: string[]
+}
+
+/**
+ * 配方卡引擎配置。
+ * body 用 {{维度名}} 占位；引擎用最远点采样在维度组合空间里挑出彼此差异最大的 N 条。
+ */
+export interface SopCampaignRecipeConfig {
+  /** 提示词骨架，含 {{维度名}} 占位符 */
+  body: string
+  /** 维度池，至少一个维度且每个维度至少一个候选值 */
+  dimensions: SopCampaignRecipeDimension[]
+}
 
 export interface SopSeriesConfig {
   imageCount: 2 | 3
@@ -135,10 +169,15 @@ export interface SopLibraryItem {
   /** 旧 SOP 缺省为 single；series SOP 的每组提示词遵循组内固定规则。 */
   kind?: SopKind
   seriesConfig?: SopSeriesConfig
+  /**
+   * 配方卡引擎配置。存在该字段即走「配方卡引擎」本地生成分支，不调用 AI。
+   * 与 executionMode='campaign-recipe' 二者任一命中即判定为该类型（字段优先）。
+   */
+  campaignRecipe?: SopCampaignRecipeConfig
   source: 'manual' | 'generated' | 'legacy-preset'
   metaInstructionId?: string
   /** 变量提示词资产：content 为可被 parseVariablePrompt 解析的模板，可展开批量生图 */
-  executionMode?: 'prompt-generator' | 'variable-prompt'
+  executionMode?: SopExecutionMode
   /** 变量提示词资产的每个可变项的结构化参数（主题/类型/衍生数量）；旧资产缺省时由正文推导 */
   variableMeta?: SopVariableMeta[]
   createdBy: string

@@ -506,3 +506,57 @@ git grep -c "DIRECTION_OPTIONS"   # 每份都是漏改点
 **坑**：`Switch` 的 `label` 是必填（要传 `label=""`）；`Button` 没有 `icon` 属性
 （图标当 children 传）；`Checkbox` 的文本在 `label` 上而不是 `button` 里——
 用 `findButton` 找媒体勾选框会失败，要按 `input[type=checkbox]` + `.ds-check__label` 找。
+
+---
+
+## 十四、对比「我的改动 vs HEAD」而不毁仓库（2026-09-20 实测定稿）
+
+**背景**：R-44 记录了本机 `git stash` 会毁掉 `.git/refs/`（命令被中断时）。做基线对比
+（"这些测试失败是我改出来的，还是本来就红？"）**不能**再用 `git stash`。
+
+### 正确做法：只读提取 + cp 换入换出
+
+```bash
+# 1. 把 HEAD 版本提取到仓库外的临时目录（只读操作，不动工作区）
+mkdir -p /d/AAA/_baseline
+git show HEAD:src/features/strategy/adapters/GallerySopBatchModal.tsx > /d/AAA/_baseline/GallerySopBatchModal.tsx
+
+# 2. 备份自己的改动版本
+cp src/.../GallerySopBatchModal.tsx /d/AAA/_wipbackup/GallerySopBatchModal.wip.tsx
+
+# 3. 换入基线 → 跑测试 → 换回自己的版本
+cp /d/AAA/_baseline/GallerySopBatchModal.tsx src/.../GallerySopBatchModal.tsx
+npx vitest run <测试文件>          # 基线是不是绿的？
+cp /d/AAA/_wipbackup/GallerySopBatchModal.wip.tsx src/.../GallerySopBatchModal.tsx
+```
+
+**为什么比 stash 好**：全程不写 `.git/`，中断了顶多留下临时目录，仓库毫发无伤。
+
+### 已踩中 R-44 的恢复配方（实测 1 步~4 步，总耗时 < 1 分钟）
+
+```bash
+# ① 重建 refs 骨架
+mkdir -p .git/refs/heads .git/refs/remotes/origin .git/refs/tags
+
+# ② 从 reflog 取分支头（这是关键：logs/ 通常还在，它保留了最后已知 commit）
+tail -1 .git/logs/refs/heads/main        # 取第二列（新值）的 40 位 hash
+printf '<hash>\n' > .git/refs/heads/main
+printf '<hash>\n' > .git/refs/remotes/origin/main
+
+# ③ 看 .pack 是否幸存；缺了就从远端取回对象（远端是最权威的备份）
+ls .git/objects/pack/
+git -c http.sslVerify=false fetch origin main
+
+# ④ 清掉失效的 multi-pack-index 并体检
+rm -f .git/objects/pack/multi-pack-index
+git fsck --no-progress                     # 只剩 dangling 是正常的
+git status -sb                             # 应显示 ## main...origin/main
+```
+
+**要点**：
+- **reflog 是恢复分支头的关键**（`.git/logs/refs/heads/main`），比 `FETCH_HEAD` 可靠。
+- 只有 `.pack` 丢了才需要 fetch；`refs/` 单独丢失时对象还在，重建 refs 即可。
+- `git fsck` 报 `invalid reflog entry` 时，用 `grep -v <坏hash>` 过滤 `logs/HEAD`
+  与 `logs/refs/heads/main` 后写回（先备份原文件）。
+- 恢复后 `git status` 显示的未提交改动应当是**你自己的那几个文件**，逐一核对。
+

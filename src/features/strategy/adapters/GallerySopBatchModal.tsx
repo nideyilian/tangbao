@@ -66,6 +66,7 @@ import {
   waitForSopSeriesAnchor,
 } from '../../../lib/sopSeriesAnchor'
 import {
+  generateCampaignRecipePromptsFromStore,
   generatePromptsFromSopStore,
   generateVariablePromptsFromSopStore,
   getSopPromptGenerationModelFromStore,
@@ -1968,6 +1969,12 @@ export default function GallerySopBatchModal({
           (item) => !item.deleted && item.promptText.trim() && promptBelongsToSource(item, sourceRun.source),
         ).length
         const isVariablePromptSop = selectedSop.executionMode === 'variable-prompt'
+        // 配方卡触发条件：带 campaignRecipe 字段，或 executionMode 显式标记。
+        // 这里内联判定而不调用 storeSopGeneration 的辅助函数，避免弹窗对生成模块产生
+        // 「非生成」依赖（该模块在测试中常被整体 mock）。
+        const isCampaignRecipe = Boolean(selectedSop.campaignRecipe) || selectedSop.executionMode === 'campaign-recipe'
+        // 配方卡与变量提示词都是本地一次算完全部结果，不能走 AI 渐进式「逐单位请求」的批量方式。
+        const isLocalGenerationSop = isCampaignRecipe || isVariablePromptSop
         const generationOptions: NonNullable<Parameters<typeof generatePromptsFromSopStore>[3]> & {
           outputUnitSize?: number
         } = {
@@ -1981,17 +1988,17 @@ export default function GallerySopBatchModal({
           referenceImages: sourceImage ? [{ name: sourceRun.source.label, dataUrl: sourceImage.dataUrl }] : undefined,
           exact: false,
           existingPrompts: [...existingPrompts, ...nextPrompts.map((item) => item.promptText.trim()).filter(Boolean)],
-          // 变量提示词模式是本地展开，一次生成全部再逐条提交。
+          // 本地生成模式（配方卡 / 变量提示词）一次算完全部再逐条提交，不做逐单位请求。
           // AI 渐进模式一律「逐单位」请求，且两种场景的批量方式互不套用：
           // 普通 SOP 一次 1 条提示词；系列图一次 1 组（一条含 3 段的内容拆成 3 条成员提示词）。
           // 普通场景批量会丢逐条粒度，系列场景批量会让多组共抢一次组间规划、并拖住母图锚定。
           maxBatchSize:
-            !isVariablePromptSop && progressiveDispatch
+            !isLocalGenerationSop && progressiveDispatch
               ? activeSeriesMode
                 ? SOP_SERIES_PROGRESSIVE_GROUP_BATCH_SIZE
                 : SOP_PROGRESSIVE_PROMPT_BATCH_SIZE
               : undefined,
-          // 系列模式下 generationCount 是「组数」，变量展开要按每组张数换算成条数
+          // 系列模式下 generationCount 是「组数」，本地展开要按每组张数换算成条数
           outputUnitSize: activeSeriesMode ? seriesCount : 1,
           beforeBatch: waitWhileGenerationPaused,
           signal: generationController.signal,
@@ -2148,9 +2155,20 @@ export default function GallerySopBatchModal({
             }
           },
         }
-        const generated = isVariablePromptSop
-          ? await generateVariablePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
-          : await generatePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
+        // 三种场景互斥分流，各自有独立的输入来源与输出形式（不要互相套用）：
+        // - campaign-recipe（配方卡）：纯本地最远点采样组合维度池，不发任何 AI 请求。
+        // - variable-prompt（变量提示词）：本地展开模板组合，组合不足时才调 AI 扩词条。
+        // - 其余（普通 SOP / 系列图）：调 AI 文本模型逐条编写提示词。
+        const generated = isCampaignRecipe
+          ? await generateCampaignRecipePromptsFromStore(
+              selectedSop,
+              generationCount,
+              effectiveBrief,
+              generationOptions,
+            )
+          : isVariablePromptSop
+            ? await generateVariablePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
+            : await generatePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
         if (generationController.signal.aborted) {
           throw generationController.signal.reason instanceof Error
             ? generationController.signal.reason

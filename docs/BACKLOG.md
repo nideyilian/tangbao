@@ -685,3 +685,99 @@
 - **已知坑**：指向 RISK.md 的 R-### 或 runbook 章节
 - **回滚点**：commit / 备份目录
 ```
+
+### TB-047 配方卡引擎：新增 campaign-recipe SOP 类型，本地最远点采样批量出提示词
+
+- **来源**：杰哥原话「帮我把提示词工厂引擎加到这个项目里…新增一个 SOP 类型叫"配方卡引擎"，
+  有 campaignRecipe 字段就走这个类型；这个类型不调 AI 生成提示词，用本地算法批量生成不重复提示词」
+  （2026-09-20）
+- **状态**：DONE · 写线：主写线
+- **需求要点**（杰哥指定，6 条）
+  1. 新增 SOP 类型「配方卡引擎」，**有 `campaignRecipe` 字段就走这个类型**
+  2. 该类型**不调 AI**，用本地算法批量生成不重复提示词
+  3. 算法：最远点采样，保证每批 N 条两两差异够大，**跨批次自动去重**
+  4. **合规红线内置**且不可关闭（21 个词，见下）
+  5. **不改现有 SOP 逻辑，只加新分支**
+  6. 改完确认能跑
+- **两种场景的区分**（杰哥第二轮明确要求「区分触发条件、输入来源、输出形式」）
+
+  |              | 配方卡引擎                                                                     | 普通 SOP / 系列图                     |
+  | ------------ | ------------------------------------------------------------------------------ | ------------------------------------- |
+  | **触发条件** | SOP 带 `campaignRecipe` 字段，或 `executionMode === 'campaign-recipe'`         | 其余全部                              |
+  | **输入来源** | 配方卡维度池（`dimensions[].options`）；**不读参考图**，`brief` 仅并入采样种子 | SOP 正文 + `brief` + 参考图（多模态） |
+  | **输出形式** | 本地直接算出成品提示词，**无 JSON 解析 / 无结构修复重试**                      | 模型返回 JSON → 校验 → 失败自动重试   |
+
+- **合规红线**（21 词，内置 `CAMPAIGN_RECIPE_FORBIDDEN_TERMS`）
+  人民币 / 现金 / 钞票 / 提现 / 赚钱 / 日赚 / 月赚 / 保本 / 稳赚 / 最高 / 必备 / 必看 / 第一 /
+  国家级 / 领导人 / 毛泽东 / 军 / 警 / 色情 / 裸体 / 裸
+  - 命中即从候选池剔除（`sanitizeCampaignRecipeConfig`），骨架命中则清空并报告；
+  - **刻意保守**：中文无词边界，「军」会命中「军绿色」，属可接受的误杀（宁杀不错放）。
+- **验收标准**（可测）
+  1. `npx tsc -b` + `npx tsc -p electron/tsconfig.json --noEmit` 双端零错误
+  2. `campaignRecipe.test.ts` **20 例全绿**：红线 21 词全覆盖、清洗、结构校验、
+     近层硬约束、签名稳定性、跨批次去重、组合耗尽不重复、占位符渲染
+  3. `GallerySopBatchModal.test.tsx` **38 例全绿**（原 36 + 2 例分流）：
+     - 配方卡 SOP → 调 `generateCampaignRecipePromptsFromStore`，**且不调** AI 生成函数
+     - 普通 SOP → 调 `generatePromptsFromSopStore`，**且不调** 配方卡引擎
+  4. **保真对拍**：同 seed 同输入下，与 `farthestPointSampling.ts` 的
+     `selections` / `signatures` / `totalAttempts` **逐位一致**（7 组配置验证）
+  5. `npm run verify` 全绿（**229 文件 / 2578 用例**）
+- **影响面**
+  - **新增**：`src/features/strategy/campaignRecipe.ts`（引擎，含红线 + FPS）、
+    `campaignRecipe.test.ts`（20 例）、**`SopCampaignRecipePanel.tsx`**（配方卡编辑器）
+  - **扩展**：`types.ts`（`SopKind` 加 `'campaign-recipe'`、新增 `SopCampaignRecipeConfig`
+    / `SopCampaignRecipeDimension` / `SopExecutionMode`、`SopLibraryItem.campaignRecipe`）、
+    `storeSopGeneration.ts`（新增 `generateCampaignRecipePromptsFromStore` 等 3 个导出）、
+    `GallerySopBatchModal.tsx`（加一条平行分支 + `isLocalGenerationSop`）、
+    `SopLibraryTab.tsx`（类型徽标 + 「配方卡」新建按钮 + 挂载编辑器）、
+    `SopManagementCenter.tsx`（`addCampaignRecipeItem` + `itemDirty` 纳入 `campaignRecipe`）
+  - **未改动**：`single` / `series` 的任何既有逻辑（`SopKind` 扩宽后全仓零编译错误，
+    因为现有代码用 `kind === 'series'` 判断而非穷尽 switch）
+- **关键设计点**
+  - **保真移植优先于"修笔误"**：原始引擎有两处疑似笔误（`enforce` 的 `n` 遮蔽、
+    `windowFar` 死参数），但实测影响采样分布 → **逐字保留**并注释标明，见 R-45；
+  - `SopCampaignRecipeConfig` 定义在 `types.ts`，`campaignRecipe.ts` 用别名引用 → 单一真相源；
+  - 弹窗内**内联判定**配方卡类型，不 import 生成模块的辅助函数（否则测试整体 mock 会挂），
+    见 R-46；
+  - 组合耗尽时**宁可少给也不重复**（`exhausted: true` + console.warn），
+    绝不静默产出两条一样的提示词。
+
+- **UI 入口（2026-09-20 补做，原为遗留项 1）**
+  - **新建**：SOP 列表头部「新建 | 配方卡」两个按钮并列。点「配方卡」直接落一张
+    带「主体/背景/光线」三件套骨架与 3×4 维度池的可用资产 —— 不给空对象，
+    否则一进编辑器就是格式错误，上手成本太高。
+  - **类型徽标**：列表行的参数区显示「配方卡引擎」`Badge`（与「变量提示词」「使用中」并列）。
+  - **编辑器**：`SopCampaignRecipePanel`，挂在 SOP 库编辑面板里 `SopTextEditor` **下方**，
+    按类型条件渲染（普通 SOP 完全不渲染，已由测试守住）。含：骨架 `TextArea`、
+    维度池增删（维度 / 候选值两级）、组合空间计数、前 6 条差异预览、
+    「按骨架补齐」维度、合规红线词表折叠区。
+  - **红线条前置**：命中红线的候选值就地标 `Badge tone="danger"` + 输入框描边变红 +
+    顶部黄条汇总；骨架命中则整条告警并在预览区说明「骨架命中红线，暂不可预览」——
+    **不让用户填完才发现值不生效**。
+  - **保存门槛按类型分叉**：配方卡的骨架存在 `campaignRecipe` 字段（不在 `content`），
+    因此 `itemDraftValid` / 自动保存门槛 / 「保存修改」按钮三处都放宽为
+    「名称非空即可；`content` 空不算无效」。否则复制出的配方卡因 `content` 为空而
+    **完全存不下去**（R-05 同源问题）。
+  - **`itemDirty` 必须纳入 `campaignRecipe`**：这是本轮实测踩到的真坑 ——
+    不比较该字段时，编辑维度后草稿**不标记为脏**，自动保存不触发、
+    「保存修改」按钮恒 disabled，表现为「看着改了但存不下去」。
+    已同时补入 `executionMode` 比较。
+  - **验收**：`SopManagementCenter.test.tsx` 新增 5 例（43 例全绿）——
+    徽标+编辑器渲染、普通 SOP 不渲染、红线告警、`content` 为空可保存、新建按钮产出可用资产。
+
+- **遗留 / 后续**
+  1. ~~UI 入口未做~~ → **已完成**（见上节）；
+  2. ~~两处疑似笔误是否要修~~ → **结论：都不改**。定量实测（原始遮蔽版 vs 修复版）：
+     <br>· 4维×4值取12：最小差 2/1，**平均差 16.76 / 2.55**
+     <br>· 4维×4值取24：最小差 1/1，**平均差 28.25 / 2.85**
+     <br>· 6维×5值取20：最小差 4/2，**平均差 7.83 / 4.87**
+     <br>· 6维×8值取60：最小差 1/1，**平均差 11.07 / 4.71**
+     <br>「修复」后平均差异掉到 1/6 ~ 1/10，属**负优化**。槽位分布（4维取12）：原始 `44/10/6/6`
+     集中在第 0 槽 vs 修复版 `1303/6/6/5` 摊薄到全槽 —— 遮蔽行为实际起了「主控槽优先」的作用，
+     **是特性不是 bug**。`windowFar` 只赋值不参与判定，保留以维持 API 兼容
+     （代码里 `void (options.windowFar ?? 80)` 显式标注为死参数）。两条均登记 R-45 禁止再动；
+  3. ~~`usedSignatures` 未接线~~ → **已完成**：`generateCampaignRecipePromptsFromStore`
+     在不传 `usedSignatures` 时自动调 `loadCampaignRecipeUsedSignatures`，
+     从 `getAllSopBatchSnapshots()` 里按 `snapshot.sop.id` 过滤出本张配方卡的历史产出，
+     再用 `deriveUsedSignatures` 反推签名；读历史失败则降级为「仅本批去重」+ console.warn，
+     不阻断生成。于是**关弹窗重开、重启应用后跨批次去重依然生效**，且**无需新增存储结构**。

@@ -27,6 +27,7 @@ import {
   MoreHorizontalIcon as MoreHorizontal,
   PlusIcon as Plus,
   SaveIcon as Save,
+  ShuffleIcon as Shuffle,
   StarIcon as Star,
   TrashIcon as Trash2,
   CloseIcon as X,
@@ -37,6 +38,7 @@ import { useStore } from '../../store'
 import type { TaskRecord } from '../../types'
 import type { SopGroup, SopLibraryItem } from './types'
 import { buildSopGroupTree, flattenSopGroupTree } from './sopGroupTree'
+import SopCampaignRecipePanel from './SopCampaignRecipePanel'
 import SopImageStack from './SopImageStack'
 import SopTextEditor from './SopTextEditor'
 
@@ -45,6 +47,23 @@ const SOP_DRAG_TYPE = 'application/x-tangbao-sop-ids'
 const SOP_GROUP_COLLAPSED_STORAGE_KEY = 'tangbao.sop-group-collapsed'
 /** 分组树每一级的缩进像素，配合展开箭头体现层级。 */
 const SOP_GROUP_INDENT = 14
+
+/**
+ * 配方卡引擎 SOP 的判定：带 campaignRecipe 字段，或 executionMode 显式标记。
+ *
+ * 与 `storeSopGeneration.isCampaignRecipeSop` 是同一规则，这里刻意内联而不 import：
+ * 生成模块被测试整体 mock（见 R-46），从 UI 层引用会把 UI 测试和生成模块耦死。
+ * 这是纯数据判定，重复成本远低于耦合成本。
+ */
+function isCampaignRecipeItem(item: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode'>): boolean {
+  return Boolean(item.campaignRecipe) || item.executionMode === 'campaign-recipe'
+}
+
+/** 配方卡 SOP 的名称即可保存，内容非空由配方卡编辑器自己的校验负责。 */
+function hasSavableContent(item: SopLibraryItem): boolean {
+  if (isCampaignRecipeItem(item)) return true
+  return Boolean(item.content.trim())
+}
 
 function loadCollapsedGroupIds(): Set<string> {
   try {
@@ -76,6 +95,8 @@ export type SopLibraryTabProps = {
   selectedIds: Set<string>
   moveItemsToGroup: (itemIds: string[], targetGroupId: string) => void
   addItem: () => void
+  /** 新建一张配方卡引擎 SOP（本地采样，不调 AI），与 addItem 的差别只在初始形态。 */
+  addCampaignRecipeItem: () => void
   selectedItemId: string
   setSelectedItemId: (id: string) => void
   selectItemWithModifiers: (
@@ -125,6 +146,7 @@ export default function SopLibraryTab({
   selectedIds,
   moveItemsToGroup,
   addItem,
+  addCampaignRecipeItem,
   selectedItemId,
   setSelectedItemId,
   selectItemWithModifiers,
@@ -350,9 +372,20 @@ export default function SopLibraryTab({
               <span className="sop-center-list-count">{filteredItems.length}</span>
             </div>
           </div>
-          <Button size="sm" variant="secondary" onClick={addItem} leadingIcon={<Plus size={15} />}>
-            新建
-          </Button>
+          <Inline gap={2} wrap={false}>
+            <Button size="sm" variant="secondary" onClick={addItem} leadingIcon={<Plus size={15} />}>
+              新建
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={addCampaignRecipeItem}
+              leadingIcon={<Shuffle size={15} />}
+              title="新建一张走本地最远点采样的配方卡（不调用 AI）"
+            >
+              配方卡
+            </Button>
+          </Inline>
         </div>
         <SearchField
           className="mt-3"
@@ -406,6 +439,7 @@ export default function SopLibraryTab({
                   <span className="sop-center-sop-params" aria-label="SOP 参数">
                     <span>{groupName}</span>
                     {item.executionMode === 'variable-prompt' && <Badge tone="info">变量提示词</Badge>}
+                    {isCampaignRecipeItem(item) && <Badge tone="info">配方卡引擎</Badge>}
                     {selectedSopId === item.id && <Badge tone="success">使用中</Badge>}
                   </span>
                 </button>
@@ -508,7 +542,7 @@ export default function SopLibraryTab({
                 )}
                 <Button
                   size="sm"
-                  disabled={!itemDirty || !itemDraft.name.trim() || !itemDraft.content.trim()}
+                  disabled={!itemDirty || !itemDraft.name.trim() || !hasSavableContent(itemDraft)}
                   onClick={() => saveItemDraftNow()}
                   variant={itemDirty ? 'primary' : 'secondary'}
                   leadingIcon={<Save size={15} />}
@@ -609,6 +643,12 @@ export default function SopLibraryTab({
                 setItemDraft((current) => (current ? { ...current, variableMeta: meta } : current))
               }
             />
+            {isCampaignRecipeItem(itemDraft) && (
+              <SopCampaignRecipePanel
+                config={itemDraft.campaignRecipe ?? { body: '', dimensions: [] }}
+                onChange={(campaignRecipe) => setItemDraft({ ...itemDraft, campaignRecipe })}
+              />
+            )}
           </div>
         ) : (
           <EmptyState className="h-full" title="选择或新建一个 SOP" description="从左侧列表选择内容后即可编辑。" />

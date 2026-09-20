@@ -10,6 +10,8 @@ import { SOP_SERIES_ANCHOR_INSTRUCTION } from '../../../lib/sopSeriesAnchor'
 
 const generateMocks = vi.hoisted(() => ({
   generatePromptsFromSopStore: vi.fn(),
+  generateVariablePromptsFromSopStore: vi.fn(),
+  generateCampaignRecipePromptsFromStore: vi.fn(),
   getSopPromptGenerationModelFromStore: vi.fn(() => 'gpt-test'),
 }))
 const storeMocks = vi.hoisted(() => ({
@@ -57,6 +59,24 @@ const requirementState = vi.hoisted(() => ({
       createdBy: 'user-1',
       createdAt: 3,
       updatedAt: 3,
+    },
+    {
+      id: 'sop-recipe',
+      name: '双十一配方卡',
+      description: '本地引擎批量组合',
+      content: '{{主视觉}}，主体是{{主体}}',
+      kind: 'campaign-recipe' as const,
+      campaignRecipe: {
+        body: '{{主视觉}}，主体是{{主体}}',
+        dimensions: [
+          { name: '主视觉', options: ['产品特写', '手持使用', '使用场景'] },
+          { name: '主体', options: ['咖啡杯', '保温杯', '玻璃杯'] },
+        ],
+      },
+      source: 'manual',
+      createdBy: 'user-1',
+      createdAt: 4,
+      updatedAt: 4,
     },
   ],
 }))
@@ -199,6 +219,57 @@ describe('GallerySopBatchModal background generation', () => {
 
     expect(generateMocks.generatePromptsFromSopStore).toHaveBeenCalledOnce()
     expect(renderer!.root.findByProps({ 'aria-label': '第 1 条提示词' }).props.value).toBe('自动生成的提示词')
+  })
+
+  it('routes recipe-card SOPs to the local engine instead of the AI text model', async () => {
+    generateMocks.generateCampaignRecipePromptsFromStore.mockResolvedValue(['本地生成的提示词'])
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe"
+          initialPromptCount={1}
+          autoStart
+          onAutoStartConsumed={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    // 配方卡走本地引擎分支，绝不调用 AI 生成函数
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledOnce()
+    expect(generateMocks.generatePromptsFromSopStore).not.toHaveBeenCalled()
+    expect(generateMocks.generateVariablePromptsFromSopStore).not.toHaveBeenCalled()
+    expect(renderer!.root.findByProps({ 'aria-label': '第 1 条提示词' }).props.value).toBe('本地生成的提示词')
+  })
+
+  it('routes ordinary SOPs to the AI text model, not the local engine', async () => {
+    generateMocks.generatePromptsFromSopStore.mockResolvedValue(['AI 生成的提示词'])
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-1"
+          initialPromptCount={1}
+          autoStart
+          onAutoStartConsumed={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(generateMocks.generatePromptsFromSopStore).toHaveBeenCalledOnce()
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).not.toHaveBeenCalled()
   })
 
   it('uses the latest input requirement when a mounted modal starts another run', async () => {

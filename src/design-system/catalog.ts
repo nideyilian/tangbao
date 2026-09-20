@@ -1039,6 +1039,12 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Dialog', 'Thumbnail', 'EmptyState'],
   },
   {
+    module: 'src/features/strategy/SopCampaignRecipePanel.tsx',
+    responsibility: '配方卡引擎编辑器（提示词骨架、维度池增删、合规红线提示与采样预览）',
+    decision: 'compose',
+    targets: ['TextArea', 'Badge', 'Button', 'IconButton'],
+  },
+  {
     module: 'src/features/strategy/SopGenerateTab.tsx',
     responsibility: 'SOP 管理中心智能生成标签页（生成表单与状态/历史面板）',
     decision: 'compose',

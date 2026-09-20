@@ -34,6 +34,7 @@
 | 铁律                                                                                                                                              | 详见        |
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | **禁用 `git rm`**（曾让 `src/` 576 文件消失）→ 用 `rm` + `git add -A`                                                                             | R-02        |
+| **禁用 `git stash` 做基线对比**（会让 `.git/refs/` 消失、`.pack` 可能被删）→ 用 `git show HEAD:<path>` 落盘 + cp 换入换出；恢复配方见 runbook §14 | R-44        |
 | **同一文件多条 Edit 必须串行**（并发只最后一条生效）；改完回读校验                                                                                | R-17        |
 | **删文件三查**：grep import / grep 字面量 / grep `readFileSync`                                                                                   | R-18        |
 | **手改 `app_data_records` 三铁律**：① 编码按 namespace（zustand 型双重 / 记录型单层）② 写库必须带 `record_id` 条件 ③ 停应用 + 备份 + 改完全库体检 | R-04 / R-05 |
@@ -48,6 +49,20 @@
 - **性能**：高频进度走 `runtimeStore`、SQLite 走 UtilityProcess、缩略图 `canvasToWebpDataUrl`、
   整图字节优先（新代码**勿传 dataUrl**）→ 改编码路径必须用 **rAF 帧探针**验收，不能比总耗时。
 - **生图编排**：普通 SOP = 1 条、系列 = 1 组（3 段拆 3 条），互不套用；守卫用字面量断言。
+- **SOP 三场景分流**（`campaign-recipe` / `variable-prompt` / 其余），互斥、输入来源与输出形式各不相同：
+  - 触发：`campaignRecipe` 字段 或 `executionMode`（优先级：配方卡 > 变量提示词 > AI）。
+  - 配方卡 = **纯本地**，不调 AI、不读参考图、无 JSON 解析重试；合规红线 21 词内置不可关闭。
+  - 编辑入口：SOP 列表头「新建 | 配方卡」→ `SopCampaignRecipePanel`（挂在编辑面板 `SopTextEditor` 下方，
+    按类型条件渲染）。骨架存 `campaignRecipe.body` 而**不是** `content`。
+  - **不要为省一行让弹窗 import 生成模块的辅助函数** → 测试整体 mock 会挂全部生成用例（R-46）。
+- **移植外部算法时保真优先于"顺手修笔误"**：改前必须与原始实现对拍
+  （`selections`/`signatures`/`attempts` 逐位一致），有意保留的怪异行为要写注释 + 登记 RISK（R-45）。
+- **新增可编辑字段 → 三处「静默失效」清单必须逐项过**（都表现为"改了但存不下去/顺序错乱"，UI 不报错）：
+  ① `SopManagementCenter.itemDirty` 的手写比较链（漏了 = 草稿不脏，保存按钮恒灰）→ R-47；
+  ② `createDesktopJsonStorage` 持久化白名单（漏了 = 完全存不住）；
+  ③ 排序键要同时改内存 `compareAssets` 与桌面端 SQL 分页。
+- **新增 `src/**/*.tsx` 必须登记 `design-system/catalog.ts`**，否则 `catalog.test.ts`
+  全等比较直接失败（刻意棘轮，不是 bug）→ R-48。
 - **`tangbao://image/`**：只能进 `<img src>`；要像素走 `ensureImageCached`；
   `fetch('tangbao://…')` 被 CSP 拦是**刻意的**，别加 `connect-src`。
 - **后处理/项目树**：一棵树（`collections`）四模块共用，不另建树；`undefined` = 继承、空值 = 显式覆盖；

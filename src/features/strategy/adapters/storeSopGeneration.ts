@@ -35,7 +35,16 @@ import { IMAGE_GENERATION_STRATEGY_SKILL_META_INSTRUCTION } from '../skillMetaIn
 import { buildSopSeriesLockedCopy, buildSopSeriesLockedFixedBlock } from '../sopSeriesDimensions'
 import { DERIVE_DIMENSIONS, validateVariablePromptTemplate, type DeriveDimensionPolicy } from '../derivePolicy'
 import { VISUAL_PROFILE_INSTRUCTION, buildProfileSummary, parseVisualProfiles } from '../visualProfile'
-import type { SopLibraryItem } from '../types'
+import {
+  deriveUsedSignatures,
+  generateCampaignRecipeBatch,
+  parseCampaignRecipeConfig,
+  sanitizeCampaignRecipeConfig,
+  validateCampaignRecipeConfig,
+  type CampaignRecipeConfig,
+} from '../campaignRecipe'
+import { getAllSopBatchSnapshots } from '../../../lib/db'
+import type { SopCampaignRecipeConfig, SopLibraryItem } from '../types'
 
 /** Agent 配置未提供有效超时时的兜底值（秒）。 */
 const TEXT_REQUEST_TIMEOUT_FALLBACK_SECONDS = DEFAULT_API_TIMEOUT
@@ -788,6 +797,164 @@ async function expandSopVariablePromptOptions(
     throw new Error(`扩词条后模板仍无法解析：${validation.errors[0] ?? '请检查模型返回'}`)
   }
   return generated.sop
+}
+
+// ---------------------------------------------------------------------------
+// 配方卡引擎（executionMode='campaign-recipe' / kind='campaign-recipe'）批量生成
+// ---------------------------------------------------------------------------
+
+/**
+ * 判定一个 SOP 是否走「配方卡引擎」本地生成分支。
+ *
+ * 触发条件有两条，命中任一即成立（字段优先，便于旧数据只补 executionMode 也能生效）：
+ * 1. 带 campaignRecipe 字段（新资产的标准形态）；
+ * 2. executionMode 显式为 'campaign-recipe'。
+ *
+ * 该判定与「普通 SOP」严格互斥：普通 SOP 走 generatePromptsFromSopStore（调 AI），
+ * 配方卡走 generateCampaignRecipePromptsFromStore（纯本地算法，不产生任何网络请求）。
+ */
+export function isCampaignRecipeSop(
+  sop: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode'> | null | undefined,
+): boolean {
+  if (!sop) return false
+  if (sop.campaignRecipe) return true
+  return sop.executionMode === 'campaign-recipe'
+}
+
+/**
+ * 配方卡引擎的批量提示词生成：纯本地最远点采样，全程不调用 AI。
+ *
+ * 与 generatePromptsFromSopStore / generateVariablePromptsFromSopStore 同签名，
+ * 批量弹窗可无缝切换执行分支。
+ *
+ * 与另两条分支的关键差异：
+ * - 输入来源：不使用对话式 brief 驱动生成，也不读 referenceImages（配方卡的多样性来自维度池，
+ *   不来自参考图）；brief 仅作为采样种子的一部分，用于区分不同会话的批次。
+ * - 输出形式：本地直接算出成品提示词，无需 JSON 解析与结构修复，因此没有「模型返回不完整」重试路径。
+ * - 去重：existingPrompts 既用于跨批次去重，也作为最远点采样的「已选点」锚定历史分布。
+ */
+export async function generateCampaignRecipePromptsFromStore(
+  sop: SopLibraryItem,
+  quantity: number,
+  brief = '',
+  options: {
+    context?: SopPromptBatchContext
+    referenceImages?: Array<{ name: string; dataUrl: string }>
+    exact?: boolean
+    existingPrompts?: string[]
+    onProgress?: (completed: number, total: number) => void
+    maxBatchSize?: number
+    onBatch?: (prompts: string[], completed: number, total: number) => void | Promise<void>
+    beforeBatch?: () => void | Promise<void>
+    signal?: AbortSignal
+    outputUnitSize?: number
+    /** 历史签名集合（跨批次去重）；不传时自动从本张配方的历史记录推导 */
+    usedSignatures?: Set<string>
+  } = {},
+) {
+  const rawConfig = sop.campaignRecipe ?? parseCampaignRecipeConfigFromContent(sop.content)
+  if (!rawConfig) {
+    throw new Error('配方卡配置缺失：需要在 SOP 中提供提示词骨架与维度池')
+  }
+
+  // 合规红线内置且不可关闭：命中红线的候选值在生成前剔除，避免脏数据进入出图链路。
+  const { config, removed } = sanitizeCampaignRecipeConfig(rawConfig)
+  if (removed.length > 0) {
+    console.warn(`[配方卡引擎] 已剔除命中合规红线的候选值：${removed.join('；')}`)
+  }
+  const errors = validateCampaignRecipeConfig(config)
+  if (errors.length > 0) throw new Error(`配方卡格式有误：${errors[0]}`)
+
+  const outputUnitSize = Math.max(1, Math.trunc(options.outputUnitSize ?? 1))
+  // 种子并入 brief：同一张配方卡在不同会话/不同补充要求下产出不同批次，
+  // 但同参数重跑结果稳定可复现。
+  const seed = `${sop.id}:${brief.trim() || 'default'}`
+
+  // 跨批次去重：签名集合优先用调用方传入的；否则从「本张配方的历史记录」自动推导。
+  // 历史以文本形式落库在 SopBatchSnapshot.prompts[].text，这里按配方卡结构反推签名，
+  // 于是「关掉弹窗重开、重启应用」之后跨批次去重依然有效。
+  const usedSignatures =
+    options.usedSignatures ?? (await loadCampaignRecipeUsedSignatures(sop.id, config, options.existingPrompts ?? []))
+
+  return generateSopPromptBatches(
+    quantity,
+    async (batchQuantity, existingPrompts) => {
+      const batchTarget = batchQuantity * outputUnitSize
+      const { samples, exhausted } = generateCampaignRecipeBatch(config, {
+        count: batchTarget,
+        seed,
+        existingPrompts,
+        usedSignatures,
+      })
+      // 本批已选签名回写，同一轮多次校验批次之间也不会重复
+      for (const sample of samples) usedSignatures.add(sample.signature)
+      if (samples.length === 0) {
+        throw new Error('配方卡候选组合已耗尽：请增加维度候选值，或减少生成数量')
+      }
+      if (exhausted && samples.length < batchTarget) {
+        console.warn(
+          `[配方卡引擎] 候选组合不足以覆盖请求数量（组合空间 ${samples.length} 条可用 / 请求 ${batchTarget} 条），已返回不重复的部分。`,
+        )
+      }
+      return samples.map((sample) => sample.prompt)
+    },
+    {
+      exact: options.exact,
+      existingPrompts: options.existingPrompts,
+      maxBatchSize: options.maxBatchSize,
+      onProgress: options.onProgress,
+      onBatch: options.onBatch,
+      beforeBatch: options.beforeBatch,
+      signal: options.signal,
+      outputUnitSize,
+      // 本地算法无网络依赖，除「组合耗尽」外没有值得重试的错误
+      isRetryable: (error) => !(error instanceof Error && /候选组合已耗尽/.test(error.message)),
+    },
+  )
+}
+
+/**
+ * 从持久化的历史记录里收集「本张配方卡用过的组合签名」，用于跨批次去重。
+ *
+ * 数据源是 `SopBatchSnapshot`（提示词仓库），它已经按文本保存了历次产出，
+ * 因此无需新增存储结构即可让去重在重启后依然生效。
+ * 只统计属于同一张 SOP 的记录，避免不同配方卡互相干扰。
+ */
+export async function loadCampaignRecipeUsedSignatures(
+  sopId: string,
+  config: CampaignRecipeConfig,
+  extraPrompts: string[] = [],
+): Promise<Set<string>> {
+  const signatures = new Set<string>(deriveUsedSignatures(config, extraPrompts).values())
+  try {
+    const snapshots = await getAllSopBatchSnapshots()
+    const historyForSop = snapshots
+      .filter((snapshot) => snapshot.sop?.id === sopId)
+      .flatMap((snapshot) => snapshot.prompts.map((prompt) => prompt.text))
+      .filter((text) => typeof text === 'string' && text.trim().length > 0)
+    for (const signature of deriveUsedSignatures(config, historyForSop)) signatures.add(signature)
+  } catch (error) {
+    // 读历史失败不应阻断生成：退化为「仅本批去重」，并留下可排查的日志
+    console.warn('[配方卡引擎] 读取历史提示词失败，本轮跨批次去重降级为仅本批去重', error)
+  }
+  return signatures
+}
+
+/**
+ * 从纯文本正文反解配方卡配置。
+ *
+ * 兼容「用 JSON 正文存配方卡」的手工资产形态：content 直接放一段
+ * {"body":"...","dimensions":[{"name":"...","options":["..."]}]} 即可被执行分支识别，
+ * 不需要额外迁移脚本。解析失败返回 null，由调用方报「配置缺失」。
+ */
+export function parseCampaignRecipeConfigFromContent(content: string): SopCampaignRecipeConfig | null {
+  const text = content?.trim()
+  if (!text || !text.startsWith('{')) return null
+  try {
+    return parseCampaignRecipeConfig(JSON.parse(text) as unknown)
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------

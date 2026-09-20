@@ -90,6 +90,17 @@ function generationStepsBefore(step: GenerationStepId) {
   return SOP_GENERATION_STEPS.slice(0, Math.max(0, stepIndex)).map((item) => item.id)
 }
 
+/**
+ * 配方卡引擎 SOP 的判定：带 campaignRecipe 字段，或 executionMode 显式标记。
+ *
+ * 与 `SopLibraryTab.isCampaignRecipeItem` 同规则，刻意各自内联：
+ * 两边都要在「保存/自动保存门槛」上用，抽成共享模块反而会让
+ * 管理中心与 SOP 库互相 import，成本高于这 3 行重复（同样理由见 R-46）。
+ */
+function isCampaignRecipeSop(item: Pick<SopLibraryItem, 'campaignRecipe' | 'executionMode'>): boolean {
+  return Boolean(item.campaignRecipe) || item.executionMode === 'campaign-recipe'
+}
+
 function getGenerationErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : '未知错误，请检查 API 配置后重试'
   if (/缺少名称、说明或 SOP 正文|缺少可用的 SOP 正文|返回不完整内容/.test(message)) {
@@ -258,9 +269,14 @@ export default function SopManagementCenter({
       itemDraft.coverImageId !== persistedItem.coverImageId ||
       JSON.stringify(itemDraft.variableMeta ?? null) !== JSON.stringify(persistedItem.variableMeta ?? null) ||
       itemDraft.kind !== persistedItem.kind ||
+      itemDraft.executionMode !== persistedItem.executionMode ||
+      // 配方卡的骨架与维度池是独立字段（不在 content 里），漏比这一项会让编辑「看着改了但存不下去」
+      JSON.stringify(itemDraft.campaignRecipe ?? null) !== JSON.stringify(persistedItem.campaignRecipe ?? null) ||
       JSON.stringify(itemDraft.seriesConfig ?? null) !== JSON.stringify(persistedItem.seriesConfig ?? null)),
   )
-  const itemDraftValid = Boolean(itemDraft?.name.trim() && itemDraft?.content.trim())
+  const itemDraftValid = Boolean(
+    itemDraft?.name.trim() && (isCampaignRecipeSop(itemDraft) || itemDraft?.content.trim()),
+  )
   const persistedMeta = metaInstructions.find((item) => item.id === selectedMetaId)
   const metaDirty = Boolean(
     metaDraft &&
@@ -281,7 +297,9 @@ export default function SopManagementCenter({
           ? itemApplied
             ? '修改将在 1 秒内自动保存，并更新当前使用的 SOP。'
             : '修改将在 1 秒内自动保存。'
-          : '名称和正文不能为空，当前修改尚未保存。'
+          : itemDraft && isCampaignRecipeSop(itemDraft)
+            ? '配方卡需要名称、提示词骨架与至少一个维度，当前修改尚未保存。'
+            : '名称和正文不能为空，当前修改尚未保存。'
         : itemApplied
           ? '当前 SOP 已使用。'
           : '无需编辑即可直接应用。'
@@ -385,7 +403,7 @@ export default function SopManagementCenter({
       autoSaveTimerRef.current = null
     }
     if (!itemDirty || !itemDraft) return
-    if (!itemDraft.name.trim() || !itemDraft.content.trim()) {
+    if (!itemDraft.name.trim() || (!isCampaignRecipeSop(itemDraft) && !itemDraft.content.trim())) {
       setAutoSaveState('blocked')
       return
     }
@@ -750,6 +768,45 @@ export default function SopManagementCenter({
     setSelectedGroupId(targetGroupId ?? 'ungrouped')
     selectItem(item)
     showToast('已新建 SOP，请完善名称与正文', 'success')
+  }
+
+  /**
+   * 新建配方卡引擎 SOP：与 addItem 的差别只在初始形态。
+   *
+   * 初始给一个「主体/背景/光线」三件套骨架而不是空对象，是为了让用户一进编辑器
+   * 就能看到占位符与维度的对应关系 —— 空骨架 + 空维度池会直接报格式错误，
+   * 新手上手成本太高。`content` 留摘要位，引擎读的是 campaignRecipe 字段。
+   */
+  const addCampaignRecipeItem = () => {
+    const now = Date.now()
+    const targetGroupId = ['all', 'favorites', 'recent', 'ungrouped'].includes(selectedGroupId)
+      ? undefined
+      : selectedGroupId
+    const item: SopLibraryItem = {
+      id: sopLibraryId('sop'),
+      groupId: targetGroupId,
+      name: '未命名配方卡',
+      description: '本地最远点采样批量出词，不调用 AI。',
+      content: '',
+      kind: 'campaign-recipe',
+      executionMode: 'campaign-recipe',
+      campaignRecipe: {
+        body: '{{主体}}，{{背景}}，{{光线}}，高清实拍',
+        dimensions: [
+          { name: '主体', options: ['咖啡杯', '帆布包', '运动鞋', '机械键盘'] },
+          { name: '背景', options: ['原木桌面', '纯色背景', '城市街景', '落地窗前'] },
+          { name: '光线', options: ['清晨侧光', '午后暖光', '阴天柔光', '影棚硬光'] },
+        ],
+      },
+      source: 'manual',
+      createdBy: currentUserId,
+      createdAt: now,
+      updatedAt: now,
+    }
+    onSaveItem(item)
+    setSelectedGroupId(targetGroupId ?? 'ungrouped')
+    selectItem(item)
+    showToast('已新建配方卡，维度池与骨架可直接编辑', 'success')
   }
 
   const addMeta = () => {
@@ -1419,6 +1476,7 @@ export default function SopManagementCenter({
             selectedIds={selectedIds}
             moveItemsToGroup={moveItemsToGroup}
             addItem={addItem}
+            addCampaignRecipeItem={addCampaignRecipeItem}
             selectedItemId={selectedItemId}
             setSelectedItemId={setSelectedItemId}
             selectItemWithModifiers={selectItemWithModifiers}

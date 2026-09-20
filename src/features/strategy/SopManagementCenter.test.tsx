@@ -1399,3 +1399,104 @@ describe('SopManagementCenter apply and save actions', () => {
     result.renderer.unmount()
   })
 })
+
+describe('SopManagementCenter campaign recipe SOPs', () => {
+  const recipeItem: SopLibraryItem = {
+    id: 'sop-recipe',
+    name: '夏季新品配方卡',
+    description: '本地采样批量出词',
+    content: '',
+    kind: 'campaign-recipe',
+    executionMode: 'campaign-recipe',
+    campaignRecipe: {
+      body: '{{主体}}，{{背景}}，高清实拍',
+      dimensions: [
+        { name: '主体', options: ['帆布包', '运动鞋'] },
+        { name: '背景', options: ['原木桌面', '城市街景'] },
+      ],
+    },
+    source: 'manual',
+    createdBy: 'user-1',
+    createdAt: 3,
+    updatedAt: 3,
+  }
+
+  it('shows a recipe-card badge and renders the dimension editor for recipe SOPs', () => {
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ items: [recipeItem], selectedSopId: 'sop-recipe' })
+    })
+
+    expect(textContent(result.renderer.root)).toContain('配方卡引擎')
+    expect(result.renderer.root.findByProps({ 'aria-label': '配方卡引擎配置' })).toBeTruthy()
+
+    // 维度池按数据渲染出可编辑输入框，骨架里引用的维度名就是 aria-label 的一部分
+    expect(result.renderer.root.findByProps({ 'aria-label': '维度 1 名称' }).props.value).toBe('主体')
+    expect(result.renderer.root.findByProps({ 'aria-label': '维度 主体 候选值 1' }).props.value).toBe('帆布包')
+    expect(textContent(result.renderer.root)).toContain('2 个维度 · 组合空间 4 条')
+
+    result.renderer.unmount()
+  })
+
+  it('does not render the recipe editor for ordinary SOPs', () => {
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ selectedSopId: 'sop-1' })
+    })
+
+    expect(result.renderer.root.findAllByProps({ 'aria-label': '配方卡引擎配置' })).toHaveLength(0)
+    result.renderer.unmount()
+  })
+
+  it('flags red-line option values instead of silently dropping them', () => {
+    const dirty: SopLibraryItem = {
+      ...recipeItem,
+      campaignRecipe: {
+        body: '{{主体}}，高清实拍',
+        dimensions: [{ name: '主体', options: ['帆布包', '现金礼盒'] }],
+      },
+    }
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ items: [dirty], selectedSopId: 'sop-recipe' })
+    })
+
+    // 候选值命中红线时给出黄色提示条，并标出具体命中的红线词
+    expect(textContent(result.renderer.root)).toContain('命中合规红线')
+    expect(textContent(result.renderer.root)).toContain('现金')
+    result.renderer.unmount()
+  })
+
+  it('lets a recipe SOP with empty content be saved, since the skeleton lives in campaignRecipe', () => {
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ items: [recipeItem], selectedSopId: 'sop-recipe' })
+    })
+
+    // 真改一个候选值让草稿变脏；content 仍为空 —— 普通 SOP 在这种情况下不允许保存
+    act(() =>
+      result.renderer.root
+        .findByProps({ 'aria-label': '维度 主体 候选值 1' })
+        .props.onChange({ target: { value: '帆布斜挎包' } }),
+    )
+    const saveButton = findButton(result.renderer.root, '保存修改')
+    expect(saveButton).toBeTruthy()
+    expect(saveButton!.props.disabled).toBe(false)
+    result.renderer.unmount()
+  })
+
+  it('creates a ready-to-run recipe card from the dedicated new button', () => {
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter()
+    })
+
+    act(() => findButton(result.renderer.root, '配方卡')!.props.onClick())
+    const saved = result.onSaveItem.mock.calls[0][0] as SopLibraryItem
+    expect(saved.kind).toBe('campaign-recipe')
+    expect(saved.executionMode).toBe('campaign-recipe')
+    expect(saved.campaignRecipe?.dimensions.length).toBe(3)
+    expect(saved.campaignRecipe?.body).toContain('{{主体}}')
+    result.renderer.unmount()
+  })
+})
