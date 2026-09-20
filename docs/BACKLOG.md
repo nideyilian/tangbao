@@ -794,7 +794,7 @@
 - **⚠️ 用户实测报障：配方卡走了 AI 大模型生成（2026-09-20 第三轮，已修）**
   - **现象**：杰哥说「我使用配方卡时还是走的普通 SOP 的 AI 大模型生成提示词的方式」，
     弹窗显示「未命名配方卡 · 0 条提示词 · 生成中 · gemini-3.1-pro-preview」
-    （模型名出现在这里 = 走了 AI 分支，本地引擎不需要模型）。
+    （当时误判：把「模型名出现在这一行」当成了走了 AI 分支的证据）。
   - **排查方法（可复用）**：只读打开 `%APPDATA%\糖包|tangbao\local-saves\db\asset-kernel.sqlite`
     的 `app_data_records`（`readOnly: true`，R-06），按 namespace 逐条看落盘时间与内容。
     关键证据：**所有 namespace 的 `updated_at` 都停在 9/19 17:07**，而用户是 9/20 上午操作
@@ -818,6 +818,51 @@
       辅助函数 —— 会踩 R-46 的整模块 mock 坑。
   - **验收**：3 例回归测试全绿，且**逐个反向验证过**（临时 `if (false)` / 回退门槛后
     测试确实失败，证明不是"假绿"）；`npm run verify` 全绿（**230 文件 / 2609 用例**）。
+
+- **⚠️ 用户复测仍报「跟之前一模一样，完全没有使用引擎」（2026-09-20 第四轮，已修）**
+  - **用户给出的判据**（经追问明确）：① 判断依据 = **「弹窗里出现了模型名」**；
+    ② 操作入口 = **SOP 管理中心 → 应用 → 输入栏生成**。
+  - **结论先行：用户的判据不成立，真正的缺陷是另一个。**
+    1. **那个模型名根本不是「走了 AI」的证据（R-54）**。它渲染在提示词集头部
+       （`GallerySopBatchModal.tsx` 的 `{sop.name} · {N} 条提示词 · {状态} · 文本模型 {model}`），
+       数据源是 run 快照的 `promptGenerationModel`；而写入它的
+       `getSopPromptGenerationModelFromStore()` **只读 `profile.model || settings.model`，
+       不发任何网络请求**。也就是说本地引擎跑完一个 run，也会顶着一个「配置里写着」
+       的模型名 —— 纯显示噪音。
+    2. **配方卡数据与引擎其实都是好的**（实测）。DB 里那张卡：
+       `executionMode: "campaign-recipe"` / `kind: "campaign-recipe"` /
+       `content: ""`（长度 0）/ `campaignRecipe` 完整（`body` 460 字符、**13 个维度**、
+       权重 `S1:2 / S3:2 / S8:3`）→ **R-51 的修复确实生效了，卡存下来了且类型正确**。
+       再用 `npx tsx` 直连引擎跑真实卡：`parseCampaignRecipeConfig → OK`、
+       红线剔除 `(无)`、校验错误 `(无)`、`生成 5 条 | 组合空间 2972712960000 |
+重掷 9`、5 条两两互异。**数据健康 + 引擎健康。**
+    3. **真正的异常是「0 条提示词 + 生成中」**：DB 里**每一个** run 快照
+       （含 9/18 尚无配方卡时的三次「快手美女网赚」）都是 `promptCount: 0`
+       且 `status` 停在 `generating`/`paused` —— **说明这个卡死与配方卡无关，是存量缺陷**，
+       只是本地引擎瞬间出词，让「0 条」显得格外刺眼。
+  - **根因（两条，已修）**
+    - **R-54** 本地分支无条件记录文本模型名 + 快照的 `previous?.promptGenerationModel`
+      **粘性回退**（历史 run 一旦写过模型名，光改 ref 洗不掉）+ 界面裸渲染无区分。
+    - **R-56** `generateForSources` 开头 `abort` 上一轮，被 abort 的那轮最后落盘的是
+      `persistPromptRun(..., 'generating')`，其快照 id 已 ≠ `activeRunIdRef.current`
+      → **永远等不到收尾覆盖**，留下「生成中 · 0 条 · 无任务」的孤儿快照。
+      触发源：异步 `running`（来自 `status`）挡不住同步重入。**`git log -S` 证实是从豆泡
+      fork 继承的存量代码**（指向 rebrand 提交），非本轮引入。
+  - **修法**
+    - R-54：① 把「本地算法分支」判定**收口到模块级 `isLocalGenerationSopForSop`**
+      （含配方卡三条触发条件 + 变量提示词，与分流同源，消灭 R-53 那类口径漂移）；
+      ② 记录模型名前先判定，本地分支写 `''`；③ `buildPromptRunSnapshot` 对本地分支
+      **直接返回 `undefined`** 挡掉粘性回退；④ 界面无模型名但当前 SOP 是本地引擎时，
+      显示「**· 本地引擎（不调用 AI）**」—— 让用户一眼能分辨。
+    - R-56：加 **ref 同步重入闸** `generateInFlightRef`（外层 `try/finally` 复位），
+      比依赖 `status` 的时序可靠；函数体拆成 `runGenerateForSources` 保持可读。
+  - **验收**：`GallerySopBatchModal.test.tsx` **42 例全绿**（+4：R-55 探针 1 例、
+    R-54 1 例、R-56 1 例、R-53 存量 1 例）；`npm run verify` 全绿
+    （**230 文件 / 2612 用例**）。
+  - **⚠️ 排查教训（写进 runbook §16）**：`GallerySopBatchModal.tsx` 有非组件导出
+    （`getGallerySopPromptRunStorageKey`）→ Vite **无法 Fast Refresh**，改这个文件后
+    HMR 会 `invalidate` 但不热更新；且渲染进程的 `console.warn` **不进终端**。
+    → 诊断这个文件**必须用 DB 取证或界面可见标记**，不要靠 `console.warn` + 改代码试。
 
 - **UI 入口（2026-09-20 补做，原为遗留项 1）**
   - **新建**：SOP 列表头部「新建 | 配方卡」两个按钮并列。点「配方卡」直接落一张
@@ -858,3 +903,41 @@
      从 `getAllSopBatchSnapshots()` 里按 `snapshot.sop.id` 过滤出本张配方卡的历史产出，
      再用 `deriveUsedSignatures` 反推签名；读历史失败则降级为「仅本批去重」+ console.warn，
      不阻断生成。于是**关弹窗重开、重启应用后跨批次去重依然生效**，且**无需新增存储结构**。
+
+### TB-048 「本地引擎快照显示成 AI 模型」残留 + 生成中卡死（2026-09-20 报障复现）
+
+- **来源**：杰哥报障「为什么提示词引擎无法生成提示词，你是不是一开始就搞错什么了」
+  （2026-09-20 上午，截图显示 · 0 条提示词 · **生成中** · `gemini-3.1-pro-preview`）
+- **状态**：R-54 残留已修；R-57 待修 · 写线：主写线
+- **排查手法**：SQLite 只读探查（runbook 第十六节），**决定性证据在 `sopBatchSnapshots`**。
+  ⚠️ 本次修正了此前的一个判断偏差：`app_data_records` 里 **没有 `sopLibrary` 这个 record_id**
+  —— SOP 库不在独立 namespace，而是并进 **`zustand` / `state` 的 `...state` 字段里**；
+  run 快照另有 `sopBatchSnapshots` namespace（`record_id = sop-run-xxx`）。查 `sopLibrary` 查不到
+  是正常的，不代表数据丢失。
+
+- **已修：R-54 残留快照没被清洗（**已修**）**
+  - **证据**：两条 run 快照（10:10:36 / 10:25:52）**同一个 `id`**
+    （`sop-run-mu972k2g-3yyu96`）、`sop.id` 都是 `sop-mu96iez8-4y7cho`（「未命名配方卡」），
+    `status: 'generating'`、`promptCount: 0`、`prompts: []`；
+    **10:10 那条带 `promptGenerationModel: 'gemini-3.1-pro-preview'`**（10:25 新代码已写 `undefined`）。
+  - **根因**：R-54 的第一版修复**只改了「新写入」**，挡不住这个「已存在」的残留。
+    写模型名用的是 `activePromptGenerationModelRef`，而弹窗挂载时会从快照把它恢复回来
+    （`applyPromptRun` 第 997 行 `= run.promptGenerationModel ?? ''`）→ 残留值再经
+    `buildPromptRunSnapshot` 回写。于是「只改 ref 洗不掉」的问题从「同一次会话内」变成了
+    「每次打开弹窗都复活」。
+  - **修法（本次）**：清洗时机前移到**弹窗恢复 run 的那一刻** —— applyPromptRun 里读到
+    `run.promptGenerationModel` 且该基准 SOP 已判为本地引擎时，先把脏值置空再落盘回写，
+    使「点开弹窗」即刻生效，不必等下一次生成。
+  - **验收**：`npm run verify` 全绿 + DB 回读确认该 run 快照已无 `promptGenerationModel`。
+
+- **未修：R-57 `generateForSources` 同步重入闸留下的 `generating` 孤儿快照（OPEN）**
+  - **证据**：10:25:52 那条快照 `status: 'generating'` / `promptCount: 0` / `prompts: []`，
+    但到 10:41（报障时）仍无后续写入 → 该 run 停在「生成中」不再前进。
+    10:10 与 10:25 两条**共用同一个 run id**，是同一份快照被反复改写。
+  - **根因（待确证）**：`if (generateInFlightRef.current) return`（第 1809 行）**是静默 return** ——
+    上一轮还在飞时直接挡下，不报错、不提示、**不落终止态快照**，
+    于是界面停在上一轮留下的 `generating` 状态，表现为「点了没反应 / 一直生成中」。
+    与 10:10 那条带模型名的快照叠加，就成了报障截图里那一行。
+  - **待办**：① 确证被挡下时确实没有终止态快照（不能留 `generating` 孤儿）；
+    ② 挡下时给用户明确反馈而不是静默返回；③ 补回归测试
+    （复用 R-54 的「按 `status==='generating'` + `promptCount===0` 扫库」探针做验收）。

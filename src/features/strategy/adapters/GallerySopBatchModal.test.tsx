@@ -323,6 +323,145 @@ describe('GallerySopBatchModal background generation', () => {
     expect(generateMocks.generatePromptsFromSopStore).not.toHaveBeenCalled()
   })
 
+  it('settles the status when switching SOP aborts an in-flight local run (R-55)', async () => {
+    // 回归 R-55：init effect 的依赖是 [promptRunStorageKey, initialSopId]，cleanup 会中止在途生成。
+    // 用户从「配方卡」切到另一张 SOP（或弹窗重挂载）时，中止后若无人结算状态，
+    // UI 会永久停在「生成中 · 0 条提示词」——看起来就像「完全没走引擎」。
+    let resolveRecipe!: (value: string[]) => void
+    generateMocks.generateCampaignRecipePromptsFromStore.mockImplementation(
+      () =>
+        new Promise<string[]>((resolve) => {
+          resolveRecipe = resolve
+        }),
+    )
+
+    let updateSop!: (value: string) => void
+    function SwitchingSopHost() {
+      const [sopId, setSopId] = useState('sop-recipe')
+      updateSop = setSopId
+      return (
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId={sopId}
+          initialPromptCount={1}
+          autoStart
+          onAutoStartConsumed={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+    }
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<SwitchingSopHost />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledOnce()
+
+    // 生成仍在途时切走 SOP → init effect 重跑 → cleanup 中止在途控制器
+    await act(async () => {
+      updateSop('sop-1')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // 让被中止的 promise 有机会落定
+    await act(async () => {
+      resolveRecipe(['迟到的提示词'])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // 状态必须被结算：最后一个落盘的 run 快照不能再停在 generating
+    // （run 头部的「生成中」正是读自 activeRun.status，见 getRunStatusLabel）
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    })
+    const snapshots = dbMocks.putSopBatchSnapshot.mock.calls.map((call) => call[0] as SopBatchSnapshot)
+    // eslint-disable-next-line no-console
+    console.log('[PROBE] snapshot statuses:', snapshots.map((s) => s.status).join(','))
+    const stuckAtGenerating = snapshots.filter((snapshot) => snapshot.status === 'generating')
+    expect(stuckAtGenerating.length).toBe(snapshots.length === 0 ? 0 : stuckAtGenerating.length)
+    expect(snapshots.every((snapshot) => snapshot.status !== 'generating')).toBe(true)
+  })
+
+  it('does not tag a local-engine run with the AI text model name (R-54)', async () => {
+    // 回归 R-54：本地算法分支（配方卡）的 run 快照不该带上文本模型名 ——
+    // 无条件记录会让界面显示「文本模型 gemini-…」，用户据此误判成走了 AI。
+    generateMocks.getSopPromptGenerationModelFromStore.mockReturnValue('gemini-3.1-pro-preview')
+    generateMocks.generateCampaignRecipePromptsFromStore.mockResolvedValue(['本地生成的提示词'])
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe"
+          initialPromptCount={1}
+          autoStart
+          onAutoStartConsumed={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledOnce()
+    // 快照落盘里不应出现该文本模型名
+    const persisted = dbMocks.putSopBatchSnapshot.mock.calls.map((call) => JSON.stringify(call[0])).join('\n')
+    expect(persisted).not.toContain('gemini-3.1-pro-preview')
+  })
+
+  it('does not start a second generation while one is already in flight (R-56)', async () => {
+    // 回归 R-56：generateForSources 开头会 abort 上一轮，而被 abort 的那一轮最后落盘的是
+    // `status: 'generating'` 的孤儿快照（progressiveSnapshotId 已不等于 activeRunIdRef，
+    // 永远等不到收尾覆盖）。界面就永久停在「生成中 · 0 条提示词」。
+    let resolveRecipe!: (value: string[]) => void
+    generateMocks.generateCampaignRecipePromptsFromStore.mockImplementation(
+      () =>
+        new Promise<string[]>((resolve) => {
+          resolveRecipe = resolve
+        }),
+    )
+    // autoStart 在消费后会被置回 false，随后若再次变 true（宿主回写、重挂载）不得重入
+    function RestartableHost() {
+      const [autoStart, setAutoStart] = useState(true)
+      return (
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-recipe"
+          initialPromptCount={2}
+          autoStart={autoStart}
+          onAutoStartConsumed={() => setAutoStart(false)}
+          onClose={vi.fn()}
+        />
+      )
+    }
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<RestartableHost />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveRecipe(['第一条', '第二条'])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // 全程只允许一次生成调用：多出来的那次会 abort 前一次并留下孤儿 generating 快照
+    expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledTimes(1)
+  })
+
   it('uses the latest input requirement when a mounted modal starts another run', async () => {
     generateMocks.generatePromptsFromSopStore.mockResolvedValue(['新任务提示词'])
     let updateBrief!: (value: string) => void

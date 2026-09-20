@@ -731,6 +731,29 @@ for (const it of d.state.sopLibrary) {
 静默失效类的修复，测试很容易写成"假绿"（断言写错方向也会过）。**逐个把修复临时改回
 `if (false)` 或还原旧条件，确认测试真的会失败**，再改回来。本次 3 个回归测试全部这样验过。
 
+### 7. ⚠️ 本方法**取代**不了什么：`GallerySopBatchModal.tsx` 的诊断盲区
+
+**这个文件不能用「加日志 → 看终端」的方式排查**，两个原因叠加：
+
+1. **它无法 Fast Refresh**。文件里有非组件导出（`getGallerySopPromptRunStorageKey`），
+   Vite 只能 `hmr invalidate`：「Could not Fast Refresh ("setDefaultMode" export is incompatible)」
+   —— 意思是**你改的代码根本没热更新**，dev 里跑的还是旧逻辑。
+2. **渲染进程的 `console.warn` / `console.info` 不进终端**。主进程（`electron/`）的输出才算。
+
+**后果**：你以为在"加日志调查"，实际上日志没打出来、代码也没生效，
+很容易得出「这条路不通」的错误结论（本次就白跑了一轮）。
+
+**正确做法（按优先级）**：
+
+- **DB 取证**（本节 1–5）—— 首选，快照 / 库内容是最硬的证据；
+- **界面可见标记** —— 把待查的值直接渲染到 UI 上（如 run 头部的状态行），
+  用眼睛看，别指望日志；
+- **写进测试** —— 用 `react-test-renderer` 直接复现分支，断言函数是否被调用
+  （本次 R-56 就是这么定位的：断言 `generateCampaignRecipePromptsFromStore` 只调一次）。
+
+**另注意**：诊断期间**不要靠"改一行再看看"**。这个文件的改动要生效必须
+**重启 dev**（`npm run dev`），而不是等 HMR。
+
 ---
 
 ## 十七、dev 崩溃 / SQLite 报错的处置顺序（2026-09-20 实测定稿）
