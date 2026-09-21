@@ -380,12 +380,29 @@ export default function CompositeWorkspace() {
       aria-label="中控台工作区"
       className="flex h-[calc(100dvh-7rem)] min-h-0 overflow-hidden bg-ds-surface text-ds-text sm:h-[calc(100dvh-var(--app-header-offset))] dark:bg-ds-scrim dark:text-ds-text-subtle"
     >
-      <ConsoleAssetTree value={scope} onValueChange={setScope} />
+      {/*
+       * 左树现在承载两级：**配置维度 → 作用域**（2026-09-21 改版）。
+       * 点一次同时定「改什么」与「改谁」；纯全局维度的组里不铺方向树，约束由结构表达。
+       */}
+      <ConsoleAssetTree
+        section={section}
+        onSectionChange={(next) => {
+          setControlConsoleSection(normalizeControlConsoleSection(next))
+          // 切维度时回到卡片视图：否则从编辑器切走再切回来会停在编辑器，与工具栏筛选不一致
+          setWatermarkView('cards')
+        }}
+        value={scope}
+        onValueChange={setScope}
+      />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex shrink-0 items-start justify-between gap-3 px-4 pt-3">
           <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold text-ds-text dark:text-ds-text">{scopeTitle}</h1>
+            {/* 维度名进标题：维度切换在左树，右区必须明说「现在在哪个维度」——
+                不然用户从树上点了个作用域，会不知道右区内容属于哪一项 */}
+            <h1 className="truncate text-base font-semibold text-ds-text dark:text-ds-text">
+              {active.label} · {scopeTitle}
+            </h1>
             <p className="truncate text-xs text-ds-muted dark:text-ds-muted">
               {scopePath} · {active.description}
             </p>
@@ -431,12 +448,7 @@ export default function CompositeWorkspace() {
 
         <div className="pt-2.5">
           <ConsoleToolbar
-            section={section}
-            onSectionChange={(next) => {
-              setControlConsoleSection(normalizeControlConsoleSection(next))
-              // 切维度时回到卡片视图：否则从编辑器切走再切回来会停在编辑器，与工具栏筛选不一致
-              setWatermarkView('cards')
-            }}
+            presetCardMode={section === 'watermark'}
             bindingFilter={bindingFilter}
             onBindingFilterChange={setBindingFilter}
             query={query}

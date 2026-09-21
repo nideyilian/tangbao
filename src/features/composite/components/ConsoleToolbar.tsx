@@ -1,7 +1,7 @@
 /**
  * 中控台 · 右区工具栏。
  *
- * 复刻「灵境 · 策略中心」的两行工具栏：
+ * 形态复刻「灵境 · 策略中心」的两行工具栏：
  *
  * ```
  * [按发布状态 ▾] [按配置完整性 ▾] [搜索当前策略] [每行数量 ─●──] [▦] [☰]
@@ -9,28 +9,31 @@
  * ```
  *
  * 糖包的对应物：
- * - 第一个下拉 = **配置维度**（水印 / 渠道与尺寸 / 输出位置 / 分发）。
- *   分区从「顶部独占一段的 SegmentedControl」降到这里，与其余筛选同形态同位置；
- * - 第二个下拉 = **归属范围**（全部 / 已绑定 / 未绑定），只在水印维度下有意义；
- * - 搜索 + 每行数量 + 网格/列表：原样复刻（这两个是纯 UI 偏好，与业务无关）；
- * - 批量行：全选当前 / 取消选择 / 批量绑定 / 批量复制 / 批量删除。
+ *
+ * - **配置维度不在这里**（2026-09-21 改版，见 `controlConsoleSections.ts` 头注）：
+ *   它挪到左树的一级节点，与作用域合成「点一次定落点」。工具栏从此只管**当前维度内部**
+ *   的筛选与批量，不再承担「切维度」这种换页性质的职责 —— 一个控件只做一件事。
+ * - 归属范围（全部 / 已绑定 / 未绑定）+ 搜索 + 每行数量 + 网格/列表：只在预设卡片形态下有意义；
+ * - 批量行：全选当前 / 取消选择 / 批量启用 / 批量停用 / 批量复制 / 批量删除。
  *   灵境的「批量挪动」「一键发布」在糖包没有对应动作（预设不移动、不发布），
- *   所以**不做**——放一个点了没反应的按钮比不放更糟。
+ *   所以**不做** —— 放一个点了没反应的按钮比不放更糟。
  *
  * 批量操作在没选中任何卡片时 `disabled`（与灵境一致），避免「点了没反应」的困惑。
  */
 
 import { Button, SearchField, SegmentedControl, SelectField, Slider } from '../../../design-system'
 import { CollectionManageIcon, Grid2X2Icon } from '../../../design-system/icons'
-import { CONTROL_CONSOLE_SECTIONS, type ControlConsoleSectionId } from '../lib/controlConsoleSections'
 
 /** 卡片归属筛选。只在「水印」维度下有内容可筛。 */
 export type ConsoleBindingFilter = 'all' | 'bound' | 'unbound'
 export type ConsoleViewMode = 'grid' | 'list'
 
 interface Props {
-  section: ControlConsoleSectionId
-  onSectionChange: (section: ControlConsoleSectionId) => void
+  /**
+   * 当前维度是否是「预设卡片」形态（水印）。其余维度是表格或表单，
+   * 归属筛选 / 搜索 / 每行数量 / 视图切换 / 批量操作都无对象，整组隐藏。
+   */
+  presetCardMode: boolean
   bindingFilter: ConsoleBindingFilter
   onBindingFilterChange: (filter: ConsoleBindingFilter) => void
   query: string
@@ -71,8 +74,7 @@ const VIEW_OPTIONS = [
 ]
 
 export function ConsoleToolbar({
-  section,
-  onSectionChange,
+  presetCardMode,
   bindingFilter,
   onBindingFilterChange,
   query,
@@ -91,101 +93,81 @@ export function ConsoleToolbar({
   onDuplicateSelected,
   onDeleteSelected,
 }: Props) {
-  // 只有水印维度是「卡片网格」形态，其余三个维度是配置表单 ⇒ 筛选/视图/批量都无对象
-  const isCardView = section === 'watermark'
   const hasSelection = selectedCount > 0
+
+  if (!presetCardMode) return null
 
   return (
     <div className="shrink-0 space-y-2 border-b border-ds-border px-4 py-2.5 dark:border-ds-border">
       <div className="flex flex-wrap items-center gap-2">
         <SelectField
-          label="配置维度"
-          aria-label="配置维度"
-          containerClassName="min-w-36"
-          value={section}
-          options={CONTROL_CONSOLE_SECTIONS.map((item) => ({ value: item.id, label: item.label }))}
-          onChange={(event) => onSectionChange(event.target.value as ControlConsoleSectionId)}
+          label="归属范围"
+          aria-label="归属范围"
+          containerClassName="min-w-32"
+          value={bindingFilter}
+          options={BINDING_OPTIONS}
+          onChange={(event) => onBindingFilterChange(event.target.value as ConsoleBindingFilter)}
         />
-        {isCardView && (
-          <SelectField
-            label="归属范围"
-            aria-label="归属范围"
-            containerClassName="min-w-32"
-            value={bindingFilter}
-            options={BINDING_OPTIONS}
-            onChange={(event) => onBindingFilterChange(event.target.value as ConsoleBindingFilter)}
-          />
-        )}
-        {isCardView && (
-          <SearchField
-            label="搜索预设"
-            placeholder="搜索预设"
-            size="sm"
-            value={query}
-            onChange={onQueryChange}
-            className="min-w-40 flex-1"
-          />
-        )}
-        {isCardView && (
-          <Slider
-            label="每行数量"
-            aria-label="每行预设数量"
-            min={2}
-            max={6}
-            step={1}
-            value={perRow}
-            valueDisplay={perRow}
-            onChange={onPerRowChange}
-          />
-        )}
-        {isCardView && (
-          <SegmentedControl
-            aria-label="切换卡片视图"
-            size="sm"
-            value={view}
-            options={VIEW_OPTIONS}
-            onValueChange={onViewChange}
-          />
-        )}
+        <SearchField
+          label="搜索预设"
+          placeholder="搜索预设"
+          size="sm"
+          value={query}
+          onChange={onQueryChange}
+          className="min-w-40 flex-1"
+        />
+        <Slider
+          label="每行数量"
+          aria-label="每行预设数量"
+          min={2}
+          max={6}
+          step={1}
+          value={perRow}
+          valueDisplay={perRow}
+          onChange={onPerRowChange}
+        />
+        <SegmentedControl
+          aria-label="切换卡片视图"
+          size="sm"
+          value={view}
+          options={VIEW_OPTIONS}
+          onValueChange={onViewChange}
+        />
       </div>
 
-      {isCardView && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onSelectAll} disabled={visibleCount === 0}>
-            全选当前
-          </Button>
-          <Button variant="ghost" size="sm" onClick={onClearSelection} disabled={!hasSelection}>
-            取消选择
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onEnableSelected}
-            disabled={!hasSelection || !canToggleEnabled}
-            title={canToggleEnabled ? undefined : '「启用」是方向级的设置，请先在左侧选一个方向'}
-          >
-            批量启用
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onDisableSelected}
-            disabled={!hasSelection || !canToggleEnabled}
-            title={canToggleEnabled ? undefined : '「停用」是方向级的设置，请先在左侧选一个方向'}
-          >
-            批量停用
-          </Button>
-          <Button variant="ghost" size="sm" onClick={onDuplicateSelected} disabled={!hasSelection}>
-            批量复制
-          </Button>
-          <Button variant="ghost" size="sm" onClick={onDeleteSelected} disabled={!hasSelection}>
-            批量删除
-          </Button>
-          {selectedCount > 0 && (
-            <span className="text-xs text-ds-muted dark:text-ds-muted">已选 {selectedCount} 个</span>
-          )}
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={onSelectAll} disabled={visibleCount === 0}>
+          全选当前
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onClearSelection} disabled={!hasSelection}>
+          取消选择
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onEnableSelected}
+          disabled={!hasSelection || !canToggleEnabled}
+          title={canToggleEnabled ? undefined : '「启用」是方向级的设置，请先在左侧选一个方向'}
+        >
+          批量启用
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onDisableSelected}
+          disabled={!hasSelection || !canToggleEnabled}
+          title={canToggleEnabled ? undefined : '「停用」是方向级的设置，请先在左侧选一个方向'}
+        >
+          批量停用
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onDuplicateSelected} disabled={!hasSelection}>
+          批量复制
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onDeleteSelected} disabled={!hasSelection}>
+          批量删除
+        </Button>
+        {selectedCount > 0 && <span className="text-xs text-ds-muted dark:text-ds-muted">已选 {selectedCount} 个</span>}
+      </div>
     </div>
   )
 }

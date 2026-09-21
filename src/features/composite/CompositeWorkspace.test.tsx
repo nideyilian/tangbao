@@ -46,12 +46,18 @@ function collectText(children: unknown): string {
   return ''
 }
 
-/** 切到某个配置维度：触发工具栏「配置维度」下拉的 onChange */
+/**
+ * 切到某个配置维度：**点左树上的维度组**（2026-09-21 改版后维度由树承载，
+ * 不再是工具栏里的下拉 —— 这条 helper 的改法本身就是那次改版的断言）。
+ */
 function switchSection(renderer: ReturnType<typeof create>, sectionId: string) {
-  const select = renderer.root.findAll((node) => node.type === 'select' && node.props['aria-label'] === '配置维度')[0]
-  if (!select) throw new Error('未找到「配置维度」下拉')
+  const label = CONTROL_CONSOLE_SECTIONS.find((item) => item.id === sectionId)?.label
+  if (!label) throw new Error(`未知维度：${sectionId}`)
+  const button = renderer.root.find(
+    (node) => node.type === 'button' && node.props['aria-label'] === `配置维度 ${label}`,
+  )
   act(() => {
-    ;(select.props.onChange as (event: { target: { value: string } }) => void)({ target: { value: sectionId } })
+    ;(button.props.onClick as () => void)()
   })
 }
 
@@ -116,8 +122,8 @@ describe('CompositeWorkspace', () => {
     })
 
     expect(renderer.root.findByType('main').props['aria-label']).toBe('中控台工作区')
-    // 左栏作用域树是复刻灵境策略中心的核心部件，必须有稳定可访问名
-    expect(renderer.root.findByProps({ 'aria-label': '中控台作用域树' })).toBeTruthy()
+    // 左栏配置资产库（配置维度 → 作用域）是复刻灵境策略中心的核心部件，必须有稳定可访问名
+    expect(renderer.root.findByProps({ 'aria-label': '中控台配置资产库' })).toBeTruthy()
   })
 
   it('switches to each registered section and renders exactly one at a time', () => {
@@ -185,16 +191,18 @@ describe('CompositeWorkspace', () => {
     expect(renderer.root.findAllByProps({ children: 'output-screen' })).toHaveLength(0)
   })
 
-  it('右区标题跟随左树选择的作用域', () => {
+  it('右区标题同时说明「当前维度」与「当前作用域」', () => {
+    // 维度切换挪到左树之后，右区必须自己说清现在在哪一项 —— 否则从树上点了作用域，
+    // 右区内容属于哪个维度就看不出来了（标题里带维度名前缀就是为了这个）
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('全局默认')
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('水印 · 全局默认')
 
     clickTreeButton(renderer, '月亮')
-    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('水印 · 月亮')
   })
 
   it('方向作用域下「批量启用」才可用（全局默认下置灰并给出原因）', () => {
@@ -222,7 +230,7 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('水印 · 月亮')
   })
 
   it('在树里选方向会写回全局指针，别的入口能读到同一个值', () => {
