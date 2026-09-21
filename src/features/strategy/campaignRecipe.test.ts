@@ -590,6 +590,65 @@ describe('campaignRecipe 跨批次签名推导（从历史文本反推）', () =
     expect(deriveUsedSignatures(recipe, []).size).toBe(0)
     expect(deriveUsedSignatures(recipe, ['   ', '']).size).toBe(0)
   })
+
+  /**
+   * 单花括号骨架（外部真实资产的常态写法，如 `{M}` / `{S9风格}`）的回归用例。
+   *
+   * 起因（2026-09-21）：`usedInBody` 曾写成 `body.includes('{{' + name + '}}')`，只认双花括号。
+   * 真实资产骨架是单花括号 ⇒ 判定恒为假 ⇒ 每个维度都走通配分支 ⇒ **整批历史塌缩成同一条
+   * 签名 `*|*|…|*`**（永不等于真实签名）⇒ 跨批次去重静默失效。实测同一份 13 维配置：
+   * 双花括号批间重复 0/10、单花括号 10/10（详见 docs/RISK.md 的 R-66）。
+   *
+   * ⚠️ 这两条用例**必须用同一 seed**：不同 seed 本身就会产出不同组合，去重完全失效时也照样
+   * 「不重复」—— 既有那条「跨批次去重闭环」用例用 first/second 两个 seed，正是因此一直绿着，
+   * 没能拦住这个 bug。同 seed 才能把「去重是否真的在起作用」隔离出来。
+   */
+  describe('单花括号骨架（外部真实资产写法）', () => {
+    const singleBrace: CampaignRecipeConfig = {
+      body: '{A}，固定文案，{B}',
+      dimensions: [
+        // 候选空间（4 × 4 = 16）必须显著大于两批的需求：组合穷尽时引擎会放行重复项
+        // 而不是标记 exhausted，那是另一码事（见 R-66 的同族风险），不该混进本用例的判定。
+        { name: 'A', options: ['甲', '乙', '丙', '丁'] },
+        { name: 'B', options: ['戊', '己', '庚', '辛'] },
+      ],
+    }
+
+    it('反推得到逐条真签名，而不是一条通配签名', () => {
+      const prompts = renderCampaignRecipePrompts(singleBrace, { count: 3, seed: 'derive-single' })
+      const signatures = deriveUsedSignatures(singleBrace, prompts)
+      // 中间态断言：只断最终产出会被 `??` 式兜底掩盖，这里直接断签名本体
+      expect(signatures.size).toBe(3)
+      expect([...signatures].some((signature) => signature.includes('*'))).toBe(false)
+      // 与渲染出的正文对得上（签名各段都能在该条提示词里找到）
+      for (const prompt of prompts) {
+        expect([...signatures].some((signature) => signature.split('|').every((value) => prompt.includes(value)))).toBe(
+          true,
+        )
+      }
+    })
+
+    it('同 seed 复跑时跨批次去重仍然闭环（批间零重复）', () => {
+      const first = renderCampaignRecipePrompts(singleBrace, { count: 3, seed: 'same-seed' })
+      const used = deriveUsedSignatures(singleBrace, first)
+      const second = generateCampaignRecipeBatch(singleBrace, { count: 3, seed: 'same-seed', usedSignatures: used })
+      // 同一 seed 会撒出同一串候选点，全靠签名去重把它们推走 —— 去重失效时这里恒为 3 条全重复
+      expect(second.samples.filter((sample) => first.includes(sample.prompt))).toEqual([])
+    })
+
+    it('正文未引用的维度仍用通配符，单/双花括号混写不误判', () => {
+      const mixed: CampaignRecipeConfig = {
+        body: '{{A}} 与 {B}',
+        dimensions: [
+          { name: 'A', options: ['甲', '乙'] },
+          { name: 'B', options: ['丙', '丁'] },
+          { name: 'C', options: ['戊', '己'] },
+        ],
+      }
+      // C 未出现在正文 → 通配；A 走双花括号、B 走单花括号，两者都要被认出
+      expect([...deriveUsedSignatures(mixed, ['甲 与 丙'])]).toEqual(['甲|丙|*'])
+    })
+  })
 })
 
 describe('campaignRecipe 取消贯穿（signal 直达采样内部）', () => {

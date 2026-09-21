@@ -569,6 +569,36 @@ function escapeCampaignRecipeRegExp(value: string) {
 }
 
 /**
+ * 骨架里的两条占位符扫描口径（渲染与「正文引用了哪些维度」的判定**共用这一份**）。
+ *
+ * 为什么必须是常量而不是各处内联：双花括号是项目标准，单花括号是外部真实资产常态
+ * （`{M}` / `{S9风格}`）。两处若各写各的，就会出现「渲染认单花括号、判定不认」这类
+ * 口径分叉 —— 2026-09-21 实测的跨批次去重静默失效正是这么来的（见 `deriveUsedSignatures`）。
+ */
+const RECIPE_DOUBLE_BRACE_PATTERN = /\{\{\s*([^{}\r\n]+?)\s*\}\}/gu
+const RECIPE_SINGLE_BRACE_PATTERN = /\{\s*([\p{L}\p{N}_]{1,40})\s*\}/gu
+
+/**
+ * 正文实际引用了哪些维度名（两种花括号写法都算）。
+ *
+ * 扫描顺序**先双后单**：先把 `{{名称}}` 消费掉再扫单花括号，否则 `{{S1}}` 的内层
+ * `{S1}` 会被重复识别（R-50 的同类坑）。
+ *
+ * 独立实现而不复用 `campaignRecipeImport.ts` 的 `extractPlaceholders`：依赖方向是
+ * import → campaignRecipe，反向引用会成环。两处的单花括号字符类宽度不同（那边兼容
+ * 更宽松的外部写法），改动其一时需同步核对。
+ */
+function referencedDimensionNames(body: string): Set<string> {
+  const names = new Set<string>()
+  const withoutDouble = body.replace(RECIPE_DOUBLE_BRACE_PATTERN, '\u0000')
+  // 双花括号用原文扫（替换后只剩哨兵），单花括号在替换后的文本上扫。
+  for (const match of body.matchAll(RECIPE_DOUBLE_BRACE_PATTERN)) names.add(match[1].trim())
+  for (const match of withoutDouble.matchAll(RECIPE_SINGLE_BRACE_PATTERN)) names.add(match[1].trim())
+  names.delete('')
+  return names
+}
+
+/**
  * 骨架里**写死**的画幅描述（比例数字 / 方向词）统一改为当前界面尺寸。
  *
  * 为什么需要：真实配方卡资产习惯把画幅写死在骨架里（如 `vertical 9:16 photo`），
@@ -634,13 +664,13 @@ function renderRecipeBody(
   // 顺序很关键：`{比例}` 这类占位符也要在归一之后才替换，否则归一得到的方向词会被再改一次。
   const normalizedBody = normalizeHardcodedAspect(body, builtinValues)
   const replaced = normalizedBody
-    .replace(/\{\{\s*([^{}\r\n]+?)\s*\}\}/gu, (marker, rawName: string) => valueByName.get(rawName.trim()) ?? marker)
+    .replace(RECIPE_DOUBLE_BRACE_PATTERN, (marker, rawName: string) => valueByName.get(rawName.trim()) ?? marker)
     // 单花括号引用：名字允许任意语言的字母/数字/下划线组合。
     // 曾经限定为纯 ASCII（`[A-Za-z][A-Za-z0-9_]{0,15}`），导致真实资产里的
     // `{S9风格}`、`{S11标题}` 这类「编号 + 中文」引用**一律替换不到**，
     // 生成出的提示词带着花括号占位符（2026-09-20「快手短剧_信息流」无法生成）。
     // 仍然「对不上维度名就原样保留」，所以正文里成对的合法花括号不会丢信息。
-    .replace(/\{\s*([\p{L}\p{N}_]{1,40})\s*\}/gu, (marker, rawName: string) => {
+    .replace(RECIPE_SINGLE_BRACE_PATTERN, (marker, rawName: string) => {
       const value = valueByName.get(rawName.trim())
       return value === undefined ? marker : value
     })
@@ -1109,7 +1139,14 @@ export function deriveUsedSignatures(config: CampaignRecipeConfig, existingPromp
   const { body, dimensions } = config
   // 正文压根没用到的维度不参与签名（与 signatureOf 对齐：它按全部维度拼串，
   // 但渲染后未使用的维度在文本里不可见，这里只能按「可确定维度」近似）。
-  const usedInBody = dimensions.filter((dimension) => body.includes(`{{${dimension.name}}}`))
+  //
+  // ⚠️ 这里曾经写成 `body.includes(`{{${dimension.name}}}`)` —— 只认双花括号，而外部真实
+  // 资产的骨架用的是单花括号（`{M}` / `{S1主体}`）。于是 referenced 恒为空集，每个维度
+  // 都走下方 `parts.push('*')` 分支 → **整批历史塌缩成同一条签名 `*|*|…|*`**，它与任何
+  // 真实签名（选项名拼串）都不相等 ⇒ 跨批次去重静默失效（2026-09-21 实测：真实资产
+  // 批间重复 10/10，同一份配置换成双花括号骨架则是 0/10）。详见 docs/RISK.md 的 R-66。
+  const referenced = referencedDimensionNames(body)
+  const usedInBody = dimensions.filter((dimension) => referenced.has(dimension.name.trim()))
 
   for (const rawPrompt of existingPrompts) {
     const prompt = rawPrompt.trim()
