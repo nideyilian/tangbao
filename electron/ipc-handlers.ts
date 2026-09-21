@@ -249,7 +249,34 @@ function getAllowedRoots(): string[] {
   ]
   const settings = readLocalSettings()
   if (typeof settings.localSavePath === 'string') roots.push(settings.localSavePath)
+  // 配置同步目录（TB-086）：用户在设置里手填 / 选过的，等同一次授权
+  if (typeof settings.configSyncPath === 'string') roots.push(settings.configSyncPath)
   return roots.map(normalizeFsPath)
+}
+
+/**
+ * 配置同步目录的基本体检。
+ *
+ * 这里刻意**不比照 `assertAllowedPath`**（理由见设置它的调用点），但也不能什么都收：
+ * 盘根与系统目录一旦被写进去，用户会看到一堆莫名其妙的文件。
+ */
+function validateConfigSyncPath(raw: unknown): string {
+  const trimmed = typeof raw === 'string' ? raw.trim() : ''
+  if (!trimmed) throw new Error('配置目录不能为空')
+  const normalized = normalizeFsPath(trimmed)
+  if (path.dirname(normalized) === normalized) throw new Error('配置目录不能是磁盘根目录')
+  const blocked = [
+    process.env.SystemRoot,
+    process.env.windir,
+    process.env.ProgramFiles,
+    process.env['ProgramFiles(x86)'],
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => normalizeFsPath(value))
+  if (blocked.some((root) => isPathInside(normalized, root))) {
+    throw new Error('配置目录不能放在系统目录里')
+  }
+  return normalized
 }
 
 function isPathInside(targetPath: string, rootPath: string): boolean {
@@ -327,6 +354,11 @@ export function initLocalSavePath(): void {
       writeLocalSettings(settings)
     }
     if (typeof settings.localSavePath === 'string') addAllowedRoot(settings.localSavePath)
+    // 配置同步目录（「发布配置 / 拉取最新」的落点，TB-086）。启动时同样要放行 ——
+    // 它多半是内网共享盘的 UNC 路径，不在任何默认白名单里。
+    if (typeof settings.configSyncPath === 'string' && settings.configSyncPath.trim()) {
+      addAllowedRoot(settings.configSyncPath)
+    }
     // 库布局骨架（db/thumbs/backups + library.json），并把布局版本写入设置文件
     ensureLibraryLayout()
     if (typeof settings.libraryVersion !== 'number') {
@@ -1412,6 +1444,28 @@ export function registerIpcHandlers(): void {
   handleChecked('store:get-local-save-path', async () => {
     const settings = readLocalSettings()
     return (settings.localSavePath as string) ?? null
+  })
+
+  handleChecked('store:get-config-sync-path', async () => {
+    const settings = readLocalSettings()
+    return (settings.configSyncPath as string) ?? null
+  })
+
+  /**
+   * 设置「配置同步」目录（「发布配置 / 拉取最新」的落点，见 TB-086）。
+   *
+   * 与 `store:set-local-save-path` 有一处**刻意不同**：这里不走 `assertAllowedPath`。
+   * 那个断言要求路径已经在白名单里，而白名单只有「用对话框选过一次」才会加 ——
+   * 手打共享盘 UNC 路径（正是这个功能的主用法）会被它拒掉，且报错不说真因（R-62）。
+   * 用户在这里写下这个路径，本身就是一次授权，所以改成「基本体检 + 显式放行 + 持久化」。
+   */
+  handleChecked('store:set-config-sync-path', async (_event, { path: syncPath }: { path: string }) => {
+    const normalized = validateConfigSyncPath(syncPath)
+    const settings = readLocalSettings()
+    settings.configSyncPath = normalized
+    writeLocalSettings(settings)
+    addAllowedRoot(normalized)
+    return normalized
   })
 
   handleChecked('store:set-local-save-path', async (_event, { path: savePath }: { path: string }) => {

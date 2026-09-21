@@ -64,7 +64,12 @@ import {
   deleteBackupFile,
   getBackupPath,
   getLibraryBackupsPath,
+  // 配置同步（TB-086）：把中控台那套配置发布到共享目录 / 从那里拉取最新
+  getConfigSyncPath,
+  setConfigSyncPath as persistConfigSyncPath,
+  pickDirectory,
 } from '../lib/localSave'
+import { listSyncDirConfigs, publishConfigToSyncDir, pullLatestConfigFromSyncDir } from '../lib/configSync'
 import { useAutoUpdate } from '../hooks/useAutoUpdate'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { formatUpdateReleaseNotes } from '../lib/updateReleaseNotes'
@@ -966,6 +971,26 @@ export default function SettingsModal() {
   const [importTasks, setImportTasks] = useState(true)
   const [importImages, setImportImages] = useState(true)
   const [importAssets, setImportAssets] = useState(true)
+  /**
+   * 配置同步（TB-086）：把中控台那套配置发布到共享目录 / 从那里拉取最新。
+   *
+   * 路径由**主进程**持久化（`local-settings.json` 的 `configSyncPath`），打开设置时读回来 ——
+   * 它同时是主进程路径白名单的一部分，所以不能只存在渲染侧的 state 里。
+   */
+  const [configSyncPath, setConfigSyncPathState] = useState('')
+  const [configSyncStatus, setConfigSyncStatus] = useState('')
+  const [isConfigSyncing, setIsConfigSyncing] = useState(false)
+
+  useEffect(() => {
+    if (!showSettings) return
+    void (async () => {
+      setConfigSyncPathState((await getConfigSyncPath()) ?? '')
+      // 顺手把目录里最新的一份读出来：点开设置就能看到"共享盘上现在那份是什么时候发的"，
+      // 不必先点一次拉取才知道
+      const names = await listSyncDirConfigs()
+      setConfigSyncStatus(names.length > 0 ? `目录里最新的一份：${names[0]}` : '')
+    })()
+  }, [showSettings])
   const [localSavePath, setLocalSavePath] = useState<string | null>(null)
   const [clearConfig, setClearConfig] = useState(true)
   const [clearTasks, setClearTasks] = useState(true)
@@ -4230,6 +4255,91 @@ export default function SettingsModal() {
                     <p className="text-xs text-ds-muted dark:text-ds-muted">
                       例如：<code>20260703-快手-1.png</code>；使用提示词后为 <code>20260703-快手-提示词-1.png</code>
                     </p>
+                  </div>
+
+                  <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-3 shadow-sm">
+                    <div className="flex items-center gap-2 mb-1">
+                      <ExportIcon className="w-4 h-4 text-ds-text dark:text-ds-muted" />
+                      <h4 className="text-sm font-semibold text-ds-text dark:text-ds-text-subtle">配置同步</h4>
+                    </div>
+                    <p className="text-xs text-ds-muted">
+                      把中控台这套配置（项目树、每个方向的参数、水印库、渠道与尺寸）放到一个共享目录：你点「发布配置」，别人在那个目录上点「拉取最新」就拿到你这份。包里不含
+                      API Key。
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        value={configSyncPath}
+                        onChange={(event) => setConfigSyncPathState(event.target.value)}
+                        onBlur={async () => {
+                          const value = configSyncPath.trim()
+                          if (!value) return
+                          try {
+                            const saved = await persistConfigSyncPath(value)
+                            setConfigSyncPathState(saved ?? value)
+                            setConfigSyncStatus('配置目录已保存')
+                          } catch (error) {
+                            setConfigSyncStatus(
+                              `配置目录不可用：${error instanceof Error ? error.message : String(error)}`,
+                            )
+                          }
+                        }}
+                        placeholder={'\\\\192.168.202.11\\设计素材交付专用\\_糖包配置'}
+                        className="min-w-0 flex-1 rounded-ds-lg border border-ds-border bg-ds-subtle px-3 py-2 text-xs text-ds-text"
+                      />
+                      <button
+                        onClick={async () => {
+                          const picked = await pickDirectory()
+                          if (!picked) return
+                          try {
+                            const saved = await persistConfigSyncPath(picked)
+                            setConfigSyncPathState(saved ?? picked)
+                            setConfigSyncStatus('配置目录已保存')
+                          } catch (error) {
+                            setConfigSyncStatus(
+                              `配置目录不可用：${error instanceof Error ? error.message : String(error)}`,
+                            )
+                          }
+                        }}
+                        className="shrink-0 rounded-ds-lg border border-ds-border px-3 py-2 text-xs font-medium text-ds-muted transition-colors hover:text-ds-text"
+                      >
+                        选择目录
+                      </button>
+                    </div>
+                    {configSyncStatus && <div className="text-xs text-ds-muted">{configSyncStatus}</div>}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          setIsConfigSyncing(true)
+                          setConfigSyncStatus('')
+                          try {
+                            const result = await publishConfigToSyncDir()
+                            setConfigSyncStatus(result.message)
+                          } finally {
+                            setIsConfigSyncing(false)
+                          }
+                        }}
+                        disabled={isConfigSyncing}
+                        className="flex-1 rounded-ds-lg bg-ds-surface/80 px-4 py-2.5 text-sm font-medium text-ds-text transition-colors hover:bg-ds-subtle disabled:opacity-50 dark:bg-ds-surface dark:text-ds-muted dark:hover:text-white"
+                      >
+                        {isConfigSyncing ? '处理中...' : '发布配置'}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setIsConfigSyncing(true)
+                          setConfigSyncStatus('')
+                          try {
+                            const result = await pullLatestConfigFromSyncDir()
+                            setConfigSyncStatus(result.message)
+                          } finally {
+                            setIsConfigSyncing(false)
+                          }
+                        }}
+                        disabled={isConfigSyncing}
+                        className="flex-1 rounded-ds-lg border border-ds-border px-4 py-2.5 text-sm font-medium text-ds-muted transition-colors hover:text-ds-text disabled:opacity-50"
+                      >
+                        拉取最新
+                      </button>
+                    </div>
                   </div>
 
                   <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-4 shadow-sm">

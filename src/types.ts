@@ -316,6 +316,11 @@ export interface MaskDraft {
 export type TaskStatus = 'running' | 'done' | 'error'
 
 export type TaskProgressStage =
+  /**
+   * 卡片已建、提示词还没写好：AI 正在写提示词（SOP 批量 / 一键衍生 / 变量模板反推）。
+   * 与 `queued` 的区别是「生图还没资格开始」—— 提示词一就绪就转 `queued`。
+   */
+  | 'prompting'
   | 'queued'
   | 'requesting'
   | 'relay-received'
@@ -569,6 +574,17 @@ export interface TaskRecord {
   rawResponsePayload?: string
   status: TaskStatus
   error: string | null
+  /**
+   * 提示词还没写好：卡片在用户点「生成」时就先建出来，提示词由 AI 稍后写入
+   * （SOP 批量 / 一键衍生）。置位期间**禁止执行生图**，`executeTask` 会直接返回；
+   * 提示词到位后由 `fulfillPendingTaskPrompt` 清空并转入正常生图。
+   */
+  promptPending?: boolean
+  /**
+   * 失败发生在「写提示词」环节，而不是生图环节。卡片据此把文案说成「提示词失败」，
+   * 而不是含糊的「生成失败」—— 两者要用户采取的动作不同（前者重试写词、后者重试生图）。
+   */
+  promptFailed?: boolean
   progressStage?: TaskProgressStage
   progressMessage?: string
   progressUpdatedAt?: number

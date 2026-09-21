@@ -91,6 +91,10 @@ type ElectronAPI = {
   openInExplorer: (filePath: string) => Promise<{ ok: boolean; error?: string }>
   getLocalSavePath: () => Promise<string | null>
   setLocalSavePath: (path: string) => Promise<void>
+  /** 配置同步目录（「发布配置 / 拉取最新」的落点，TB-086）；没设置过时为 null。 */
+  getConfigSyncPath?: () => Promise<string | null>
+  /** 设置配置同步目录：主进程负责体检、持久化并**放行该路径**（手输共享盘 UNC 也能用）。 */
+  setConfigSyncPath?: (path: string) => Promise<string | null>
   copyCacheToRoot?: (newRoot: string) => Promise<Array<{ from: string; to: string }>>
   readJsonText: (filePath: string) => Promise<string | null>
   writeJsonText: (filePath: string, content: string, backupIntervalOrSkip?: number | boolean) => Promise<boolean>
@@ -469,6 +473,37 @@ export async function setLocalSavePath(path: string): Promise<void> {
   const api = getAPI()
   if (!api) return
   await api.setLocalSavePath(path)
+}
+
+/**
+ * 通用的「选一个目录」对话框。
+ *
+ * 与 `selectLocalSaveDirectory` 的区别只在**意图**：那个是给「本地保存目录」用的
+ * （选完会走库根迁移）。这里只借用对话框，选中的路径由调用方自己决定怎么存。
+ */
+export async function pickDirectory(): Promise<string | null> {
+  const api = getAPI()
+  if (!api?.selectDirectory) return null
+  return await api.selectDirectory()
+}
+
+/** 配置同步目录（「发布配置 / 拉取最新」的落点，TB-086）；没设置过时返回 null。 */
+export async function getConfigSyncPath(): Promise<string | null> {
+  const api = getAPI()
+  if (!api?.getConfigSyncPath) return null
+  return await api.getConfigSyncPath()
+}
+
+/**
+ * 设置配置同步目录。
+ *
+ * 返回主进程**归一化并落盘后**的路径（用户填相对路径 / 带尾斜杠时以它为准）；
+ * 校验不通过时主进程抛错（比如盘根、系统目录），错误消息直接给用户看，不要吞成 false。
+ */
+export async function setConfigSyncPath(path: string): Promise<string | null> {
+  const api = getAPI()
+  if (!api?.setConfigSyncPath) return null
+  return await api.setConfigSyncPath(path)
 }
 
 export async function copyRawCacheImagesToRoot(newRoot: string): Promise<Array<{ from: string; to: string }>> {

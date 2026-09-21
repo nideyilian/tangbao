@@ -3509,9 +3509,24 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
   且精确命中钉这条契约的两例（节点参数 / 逐节点一致）→ 恢复后回到全绿。
 - v7 老包（`backupImport.test.ts` 构造的那种）仍能导入 ✓。
 
-**未做（下一步）**
+**第二段也已完成（2026-09-22 00:53-01:05）**
 
-- **配置中心入口**：设置里的「配置目录」+「发布配置 / 拉取最新」两个按钮，含**拉取前自动备份**
-  （现有代码里**没有**这个能力，`backup-before-import-*` 那些目录是手工建的，要新做）。
-- **主进程持久化放行**配置目录（见上面的坑）。
-- 文档：`architecture-constraints.md` 补一节 + 新增 ADR。
+6. **配置中心入口**：设置 → 数据新增「配置同步」卡片 —— 配置目录输入 + 「选择目录」+
+   「发布配置」+「拉取最新」，并显示目录里最新一份是哪个文件（点开设置就能看到，不用先点一次）。
+7. **拉取前自动备份**：`backupLocalConfigBeforePull()` 把本机配置写到本地保存目录下的
+   `backups/backup-before-pull-<时间>.zip`；**备份失败就直接中止**，不做没有退路的覆盖。
+   备份存**本机**而不是共享盘（那是自己的历史配置）。
+8. **主进程持久化放行**：`local-settings.json` 新增 `configSyncPath`，`getAllowedRoots()` 放行它，
+   启动时 `initLocalSavePath()` 一并 `addAllowedRoot`。设置它的 handler **刻意不走 `assertAllowedPath`**
+   —— 那个断言要求路径已在白名单里，而手打共享盘 UNC（正是这个功能的主用法）会被它拒掉且不说真因（R-62）；
+   改成「基本体检（禁盘根 / 系统目录）+ 显式放行 + 持久化」。
+9. **文档**：`architecture-constraints.md` 新增「十、配置以树为根」；
+   新增 `docs/adr/0014-tree-rooted-config-bundle.md`。
+10. **树改为跟着「包含配置」走**：`assetCollections` 以前只在勾「素材库元数据」时才进包，
+    现在 `exportConfig` 就带它（"树就是根"），但**不**顺带把素材索引（`generatedAssets`）发出去
+    —— 否则别人的素材库里会多出一堆指不到的条目。
+
+**已知未做**
+
+- 本地独有节点的"彻底替换"开关（见上面的取舍，等杰哥定）。
+- 跨外网场景（把配置目录换成 HTTP 地址）—— 应用侧逻辑不用改，只换那个地址。

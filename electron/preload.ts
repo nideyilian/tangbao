@@ -87,6 +87,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openInExplorer: (filePath: string) => ipcRenderer.invoke('fs:open-in-explorer', { filePath }),
   getLocalSavePath: () => ipcRenderer.invoke('store:get-local-save-path'),
   setLocalSavePath: (path: string) => ipcRenderer.invoke('store:set-local-save-path', { path }),
+  // 配置同步目录（「发布配置 / 拉取最新」的落点，TB-086）
+  getConfigSyncPath: () => ipcRenderer.invoke('store:get-config-sync-path'),
+  setConfigSyncPath: (path: string) => ipcRenderer.invoke('store:set-config-sync-path', { path }),
   copyCacheToRoot: (newRoot: string) => ipcRenderer.invoke('store:copy-cache-to-root', { newRoot }),
   readJsonText: (filePath: string) => ipcRenderer.invoke('fs:read-json-text', { filePath }),
   writeJsonText: (filePath: string, content: string, backupIntervalOrSkip?: boolean | number) =>
