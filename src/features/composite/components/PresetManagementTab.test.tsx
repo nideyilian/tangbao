@@ -5,6 +5,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer'
 import { createDefaultCompositeV2Preset } from '../lib/compositeV2Defaults'
 import { useStore } from '../../../store'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
+import { DEFAULT_POSTPROCESS_MEDIA } from '../../../lib/postprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { createCompositeV2StoreState, useCompositeV2Store } from '../storeV2'
@@ -24,6 +25,8 @@ afterEach(() => {
   useCompositeV2Store.setState(createCompositeV2StoreState())
   useProjectTreeParamsStore.setState({ params: {} })
   useAssetLibraryStore.setState({ collections: [] })
+  // 渠道表按渠道配水印的用例会改它：不还原的话下一个用例会跑在别人留下的渠道表上
+  usePostprocessMediaStore.setState({ watermarkPresetIds: [], media: DEFAULT_POSTPROCESS_MEDIA })
   // 分隔条比例是持久化的：不清掉的话，上一个用例拖出来的比例会变成下一个用例的初始值
   window.localStorage.clear()
   useStore.getState().setConfirmDialog(null)
@@ -39,6 +42,12 @@ function getNodeText(node: ReactTestInstance): string {
 
 function findInputByAriaLabel(root: ReactTestInstance, label: string) {
   return root.findAllByType('input').find((node: ReactTestInstance) => node.props['aria-label'] === label)
+}
+
+/** 生效范围那一排里的某个选项（按可见文字找）。 */
+function findScopePill(renderer: ReturnType<typeof create>, label: string) {
+  const scope = renderer.root.find((node) => node.props['data-layout'] === 'preset-scope-switch')
+  return scope.findAll((node: ReactTestInstance) => node.type === 'button').find((node) => getNodeText(node) === label)
 }
 
 describe('PresetManagementTab', () => {
@@ -408,5 +417,142 @@ describe('PresetManagementTab', () => {
     const box = renderer!.root.findByProps({ 'aria-label': '「Alpha Preset」的启用在方向层设置' })
     expect(box.props.disabled).toBe(true)
     expect(getNodeText(renderer!.root)).toContain('先在左侧项目树选一个方向')
+    // 全局默认连「生效范围」那一排都不渲染：数据层没有 byMedia 这一层，
+    // 摆一排点不动的渠道会让人以为「全局也能按渠道配，只是现在锁着」
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-scope-switch')).toHaveLength(0)
+  })
+
+  describe('按渠道单独设水印', () => {
+    /**
+     * 一棵三级树：**只有产品写了通用水印**，方向本身什么都没写。
+     * 这正是杰哥说的「默认按产品维度来 —— 该产品下所有方向都显示同一套」。
+     */
+    function seedProductLevelWatermark() {
+      usePostprocessMediaStore.setState({
+        watermarkPresetIds: [],
+        media: [
+          { id: 'toutiao', name: '头条' },
+          { id: 'baidu', name: '百度' },
+        ] as never,
+      })
+      useAssetLibraryStore.setState({
+        scope: { kind: 'collection', id: 'direction-moon' },
+        collections: [
+          { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+          { id: 'product-b', name: '机器人', parentId: 'line-a', order: 0, createdAt: 0, updatedAt: 0 },
+          { id: 'direction-moon', name: '月亮', parentId: 'product-b', order: 0, createdAt: 0, updatedAt: 0 },
+        ] as never,
+      })
+      useProjectTreeParamsStore.setState({
+        params: { 'product-b': { postprocess: { watermarkPresetIds: ['preset-shared'] } } },
+      })
+    }
+
+    it('⭐ 方向没写过时显示的是继承来的那套，并写明来源', () => {
+      seedProductLevelWatermark()
+
+      let renderer: ReturnType<typeof create>
+      act(() => {
+        renderer = create(<PresetManagementTab />)
+      })
+      mountedRenderers.push(renderer!)
+
+      // 不写来源的话，「库里勾着的这几套」会被当成这个方向自己的设置 ——
+      // 用户以为在改产品，实际一勾就落了一条方向级覆盖
+      expect(getNodeText(renderer!.root)).toContain('继承自「机器人」')
+      // 本级没写就没有「跟随上级」可点（没东西可撤）
+      expect(renderer!.root.findAll((node) => node.type === 'button' && getNodeText(node) === '跟随上级')).toHaveLength(
+        0,
+      )
+    })
+
+    it('⭐ 切到某个渠道后勾选 = 该渠道单独的水印（写 byMedia，不动通用那格）', () => {
+      seedProductLevelWatermark()
+      const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
+      useCompositeV2Store.setState({ presets: [preset], selectedPreviewPresetId: preset.id })
+
+      let renderer: ReturnType<typeof create>
+      act(() => {
+        renderer = create(<PresetManagementTab />)
+      })
+      mountedRenderers.push(renderer!)
+
+      act(() => {
+        findScopePill(renderer!, '头条')!.props.onClick()
+      })
+      expect(getNodeText(renderer!.root)).toContain('本方向的头条单独生效')
+
+      act(() => {
+        renderer!.root.findByProps({ 'aria-label': '启用「Alpha Preset」（头条）' }).props.onChange(true)
+      })
+
+      // 头条当前生效值是继承来的 ['preset-shared']，首次改动要**物化**成显式数组再追加；
+      // 直接写「勾上的那几个」会把它静默丢掉
+      expect(useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.byMedia).toEqual({
+        toutiao: { watermarkPresetIds: ['preset-shared', preset.id] },
+      })
+      // 通用那格没被写脏：其他渠道照旧跟随通用
+      expect(
+        useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.watermarkPresetIds,
+      ).toBeUndefined()
+    })
+
+    it('⭐「跟随通用」是删掉那一格，不是写回当前值（否则以后改通用就影响不到它）', () => {
+      seedProductLevelWatermark()
+      useProjectTreeParamsStore.setState({
+        params: {
+          'product-b': { postprocess: { watermarkPresetIds: ['preset-shared'] } },
+          'direction-moon': { postprocess: { byMedia: { toutiao: { watermarkPresetIds: ['preset-toutiao'] } } } },
+        },
+      })
+
+      let renderer: ReturnType<typeof create>
+      act(() => {
+        renderer = create(<PresetManagementTab />)
+      })
+      mountedRenderers.push(renderer!)
+
+      act(() => {
+        findScopePill(renderer!, '头条')!.props.onClick()
+      })
+
+      const reset = renderer!.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => getNodeText(node) === '跟随通用')
+      expect(reset).toBeTruthy()
+      act(() => {
+        reset!.props.onClick()
+      })
+
+      expect(useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.byMedia).toBeUndefined()
+    })
+
+    it('本级写了通用水印时给「跟随上级」，撤掉后回到继承', () => {
+      seedProductLevelWatermark()
+      useProjectTreeParamsStore.setState({
+        params: {
+          'product-b': { postprocess: { watermarkPresetIds: ['preset-shared'] } },
+          'direction-moon': { postprocess: { watermarkPresetIds: ['preset-own'] } },
+        },
+      })
+
+      let renderer: ReturnType<typeof create>
+      act(() => {
+        renderer = create(<PresetManagementTab />)
+      })
+      mountedRenderers.push(renderer!)
+
+      const reset = renderer!.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => getNodeText(node) === '跟随上级')
+      expect(reset).toBeTruthy()
+      act(() => {
+        reset!.props.onClick()
+      })
+
+      expect(
+        useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.watermarkPresetIds,
+      ).toBeUndefined()
+    })
   })
 })

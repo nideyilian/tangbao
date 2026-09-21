@@ -939,7 +939,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/PresetManagementTab.tsx',
     responsibility:
-      '中控台「水印」分区两栏装配（水印库 / 画布编辑）。库行勾选框 = 这个范围启用这套水印（原卡片层的开关与归属树的拖拽都已在 2026-09-21 退役）',
+      '中控台「水印」分区两栏装配（水印库 / 画布编辑）。库行勾选框 = 当前生效范围启用这套水印；生效范围 = 本范围通用 或 某个渠道单独设（`byMedia`，渠道是被单独设过时打点）。原卡片层的开关与归属树的拖拽均已在 2026-09-21 退役',
     decision: 'retain',
     targets: ['Panel', 'ListRow', 'Checkbox', 'SegmentedControl', 'Menu'],
   },

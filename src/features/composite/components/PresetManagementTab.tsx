@@ -56,6 +56,15 @@ export function PresetManagementTab() {
   const [selectedLayerId, setSelectedLayerId] = useState('')
   const [editingPresetId, setEditingPresetId] = useState('')
   const [editingPresetName, setEditingPresetName] = useState('')
+  /**
+   * 生效范围：`null` = 这个范围的**通用水印**（写 `watermarkPresetIds`）；
+   * 某个媒体 id = 该渠道**单独的水印**（写 `byMedia[媒体]`）。
+   *
+   * 渠道是在「作用域（左树给）」与「水印（库给）」之外的**第三个维度**。
+   * 它不进左树：维度与作用域套成一层嵌套必然把同一棵作用域树复制 N 份（TB-062 的教训），
+   * 所以它是一排选择器 —— 与右区那排分区 tab 同一种表达方式。
+   */
+  const [mediaScope, setMediaScope] = useState<string | null>(null)
 
   const setSelectedPreviewPresetId = useCompositeV2Store((state) => state.setSelectedPreviewPresetId)
   const collections = useAssetLibraryStore((state) => state.collections)
@@ -77,17 +86,73 @@ export function PresetManagementTab() {
   const isGlobal = scope === GLOBAL_NODE_ID
   const scopeName = isGlobal ? '全局默认' : (collections.find((item) => item.id === scope)?.name ?? '全局默认')
 
-  /** 当前范围生效的水印清单。全局默认下是全局基线——它前端没有写入点，所以只读。 */
-  const effectivePresetIds = useMemo(() => {
-    if (isGlobal) return globalWatermarkPresetIds
-    return resolveNodeWatermarkBinding(collections, params, scope, globalWatermarkPresetIds).presetIds
-  }, [isGlobal, collections, params, scope, globalWatermarkPresetIds])
+  /**
+   * 全局默认没有渠道这一层：切过去时把渠道选择归位。
+   * 否则从「方向A + 头条」切到全局再切回某个方向，会停在一个上次用过的渠道上 ——
+   * 而用户的心智是「刚进来看的应该是这个方向的通用值」。
+   */
+  useEffect(() => {
+    if (isGlobal) setMediaScope(null)
+  }, [isGlobal])
 
-  const isPresetEnabled = (presetId: string) => effectivePresetIds.includes(presetId)
+  const activeMedia = mediaScope ? media.find((item) => item.id === mediaScope) : undefined
+  const mediaName = activeMedia?.name ?? ''
 
   /**
-   * 逐套开关**当前范围**的水印。这是「这个方向用哪几套」唯一的编辑入口
-   * （原卡片层的开关与归属树的拖拽都已在 2026-09-21 改版中退役）。
+   * 当前生效范围解析出来的水印绑定。
+   *
+   * 给 `mediaId` 时解析的是**该渠道生效的那套**（渠道值优先于本级通用值，两者都没有就继续
+   * 往上级继承）—— 所以界面上的勾选状态永远反映「生成图时真正会叠什么」，而不是
+   * 「这个节点上配过什么」。全局默认没有 `byMedia` 这一层，只读全局基线。
+   */
+  const binding = useMemo(() => {
+    if (isGlobal) return { presetIds: globalWatermarkPresetIds, sourcedFrom: null, overridden: false }
+    return resolveNodeWatermarkBinding(collections, params, scope, globalWatermarkPresetIds, mediaScope ?? undefined)
+  }, [isGlobal, collections, params, scope, globalWatermarkPresetIds, mediaScope])
+
+  const effectivePresetIds = binding.presetIds
+  const isPresetEnabled = (presetId: string) => effectivePresetIds.includes(presetId)
+
+  /** 本范围的节点覆盖。全局默认没有「覆盖」这一说（基线就是基线自己的值）。 */
+  const nodeOverride = isGlobal ? undefined : params[scope]?.postprocess
+
+  /**
+   * 被本范围**单独设过**水印的渠道集合。
+   *
+   * 只认「本级写了 `byMedia[媒体].watermarkPresetIds`」的：选择器据此打点，一眼看出哪些渠道
+   * 跟通用那套不一样 —— 与 `resolveNodeWatermarkBindingsByMedia` 的「只回传与通用值不同的渠道」
+   * 是同一个口径（那边看全链，这里只看本级）。
+   */
+  const overriddenMediaIds = useMemo(() => {
+    const result = new Set<string>()
+    for (const [mediaId, entry] of Object.entries(nodeOverride?.byMedia ?? {})) {
+      if (entry?.watermarkPresetIds !== undefined) result.add(mediaId)
+    }
+    return result
+  }, [nodeOverride])
+
+  /**
+   * 这批水印是从哪儿继承来的（本级没写时才说得上）。
+   * 不写清的话「勾选里显示的那几套」会被当成「本范围的设置」—— 用户会以为自己在改产品，
+   * 实际一勾就产生了一条方向级覆盖。
+   */
+  const inheritedFromName =
+    !isGlobal && !binding.overridden && binding.sourcedFrom
+      ? (collections.find((item) => item.id === binding.sourcedFrom)?.name ?? '')
+      : ''
+
+  /**
+   * 写当前生效范围：通用那格写 `watermarkPresetIds`，某渠道写 `byMedia[该渠道]`。
+   * 两者在数据层是**同层**关系（渠道值优先于本级通用值），所以一次只动一格。
+   */
+  const writePresetIds = (nextIds: string[]) => {
+    if (isGlobal) return
+    if (mediaScope) setPostprocessOverride(scope, { byMedia: { [mediaScope]: { watermarkPresetIds: nextIds } } })
+    else setPostprocessOverride(scope, { watermarkPresetIds: nextIds })
+  }
+
+  /**
+   * 逐套开关当前生效范围的水印。这是「这个方向 / 这个渠道用哪几套」唯一的编辑入口。
    *
    * **首次改动即物化**：继承态下把生效清单复制成显式数组再改。直接写「剩下的这几个」
    * 会把继承来的其余水印静默丢掉——症状是「我只想减一个，结果另外两个也没了」。
@@ -97,8 +162,40 @@ export function PresetManagementTab() {
     const next = effectivePresetIds.includes(presetId)
       ? effectivePresetIds.filter((id) => id !== presetId)
       : [...effectivePresetIds, presetId]
-    setPostprocessOverride(scope, { watermarkPresetIds: next })
+    writePresetIds(next)
   }
+
+  /**
+   * 撤掉当前生效范围的设置、退回继承。
+   *
+   * 传 `undefined` 而不是「写入当前生效值」：写值等于把继承来的那份固化在本级，
+   * 以后改上层就再也影响不到这里（与「输出位置」分区的「恢复继承」同一个口径）。
+   */
+  const resetCurrentScope = () => {
+    if (isGlobal) return
+    if (mediaScope) {
+      setPostprocessOverride(scope, { byMedia: { [mediaScope]: { watermarkPresetIds: undefined } } })
+      useStore.getState().showToast(`「${scopeName}」在${mediaName}已改回跟随通用`, 'success')
+      return
+    }
+    setPostprocessOverride(scope, { watermarkPresetIds: undefined })
+    useStore.getState().showToast(`「${scopeName}」已改回跟随上级`, 'success')
+  }
+
+  /** 库栏副标题：这一勾会落到哪一层，以及没写过的值是从哪儿来的。 */
+  const scopeHint = isGlobal
+    ? '先在左侧项目树选一个方向，再逐套开关'
+    : inheritedFromName
+      ? `继承自「${inheritedFromName}」· 改动即在${mediaScope ? `本方向的${mediaName}` : '本范围'}单独生效`
+      : `勾选 = 「${scopeName}」${mediaScope ? `在${mediaName} ` : ''}用这套水印`
+
+  /** 生效范围 pill：选中 = 强调色（与库行的选中态同源），未选中 = 灰边。 */
+  const scopePillClass = (active: boolean) =>
+    `inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors ${
+      active
+        ? 'border-ds-primary bg-ds-primary-subtle font-medium text-ds-primary dark:border-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary'
+        : 'border-ds-border text-ds-muted hover:border-ds-primary hover:text-ds-primary dark:border-ds-border dark:text-ds-muted dark:hover:text-ds-primary'
+    }`
 
   const sortedLogoAssets = useMemo(() => {
     const assets =
@@ -416,10 +513,10 @@ export function PresetManagementTab() {
         <header className="flex items-center justify-between border-b border-ds-border px-3 py-2 dark:border-ds-border shrink-0">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">水印库</h2>
-            {/* 副标题写明「勾选」现在是什么语义：库行上的勾选框不再是批量选择，
-                而是「当前范围是否启用这套水印」。不写清就会有人以为勾上只是为了导出。 */}
-            <p className="truncate text-xs text-ds-muted">
-              {isGlobal ? '先在左侧项目树选一个方向，再逐套开关' : `勾选 = 「${scopeName}」用这套水印`}
+            {/* 副标题写清这一勾落到哪一层、没写过的值是从哪儿来的 —— 不写的话
+                「库里显示的那几套」会被当成「本范围的设置」，而它可能只是从产品继承来的。 */}
+            <p className="truncate text-xs text-ds-muted" title={scopeHint}>
+              {scopeHint}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
@@ -455,6 +552,70 @@ export function PresetManagementTab() {
           </div>
         </header>
         <div className="shrink-0 space-y-1.5 p-3">
+          {/*
+           * 生效范围：决定下面那些勾选写进「本范围的通用水印」还是「某个渠道单独的水印」。
+           *
+           * 全局默认下整块不渲染 —— 全局基线只有一套、数据层就没有 `byMedia` 这一层，
+           * 摆一排点不动的渠道只会让人以为「全局也能按渠道配，只是现在锁着」。
+           */}
+          {!isGlobal && (
+            <div
+              data-layout="preset-scope-switch"
+              className="space-y-1 border-b border-ds-border pb-2 dark:border-ds-border"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-ds-text dark:text-ds-text">生效范围</span>
+                {binding.overridden && (
+                  <button
+                    type="button"
+                    onClick={resetCurrentScope}
+                    title={
+                      mediaScope
+                        ? `撤掉「${mediaName}」的单独设置，改回跟随通用`
+                        : `撤掉本级的设置，改回跟随上级（${inheritedFromName || '上级'}）`
+                    }
+                    className="shrink-0 cursor-pointer text-xs text-ds-muted underline-offset-2 hover:text-ds-primary hover:underline dark:text-ds-muted dark:hover:text-ds-primary"
+                  >
+                    {mediaScope ? '跟随通用' : '跟随上级'}
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  aria-pressed={mediaScope === null}
+                  onClick={() => setMediaScope(null)}
+                  title="这个范围的通用水印：没被单独设过的渠道都用它"
+                  className={scopePillClass(mediaScope === null)}
+                >
+                  通用
+                </button>
+                {media.map((item) => {
+                  const overridden = overriddenMediaIds.has(item.id)
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={mediaScope === item.id}
+                      onClick={() => setMediaScope(item.id)}
+                      title={
+                        overridden
+                          ? `${item.name} 已单独设置（点进来改，或撤掉改回跟随通用）`
+                          : `${item.name} 跟随通用；点进来一改即在本方向单独生效`
+                      }
+                      className={scopePillClass(mediaScope === item.id)}
+                    >
+                      {item.name}
+                      {overridden && (
+                        <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-ds-warning" />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -539,12 +700,12 @@ export function PresetManagementTab() {
                     aria-label={
                       isGlobal
                         ? `「${preset.name}」的启用在方向层设置`
-                        : `${isPresetEnabled(preset.id) ? '停用' : '启用'}「${preset.name}」`
+                        : `${isPresetEnabled(preset.id) ? '停用' : '启用'}「${preset.name}」${mediaScope ? `（${mediaName}）` : ''}`
                     }
                     title={
                       isGlobal
                         ? '全局默认是各方向的兜底值，先在左侧项目树选一个方向，再逐套开关'
-                        : `当前范围：${scopeName}`
+                        : `写进：${scopeName} · ${mediaScope ? mediaName : '通用'}`
                     }
                     className="shrink-0"
                   />
