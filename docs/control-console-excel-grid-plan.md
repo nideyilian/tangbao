@@ -504,6 +504,62 @@
 | ⑪ 命名与署名                      | 待做（现为表单，字段少，可与 ⑤ 同批）                                |
 | ⑫ 产出清单                        | 待做（只读表，导出用）                                               |
 | ⑧⑨ 水印预设主子表                 | 待做 —— 卡片网格有缩略图价值（认预设靠它），表格应作**补充**而非替换 |
-| P3 导出（xlsx 12 表）/ P3 导入    | 待做 —— **必须在所有区域列定义稳定之后**，否则返工                   |
+| P3 导出（xlsx）                   | ✅ **已交付**（2026-09-21，见 §10.9）                                |
+| P3 导入                           | 待做 —— 设计见 §10.10                                                |
 
 详见 `docs/BACKLOG.md` TB-060 的「剩余」清单。
+
+### 10.9 P3 导出：已交付（2026-09-21）
+
+`src/features/composite/lib/consoleWorkbook.ts` + `CompositeWorkspace` 标题栏的「导出 Excel」。
+
+**产出 11 张表**（方案原写 12 张，**去掉了 `output_manifest`**）：`directions` / `node_params` /
+`channels` / `channel_sizes` / `output_dirs_global` / `output_dirs_node` / `watermark_binding` /
+`presets` / `preset_layers` / `distribution` / `naming`。
+
+> **为什么砍掉产出清单**：它是运行时的派生结果、每生成一批就变，导出一份静态快照只会让人拿它去
+> 对账而对不上（源图尺寸还是示例估算的 1280×720）。要看产出清单就去「输出位置」分区看活的。
+
+四条实现口径：
+
+1. **表头两行**：第一行字段键、第二行中文名。导入一律按**字段键**匹配，界面文案随便改都不会让
+   导出文件与导入器脱钩。这条契约用**往返测试**钉住：写出的工作簿读回来，首行必须仍等于列 `key`。
+2. **纯函数层与 xlsx 层分开**：`buildConsoleSheets` 不 import xlsx（逐列断言字段映射），
+   `writeConsoleWorkbook` 才动态 `import('xlsx')`。将来换生成器只动下面那层。
+3. **空值语义要能被导入侧还原**：目录类字段空串 = 继承，所以 `output_dirs_global`
+   **列全部渠道**（不是只列配过的）；`watermark_binding` 用 `__postprocess_global__`
+   **哨兵行**表示全局清单，与「某方向显式声明」分开。
+4. **依赖选型**：xlsx 走 **SheetJS 官方 CDN 的 0.20.3**，不用 npm 上的 0.18.5 ——
+   后者带 2 个 high 漏洞（原型污染 + ReDoS），而导入要处理**别人发来的文件**，那是真实攻击面。
+
+**顺手修掉一个既有缺陷**：`fs:select-save-path` 与 `fs:select-zip-save-path` 在用户选定路径后
+**没有** `addAllowedRoot`，于是选到白名单外的目录（如 `D:\投放`）会因 `assertAllowedPath` 抛错而
+**静默保存失败** —— 用户只看到「导出失败」，可路径明明打得开。这正是 R-62 那一类。现改为「选中即授权」。
+
+### 10.10 P3 导入：待做的设计（照此实现即可）
+
+**分层**（与导出对称，便于逐条测试）：
+
+| 层             | 职责                                                                                  | 可测性                          |
+| -------------- | ------------------------------------------------------------------------------------- | ------------------------------- |
+| `readWorkbook` | 解析 xlsx 二进制 → `Map<sheetName, RawRow[]>`，**按首行字段键**建列索引               | 用自己导出的文件做 fixture 即可 |
+| `planImport`   | 纯函数：RawRow × 当前状态 → `ImportPlan`（新增 / 覆盖 / 跳过 / 拒绝，各带原因与行号） | ✅ 纯函数，重点测这里           |
+| `applyImport`  | 按 plan 调 store action 写库；失败回滚                                                | 需 mock store，重点测回滚       |
+
+**六条一致性校验的落地位置**（方案 §4.3）：
+
+1. **`sizeId` 派生陷阱** → `planImport` 里：渠道 + 宽高变了就产出「删旧 + 增新」两条计划，
+   并在 dry-run 列出「将重命名 N 个尺寸、影响 M 个方向的产出计划」。**不静默**。
+2. **主键不可变** → 行里的 `id` 与库中同位置不一致即**整行拒绝并报行号**（不当作新行插入）。
+3. **写入只走 store action** → `applyImport` 只调既有 action，让 zustand 自己落盘
+   （禁直接写 `app_data_records`，R-04/R-05）。
+4. **外键悬空即拒绝整表**（`channel_sizes.mediaId` / `preset_layers.presetId` / `watermark_binding`）——
+   例外：`output_dirs_global` 的键**允许**指向已删除的渠道（`normalizeMediaOutputDirs` 刻意不剪枝）。
+5. **跨机失效字段显式报警**：`sampleBackgroundPath`、图层的 `path` / `internal` 图源、`targetDir`、
+   各输出目录 —— 换台机器这些路径都不存在，必须列出来而不是留空。
+6. **三模式 + dry-run + 回滚**：合并（默认，按主键去重追加）/ 覆盖（整体替换所选表）/ 仅配置；
+   dry-run 必须在写库**前**展示「新增 N / 覆盖 M / 跳过 K / 拒绝 J（带原因）」；
+   中途异常回滚到导入前状态并明确告知已回滚。
+
+**解析容错**（用户手改过的文件一定会出现这些）：布尔认 `true/false/是/否/1/0/TRUE`；
+数组按 `[,，]` 切分（与 `parseTagList` 同源）；数字去千分位；`startDate` 当 8 位字符串处理，不解析日期。
