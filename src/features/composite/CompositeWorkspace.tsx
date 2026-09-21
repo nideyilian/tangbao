@@ -25,6 +25,8 @@ import { useAppDialog } from '../../hooks/useAppDialog'
 import { useStore } from '../../store'
 import { GLOBAL_NODE_ID } from '../postprocess/paramSchema'
 import { useCompositeV2Store } from './storeV2'
+import { exportConsoleWorkbook } from './lib/consoleWorkbook'
+import { usePostprocessGlobalConfig } from '../postprocess/usePostprocessGlobalConfig'
 
 /**
  * 中控台（顶栏 tab，原「水印预设」工作区）。
@@ -64,6 +66,11 @@ export default function CompositeWorkspace() {
 
   const showToast = useStore((state) => state.showToast)
   const { openConfirmDialog } = useAppDialog()
+
+  /** 导出用的全局基线（与各分区读的是同一份，`usePostprocessGlobalConfig` 就是为此收口的）。 */
+  const globalConfig = usePostprocessGlobalConfig()
+  const identifier = useCompositeV2Store((state) => state.identifier)
+  const [exporting, setExporting] = useState(false)
 
   /**
    * 当前分区来自应用 store，而不是本工作区的局部 state。
@@ -235,6 +242,24 @@ export default function CompositeWorkspace() {
 
   const isCardView = section === 'watermark' && watermarkView === 'cards'
 
+  /**
+   * 导出中控台全量数据为 Excel。
+   *
+   * 四种结果分开处理：**用户取消不打扰**（他自己点的取消），**失败必须说清**（否则
+   * 又是一次「点了没反应」，而失败真因常常被吞在 IPC 的 catch 里 —— 见 runbook 十七条）。
+   */
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const outcome = await exportConsoleWorkbook({ collections, globalConfig, identifier, params, presets })
+      if (outcome === 'saved') showToast('已导出中控台数据', 'success')
+      else if (outcome === 'failed') showToast('导出失败：文件没能写入，换一个位置再试', 'error')
+      else if (outcome === 'unsupported') showToast('当前环境不支持导出文件', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     // 高度对齐另外两个工作区：顶栏在自己的 return 里放了一块等高的 `invisible` 占位，
     // 所以这里按「视口 - 顶栏高度」算即可。窄屏顶栏多一行工作区切换，与素材库同口径取 7rem。
@@ -252,31 +277,40 @@ export default function CompositeWorkspace() {
               {scopePath} · {active.description}
             </p>
           </div>
-          {isCardView && (
-            <div className="flex shrink-0 items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void createCollection('新方向', isGlobal ? null : scope)
-                }}
-              >
-                <PlusIcon className="h-3.5 w-3.5" />
-                新建方向
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  createPreset('新预设')
-                  setWatermarkView('editor')
-                }}
-              >
-                <PlusIcon className="h-3.5 w-3.5" />
-                新建预设
-              </Button>
-            </div>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            {isCardView && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    void createCollection('新方向', isGlobal ? null : scope)
+                  }}
+                >
+                  <PlusIcon className="h-3.5 w-3.5" />
+                  新建方向
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    createPreset('新预设')
+                    setWatermarkView('editor')
+                  }}
+                >
+                  <PlusIcon className="h-3.5 w-3.5" />
+                  新建预设
+                </Button>
+              </>
+            )}
+            {/*
+             * 导出放在工作区标题栏而不是某个分区里：它导的是**整个中控台**的数据面，
+             * 不属于任何单一分区（放进分区会让人以为只导那一块）。
+             */}
+            <Button variant="secondary" size="sm" disabled={exporting} onClick={() => void handleExport()}>
+              {exporting ? '导出中…' : '导出 Excel'}
+            </Button>
+          </div>
         </header>
 
         <div className="pt-2.5">

@@ -1628,7 +1628,10 @@ export function registerIpcHandlers(): void {
       ),
       filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
     })
-    return result.canceled ? null : (result.filePath ?? null)
+    if (result.canceled || !result.filePath) return null
+    // 同 `fs:select-save-path`：选中即授权，否则选到白名单外的目录会静默保存失败
+    addAllowedRoot(path.dirname(result.filePath))
+    return result.filePath
   })
 
   handleChecked('fs:get-library-backups-path', () => getLibraryPaths().backups)
@@ -1831,7 +1834,13 @@ export function registerIpcHandlers(): void {
       defaultPath: typeof payload?.defaultName === 'string' ? payload.defaultName : 'untitled',
       filters: Array.isArray(payload?.filters) ? (payload.filters as Electron.FileFilter[]) : undefined,
     })
-    return result.canceled ? null : (result.filePath ?? null)
+    if (result.canceled || !result.filePath) return null
+    // ⭐ 选中即授权。主进程只允许写白名单内的目录（userData / 桌面 / 文档 / 下载 / 图片 /
+    // 库根 + 本次会话已授权），用户在对话框里选到别处（如 `D:\投放`）时，
+    // 不授权的话紧接着的保存会因 `assertAllowedPath` 抛错而**静默失败** ——
+    // 用户只看到「导出失败」，可路径明明打得开（R-62 同类）。
+    addAllowedRoot(path.dirname(result.filePath))
+    return result.filePath
   })
 
   handleChecked('backup:read-zip-manifest', async (_event, payload: { filePath?: unknown }) => {
