@@ -1205,6 +1205,21 @@ if ((r.stderr || '').trim()) console.log('--- stderr ---\n' + dec(r.stderr))
 否则 `npm run dev` 派生的 vite/electron 子进程又会回落 v22
 （实测 `npm test` 阶段就栽在这）。
 
+**AI 会话里跑验证同理（2026-09-21 实测）**：shell 默认 `node` 是 v22，于是
+
+```bash
+npx vitest run <测试路径>     # ✗ 直接死在 vite.config.ts 的 MIN_NODE_MAJOR = 24 守卫上
+                              #   报「[糖包] Node 版本过低」，看不出是测试挂了还是环境不对
+npx tsc -b                    # ✓ 不受影响（不加载 vite 配置）
+npm run lint / format:check   # ✓ 不受影响
+```
+
+测试（和 `vite build`）一律**显式提 v24**：
+
+```bash
+"/c/Program Files/nodejs/node.exe" node_modules/vitest/vitest.mjs run [<测试路径>]
+```
+
 ### 5. 两个开关：让自检能无人值守跑完
 
 | 变量                 | 作用                                                        |
