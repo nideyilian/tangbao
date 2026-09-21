@@ -9,6 +9,7 @@ import {
 } from '../../../design-system/icons'
 import { filterPresetsByProduct, filterPresetsByQuery, filterUnassignedPresets } from '../lib/compositePresetLibrary'
 import type { CompositeFsImage } from '../lib/compositeTypes'
+import type { CompositeV2Preset } from '../lib/compositeV2Types'
 import {
   dataUrlToCompositeBlob,
   getCompositeAssetObjectUrl,
@@ -37,12 +38,13 @@ import { bindPresetToNode } from '../lib/presetBinding'
 import { runPresetProductMigration } from '../presetProductMigrationRunner'
 import { useCompositeV2Store } from '../storeV2'
 import { useStore } from '../../../store'
-import { resolveNodeWatermarkBinding, resolveOwningProductId } from '../../projectTree/params'
+import { listProductNodes, resolveNodeWatermarkBinding, resolveOwningProductId } from '../../projectTree/params'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import { FloatingLogoLibrary } from './FloatingLogoLibrary'
+import PresetCopyDialog from './PresetCopyDialog'
 import { PresetCanvasEditor } from './PresetCanvasEditor'
 import { PresetLayerPanel } from './PresetLayerPanel'
 import { useAppDialog } from '../../../hooks/useAppDialog'
@@ -66,6 +68,11 @@ export function PresetManagementTab() {
    * 所以它是一排选择器 —— 与右区那排分区 tab 同一种表达方式。
    */
   const [mediaScope, setMediaScope] = useState<string | null>(null)
+  /**
+   * 「复制到其他产品」的待复制内容：非 null 时弹目标选择框。
+   * 单条复制放一套，整库复制放当前产品的全部 —— 两个入口共用同一个弹窗与同一个 store 动作。
+   */
+  const [copyTargets, setCopyTargets] = useState<CompositeV2Preset[] | null>(null)
 
   const setSelectedPreviewPresetId = useCompositeV2Store((state) => state.setSelectedPreviewPresetId)
   const collections = useAssetLibraryStore((state) => state.collections)
@@ -410,6 +417,45 @@ export function PresetManagementTab() {
     useStore.getState().showToast(`已重命名为「${newName}」`, 'success')
   }
 
+  /**
+   * 「复制到其他产品」的目标候选：**排除当前产品**。
+   *
+   * 同产品内复制已经是另一个动作（行内「复制为新预设」），列出来只会让人选到等于什么都没做的那个，
+   * 数据层也会直接跳过（`planPresetCopies`）。
+   */
+  const copyCandidates = useMemo(
+    () => listProductNodes(collections).filter((product) => product.id !== productId),
+    [collections, productId],
+  )
+
+  /**
+   * 整库复制的可用性与说明。
+   *
+   * 三种「点不动」的情形要分别说清 —— 统一写成「不可用」会让人以为是坏了：
+   * 没选产品 / 这个产品的库是空的 / 树里没有别的产品。
+   */
+  const canCopyLibrary = hasProduct && libraryPresets.length > 0 && copyCandidates.length > 0
+  const copyLibraryTitle = !hasProduct
+    ? '先在左侧选一个产品'
+    : libraryPresets.length === 0
+      ? `「${productName}」的水印库是空的，没有可复制的水印`
+      : copyCandidates.length === 0
+        ? '项目树里还没有别的产品，无处可复制'
+        : `把「${productName}」的 ${libraryPresets.length} 套水印整体复制到其他产品`
+
+  /** 复制到目标产品：新 id、归属改成目标产品、内容整套带过去；**不自动启用**。 */
+  const handleCopyConfirm = (targetProductId: string) => {
+    const targets = copyTargets ?? []
+    setCopyTargets(null)
+    if (targets.length === 0) return
+    const targetName = copyCandidates.find((product) => product.id === targetProductId)?.name ?? '目标产品'
+    store.copyPresetsToProduct(
+      targets.map((preset) => preset.id),
+      targetProductId,
+    )
+    useStore.getState().showToast(`已复制 ${targets.length} 套水印到「${targetName}」（未启用）`, 'success')
+  }
+
   function beginPresetRename(presetId: string, name: string) {
     setEditingPresetId(presetId)
     setEditingPresetName(name)
@@ -613,6 +659,18 @@ export function PresetManagementTab() {
             >
               <Plus className="h-4 w-4" />
             </button>
+            {/* 整库复制：库里一套套点「复制到…」在几十套水印时是折磨，这里一次搬完 */}
+            <button
+              type="button"
+              data-testid="preset-copy-library"
+              title={copyLibraryTitle}
+              aria-label="把本产品的水印库复制到其他产品"
+              disabled={!canCopyLibrary}
+              onClick={() => setCopyTargets(libraryPresets)}
+              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-ds-sm text-ds-muted hover:bg-ds-subtle hover:text-ds-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:pointer-events-none dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
+            >
+              <Copy className="h-4 w-4" />
+            </button>
           </div>
         </header>
         <div className="shrink-0 space-y-1.5 p-3">
@@ -788,6 +846,21 @@ export function PresetManagementTab() {
                   </button>
                   {preset.id === store.selectedPreviewPresetId && (
                     <div className="flex shrink-0 items-center gap-0.5">
+                      {/* 跨产品复制：单套的入口。整库走头部那个图标按钮 */}
+                      <button
+                        type="button"
+                        data-testid="preset-copy-one"
+                        title={
+                          copyCandidates.length === 0
+                            ? '项目树里还没有别的产品，无处可复制'
+                            : `把「${preset.name}」复制到其他产品`
+                        }
+                        disabled={!hasProduct || copyCandidates.length === 0}
+                        onClick={() => setCopyTargets([preset])}
+                        className="shrink-0 cursor-pointer px-1 text-xs text-ds-muted underline-offset-2 hover:text-ds-primary hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:pointer-events-none dark:text-ds-muted dark:hover:text-ds-primary"
+                      >
+                        复制到…
+                      </button>
                       <button
                         type="button"
                         title="复制为新预设"
@@ -933,6 +1006,16 @@ export function PresetManagementTab() {
           />
         </div>
       </div>
+
+      {copyTargets && (
+        <PresetCopyDialog
+          presets={copyTargets}
+          sourceProductName={productName}
+          products={copyCandidates}
+          onConfirm={handleCopyConfirm}
+          onClose={() => setCopyTargets(null)}
+        />
+      )}
     </div>
   )
 }

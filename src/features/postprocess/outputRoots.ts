@@ -12,6 +12,7 @@
  */
 
 import { resolvePostprocessOutputDirs, type PostprocessMediaConfig } from '../../lib/postprocessMedia'
+import type { PostprocessIssueInput } from './postprocessIssue'
 
 /** 解析一个「导出位置」字符串到真实可用的根目录；返回 null = 建不出来 */
 export type OutputRootResolver = (configured: string) => Promise<string | null>
@@ -19,19 +20,21 @@ export type OutputRootResolver = (configured: string) => Promise<string | null>
 /**
  * 解析某个渠道（桶）要写入的全部输出根目录，按配置顺序返回（第一个是主位置）。
  *
- * `warnOnce` 由调用方负责去重（同一批图逐张解析时不该刷屏）。
+ * `onIssue` 由调用方负责去重与落库（同一批图逐张解析时不该刷屏）；**报的是错误码而不是一句话**：
+ * 原来这里回一句「导出位置不可用（请检查路径是否可达）」，而真因九成是目录不在应用允许的位置内
+ * （主进程的 `assertAllowedPath`），照那句话去查永远查不到 —— 文案必须与真因对齐。
  */
 export async function resolveBucketOutputRoots(
   config: Pick<PostprocessMediaConfig, 'outputDir' | 'mediaOutputDirs'>,
   mediaId: string,
   resolveRoot: OutputRootResolver,
-  warnOnce: (message: string) => void,
+  onIssue: (issue: PostprocessIssueInput) => void,
 ): Promise<string[]> {
   const configured = resolvePostprocessOutputDirs(config, mediaId)
   if (configured.length === 0) {
     const fallback = await resolveRoot('')
     if (!fallback) {
-      warnOnce('部分源图已跳过：无法创建输出目录')
+      onIssue({ code: 'PP-DIR-002', stage: 'write', mediaId })
       return []
     }
     return [fallback]
@@ -44,11 +47,16 @@ export async function resolveBucketOutputRoots(
     if (root && !roots.includes(root)) roots.push(root)
   }
   if (roots.length === 0) {
-    warnOnce('导出位置不可用，已跳过这批产出（请检查路径是否可达）')
+    onIssue({ code: 'PP-DIR-001', stage: 'write', mediaId, dir: configured.join('、') })
     return []
   }
   if (roots.length < configured.length) {
-    warnOnce(`有 ${configured.length - roots.length} 个导出位置不可用，已跳过`)
+    onIssue({
+      code: 'PP-DIR-003',
+      stage: 'write',
+      mediaId,
+      detail: `配了 ${configured.length} 个，可用 ${roots.length} 个`,
+    })
   }
   return roots
 }

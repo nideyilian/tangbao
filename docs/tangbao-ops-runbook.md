@@ -111,6 +111,36 @@ new DatabaseSync('<db>', { readOnly: true })
 产出根 = `<本地保存目录>/postprocess/` + 项目三级目录；一图 = 纯净版 1 + 每个选中媒体的启用尺寸各 1
 （多预设再乘预设数）。
 
+### 排查「后处理到底跑没跑、为什么没出图」（2026-09-21 起）
+
+**先看运行记录，别从代码往下猜。** 每次跑后处理都会在渲染进程内存里留一条运行记录
+（`stores/runtimeStore.ts` 的 `postprocessRuns`；不落盘、只留最近 20 条），控制台里可直接查：
+
+```js
+// DevTools Console（渲染进程）
+const s = (await import('/src/stores/runtimeStore.ts')).listPostprocessRuns()
+console.table(
+  s.map((r) => ({
+    id: r.id,
+    status: r.status,
+    stage: r.stage,
+    done: `${r.completedImages}/${r.totalImages}`,
+    files: r.producedFiles,
+  })),
+)
+// 看某条的全部问题（带错误码与定位线索）
+s[0].issues.forEach((i) => console.log(i.code, i.message, i.file ?? i.dir ?? '', i.hint))
+```
+
+界面上等价入口：素材库工具栏（进行中显示 `3/12 45%`，结束后显示「后处理问题 (N)」可展开完整清单）、
+任务卡上的「后处理中 / 后处理问题」徽章、以及失败 toast 的「查看问题」。
+
+**错误码是排查起点，别只看中文描述。** `docs/BACKLOG.md` TB-069 有码表；最常撞的两条：
+
+- `PP-DIR-001` 导出位置不可用 → **先怀疑位置不在应用允许范围内**（R-62），
+  而不是路径打不开：必须用「选择目录」对话框选过、或在允许位置（桌面 / 文档 / 下载 / 图片 / 应用数据）里；
+- `PP-PRESET-001` 水印预设不存在 → 该方向的清单还指着已被删掉的水印（中控台「水印」分区里重选一套）。
+
 ## 四、抓渲染进程报错（**不看堆栈就别猜**）
 
 dev 窗口的 `TypeError` **不会**出现在 vite stdout —— `electron/main.ts:389` 的 `console-message` 只转发

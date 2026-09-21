@@ -8,10 +8,12 @@ import {
   subscribeImageThumbnail,
   retryTask,
   removeMultipleTasks,
+  showPostprocessIssuesDialog,
 } from '../store'
 import { getImage } from '../lib/db'
 import { isLocalImageUrl } from '../lib/localImageUrl'
-import { useRuntimeStore } from '../stores/runtimeStore'
+import { useRuntimeStore, useLatestPostprocessRunForTask } from '../stores/runtimeStore'
+import { countPostprocessIssues, formatPostprocessRunProgress } from '../features/postprocess/postprocessRun'
 import { updateTaskPrompt } from '../store'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from './paramDisplay'
@@ -22,7 +24,7 @@ import { CodeIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 import PromptVariableEditor from './PromptVariableEditor'
 import { Card, IconButton } from '../design-system'
-import { FolderOpenIcon } from '../design-system/icons'
+import { AlertCircleIcon, FolderOpenIcon, LoaderCircleIcon } from '../design-system/icons'
 import TaskPostprocessModal from './TaskPostprocessModal'
 
 interface Props {
@@ -103,6 +105,18 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
   const displayTaskStatus = task.status === 'error' && hasCompletedTaskOutputs(task) ? 'done' : task.status
   /** 后处理产出数量；只在有产出时渲染徽章，卡片高度不受影响（列表按固定行高虚拟化） */
   const postprocessCount = task.postprocessOutputs?.length ?? 0
+  /**
+   * 这个任务的后处理运行记录（自动触发那条路径）。
+   *
+   * 为什么卡片要关心它：`postprocessOutputs` 是**产出落库之后**才有的，所以「跑到一半」
+   * 与「跑了但一个都没成」两种情况下，卡片原本什么都不会显示 —— 用户只看到图出来了，
+   * 不知道后处理还在跑还是已经失败了。
+   */
+  const postprocessRun = useLatestPostprocessRunForTask(task.id)
+  const postprocessIssues =
+    postprocessRun && postprocessRun.status !== 'running'
+      ? countPostprocessIssues(postprocessRun).errors || postprocessRun.issues.length
+      : 0
 
   const updateSwipeDirection = (nextDirection: -1 | 0 | 1) => {
     if (swipeDirectionRef.current === nextDirection) return
@@ -939,6 +953,35 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                   >
                     <FolderOpenIcon className="gallery-task-tag__icon w-3 h-3 flex-shrink-0" />
                     <span>{`后处理 ${postprocessCount}`}</span>
+                  </button>
+                )}
+                {/* 后处理进行中 / 有问题：自动触发那条路径上，卡片的「后处理 N」要等产出落库
+                    才会出现，中途与失败时卡片上原本什么都不会显示 —— 这两个徽章补的就是那段空白。 */}
+                {postprocessRun?.status === 'running' && (
+                  <span
+                    className="gallery-task-tag flex items-center gap-1 px-1.5 py-0.5 rounded text-xs flex-shrink-0"
+                    data-testid="task-postprocess-running"
+                    title={`后处理进行中：${formatPostprocessRunProgress(postprocessRun) || '准备中'}`}
+                  >
+                    <LoaderCircleIcon className="gallery-task-tag__icon w-3 h-3 flex-shrink-0 animate-spin" />
+                    <span>{`后处理中 ${formatPostprocessRunProgress(postprocessRun)}`.trim()}</span>
+                  </span>
+                )}
+                {postprocessIssues > 0 && postprocessRun && postprocessRun.status !== 'running' && (
+                  <button
+                    type="button"
+                    className="gallery-task-tag flex cursor-pointer items-center gap-1 px-1.5 py-0.5 rounded text-xs flex-shrink-0"
+                    data-testid="task-postprocess-issues"
+                    title="查看这次后处理的问题：错误码、涉及的图片与文件、以及可照做的定位线索"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      showPostprocessIssuesDialog(postprocessRun.issues)
+                    }}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    onTouchEnd={(e) => e.stopPropagation()}
+                  >
+                    <AlertCircleIcon className="gallery-task-tag__icon w-3 h-3 flex-shrink-0" />
+                    <span>{`后处理问题 ${postprocessIssues}`}</span>
                   </button>
                 )}
               </div>

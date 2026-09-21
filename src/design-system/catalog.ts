@@ -937,6 +937,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Panel', 'ListRow', 'Fieldset', 'Stepper', 'Menu'],
   },
   {
+    module: 'src/features/composite/components/PresetCopyDialog.tsx',
+    responsibility:
+      '「把水印复制到其他产品」的目标选择弹窗：候选按产品线归组，并提前说清复制后的行为（归属改写、名称带「副本」、不自动启用、素材沿用同一份引用）',
+    decision: 'compose',
+    targets: ['Dialog', 'Button', 'ListRow'],
+  },
+  {
     module: 'src/features/composite/components/PresetManagementTab.tsx',
     responsibility:
       '中控台「水印」分区两栏装配（水印库 / 画布编辑）。库行勾选框 = 当前生效范围启用这套水印；生效范围 = 本范围通用 或 某个渠道单独设（`byMedia`，渠道是被单独设过时打点）。原卡片层的开关与归属树的拖拽均已在 2026-09-21 退役',

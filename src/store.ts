@@ -16,6 +16,15 @@ import { isRecord } from './lib/typeGuards'
 // 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
 import type { TaskPostprocessResult, TaskPostprocessSource } from './features/postprocess/taskPostprocess'
 import {
+  createPostprocessIssue,
+  describePostprocessIssueCode,
+  formatPostprocessIssue,
+  formatPostprocessIssueList,
+  issuesToWarnings,
+  type PostprocessIssue,
+} from './features/postprocess/postprocessIssue'
+import type { PostprocessRunSource } from './features/postprocess/postprocessRun'
+import {
   DEFAULT_CONTROL_CONSOLE_SECTION,
   type ControlConsoleSectionId,
 } from './features/composite/lib/controlConsoleSections'
@@ -831,6 +840,7 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
     alreadyProducedImageIds: [...produced],
     createdAt: task.createdAt,
     taskId,
+    source: 'auto',
   })
   if (!result) return
 
@@ -853,31 +863,58 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
  *
  * 没产出时**也必须**给结论。曾经的写法是「三项皆空就不提示」，而「媒体尺寸全被禁用」这类情况
  * 恰好三项皆空 → 点了按钮界面毫无变化，与「按钮坏了」无法区分。
+ *
+ * 现在每条提示都带**错误码**，并在有问题时挂一个「查看问题」动作：toast 3 秒后就没了，
+ * 而排查要的是完整清单（码 + 上下文 + 线索），靠 toast 装不下。
  */
 function reportPostprocessResult(result: TaskPostprocessResult, successPrefix = '后处理完成'): void {
   const showToast = useStore.getState().showToast
   const produced = result.outputs.length
-  const reason = result.warnings[0]
+  const first = result.issues[0]
+  const reason = first ? formatPostprocessIssue(first) : undefined
+  const action =
+    result.issues.length > 0
+      ? { label: '查看问题', onClick: () => showPostprocessIssuesDialog(result.issues) }
+      : undefined
 
   if (produced > 0) {
     // 有原因时降级成 info：结果本身是成功的，但要让用户知道有东西被跳过
     const message = reason
       ? `${successPrefix}：产出 ${produced} 个文件；${reason}`
       : `${successPrefix}：产出 ${produced} 个文件`
-    showToast(message, reason ? 'info' : 'success')
+    showToast(message, reason ? 'info' : 'success', action)
     return
   }
 
   // 原因放最前：error 型 toast 超过 80 字会被截成「操作失败，请查看详情」，原因就丢了
   if (reason) {
-    showToast(`没有产出文件：${reason}`, 'error')
+    showToast(`没有产出文件：${reason}`, 'error', action)
     return
   }
   if (result.skippedMediaIds.length > 0) {
     showToast(`没有产出文件：选中的 ${result.skippedMediaIds.length} 个媒体已被删除`, 'error')
     return
   }
-  showToast('没有产出文件：请检查启用范围的方向、媒体与源图归属', 'error')
+  // 三项皆空（没产出、没问题、没跳过）说明是配置没配上，用码表里的排查顺序，别让用户猜
+  showToast(`没有产出文件：${describePostprocessIssueCode('PP-EMPTY-001').hint}`, 'error')
+}
+
+/**
+ * 完整问题清单弹窗（错误码 + 描述 + 上下文 + 定位线索）。
+ *
+ * 用既有确认弹窗而不是新做一个：`message` 支持多行与反引号，列表形态刚好够，
+ * 而每多一个模态窗就多一份焦点陷阱 / Esc 关闭 / 滚动锁的维护面。
+ *
+ * 导出是给素材库工具栏的「查看问题」入口用：toast 3 秒后消失，问题清单得留得住。
+ */
+export function showPostprocessIssuesDialog(issues: PostprocessIssue[]): void {
+  useStore.getState().setConfirmDialog({
+    title: `后处理问题（${issues.length}）`,
+    message: formatPostprocessIssueList(issues),
+    icon: 'info',
+    showCancel: false,
+    confirmText: '知道了',
+  })
 }
 
 /**
@@ -888,6 +925,9 @@ function reportPostprocessResult(result: TaskPostprocessResult, successPrefix = 
  *
  * 不碰任务记录：自动触发要写回 `postprocessOutputs`，手动触发没有任务可写，
  * 把写回塞进来会让两边的幂等语义互相污染。返回 null = 后处理没启用（调用方据此提示）。
+ *
+ * **运行记录也在这里建**（`runtimeStore.startPostprocessRun`）：进度与状态是「这次跑的」属性，
+ * 两个触发点各建一份必然分叉成「手动有进度、自动没有」。执行体的进度回调直接写进这条记录。
  */
 async function executePostprocessImageIds(
   imageIds: string[],
@@ -896,6 +936,8 @@ async function executePostprocessImageIds(
     alreadyProducedImageIds?: string[]
     createdAt?: number
     taskId?: string
+    /** 自动（任务完成触发）还是手动（素材库补跑）；只影响记录归属与文案 */
+    source: PostprocessRunSource
   },
 ): Promise<TaskPostprocessResult | null> {
   // 启用范围为空 = 没启用。与输入栏的「未启用」显示保持一致，不看树上有多少参数。
@@ -903,6 +945,15 @@ async function executePostprocessImageIds(
 
   const runtime = useRuntimeStore.getState()
   runtime.beginPostprocess()
+  // 本次运行的 id：`startPostprocessRun` 用它把后续每一次进度上报对到同一条记录上
+  const runId = `${options.source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  runtime.startPostprocessRun({
+    id: runId,
+    source: options.source,
+    taskId: options.taskId,
+    totalImages: imageIds.length,
+  })
+
   try {
     const ownership = await resolveImageOwnership(imageIds, { waitForOwnership: options.waitForOwnership })
     // 等待期间归档可能新建了项目文件夹，这里取最新的树
@@ -930,7 +981,7 @@ async function executePostprocessImageIds(
     }
 
     const { runTaskPostprocess } = await import('./features/postprocess/taskPostprocess')
-    return await runTaskPostprocess({
+    const result = await runTaskPostprocess({
       // 手动触发没有任务，给一个占位 id：执行体只用它做日志与幂等键，不查任务表
       taskId: options.taskId ?? 'manual-postprocess',
       imageIds,
@@ -941,16 +992,27 @@ async function executePostprocessImageIds(
       alreadyProducedImageIds: options.alreadyProducedImageIds ?? [],
       createdAt: options.createdAt,
       readSource,
+      // 进度上报：绝对值补丁，直接落到运行记录上（界面订阅它显示「3/12」）
+      onProgress: (patch) => useRuntimeStore.getState().updatePostprocessRun(runId, patch),
     })
+    useRuntimeStore
+      .getState()
+      .finishPostprocessRun(runId, { issues: result.issues, producedFiles: result.outputs.length })
+    return result
   } catch (error) {
     // 异常必须走「可上报结果」而不是抛出去：调用方是 `void x()`（fire-and-forget），
     // 抛出去只会变成一条没人看见的未处理 rejection —— 这正是「点了没反应」的来源之一。
     console.error('后处理产出失败', error)
-    const message = error instanceof Error ? error.message : String(error)
-    return { outputs: [], skippedMediaIds: [], warnings: [`后处理失败：${message}`] }
+    const issues = [createPostprocessIssue({ code: 'PP-CRASH-001', stage: 'prepare', cause: messageOfError(error) })]
+    useRuntimeStore.getState().finishPostprocessRun(runId, { issues, producedFiles: 0 })
+    return { outputs: [], skippedMediaIds: [], issues, warnings: issuesToWarnings(issues) }
   } finally {
     runtime.endPostprocess()
   }
+}
+
+function messageOfError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 /** 手动后处理的重入标记（内存态）。 */
@@ -987,7 +1049,7 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
   useStore.getState().showToast(`开始跑后处理：${pending.length} 张素材`, 'info')
 
   try {
-    const result = await executePostprocessImageIds(pending, { waitForOwnership: false })
+    const result = await executePostprocessImageIds(pending, { waitForOwnership: false, source: 'manual' })
     if (!result) {
       useStore.getState().showToast('后处理未启用：请先在项目树里勾选启用范围', 'error')
       return

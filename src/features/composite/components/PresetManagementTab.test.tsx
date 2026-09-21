@@ -691,4 +691,123 @@ describe('PresetManagementTab', () => {
       ).toBeUndefined()
     })
   })
+
+  /**
+   * 跨产品复制（单条 / 整库）。
+   *
+   * 契约：复制出的是**新的一套**（新 id、归属改到目标产品、内容整套带走），并且
+   * **不自动启用** —— 不动任何节点的水印清单。目标候选里不出现当前产品。
+   */
+  describe('复制水印到其他产品', () => {
+    /** 点开「复制到…」并选中目标产品，返回渲染器。 */
+    function openCopyDialog(entryTestId: string) {
+      seedScope()
+      useCompositeV2Store.setState({
+        presets: [productPreset('preset-a', '合规水印头部'), productPreset('preset-b', '角标')],
+        selectedPreviewPresetId: 'preset-a',
+      })
+
+      let renderer: ReturnType<typeof create>
+      act(() => {
+        renderer = create(<PresetManagementTab />)
+      })
+      mountedRenderers.push(renderer!)
+
+      act(() => {
+        renderer!.root.findByProps({ 'data-testid': entryTestId }).props.onClick()
+      })
+      return renderer!
+    }
+
+    function clickButton(renderer: ReturnType<typeof create>, label: string) {
+      const button = renderer.root.findAll((node) => node.type === 'button').find((node) => getNodeText(node) === label)
+      expect(button, `没找到按钮「${label}」`).toBeTruthy()
+      act(() => {
+        button!.props.onClick()
+      })
+    }
+
+    it('单条：换新 id、归属改到目标产品、名称带副本，且不自动启用', () => {
+      const showToast = vi.fn()
+      useStore.setState({ showToast })
+      useProjectTreeParamsStore.setState({
+        params: { [PRODUCT_ID]: { postprocess: { watermarkPresetIds: ['preset-a'] } } },
+      })
+      const renderer = openCopyDialog('preset-copy-one')
+
+      clickButton(renderer, '电池')
+      act(() => {
+        renderer.root.findByProps({ 'data-testid': 'preset-copy-confirm' }).props.onClick()
+      })
+
+      const presets = useCompositeV2Store.getState().presets
+      expect(presets).toHaveLength(3)
+      const copy = presets.find((preset) => preset.productId === OTHER_PRODUCT_ID)
+      expect(copy).toMatchObject({ name: '合规水印头部 副本' })
+      expect(copy?.id).not.toBe('preset-a')
+      // 内容整套带过去：画布尺寸与图层不能丢，否则等于复制了个空壳
+      expect(copy?.baseCanvas).toEqual(presets.find((preset) => preset.id === 'preset-a')?.baseCanvas)
+      expect(copy?.layers).toEqual(presets.find((preset) => preset.id === 'preset-a')?.layers)
+      // 只复制了选中的那一套，不是整库
+      expect(presets.filter((preset) => preset.productId === OTHER_PRODUCT_ID)).toHaveLength(1)
+      // **不自动启用**：当前产品的清单原样不动（源 id 仍在，新 id 没被塞进去）
+      expect(useProjectTreeParamsStore.getState().params[PRODUCT_ID]?.postprocess?.watermarkPresetIds).toEqual([
+        'preset-a',
+      ])
+      expect(showToast).toHaveBeenCalledWith('已复制 1 套水印到「电池」（未启用）', 'success')
+    })
+
+    it('整库：一次复制本产品的全部水印，目标产品里已有的同名会加序号', () => {
+      const showToast = vi.fn()
+      useStore.setState({ showToast })
+      const renderer = openCopyDialog('preset-copy-library')
+
+      // 目标产品已有同名副本，复制过去不能撞名
+      useCompositeV2Store.setState((state) => ({
+        presets: [...state.presets, productPreset('preset-c', '合规水印头部 副本', OTHER_PRODUCT_ID)],
+      }))
+
+      clickButton(renderer, '电池')
+      act(() => {
+        renderer.root.findByProps({ 'data-testid': 'preset-copy-confirm' }).props.onClick()
+      })
+
+      const inTarget = useCompositeV2Store.getState().presets.filter((preset) => preset.productId === OTHER_PRODUCT_ID)
+      // 已有的 `preset-c` 是「合规水印头部 副本」，所以这次复制出来的必须让开这个名字
+      expect(
+        inTarget
+          .filter((preset) => preset.id !== 'preset-c')
+          .map((preset) => preset.name)
+          .sort(),
+      ).toEqual(['合规水印头部 副本 2', '角标 副本'])
+      expect(showToast).toHaveBeenCalledWith('已复制 2 套水印到「电池」（未启用）', 'success')
+    })
+
+    it('候选里不出现当前产品，只剩一个产品时入口不可点', () => {
+      seedScope(PRODUCT_ID, [{ id: 'product-d', name: '无关产品', parentId: 'line-b', order: 0 }])
+      useCompositeV2Store.setState({
+        presets: [productPreset('preset-a', '合规水印头部')],
+        selectedPreviewPresetId: 'preset-a',
+      })
+
+      let renderer: ReturnType<typeof create>
+      act(() => {
+        renderer = create(<PresetManagementTab />)
+      })
+      mountedRenderers.push(renderer!)
+
+      act(() => {
+        renderer!.root.findByProps({ 'data-testid': 'preset-copy-one' }).props.onClick()
+      })
+
+      const dialog = renderer!.root.findByProps({ 'aria-labelledby': 'preset-copy-dialog-title' })
+      // 只比「候选按钮」这一层：标题与说明里本来就会出现源产品名（「把『机器人』的 1 套水印…」）
+      const candidates = dialog
+        .findAll((node) => node.type === 'button')
+        .map((node) => getNodeText(node))
+        .filter((text) => text !== '取消' && !text.startsWith('复制到'))
+      expect(candidates).not.toContain('机器人')
+      expect(candidates).toContain('电池')
+    })
+  })
 })

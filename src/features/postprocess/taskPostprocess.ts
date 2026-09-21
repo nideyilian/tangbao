@@ -38,6 +38,13 @@ import type { ProjectNodeParamsMap } from '../projectTree/types'
 import { renderWithMaxKb } from './renderVariant'
 import { resolveBucketOutputRoots } from './outputRoots'
 import { createOutputRootResolver } from './outputRootResolver'
+import {
+  createPostprocessIssue,
+  issuesToWarnings,
+  type PostprocessIssue,
+  type PostprocessIssueInput,
+} from './postprocessIssue'
+import type { PostprocessProgressPatch } from './postprocessRun'
 import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
@@ -95,18 +102,57 @@ export interface RunTaskPostprocessInput {
   createdAt?: number
   /** 取源图像素数据；返回 null 表示这张图不可用（跳过并记 warning） */
   readSource: (imageId: string, index: number) => Promise<TaskPostprocessSource | null>
+  /**
+   * 进度回调（可选）。**每张源图开跑 / 每个产出单元写完各报一次**，绝对值语义（见
+   * `postprocessRun.ts` 的 `PostprocessProgressPatch`）。不传就纯静默跑——单测与脚本用得上。
+   */
+  onProgress?: (patch: PostprocessProgressPatch) => void
 }
 
 export interface TaskPostprocessResult {
   outputs: TaskPostprocessOutput[]
   /** 配置里勾了、但媒体表里找不到的渠道 id（需向用户提示，不静默回退） */
   skippedMediaIds: string[]
-  /** 可向用户展示的降级说明（预设缺失、目录不可用、单张失败等） */
+  /**
+   * 结构化问题清单：错误码 + 描述 + 定位线索 + 上下文（见 `postprocessIssue.ts`）。
+   * 界面按它分类显示「跳过几项 / 失败几项、分别是为什么」。
+   */
+  issues: PostprocessIssue[]
+  /**
+   * 问题的单行文本，**由 `issues` 派生**（`formatPostprocessIssue`）。
+   *
+   * 保留它是为了不动既有调用方（toast 取首条、日志取整段）；但**不要再往这里推文案** ——
+   * 两份文案一旦分叉，界面按码查到的说法就会与 toast 看到的不一致。
+   */
   warnings: string[]
 }
 
-function emptyResult(): TaskPostprocessResult {
-  return { outputs: [], skippedMediaIds: [], warnings: [] }
+/** 执行过程中的累加器：问题先以结构化形式收着，返回前统一派生 `warnings`。 */
+type PostprocessAccumulator = Pick<TaskPostprocessResult, 'outputs' | 'skippedMediaIds' | 'issues'>
+
+function emptyAccumulator(): PostprocessAccumulator {
+  return { outputs: [], skippedMediaIds: [], issues: [] }
+}
+
+function toResult(acc: PostprocessAccumulator): TaskPostprocessResult {
+  return { ...acc, warnings: issuesToWarnings(acc.issues) }
+}
+
+/**
+ * 收一条问题。
+ *
+ * `once` = true 时按「码 + 渠道 + 预设 + 目录」去重：配置级问题（方向没启用、预设被删、
+ * 目录不可用）一批图会反复遇到，逐图刷出来只会把真正不同的那几条埋掉。
+ * 逐图不同的问题（某张图读不到）不去重——那是真的发生了 N 次。
+ */
+function reportIssue(acc: PostprocessAccumulator, input: PostprocessIssueInput, once = false): void {
+  const issue = createPostprocessIssue(input)
+  if (once) {
+    const keyOf = (item: PostprocessIssue) => [item.code, item.mediaId, item.presetId, item.dir].join('|')
+    const key = keyOf(issue)
+    if (acc.issues.some((item) => keyOf(item) === key)) return
+  }
+  acc.issues.push(issue)
 }
 
 /**
@@ -124,8 +170,11 @@ function emptyResult(): TaskPostprocessResult {
  * 「启用范围为空」时同样直接返回——没启用就不产出，与输入栏的「未启用」显示保持一致。
  */
 export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promise<TaskPostprocessResult> {
-  const result = emptyResult()
-  if (!isElectron() || input.imageIds.length === 0) return result
+  const result = emptyAccumulator()
+  /** 进度上报：绝对值语义，调用方（store）把它写进运行记录；没传就纯静默跑。 */
+  const reportProgress = (patch: PostprocessProgressPatch) => input.onProgress?.(patch)
+
+  if (!isElectron() || input.imageIds.length === 0) return toResult(result)
 
   // 迁移提升值要并进基线，否则「升级前配在方向上的命名模板 / 分发排期」在产出时读不到 ——
   // 界面显示的是合并后的值，落盘用的是未合并的值，会出现「看着对、产出错」。
@@ -134,13 +183,15 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     useProjectTreeParamsStore.getState().promotedGlobals,
   )
   const params = input.projectParams ?? {}
-  if (baseConfig.selectedCollectionIds.length === 0) return result
+  if (baseConfig.selectedCollectionIds.length === 0) return toResult(result)
 
   const api = typeof window !== 'undefined' ? window.electronAPI : undefined
   if (!api) {
-    result.warnings.push('后处理已跳过：非桌面环境')
-    return result
+    reportIssue(result, { code: 'PP-ENV-001', stage: 'prepare' })
+    return toResult(result)
   }
+
+  reportProgress({ stage: 'prepare', completedImages: 0, imageUnits: 0, imageUnitsDone: 0, producedFiles: 0 })
 
   /**
    * 同一批图多半共用输出目录，按配置串缓存，避免每张图都走一次目录创建与授权。
@@ -152,13 +203,10 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     resolve: resolveOutputRoot,
   })
 
-  /** 配置级问题（预设被删、方向关闭）每批只提示一次，不逐图刷屏。 */
-  const warnOnce = (message: string) => {
-    if (!result.warnings.includes(message)) result.warnings.push(message)
-  }
-
   const produced = new Set(input.alreadyProducedImageIds ?? [])
   let sequence = 1
+  /** 已写成的文件数（双写按实际份数算），进度与收尾结论都看它。 */
+  let producedFiles = 0
 
   /**
    * 待分发的产出，按**生效分发配置**分组。
@@ -173,11 +221,21 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
 
   for (let index = 0; index < input.imageIds.length; index += 1) {
     const imageId = input.imageIds[index]
+    // 每张图开跑先报一次：`completedImages` 取下标——每轮恰好处理一张（产出或跳过），
+    // 所以「已完成」不需要另设计数器，也不会与真实的处理顺序脱节。
+    reportProgress({
+      stage: 'render',
+      completedImages: index,
+      imageUnits: 0,
+      imageUnitsDone: 0,
+      producedFiles,
+      currentLabel: undefined,
+    })
     if (produced.has(imageId)) continue
 
     const source = await input.readSource(imageId, index)
     if (!source || !source.dataUrl || !isUsableSize(source.width, source.height)) {
-      result.warnings.push('跳过 1 张源图：图片数据或尺寸不可用')
+      reportIssue(result, { code: 'PP-SRC-001', stage: 'prepare', sourceImageId: imageId, sourceIndex: index })
       continue
     }
 
@@ -187,13 +245,13 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       collectionId &&
       !isCollectionWithinSelection(input.collections, collectionId, baseConfig.selectedCollectionIds)
     ) {
-      warnOnce('部分源图已跳过：所属方向未启用后处理（在项目树里勾选该方向或其上级即可启用）')
+      reportIssue(result, { code: 'PP-SCOPE-001', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
       continue
     }
 
     const slice = resolveProjectPostprocessSlice(input.collections, params, collectionId, baseConfig)
     if (!slice.enabled) {
-      warnOnce('部分源图已跳过：所属方向关闭了自动后处理')
+      reportIssue(result, { code: 'PP-SCOPE-002', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
       continue
     }
 
@@ -202,7 +260,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     const targetIds = collectionId ? [collectionId] : slice.config.selectedCollectionIds
     const projects = resolvePostprocessProjectTargets(input.collections, targetIds)
     if (projects.length === 0) {
-      warnOnce('部分源图已跳过：找不到对应的项目目标')
+      reportIssue(result, { code: 'PP-TARGET-001', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
       continue
     }
 
@@ -238,11 +296,16 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         bucketPresets.set(presetId, preset)
       }
       if (missingPreset) {
-        warnOnce('部分源图已跳过：引用的水印预设不存在')
+        reportIssue(result, { code: 'PP-PRESET-001', stage: 'prepare', mediaId: bucketMediaId }, true)
         continue
       }
 
-      const outputRoots = await resolveBucketOutputRoots(bucketConfig, bucketMediaId, resolveOutputRootCached, warnOnce)
+      const outputRoots = await resolveBucketOutputRoots(
+        bucketConfig,
+        bucketMediaId,
+        resolveOutputRootCached,
+        (issue) => reportIssue(result, issue, true),
+      )
       if (outputRoots.length === 0) continue
       for (const root of outputRoots) await api.authorizeCompositeOutputDirectory?.(root)
 
@@ -269,10 +332,31 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       })
       sequence = nextSequence
 
-      for (const plan of plans) {
+      // 单元数只有到这里才知道（要按渠道 × 尺寸 × 预设展开）：报给进度，界面才能显示
+      // 「这张图 3/8」而不是干等。
+      reportProgress({
+        stage: 'write',
+        completedImages: index,
+        imageUnits: plans.length,
+        imageUnitsDone: 0,
+        producedFiles,
+      })
+
+      for (let planIndex = 0; planIndex < plans.length; planIndex += 1) {
+        const plan = plans[planIndex]
         // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
         const planPreset = plan.unit.watermark ? (bucketPresets.get(plan.unit.watermark.id) ?? null) : null
-        const written = await writeVariant(api, outputRoots, plan, source.dataUrl, planPreset, result)
+        const written = await writeVariant(api, outputRoots, plan, source.dataUrl, planPreset, result, {
+          sourceImageId: imageId,
+          sourceIndex: index,
+        })
+        producedFiles += written.length
+        reportProgress({
+          imageUnits: plans.length,
+          imageUnitsDone: planIndex + 1,
+          producedFiles,
+          currentLabel: `${plan.unit.clean ? '纯净版' : plan.unit.mediaName} ${plan.unit.width}x${plan.unit.height} · ${plan.fileName}`,
+        })
         if (written.length === 0) continue
         // 产出记录只登记**第一个**位置：清单是「产出了哪些变体」，双写的第二份是同一张图，
         // 登记进去只会让「产出 N 个文件」翻倍，而用户关心的是变体数。
@@ -305,9 +389,24 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     }
   }
 
+  // 整批产出结束，进入分发：`completedImages` 到这里补满，进度条不会停在最后一格。
+  reportProgress({
+    stage: 'distribute',
+    completedImages: input.imageIds.length,
+    imageUnits: 0,
+    imageUnitsDone: 0,
+    producedFiles,
+  })
   await distributeOutputs(api, distributionGroups, result)
 
-  return result
+  // 一个文件都没出、又没记下任何原因：这本身就是结论（配置指向了空产出 —— 渠道的尺寸全禁用、
+  // 预设没挂上东西之类）。不留这条的话，界面只能报「结束了」而说不出为什么，
+  // 而「跑了但什么都没发生」正是最难自查的一类。
+  if (result.outputs.length === 0 && result.issues.length === 0) {
+    reportIssue(result, { code: 'PP-EMPTY-001', stage: 'finish' })
+  }
+
+  return toResult(result)
 }
 
 /**
@@ -319,7 +418,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
 async function distributeOutputs(
   api: NonNullable<Window['electronAPI']>,
   groups: Map<string, { config: PostprocessDistributionConfig; items: PostprocessDistributionItem[] }>,
-  result: TaskPostprocessResult,
+  result: PostprocessAccumulator,
 ): Promise<void> {
   if (groups.size === 0) return
   const movedPaths = new Map<string, string>()
@@ -327,11 +426,13 @@ async function distributeOutputs(
     try {
       const outcome = await runPostprocessDistribution(items, config, api)
       for (const item of outcome.moved) movedPaths.set(item.originalPath, item.targetPath)
-      for (const error of outcome.errors) result.warnings.push(`分发：${error}`)
-      if (outcome.canceled) result.warnings.push('分发已取消：部分产出未排期')
+      for (const error of outcome.errors) {
+        reportIssue(result, { code: 'PP-DIST-001', stage: 'distribute', cause: error })
+      }
+      if (outcome.canceled) reportIssue(result, { code: 'PP-DIST-002', stage: 'distribute' })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      result.warnings.push(`分发异常：${message}`)
+      reportIssue(result, { code: 'PP-DIST-003', stage: 'distribute', cause: message })
     }
   }
   if (movedPaths.size === 0) return
@@ -368,8 +469,8 @@ interface WrittenVariant {
 }
 
 /**
- * 渲染 + 写盘一个变体（可以写多个位置）；返回实际写成的那些位置，全失败时把原因写进
- * `result.warnings` 并返回空数组。
+ * 渲染 + 写盘一个变体（可以写多个位置）；返回实际写成的那些位置，全失败时把原因记成带码的问题项
+ * 并返回空数组。
  *
  * 渲染只做**一次**：双写时若按位置各渲染一遍，体积压缩（逐档试编码）会整份翻倍，
  * 而两个位置要的本来就是同一张图。
@@ -380,41 +481,57 @@ async function writeVariant(
   plan: PostprocessVariantPlan,
   sourceDataUrl: string,
   preset: CompositeV2Preset | null,
-  result: TaskPostprocessResult,
+  result: PostprocessAccumulator,
+  /** 定位线索：出问题时用户要靠「哪张源图的哪个文件」去查 */
+  context: { sourceImageId: string; sourceIndex: number },
 ): Promise<WrittenVariant[]> {
   const written: WrittenVariant[] = []
-  try {
-    const rendered = await renderVariant(sourceDataUrl, plan, preset)
-    if (rendered.warning) result.warnings.push(`${plan.fileName}：${rendered.warning}`)
+  const locator = {
+    file: plan.fileName,
+    mediaId: plan.unit.mediaId,
+    mediaName: plan.unit.mediaName,
+    sourceImageId: context.sourceImageId,
+    sourceIndex: context.sourceIndex,
+  }
 
-    // 第一个位置定下的文件名（含撞名后缀）给后面几个位置沿用，双写的两份看起来才是同一个东西
-    let fileName = plan.fileName
-    for (const root of roots) {
-      const directory = await ensureDirectoryChain(api, root, plan.subFolders)
-      if (!directory) {
-        result.warnings.push(`${plan.fileName}：输出子目录创建失败`)
-        continue
-      }
-      const filePath = await resolveUniquePath(api, directory, fileName)
-      if (!filePath) {
-        result.warnings.push(`${plan.fileName}：同名文件过多，无法分配文件名`)
-        continue
-      }
-      const saved = await saveCompositeImage(api, filePath, rendered.dataUrl)
-      if (!saved) {
-        result.warnings.push(`${plan.fileName}：图片写入失败`)
-        continue
-      }
-      fileName = filePath.split(/[\\/]/).pop() ?? fileName
-      written.push({ path: filePath, root })
-    }
-    if (written.length === 0) throw new Error('全部导出位置写入失败')
+  let rendered: { dataUrl: string; warning?: string }
+  try {
+    rendered = await renderVariant(sourceDataUrl, plan, preset)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    result.warnings.push(`${plan.fileName}：${message}`)
+    // 渲染抛异常：以前这里只留一条「全部导出位置写入失败」，真因（异常本身）只在 console 里。
+    reportIssue(result, { code: 'PP-RENDER-001', stage: 'render', ...locator, cause: messageOf(error) })
     console.error('后处理产出失败', plan.fileName, error)
+    return written
+  }
+  if (rendered.warning)
+    reportIssue(result, { code: 'PP-RENDER-002', stage: 'render', ...locator, cause: rendered.warning })
+
+  // 第一个位置定下的文件名（含撞名后缀）给后面几个位置沿用，双写的两份看起来才是同一个东西
+  let fileName = plan.fileName
+  for (const root of roots) {
+    const directory = await ensureDirectoryChain(api, root, plan.subFolders)
+    if (!directory) {
+      reportIssue(result, { code: 'PP-DIR-004', stage: 'write', ...locator, dir: root })
+      continue
+    }
+    const filePath = await resolveUniquePath(api, directory, fileName)
+    if (!filePath) {
+      reportIssue(result, { code: 'PP-NAME-001', stage: 'write', ...locator, dir: directory })
+      continue
+    }
+    const saved = await saveCompositeImage(api, filePath, rendered.dataUrl)
+    if (!saved) {
+      reportIssue(result, { code: 'PP-WRITE-001', stage: 'write', ...locator, dir: directory })
+      continue
+    }
+    fileName = filePath.split(/[\\/]/).pop() ?? fileName
+    written.push({ path: filePath, root })
   }
   return written
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 /**

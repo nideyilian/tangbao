@@ -3,6 +3,7 @@
 import { act, create } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
+import { createPostprocessIssue } from '../features/postprocess/postprocessIssue'
 import TaskCard from './TaskCard'
 
 const storeMocks = vi.hoisted(() => {
@@ -26,13 +27,19 @@ const storeMocks = vi.hoisted(() => {
     retryTask: vi.fn(),
     removeMultipleTasks: vi.fn(),
     updateTaskPrompt: vi.fn(),
+    // ⚠️ 手工 mock 的工厂必须与 `../store` 的导出同步（R-75）：少一个就报
+    // `No "X" export is defined on the "../store" mock`，而堆栈指着的却是 TaskCard
+    showPostprocessIssuesDialog: vi.fn(),
   }
 })
 
 vi.mock('../store', () => storeMocks)
+/** 后处理运行记录由用例按需注入（默认 undefined = 没有记录、不渲染徽章）。 */
+const postprocessRunRef = vi.hoisted(() => ({ current: undefined as unknown }))
 vi.mock('../stores/runtimeStore', () => ({
   useRuntimeStore: (selector: (value: { streamPreviews: Record<string, string> }) => unknown) =>
     selector({ streamPreviews: {} }),
+  useLatestPostprocessRunForTask: () => postprocessRunRef.current,
 }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -41,6 +48,7 @@ const mountedRenderers: Array<ReturnType<typeof create>> = []
 
 afterEach(() => {
   while (mountedRenderers.length) mountedRenderers.pop()?.unmount()
+  postprocessRunRef.current = undefined
   vi.clearAllMocks()
 })
 
@@ -194,5 +202,90 @@ describe('TaskCard', () => {
     expect(
       renderer.root.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children),
     ).not.toContain('生成失败')
+  })
+})
+
+/**
+ * 后处理状态徽章。
+ *
+ * 为什么值得单独测：`postprocessOutputs` 是**产出落库之后**才有的，所以「跑到一半」与
+ * 「跑了但一个都没成」两种情况下，卡片上原本什么都不显示 —— 这两个徽章就是补那段空白的，
+ * 一旦条件写反（例如把 status 判成非 running），用户又会回到「不知道在跑还是失败了」。
+ */
+describe('TaskCard · 后处理状态徽章', () => {
+  const collectTexts = (renderer: ReturnType<typeof create>) =>
+    renderer.root.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children)
+
+  async function renderCard() {
+    storeMocks.ensureImageThumbnailCached.mockResolvedValue(undefined)
+    storeMocks.resolveImageDisplaySrc.mockResolvedValue('data:image/png;base64,original')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <TaskCard task={task} onReuse={vi.fn()} onEditOutputs={vi.fn()} onDelete={vi.fn()} onClick={vi.fn()} />,
+      )
+    })
+    mountedRenderers.push(renderer)
+    return renderer
+  }
+
+  it('进行中显示进度徽章（进度数字来自运行记录，不是写死的文案）', async () => {
+    postprocessRunRef.current = {
+      id: 'run-1',
+      source: 'auto',
+      taskId: 'task-1',
+      status: 'running',
+      stage: 'write',
+      totalImages: 4,
+      completedImages: 1,
+      imageUnits: 3,
+      imageUnitsDone: 2,
+      producedFiles: 2,
+      currentLabel: '头条 1080x1920',
+      issues: [],
+      startedAt: 1,
+    }
+
+    const texts = collectTexts(await renderCard())
+    // (1 + 2/3) / 4 = 41.7% → 42%
+    expect(texts).toContain('后处理中 1/4 42% · 头条 1080x1920')
+  })
+
+  it('结束后有问题给问题徽章，点击把这次运行的问题交给清单弹窗', async () => {
+    const issues = [
+      createPostprocessIssue({ code: 'PP-DIR-001', stage: 'write', dir: 'D:/投放' }),
+      createPostprocessIssue({ code: 'PP-PRESET-001', stage: 'prepare' }),
+    ]
+    postprocessRunRef.current = {
+      id: 'run-2',
+      source: 'auto',
+      taskId: 'task-1',
+      status: 'failed',
+      stage: 'finish',
+      totalImages: 2,
+      completedImages: 2,
+      imageUnits: 0,
+      imageUnitsDone: 0,
+      producedFiles: 0,
+      issues,
+      startedAt: 1,
+      finishedAt: 2,
+    }
+
+    const renderer = await renderCard()
+    const badge = renderer.root.findByProps({ 'data-testid': 'task-postprocess-issues' })
+    expect(collectTexts(renderer)).toContain('后处理问题 2')
+
+    act(() => {
+      badge.props.onClick({ stopPropagation: () => {} })
+    })
+    // 卡片只负责把问题交出去；弹窗的内容（码 / 上下文 / 线索）由 store 侧的用例守
+    expect(storeMocks.showPostprocessIssuesDialog).toHaveBeenCalledWith(issues)
+  })
+
+  it('没有运行记录时两个徽章都不渲染（正常完成的任务不该多出状态）', async () => {
+    const renderer = await renderCard()
+    expect(renderer.root.findAllByProps({ 'data-testid': 'task-postprocess-running' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'task-postprocess-issues' })).toHaveLength(0)
   })
 })

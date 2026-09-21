@@ -52,31 +52,37 @@ describe('resolveBucketOutputRoots —— 每桶的导出位置决策', () => {
     expect(roots).toEqual(['D:/同一个'])
   })
 
-  it('配了位置但一个都建不出来 → 空列表 + 提示，绝不悄悄写到本地', async () => {
-    const warn = vi.fn()
+  it('配了位置但一个都建不出来 → 空列表 + 报码，绝不悄悄写到本地', async () => {
+    const onIssue = vi.fn()
     const resolveRoot = vi.fn(async (configured: string) => (configured === '' ? 'LOCAL/postprocess' : null))
     const roots = await resolveBucketOutputRoots(
       config('D:/全局默认', { baidu: ['//NAS/不可达'] }),
       'baidu',
       resolveRoot,
-      warn,
+      onIssue,
     )
     expect(roots).toEqual([])
-    expect(warn).toHaveBeenCalledWith('导出位置不可用，已跳过这批产出（请检查路径是否可达）')
+    // 报的是码 + 目录，不再是「请检查路径是否可达」这句查不出真因的话
+    expect(onIssue).toHaveBeenCalledWith({ code: 'PP-DIR-001', stage: 'write', mediaId: 'baidu', dir: '//NAS/不可达' })
     // 关键：没有回退去调默认目录（`''` 那次只可能是从没配位置的分支来）
     expect(resolveRoot).not.toHaveBeenCalledWith('')
   })
 
   it('双写时只有一个位置可用 → 写可用的那个并把少的位置数报出来', async () => {
-    const warn = vi.fn()
+    const onIssue = vi.fn()
     const roots = await resolveBucketOutputRoots(
       config('', { baidu: ['D:/可用', '//NAS/不可达'] }),
       'baidu',
       resolverFor(['D:/可用']),
-      warn,
+      onIssue,
     )
     expect(roots).toEqual(['D:/可用'])
-    expect(warn).toHaveBeenCalledWith('有 1 个导出位置不可用，已跳过')
+    expect(onIssue).toHaveBeenCalledWith({
+      code: 'PP-DIR-003',
+      stage: 'write',
+      mediaId: 'baidu',
+      detail: '配了 2 个，可用 1 个',
+    })
   })
 
   it('渠道没配时沿用默认输出目录（不因为别的渠道配了就一起变）', async () => {

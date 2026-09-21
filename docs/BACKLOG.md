@@ -2586,3 +2586,121 @@ BigInt 版才是真正的「与原始引擎逐位一致」。
 - **⚠️ 未经渲染自证**：本机做不了网页渲染验证，合并后的三段排列与「输出位置」的高度表现
   **未经真机过目**，请在中控台「输出位置」分区里核对。
 - **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）
+
+---
+
+### TB-069 后处理：进度查询 + 状态通知 + 带错误码的失败原因
+
+- **来源**：杰哥原话（2026-09-21）「当前后处理流程缺少任务进度查询与状态通知能力，用户无法判断任务
+  是否正在执行、是否已成功完成或已失败」，要求补：① 实时进度查询（百分比 / 阶段 / 已处理数量）；
+  ② 覆盖进行中 / 成功 / 失败的状态通知机制；③ 失败时给出错误码 + 描述 + 定位线索。
+- **状态**：DONE · 写线：主写线（与另一条线 TB-060 的 WIP 无文件重叠）
+- **背景（诊断）**
+  1. 执行体（`taskPostprocess.ts`）一次调用到底，**中途不上报任何东西** —— 不是「没显示」，
+     是根本没有进度数据源；
+  2. 界面反馈只有三样：按钮转圈（`runtimeStore.postprocessRunning` 计数）、开跑一条 toast、
+     结束一条 toast（`store.ts` 的 `reportPostprocessResult`）；
+  3. 失败原因只剩**第一条**（`warnings[0]`），且是自由文本：没有码、没有文件名 / 渠道 / 目录，
+     文案还与真因不对齐 —— 典型是 `outputRoots.ts` 那句「导出位置不可用（请检查路径是否可达）」，
+     而真因九成是**目录不在主进程允许的位置内**（R-62），照那句话查永远查不到。
+- **改了什么**
+  1. **错误码表 + 问题项**（新 `postprocessIssue.ts`）：19 个码（`PP-SRC/ENV/SCOPE/TARGET/MEDIA/PRESET/DIR/
+NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的线索 + 严重度（skipped / error）」；
+     上下文（文件 / 源图 / 渠道 / 目录 / 预设 / 原始异常）由调用点填。
+     `TaskPostprocessResult` 新增 `issues`，**`warnings` 改为由 `issues` 派生**（`issuesToWarnings`），
+     老调用方与测试不受影响，也不会再出现两处文案分叉。
+  2. **运行记录 + 进度查询**（新 `postprocessRun.ts` + `runtimeStore.postprocessRuns` 切片，内存态不落盘）：
+     一次运行可查 `状态 / 阶段 / 已完成张数 / 总张数 / 百分比 / 当前产出 / 产出文件数 / 问题清单 /
+起止时间`；查询走导出函数 `getPostprocessRun(id)`、`listPostprocessRuns()`、
+     `getActivePostprocessRuns()`、`getLatestPostprocessRun()`、`getLatestPostprocessRunForTask(taskId)`。
+     **百分比按源图张数算**（分母事前可知），当前这张图按已完成的产出单元折算小数部分 —— 单元总数要
+     逐图展开才知道，拿它当分母会让数字中途回退。
+  3. **状态通知**：状态机 `running → succeeded | partial | failed`（有产出 + 有真错 = partial；
+     `issues` 里区分 skipped / error，配置使然的跳过不算失败）。通知分两层：① 运行记录可订阅
+     （不新造事件总线，沿用项目里订阅 zustand 的写法）；② 状态切换各发一条 toast。
+     **中途进度不弹 toast**（`showToast` 是单槽，连发会互相顶掉）。
+  4. **通知的落点**：素材库工具栏新增常驻「后处理状态」入口（进行中显示 `3/12 45%`，
+     有问题显示「后处理问题 (N)」并打开完整清单）；失败 toast 带错误码并挂「查看问题」动作；
+     任务卡在「后处理进行中 / 有问题」时补徽章 —— 自动触发那条路径原本要等产出落库才在卡片上有反应。
+  5. **修掉误导文案**：`outputRoots.ts` 的 `warnOnce(string)` 改为结构化 issue 回调，
+     `PP-DIR-001` 的线索直指真因（允许的位置 / 用「选择目录」选过 / 手输其它盘符会被拒）。
+- **验收标准**（可测）
+  1. 跑一次后处理，**开跑瞬间**就能查到运行记录（`status: 'running'`、`totalImages` 正确）；
+  2. 结束后同一条记录落定：`completedImages` 补满、进度 100%、`status` 与 `issues` 可查；
+  3. 零产出时 `issues[0].code === 'PP-EMPTY-001'`（不再是「三项皆空、界面毫无反应」）；
+  4. 执行体整体抛异常时 `issues[0]` = `PP-CRASH-001` 且 `cause` 是原始错误消息；
+  5. 界面：进行中能看到「N/M 百分比」，失败 toast 带 `[PP-xxx-000]`，并可展开完整清单；
+  6. `npm run verify` 全绿。
+- **改动面**
+  - 新增：`features/postprocess/postprocessIssue.ts`、`features/postprocess/postprocessRun.ts`
+  - 修改：`features/postprocess/taskPostprocess.ts`（issues 收集 + `onProgress` + 零产出兜底）、
+    `features/postprocess/outputRoots.ts`、`stores/runtimeStore.ts`、`store.ts`、
+    `features/assetLibrary/AssetLibraryToolbar.tsx`、`components/TaskCard.tsx`
+- **验收证据**：`npm run verify` 全绿（254 文件 / **2935 例**）；新增
+  `postprocessIssue.test.ts` **8 例**、`postprocessRun.test.ts` **10 例**、
+  `store.test.ts` 新增 **3 例**（开跑可查 + 崩溃落码 + 问题清单弹窗逐条给码与线索）、
+  `TaskCard.test.tsx` 新增 **3 例**（进行中徽章带真实进度 / 问题徽章把问题交给弹窗 / 无记录不渲染）、
+  `outputRoots.test.ts` 改写 **2 例**（改断言错误码，顺带反向验证「文案不再写『请检查路径是否可达』」）。
+- **知情取舍**
+  - **运行记录只有最近 20 条且不落盘**：进度是会话内信息，重启后没有意义；要长期留痕得另做产出日志，
+    不在本轮范围。
+  - **`issues` 不写进任务记录**：任务记录是持久化的，塞会话级问题会让「重开应用还挂着上一条失败原因」。
+    自动触发的失败因此只在**当前会话**可查（toast + 工具栏入口）。
+  - **快照式进度（每张图 / 每个单元一次）不是流式**：足够回答「在跑吗、跑到哪、成了没」，
+    也不至于让 React 每帧重渲染。
+- **⚠️ 未经渲染自证**：本机做不了网页渲染验证（环境级限制，见 `~/.workbuddy/MEMORY.md`），
+  工具栏的进度文本、任务卡两个徽章、问题清单弹窗的排版**未经真机过目**，请在素材库与画廊里核对。
+- **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）
+
+---
+
+### TB-070 水印库：产品之间的复制（单条 + 整库）
+
+- **来源**：杰哥原话（2026-09-21）「当前水印库缺少产品之间的复制功能，请一并补充该复制能力，
+  明确可复制的产品属性范围及复制后的预期行为」。
+- **状态**：DONE · 写线：主写线
+- **背景（诊断）**：水印库在 TB-067 按产品隔离后，跨产品搬一套水印**只能**「导出 JSON → 切产品 →
+  导入」（`PresetManagementTab` 的 `handleExportPresets` / `handleImportPresets`）—— 要落一个临时文件、
+  还得记着刚才那套叫什么。行内那个「复制为新预设」是 `duplicatePreset`，**同产品内**复制
+  （`productId` 原样带走），跨产品确实没有。
+- **改了什么**
+  1. **复制的属性范围（= 整套预设，除 id / 名称 / 归属）**：画布尺寸、全部图层（文字 / 图片 / LOGO
+     的资产引用）、采样背景路径、适配方式一律带过去。**不带**：`id`（换新，否则两个产品指向同一套，
+     改一个另一个跟着变 = 共用而不是复制）、`name`（默认「源名 副本」，目标产品已有同名则加序号
+     「… 副本 2」）、`productId`（改为目标产品）、`updatedAt`（盖当前时间）。
+     「水印标识符」是全局一份，本来就不属于单个预设，不随复制走。
+  2. **资产只沿用引用，不复制文件**：图片 / LOGO 是同一台机器上的 blob，复制既慢又占空间；
+     引用计数（`isCompositeAssetReferenced`）保证「删源水印不会让副本变成没图」。
+  3. **复制后的预期行为**：副本只落进目标产品的库，**不自动启用** —— 不替任何方向勾选
+     （`watermarkPresetIds` 引用的是新 id，没人指向它），所以「复制一下」不会静默改变任何产出结果；
+     当前画布的选中预设也不动（画布只在**当前产品**的库里找预设，指过去会切到一套左栏不列的预设）。
+  4. **两个入口，一个弹窗**：库行选中后的「复制到…」（单条）+ 库头图标按钮（整库），
+     都打开 `PresetCopyDialog` 选目标产品；候选按产品线归组，**排除当前产品**（同产品复制
+     是另一个动作，且数据层直接跳过）。三种「点不动」的情形分别给说明（没选产品 / 库是空的 / 树里没有别的产品）。
+  5. **产品候选**收敛到 `listProductNodes`（项目树第二级，排除回收站与回收站产品线下的节点），
+     与 `resolveOwningProductId` 共用「第 2 级 = 产品」这一条口径。
+- **验收标准**（可测）
+  1. 单条复制：源水印不变；目标产品里多出一套 `productId` = 目标、名称 = 「源名 副本」的新预设，
+     画布尺寸与图层与源一致；
+  2. 整库复制：本产品全部水印各复制一份，目标产品已有的同名让开（加序号）；
+  3. **不自动启用**：复制前后任何节点的 `watermarkPresetIds` 都不变；当前画布选中预设不变；
+  4. 同产品 / 空目标 / 不存在的 id 一律不产生副本，且不抛错；
+  5. 候选里不出现当前产品，也不出现回收站里的产品；
+  6. `npm run verify` 全绿。
+- **改动面**
+  - 新增：`features/composite/components/PresetCopyDialog.tsx`（+ `design-system/catalog.ts` 登记）
+  - 修改：`features/composite/lib/compositePresetLibrary.ts`（`buildCopiedPresetName` / `planPresetCopies`）、
+    `features/composite/storeV2.ts`（`copyPresetsToProduct`）、`features/projectTree/params.ts`（`listProductNodes`）、
+    `features/composite/components/PresetManagementTab.tsx`（两个入口 + 弹窗装配）
+- **验收证据**：`npm run verify` 全绿（254 文件 / **2935 例**）；新增 `compositePresetLibrary.test.ts` **5 例**、
+  `storeV2.test.ts` **2 例**、`params.test.ts` **4 例**、`PresetManagementTab.test.tsx` **3 例**
+  （单条复制 / 整库复制 + 让名 / 候选排除当前产品）。
+- **知情取舍**
+  - **不复制到「未分配」区**：目标必须是真实产品。未分配是个过渡态（TB-067），
+    把水印复制进去只会变成「谁都看不见」。
+  - **源自己就是副本时不去猜尾部**：统一在原名后追加（`X 副本` → `X 副本 副本`），
+    名字可预测；重名规避交给序号那一步，不做「替换尾部 副本」这类隐式改写。
+  - **不跨机器**：复制只在本机同一份数据里搬（资产是引用）。换台机器仍然要走导出 / 导入。
+- **⚠️ 未经渲染自证**：本机做不了网页渲染验证，弹窗的产品分组列表、`复制到…` 文字链与库头图标按钮的
+  排版**未经真机过目**，请在中控台「水印」分区里核对。
+- **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）

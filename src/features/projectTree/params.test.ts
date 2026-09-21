@@ -6,6 +6,7 @@ import {
   buildProjectNodeParams,
   collectPromotedNodeFieldValues,
   hasLegacyNodeOnlyFields,
+  listProductNodes,
   mergePostprocessNodeOverride,
   normalizePostprocessNodeOverride,
   normalizeProjectNodeParamsMap,
@@ -717,5 +718,42 @@ describe('R-63 迁移：节点上已收归全局的旧值必须被接住（ADR-0
   it('空迁移值不改变基线', () => {
     const baseline: PromotedNodeFieldValues = { namePattern: 'x', creator: 'y' }
     expect(mergePromotedGlobals(baseline, {})).toEqual(baseline)
+  })
+})
+
+describe('listProductNodes —— 跨产品动作的候选清单', () => {
+  const tree: AssetCollection[] = [
+    collection('line-a', '保险'),
+    collection('product-1', '百万医疗险', 'line-a'),
+    collection('direction-1', '月亮', 'product-1'),
+    collection('line-b', '电商'),
+    collection('product-2', 'QQ阅读', 'line-b'),
+  ]
+
+  it('只列第二级的产品，带它所属产品线', () => {
+    expect(listProductNodes(tree)).toEqual([
+      { id: 'product-1', name: '百万医疗险', lineId: 'line-a', lineName: '保险' },
+      { id: 'product-2', name: 'QQ阅读', lineId: 'line-b', lineName: '电商' },
+    ])
+  })
+
+  it('产品线与方向都不是候选（水印是产品的资产）', () => {
+    const ids = listProductNodes(tree).map((node) => node.id)
+    expect(ids).not.toContain('line-a')
+    expect(ids).not.toContain('direction-1')
+  })
+
+  it('回收站里的产品不算候选，它所在产品线被删时也不算（复制过去用户看不见）', () => {
+    const trashed: AssetCollection[] = [
+      collection('line-a', '保险'),
+      { ...collection('product-1', '百万医疗险', 'line-a'), trashedAt: 99 },
+      { ...collection('line-b', '电商'), trashedAt: 99 },
+      collection('product-2', 'QQ阅读', 'line-b'),
+    ]
+    expect(listProductNodes(trashed)).toEqual([])
+  })
+
+  it('根级节点（没有产品线）不算产品', () => {
+    expect(listProductNodes([collection('orphan', '孤儿节点')])).toEqual([])
   })
 })

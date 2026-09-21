@@ -85,3 +85,78 @@ export function filterPresetsByProduct(presets: CompositeV2Preset[], productId: 
 export function filterUnassignedPresets(presets: CompositeV2Preset[]): CompositeV2Preset[] {
   return presets.filter((preset) => normalizePresetProductId(preset.productId) === '')
 }
+
+/**
+ * 复制出来的水印叫什么：默认「XX 副本」，目标产品里已有同名就退到「XX 副本 2」「XX 副本 3」…
+ *
+ * **只与目标产品的现有名字比对**：水印库已按产品隔离，重名只可能撞在落地的那一侧；
+ * 拿全量名字比会把源产品里的「XX 副本」也算进来，用户会莫名其妙拿到一个「XX 副本 2」。
+ */
+export function buildCopiedPresetName(sourceName: string, takenNames: Iterable<string>, suffix = '副本'): string {
+  const base = `${sourceName} ${suffix}`
+  const taken = new Set(takenNames)
+  if (!taken.has(base)) return base
+  for (let index = 2; index <= 999; index += 1) {
+    const candidate = `${base} ${index}`
+    if (!taken.has(candidate)) return candidate
+  }
+  // 极端兜底：同一个名字被占满 999 次。加时间戳保证不重名，优先级低于「名字好看」。
+  return `${base} ${Date.now()}`
+}
+
+export interface PlanPresetCopyInput {
+  /** 现有全部预设（扁平数组，跨产品） */
+  presets: CompositeV2Preset[]
+  /** 要复制的源水印 id（顺序即落地顺序；重复 id 只算一次） */
+  presetIds: string[]
+  /** 落地到哪个产品；空串 = 未分配（不是合法目标，直接不复制） */
+  targetProductId: string
+  /** id 工厂：传进来而不是内部生成，纯函数才好测 */
+  makeId: () => string
+  now: number
+}
+
+/**
+ * 规划「把这些水印复制到目标产品」要**新增**的预设（纯函数，不落库、不改入参）。
+ *
+ * 复制的是整套水印：画布尺寸、图层（含图片 / LOGO 的资产引用）、适配方式全都带过去 ——
+ * 这是用户说「复制」时的全部预期，少带一样都要在目标产品里重配一遍。
+ *
+ * 三条刻意的口径：
+ * - **图片 / LOGO 只沿用引用，不复制资产**：同一台机器上的 blob 是共享的，复制它既慢又占空间；
+ *   引用计数（`isCompositeAssetReferenced`）已经保证「删源水印不会把副本弄成没图」。
+ * - **id 一定换新**：沿用源 id 会把两个产品的库指向同一套水印，改一个另一个跟着变 ——
+ *   那就不是复制而是「共用」，正是按产品隔离要治的问题。
+ * - **不改归属引用**：复制出来的水印**不自动被任何方向勾选**。自动勾上等于「复制一下」
+ *   就静默改了产出结果，用户以为只是留个底稿。
+ */
+export function planPresetCopies(input: PlanPresetCopyInput): CompositeV2Preset[] {
+  const target = normalizePresetProductId(input.targetProductId)
+  if (!target) return []
+
+  const byId = new Map(input.presets.map((preset) => [preset.id, preset]))
+  const taken = input.presets
+    .filter((preset) => normalizePresetProductId(preset.productId) === target)
+    .map((preset) => preset.name)
+  const copies: CompositeV2Preset[] = []
+  const seen = new Set<string>()
+
+  for (const presetId of input.presetIds) {
+    if (seen.has(presetId)) continue
+    seen.add(presetId)
+    const source = byId.get(presetId)
+    if (!source) continue
+    // 同产品内复制 = 原地再建一套，用户要的是「搬到另一个产品」；界面也不会给出这个选项
+    if (normalizePresetProductId(source.productId) === target) continue
+    const name = buildCopiedPresetName(source.name, taken)
+    taken.push(name)
+    copies.push({
+      ...structuredClone(source),
+      id: input.makeId(),
+      name,
+      productId: target,
+      updatedAt: input.now,
+    })
+  }
+  return copies
+}

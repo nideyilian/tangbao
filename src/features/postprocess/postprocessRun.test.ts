@@ -1,0 +1,141 @@
+import { describe, expect, it } from 'vitest'
+import {
+  applyPostprocessProgress,
+  countPostprocessIssues,
+  createPostprocessRun,
+  finishPostprocessRun,
+  formatPostprocessRunProgress,
+  getPostprocessRunPercent,
+  resolvePostprocessRunStatus,
+  summarizePostprocessRun,
+} from './postprocessRun'
+import { createPostprocessIssue } from './postprocessIssue'
+
+function run(totalImages = 4) {
+  return createPostprocessRun({ id: 'run-1', source: 'manual', totalImages, startedAt: 1000 })
+}
+
+describe('后处理运行记录', () => {
+  it('刚建出来是进行中、准备阶段、零产出', () => {
+    expect(run()).toMatchObject({
+      id: 'run-1',
+      source: 'manual',
+      status: 'running',
+      stage: 'prepare',
+      totalImages: 4,
+      completedImages: 0,
+      producedFiles: 0,
+      issues: [],
+    })
+  })
+
+  it('进度补丁是绝对值，且不改原对象（store 靠引用变化触发重渲染）', () => {
+    const first = run()
+    const second = applyPostprocessProgress(first, { stage: 'write', completedImages: 1, imageUnits: 3 })
+    const third = applyPostprocessProgress(second, { imageUnitsDone: 2, producedFiles: 5 })
+
+    expect(first).toMatchObject({ stage: 'prepare', completedImages: 0, producedFiles: 0 })
+    expect(second).toMatchObject({ stage: 'write', completedImages: 1, imageUnits: 3, imageUnitsDone: 0 })
+    expect(third).toMatchObject({ stage: 'write', completedImages: 1, imageUnitsDone: 2, producedFiles: 5 })
+    expect(third).not.toBe(second)
+  })
+
+  it('负数补丁被夹回 0（异常路径不会把计数算负）', () => {
+    const next = applyPostprocessProgress(run(), { completedImages: -3, producedFiles: -1 })
+    expect(next.completedImages).toBe(0)
+    expect(next.producedFiles).toBe(0)
+  })
+
+  it('百分比以源图张数为分母，当前这张按单元数折算小数部分', () => {
+    // 4 张图，第 2 张跑到 4 个单元里的 2 个 → (1 + 0.5) / 4 = 37.5% → 38%
+    const next = applyPostprocessProgress(run(4), { completedImages: 1, imageUnits: 4, imageUnitsDone: 2 })
+    expect(getPostprocessRunPercent(next)).toBe(38)
+  })
+
+  it('百分比不因分母未知/单元未解出而瞎跳，跑完钉在 100', () => {
+    expect(getPostprocessRunPercent(run(0))).toBeUndefined()
+    expect(getPostprocessRunPercent(run(4))).toBe(0)
+    const finished = finishPostprocessRun(applyPostprocessProgress(run(4), { completedImages: 4 }), {
+      issues: [],
+      producedFiles: 6,
+      finishedAt: 2000,
+    })
+    expect(getPostprocessRunPercent(finished)).toBe(100)
+  })
+
+  it('状态判定：有产出 + 只有跳过 = 成功；有产出 + 有真错 = 部分完成；零产出 = 失败', () => {
+    const skipped = createPostprocessIssue({ code: 'PP-SCOPE-001', stage: 'prepare' })
+    const error = createPostprocessIssue({ code: 'PP-DIR-004', stage: 'write' })
+    expect(resolvePostprocessRunStatus({ producedFiles: 3, issues: [skipped] })).toBe('succeeded')
+    expect(resolvePostprocessRunStatus({ producedFiles: 3, issues: [skipped, error] })).toBe('partial')
+    expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [skipped] })).toBe('failed')
+    // 零产出且无记录 = 本次没有可做的事，不算失败
+    expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [] })).toBe('succeeded')
+  })
+
+  it('收尾：写问题清单与产出数，清掉「当前产出」，记完成时间', () => {
+    const error = createPostprocessIssue({ code: 'PP-WRITE-001', stage: 'write', file: 'a.jpg' })
+    const finished = finishPostprocessRun(
+      applyPostprocessProgress(run(4), {
+        stage: 'distribute',
+        completedImages: 3,
+        imageUnits: 2,
+        imageUnitsDone: 2,
+        currentLabel: '头条 1080x1920',
+      }),
+      { issues: [error], producedFiles: 2, finishedAt: 9999 },
+    )
+    expect(finished).toMatchObject({
+      status: 'partial',
+      stage: 'finish',
+      producedFiles: 2,
+      completedImages: 4,
+      imageUnits: 0,
+      imageUnitsDone: 0,
+      finishedAt: 9999,
+    })
+    expect(finished.currentLabel).toBeUndefined()
+    expect(finished.issues).toHaveLength(1)
+  })
+
+  it('跳过与错误分开计数（界面要能说「跳过 3 项、错误 1 项」）', () => {
+    const finished = finishPostprocessRun(run(2), {
+      issues: [
+        createPostprocessIssue({ code: 'PP-SRC-001', stage: 'prepare' }),
+        createPostprocessIssue({ code: 'PP-SCOPE-001', stage: 'prepare' }),
+        createPostprocessIssue({ code: 'PP-DIR-001', stage: 'write' }),
+      ],
+      producedFiles: 0,
+    })
+    expect(countPostprocessIssues(finished)).toEqual({ errors: 1, skipped: 2 })
+  })
+
+  it('一行结论按状态分档，且带上未完成条数', () => {
+    const done = finishPostprocessRun(run(2), { issues: [], producedFiles: 4 })
+    expect(summarizePostprocessRun(done)).toBe('后处理完成：产出 4 个文件')
+
+    const partial = finishPostprocessRun(run(2), {
+      issues: [createPostprocessIssue({ code: 'PP-WRITE-001', stage: 'write' })],
+      producedFiles: 2,
+    })
+    expect(summarizePostprocessRun(partial)).toContain('产出 2 个文件')
+    expect(summarizePostprocessRun(partial)).toContain('错误 1')
+
+    const failed = finishPostprocessRun(run(2), {
+      issues: [createPostprocessIssue({ code: 'PP-DIR-001', stage: 'write' })],
+      producedFiles: 0,
+    })
+    expect(summarizePostprocessRun(failed)).toBe('后处理失败：没有产出文件（错误 1）')
+
+    expect(summarizePostprocessRun(applyPostprocessProgress(run(4), { completedImages: 1 }))).toBe('后处理进行中：1/4')
+  })
+
+  it('进度文本 = 计数 + 百分比 + 当前产出，总数未知时不硬编分母', () => {
+    const next = applyPostprocessProgress(run(4), {
+      completedImages: 2,
+      currentLabel: '头条 1080x1920 · a.jpg',
+    })
+    expect(formatPostprocessRunProgress(next)).toBe('2/4 50% · 头条 1080x1920 · a.jpg')
+    expect(formatPostprocessRunProgress(createPostprocessRun({ id: 'x', source: 'auto', totalImages: 0 }))).toBe('')
+  })
+})

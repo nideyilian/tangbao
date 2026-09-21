@@ -21,6 +21,7 @@ import {
   FolderOpenIcon,
   ImageIcon,
   ListChecksIcon,
+  LoaderCircleIcon,
   PinIcon,
   StarIcon,
   TrashIcon,
@@ -31,8 +32,10 @@ import { COLOR_LABEL_OPTIONS } from './colorLabels'
 import { pinnedFilterKey, pinnedFilterLabel } from './pinnedFilters'
 import FilterControlStrip from './FilterControlStrip'
 import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
-import { runManualPostprocess, useStore } from '../../store'
-import { useRuntimeStore } from '../../stores/runtimeStore'
+import { runManualPostprocess, showPostprocessIssuesDialog, useStore } from '../../store'
+import { useLatestPostprocessRun, useRuntimeStore } from '../../stores/runtimeStore'
+import { countPostprocessIssues, formatPostprocessRunProgress } from '../postprocess/postprocessRun'
+import { POSTPROCESS_STAGE_LABELS } from '../postprocess/postprocessIssue'
 
 export interface AssetLibraryToolbarProps {
   scopeLabel: string
@@ -194,6 +197,8 @@ function AssetLibraryToolbar({
       <ProjectTreeEntryButton />
 
       <ManualPostprocessButton />
+
+      <PostprocessStatusEntry />
 
       {similarLabel && onClearSimilar && (
         <Badge tone="info">
@@ -846,20 +851,29 @@ function ProjectTreeEntryButton() {
  * 「跑后处理」：对选中的**已有素材**补跑一次后处理。
  *
  * 自动触发只发生在生成完成那一刻，历史素材与当时还没启用后处理的老图再也拿不到变体，
- * 这里补的就是这条路径（旧「后期处理工作区」的批量导出覆盖的场景）。
+ * 这里补的就是这条路径（旧「后期处理工作台」的批量导出覆盖的场景）。
  *
  * 只在有选中时出现：空选中时点它无从判断该处理什么。
  *
- * 必须显示加载态：一次后处理要读图、逐渠道渲染并做体积二分压缩，几十秒内界面不会有任何
- * 其他变化——没有加载态时，「正在跑」与「按钮没生效」在用户眼里完全一样。
+ * 必须显示加载态，且**带上进度**：一次后处理要读图、逐渠道渲染并做体积二分压缩，几十秒内界面不会有
+ * 任何其他变化——没有进度时，「跑到第几张」与「按钮没生效」在用户眼里完全一样。
  */
 function ManualPostprocessButton() {
   const selectedAssetIds = useAssetLibraryStore((s) => s.selectedAssetIds)
   const assetsById = useAssetLibraryStore((s) => s.assetsById)
   const showToast = useStore((state) => state.showToast)
   const running = useRuntimeStore((s) => s.postprocessRunning > 0)
+  const activeRun = useRuntimeStore((s) => {
+    for (const id of s.postprocessRunIds) {
+      const run = s.postprocessRuns[id]
+      if (run?.status === 'running') return run
+    }
+    return undefined
+  })
 
   if (selectedAssetIds.length === 0) return null
+
+  const progress = activeRun ? formatPostprocessRunProgress(activeRun) : ''
 
   const handleClick = () => {
     // 选中的是素材记录，后处理要的是图片 id；素材已被清理的（imageId 缺失）单独提示，
@@ -884,7 +898,58 @@ function ManualPostprocessButton() {
       title="对选中素材跑一次后处理：参数与输出目录按每张图所属方向自动取值"
       onClick={handleClick}
     >
-      {running ? '后处理中…' : `跑后处理 (${selectedAssetIds.length})`}
+      {running ? `后处理中…${progress ? ` ${progress}` : ''}` : `跑后处理 (${selectedAssetIds.length})`}
+    </Button>
+  )
+}
+
+/**
+ * 后处理状态入口：**进行中**显示进度条，**结束后有问题**显示问题入口。
+ *
+ * 为什么要它：「跑后处理」按钮只在有选中素材时出现，而后处理既可能由生成完成自动触发、
+ * 也可能在选中被清掉之后还在跑 —— 那时界面上就没有任何东西说明「它还在跑」。
+ * 这个入口不依赖选中状态，是「到底有没有在跑」的常驻答复。
+ *
+ * 为什么不能只靠 toast：toast 3 秒就没了，而且失败原因多到看不全（哪张图、哪个渠道、
+ * 哪个目录、原始错误）。这个入口把完整清单留下来 —— **会话内持久**，直到下一次跑后处理。
+ */
+function PostprocessStatusEntry() {
+  const activeRun = useRuntimeStore((s) => {
+    for (const id of s.postprocessRunIds) {
+      const run = s.postprocessRuns[id]
+      if (run?.status === 'running') return run
+    }
+    return undefined
+  })
+  const latestRun = useLatestPostprocessRun()
+
+  if (activeRun) {
+    return (
+      <span
+        data-testid="asset-postprocess-progress"
+        className="inline-flex shrink-0 items-center gap-1.5 text-xs text-ds-muted"
+        title={`后处理进行中 · ${POSTPROCESS_STAGE_LABELS[activeRun.stage]}${
+          activeRun.currentLabel ? ` · ${activeRun.currentLabel}` : ''
+        }`}
+      >
+        <LoaderCircleIcon className="h-3.5 w-3.5 animate-spin" />
+        {formatPostprocessRunProgress(activeRun) || '后处理中'}
+      </span>
+    )
+  }
+
+  if (!latestRun || latestRun.issues.length === 0) return null
+
+  const { errors, skipped } = countPostprocessIssues(latestRun)
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      data-testid="asset-postprocess-issues"
+      title="查看最近一次后处理的问题：错误码、涉及的图与文件、以及可照做的定位线索"
+      onClick={() => showPostprocessIssuesDialog(latestRun.issues)}
+    >
+      {errors > 0 ? `后处理问题 (${errors})` : `后处理跳过 (${skipped})`}
     </Button>
   )
 }

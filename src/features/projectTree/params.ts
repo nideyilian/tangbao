@@ -98,6 +98,37 @@ export function resolveOwningProductId(collections: AssetCollection[], collectio
   return path[1]?.id ?? null
 }
 
+/** 产品清单里的一项：产品本身 + 它所属产品线（界面按产品线分组显示）。 */
+export interface ProjectProductNode {
+  id: string
+  name: string
+  lineId: string
+  lineName: string
+}
+
+/**
+ * 列出全部**产品**（项目树第二级）——「把水印复制到哪个产品」这类跨产品动作要用的候选清单。
+ *
+ * 与 `resolveOwningProductId` 是同一个层级口径（都取路径第 2 段），但方向不同：
+ * 那边是「给一个节点，问它属于哪个产品」，这边是「有哪些产品可选」。
+ * 两处必须共用「第 2 级 = 产品」这一条，否则会出现「能选到的产品」与「算得出的产品」对不上。
+ *
+ * 回收站里的节点（自身或它所在的产品线）不算候选：往一个已删的产品里复制水印，
+ * 用户在水印库里根本看不到它。顺序保持传入顺序（= 树的维护顺序），交界面去分组。
+ */
+export function listProductNodes(collections: AssetCollection[]): ProjectProductNode[] {
+  const result: ProjectProductNode[] = []
+  for (const collection of collections) {
+    if (collection.trashedAt) continue
+    const path = resolveCollectionPath(collections, collection.id)
+    if (path.length !== 2) continue
+    const [line, product] = path
+    if (line.trashedAt) continue
+    result.push({ id: product.id, name: product.name, lineId: line.id, lineName: line.name })
+  }
+  return result
+}
+
 /**
  * 从一张图的若干归属 id 里挑出「最具体」的那个（层级最深）作为它的方向归属。
  *

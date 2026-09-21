@@ -407,6 +407,42 @@ describe('composite v2 store state factory', () => {
     expect(store.getState().presets.find((preset) => preset.id === 'preset-default')?.productId).toBe('')
   })
 
+  it('⭐ 跨产品复制：新 id、改归属、内容整套带走，且不动当前编辑对象', () => {
+    const store = createCompositeV2Store()
+    store.getState().createPreset('Campaign', 'product-a')
+    const source = store.getState().presets.find((preset) => preset.name === 'Campaign')!
+    const selectionBefore = store.getState().selectedPreviewPresetId
+
+    store.getState().copyPresetsToProduct([source.id], 'product-b')
+
+    const copy = store.getState().presets.find((preset) => preset.productId === 'product-b')!
+    expect(copy).toBeTruthy()
+    expect(copy.id).not.toBe(source.id)
+    expect(copy.name).toBe('Campaign 副本')
+    expect(copy.baseCanvas).toEqual(source.baseCanvas)
+    expect(copy.layers).toEqual(source.layers)
+    // 源份一个字段都不该被改：用户改副本时原水印要原样留着
+    expect(store.getState().presets.find((preset) => preset.id === source.id)).toMatchObject({
+      name: 'Campaign',
+      productId: 'product-a',
+    })
+    // 画布只在**当前产品**的库里找预设，把选中态指到副本上会让画布切到一套左栏不列的预设
+    expect(store.getState().selectedPreviewPresetId).toBe(selectionBefore)
+  })
+
+  it('跨产品复制：同产品/空目标不产生副本', () => {
+    const store = createCompositeV2Store()
+    store.getState().createPreset('Campaign', 'product-a')
+    const source = store.getState().presets.find((preset) => preset.name === 'Campaign')!
+    const countBefore = store.getState().presets.length
+
+    store.getState().copyPresetsToProduct([source.id], 'product-a')
+    store.getState().copyPresetsToProduct([source.id], '')
+    store.getState().copyPresetsToProduct(['不存在'], 'product-b')
+
+    expect(store.getState().presets).toHaveLength(countBefore)
+  })
+
   it('updates the global fit mode', () => {
     const store = createCompositeV2Store()
     store.getState().setGlobalFitMode('contain-blur')

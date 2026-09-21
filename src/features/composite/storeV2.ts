@@ -24,7 +24,7 @@ import { create } from 'zustand'
 import { createStore } from 'zustand/vanilla'
 import { persist } from 'zustand/middleware'
 import { createPreviewHistory } from './lib/compositeBackgrounds'
-import { normalizePresetProductId } from './lib/compositePresetLibrary'
+import { normalizePresetProductId, planPresetCopies } from './lib/compositePresetLibrary'
 import { createDefaultCompositeV2State } from './lib/compositeV2Defaults'
 import { createDefaultIdentifier, normalizeIdentifier } from './lib/compositeIdentifier'
 import { fitCompositeTextLayer } from './lib/compositeTextLayout'
@@ -110,6 +110,14 @@ type CompositeV2StoreActions = {
   createPreset: (name: string, productId: string) => void
   deletePreset: (presetId: string) => void
   duplicatePreset: (presetId: string) => void
+  /**
+   * 把一批水印**复制到另一个产品**（跨产品复制；同产品内复制走 `duplicatePreset`）。
+   *
+   * 复制是「另起一套」：id 换新、归属改为目标产品、内容整套带过去，
+   * 且**不自动被任何方向勾选** —— 详情与口径见 `planPresetCopies`。
+   * 目标产品与源产品相同时不复制（那等于原地再建一套，界面上也不会给这个选项）。
+   */
+  copyPresetsToProduct: (presetIds: string[], productId: string) => void
   /**
    * 把预设改归到某个产品（空串 = 摘成「未分配」）。
    *
@@ -552,6 +560,20 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
               presets: [...state.presets, preset],
               selectedPreviewPresetId: preset.id,
             }
+          }, 'presets:structure'),
+        copyPresetsToProduct: (presetIds, productId) =>
+          setWithHistory((state) => {
+            const copies = planPresetCopies({
+              presets: state.presets,
+              presetIds,
+              targetProductId: productId,
+              makeId: () => uniqueId('preset'),
+              now: Date.now(),
+            })
+            if (copies.length === 0) return {}
+            // **不动 `selectedPreviewPresetId`**：目标通常是别的产品，而画布只在**当前产品**的库里找预设。
+            // 把选中态指过去，画布会切到一套左栏根本不列的预设，看起来像「选中的东西不见了」。
+            return { presets: [...state.presets, ...copies] }
           }, 'presets:structure'),
         /**
          * 合并导入的预设：同 id 覆盖、**保留原位**，新 id 追加在末尾。

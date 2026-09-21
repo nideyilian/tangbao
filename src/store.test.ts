@@ -23,7 +23,14 @@ import type {
 } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 import { formatGeneratedImageDate } from './lib/generatedImageFilename'
-import { useRuntimeStore } from './stores/runtimeStore'
+import {
+  getActivePostprocessRuns,
+  getLatestPostprocessRun,
+  getPostprocessRun,
+  useRuntimeStore,
+} from './stores/runtimeStore'
+import { getPostprocessRunPercent } from './features/postprocess/postprocessRun'
+import { createPostprocessIssue } from './features/postprocess/postprocessIssue'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
 
 // 供 db mock 与测试共享的素材种子/删除记录（task 删除级联测试用）
@@ -359,6 +366,7 @@ import {
   GRID_THUMBNAIL_VARIANT,
   resolveImageDisplaySrc,
   runManualPostprocess,
+  showPostprocessIssuesDialog,
   useStore,
 } from './store'
 import { usePostprocessMediaStore } from './storePostprocessMedia'
@@ -5338,6 +5346,88 @@ describe('手动后处理入口', () => {
 
     const messages = showToast.mock.calls.map(([message]) => String(message))
     expect(messages.some((message) => message.includes('没有产出'))).toBe(true)
+  })
+
+  /**
+   * 进度查询与状态通知的验收组。
+   *
+   * 契约：**开跑就能查到这条运行**（不是跑完才有），结束后状态与问题码都落在同一条记录上；
+   * 零产出也不是「什么都没发生」，必须给一条能照着查的码。
+   */
+  it('运行记录开跑即可查询，结束后状态与问题码落在同一条记录上', async () => {
+    useStore.setState({ showToast: vi.fn() })
+    stubElectronApi()
+    useAssetLibraryStore.setState({ collections: [directionFixture()], assetsById: {} })
+    usePostprocessMediaStore.setState({
+      media: [
+        {
+          id: 'gdt',
+          name: '广点通',
+          enabled: true,
+          sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
+        },
+      ],
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: ['direction-a'],
+      autoCompanionClean: false,
+      outputDir: '',
+    })
+    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+
+    const pending = runManualPostprocess(['image-a'])
+
+    // 开跑瞬间就能查到：这是「点了到底有没有生效」的第一手依据
+    const active = getActivePostprocessRuns()
+    expect(active).toHaveLength(1)
+    expect(active[0]).toMatchObject({ source: 'manual', status: 'running', totalImages: 1, producedFiles: 0 })
+
+    await pending
+
+    const run = getLatestPostprocessRun()
+    expect(run).toBeDefined()
+    // 结束后同一条记录落定：完成张数补满、进度 100%、状态与问题码可查
+    expect(getPostprocessRun(active[0].id)).toMatchObject({
+      status: 'failed',
+      completedImages: 1,
+      producedFiles: 0,
+    })
+    expect(getPostprocessRunPercent(getPostprocessRun(active[0].id)!)).toBe(100)
+    expect(getPostprocessRun(active[0].id)!.issues[0]?.code).toBe('PP-EMPTY-001')
+  })
+
+  it('执行前段抛错时，运行记录里留下带码的崩溃项（不是只有 console）', async () => {
+    useStore.setState({ showToast: vi.fn() })
+    usePostprocessMediaStore.setState({ selectedCollectionIds: ['direction-a'] })
+    const spy = vi.spyOn(useAssetLibraryStore, 'getState').mockImplementation(() => {
+      throw new Error('素材库读取失败')
+    })
+
+    await runManualPostprocess(['image-a'])
+
+    const run = getLatestPostprocessRun()
+    expect(run).toMatchObject({ status: 'failed', producedFiles: 0 })
+    expect(run?.issues[0]).toMatchObject({ code: 'PP-CRASH-001', cause: '素材库读取失败' })
+    spy.mockRestore()
+  })
+
+  it('问题清单弹窗逐条给码、上下文与可照做的线索', () => {
+    const setConfirmDialog = vi.fn()
+    useStore.setState({ setConfirmDialog })
+
+    showPostprocessIssuesDialog([
+      createPostprocessIssue({ code: 'PP-DIR-004', stage: 'write', file: 'a.jpg', dir: 'D:/投放' }),
+      createPostprocessIssue({ code: 'PP-PRESET-001', stage: 'prepare', mediaName: '头条' }),
+    ])
+
+    const dialog = setConfirmDialog.mock.calls[0]?.[0]
+    expect(dialog).toMatchObject({ title: '后处理问题（2）', icon: 'info', showCancel: false })
+    expect(dialog.message).toContain('[PP-DIR-004] 输出子目录创建失败')
+    expect(dialog.message).toContain('文件 a.jpg')
+    expect(dialog.message).toContain('目录 D:/投放')
+    expect(dialog.message).toContain('[PP-PRESET-001]')
+    expect(dialog.message).toContain('渠道 头条')
+    // 线索必须出现：用户拿到的不能只是「失败了」
+    expect(dialog.message).toContain('线索：')
   })
 
   it('同一批图还在跑时再次点击，必须提示「正在运行」而不是静默丢弃', async () => {
