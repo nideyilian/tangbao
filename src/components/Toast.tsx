@@ -42,6 +42,7 @@ export default function Toast() {
     // 提示本体始终可点：容器 `pointer-events-none` 时连"点掉它"都做不到，只能干等自动消失。
     // 现在关闭按钮是必备出口（2026-09-21 报障「关不掉」）。
     <div
+      data-testid="app-toast"
       className="fixed left-1/2 z-[var(--ds-z-toast)] -translate-x-1/2 toast-enter pointer-events-auto"
       style={{ bottom: bottomOffset }}
     >

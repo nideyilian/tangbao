@@ -66,7 +66,7 @@ describe('Toast 关得掉', () => {
     storeState.toast = { message: '没有产出文件：[PP-SCOPE-002] 所属方向关闭了自动后处理', type: 'error' }
     const renderer = render()
 
-    const container = renderer.root.children[0]
+    const container = renderer.root.findByProps({ 'data-testid': 'app-toast' })
     expect(String(container.props.className)).toContain('pointer-events-auto')
   })
 
