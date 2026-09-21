@@ -161,6 +161,17 @@
 ## 七、UI 与组件约定
 
 - **标准弹窗 = design-system 的 `Dialog`**。
+- **弹窗高度上限不是可选项**（2026-09-21 报障「关不掉」）：自建弹窗那套
+  （`ds-modal-layer` + `ds-modal-surface`，不经 `Dialog`）**不会自动限高** ——
+  `.ds-dialog` 有 `max-height: min(48rem, calc(100dvh - 2rem))`，而 `.ds-modal-surface` 只管
+  背景/边框/阴影。内容一长，卡片就超出视口、底部按钮被顶到屏幕外，而弹窗打开时背景滚动是锁着的
+  ⇒ 用户只剩 Esc 一条路。`ConfirmDialog` 曾是全仓**唯一**漏掉这条的（另外 20 处 `ds-modal-surface`
+  都写了 `max-h-*` + `flex flex-col overflow-hidden`）→ **写自建弹窗时抄这一行**：
+  卡片 `flex max-h-[calc(100dvh-2rem)] flex-col`，内容区 `min-h-0 flex-auto overflow-y-auto`
+  （滚的只有正文，按钮在滚动区外）。
+  ⚠️ 内容区**不能用 `flex-1`**（`flex: 1 1 0%`）：高度由内容决定时 basis 0 会让它在固有尺寸
+  计算里贡献 0，弹窗直接塌成「标题 + 按钮」—— 同一个坑 `dialogSizing.test.ts` 已为
+  `.ds-dialog--postprocess` 守过。
 - `react-test-renderer` **不支持 portal** → 涉及 Dialog 的测试用 `createRoot` + jsdom。
 - **`localStorage` UI 状态在测试间会泄漏**（分隔条比例等持久化值）→ 受影响测试的 `afterEach` 清 `localStorage`。
 - **任务卡片高度固定** `TASK_CARD_ROW_HEIGHT = 192`；卡内加可展开区块会撑破布局。
