@@ -1107,7 +1107,10 @@ button.sop-center-group-tree-toggle:hover {
   border: 1px solid hsl(var(--ds-color-border));
   border-radius: var(--ds-radius-md);
   display: grid;
-  /* 撑满编辑器容器的剩余高度：面板下方不再留大片空白（原为 `flex: none`） */
+  /* 撑满编辑器容器的剩余高度：面板下方不再留大片空白（原为 `flex: none`）。
+     ⚠️ 这只解决「面板没撑满父容器」。剩余高度到了面板内部怎么分，见
+     `.sop-recipe-panel__body` 的 `grid-template-rows` —— 2026-09-21 的报障就出在那一层：
+     面板明明撑满了，可剩余高度被两条隐式 auto 行均分，概览区底部照样一大片空白。 */
   flex: 1 1 auto;
   gap: 0;
   grid-template-rows: auto minmax(0, 1fr);
@@ -1145,6 +1148,18 @@ button.sop-center-group-tree-toggle:hover {
 .sop-recipe-panel__body {
   display: grid;
   gap: 0.625rem;
+  /*
+   * 行分配必须写出来：录入区吃掉剩余高度（textarea 因此随窗口长高），概览区按内容高度。
+   *
+   * ⚠️ 漏了它，两行就都是**隐式 auto 行**，而 `align-content` 的初始值是 `normal`
+   * —— 对 auto 轨道它表现为 `stretch` ⇒ 剩余高度被**均分给两条 auto 行**：
+   * 录入区的高被分掉一部分、概览区更是被拉出一大段底部空白（2026-09-21 报障：
+   * 「页面底部仍有这么大的空白」）。
+   *
+   * 注意空白是**在面板内部**被行拉伸出来的：面板那层的 `flex: 1 1 auto` 本身是对的
+   * （它确实撑满了父容器），所以在面板上加 flex 治不了这个 —— 必须在这一层分行。
+   */
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   padding: 0.75rem;
 }
