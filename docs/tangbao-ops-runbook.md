@@ -250,6 +250,11 @@ curl -s --ssl-no-revoke \
 - 未认证 60 次/时，带 token 5000 次/时。轮询用 `for i in $(seq 1 12); do … sleep 20; done` 判
   `status completed`，别靠猜时长（本仓 CI 约 2.5–3min）。
 - **一次 push 只给 head commit 生成一个 run**，中间那几条提交不会有独立 run，别以为漏跑了。
+- **下载 job logs 时给 curl 明确的盘符路径**（2026-09-21 实踩）：`curl -o /tmp/ci.log` 在 Git Bash 下
+  会让**Windows 版 curl 写到 `D:\tmp\ci.log`**（它把 `/tmp` 当成「当前盘的相对路径」），
+  随后 `ls /tmp/ci.log`（Git Bash 映射到 `%TEMP%`）自然找不到，看起来像"下载失败"。
+  写成 `-o "D:/AAA/TANGBAO/.git/ci-job.log"` 即可（`.git/` 不被 git 跟踪）。
+  logs 端点仍需先 `-I` 带 `Authorization` 取 302 的 `location`，再无认证头下载（匿名一律 403）。
 - job logs 会 302 到带签名的 URL；`curl -L` 带 `Authorization` 会被拒 → 先 `curl -I` 取
   `location`，再无认证头下载。
 
@@ -259,6 +264,25 @@ curl -s --ssl-no-revoke \
 | ------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `ci.yml`      | 任意分支 push | `tsc -b` + electron typecheck + lint + format:check + vitest（Node 24）                                                       |
 | `release.yml` | `v*` tag      | **勿改回 `--publish always`**（124MB exe 必超时）→ `--publish never` + `softprops/action-gh-release@v2`；校验步骤硬编码产物名 |
+
+### 提交前复检：列「全部报错文件」，别用凭记忆拼的窄模式（2026-09-21 实踩）
+
+推之前复检 `tsc -b`，若按文件名过滤（`grep -E "Toast\.tsx|ConfirmDialog|..."`），
+**漏一个名字就是一次 CI 红** —— 本轮就是这么让 `Toast.test.tsx` 溜过去的：
+模式写成 `Toast\.tsx`，而真正的错误在 `Toast.test.tsx`（中间多一个 `.test`），
+加上输出里还混着另一条写线的 26 条报错，它被彻底淹掉。
+
+正确顺序是**先看全貌、再判断归属**：
+
+```bash
+node ./node_modules/typescript/bin/tsc -b --force 2>&1 \
+  | grep -oE "^[^ ]+\.(ts|tsx)\([0-9]+,[0-9]+\): error" | sed 's/(.*//' \
+  | sort | uniq -c | sort -rn          # 文件名 + 计数，一条不漏
+```
+
+- **`--force` 必加**：增量构建会跳过没变的文件，看到的错误集合未必是全量。
+- 报错文件全在你「没改过」的清单里 → 那是**另一条线**的（R-09 / R-74）；
+  只要有一个落在你的清单里，就一定是你的 —— 别用「相关测试都绿」搪塞，**vitest 不做类型检查**。
 
 ### 只提交自己那部分（工作区混着另一条写线）
 

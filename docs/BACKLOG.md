@@ -2840,10 +2840,20 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
   - 涉及文件全绿：`store.test.ts`(146) / `AssetLibraryToolbar.test.tsx`(7) /
     `TaskCard.test.tsx`(7) / `postprocessIssue`(8) / `postprocessRun`(10) / `runtimeStore`(3) /
     `catalog`(6) / `compliance`(10) / `dialogSizing`(2) / `page-coverage`(15)
-  - `tsc -b --force`：本轮改动文件**零错误**
-- **⚠️ 无法跑完整 `npm run verify`**：工作区里另一条在途线正在做「删 `PostprocessMedia.enabled`」
-  的重构（类型已改、调用点未改完），全仓 tsc 有 **26 条错全属那条线**，与本轮文件无关
-  （与 `RISK.md` R-74 同类情形）。本轮提交只 add 自己的文件。
+  - `npm test` **全绿：258 文件 / 2959 例**；`tsc -b --force` **零错误**
+  - **CI `ci.yml` success**（head commit `19be835`，2026-09-21）
+  - 提交链：`caae697`（主体）→ `02c3eab`（补七章「弹窗高度上限」）→ `19be835`（修 CI 红）
+- **⚠️ 本轮踩到并已登记的两个坑**
+  1. **CI 第一版红在 `Toast.test.tsx`**：`renderer.root.children[0]` 的类型是
+     `string | ReactTestInstance`，取 `.props` 前必须先收窄（已改成给容器加 `data-testid`
+     再用 `findByProps`）。**本地为什么会漏**：过滤 tsc 输出时模式写成了 `Toast\.tsx`，
+     匹配不到 `Toast.test.tsx` —— 复检一律用「列出全部报错文件」，别用凭记忆拼的文件名模式。
+  2. **`architecture-constraints.md` 4.4.2 里写了悬空指针**（指向「七章弹窗高度那条」，
+     而那条当时并不存在）→ 已在 `02c3eab` 补写七章那一条。**写指针前先确认目标真的存在。**
+- **同文件混着另一条写线**：本轮 `docs/architecture-constraints.md` 与 `src/store.test.ts`
+  同时含对方的未提交改动，按 runbook §八 的 hunk 筛选只把**自己的部分**入索引
+  （判据：提交后这两个文件在 `git status` 里**仍是 `M`**，对方内容仍在工作区）。
+  对方随后把 `enabled` 删除的调用点改完，全仓类型随之转干净。
 - **未做**：本机无渲染验证能力 —— 面板排版、× 的位置与进度条观感**未经真机过目**，
   请在素材库工具栏点开核对。
 - **通用结论已上收**：`docs/architecture-constraints.md` **4.4.1**（触发来源必须传进执行体）
@@ -2894,15 +2904,15 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
   （`src/components/Toast.test.tsx:70` `Property 'props' does not exist on type 'string | ReactTestInstance'`，
   随其 TB-072 提交进来的，与本轮无关）→ 链条在第一步就断。**生产代码 0 类型错**（本轮 18 个文件干净）。
 - **反向验证**（3 个变异，逐个确认精确变红）
-  | 变异                                          | 结果                                                                    |
-  | --------------------------------------------- | ----------------------------------------------------------------------- |
+  | 变异                                          | 结果                                                                           |
+  | --------------------------------------------- | ------------------------------------------------------------------------------ |
   | `normalizePostprocessNodeOverride` 不读该字段 | `params.test.ts` **1 failed / 72 passed**（「selectedMediaIds 回到节点层」红） |
-  | 去掉 `enabled: false` 的折算                  | `storePostprocessMedia.test.ts` **1 failed / 45 passed**（「折成不参与」红）  |
-  | 老包的「启用」列不折、照 `applied` 走         | `consoleImport.test.ts` **1 failed / 19 passed**（渠道多进了列表）           |
+  | 去掉 `enabled: false` 的折算                  | `storePostprocessMedia.test.ts` **1 failed / 45 passed**（「折成不参与」红）   |
+  | 老包的「启用」列不折、照 `applied` 走         | `consoleImport.test.ts` **1 failed / 19 passed**（渠道多进了列表）             |
 - **知情取舍**：输入栏「已勾 N 个渠道」仍读全局基线（它没有方向上下文），核对真实产出用中控台产出预览。
 - **已知坑（本轮实踩三条，都值得记）**
   1. ⚠️ **动手时工作区里有另一条写线在并行改后处理**（`Toast/ConfirmDialog/PostprocessRunsDialog/
-     taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本轮与它**文件级零重叠**，
+taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本轮与它**文件级零重叠**，
      但它改的 `taskPostprocess.ts` 正是我这条线依赖的产出链 —— R-01「同仓单写线」不是洁癖，
      是这里真的会撞。
   2. ⚠️ **任务号撞车**：对方同期也登记了 TB-072（后处理提示分级 / 进度面板），本条因此改为 **TB-075**。
