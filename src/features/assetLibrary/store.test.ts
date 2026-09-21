@@ -113,7 +113,6 @@ function resetState() {
     sortKey: 'updatedAt',
     sortOrder: 'desc',
     sidebarOpen: true,
-    detailOpen: false,
     viewMode: 'grid',
     groupBy: 'none',
     includeSubcollections: false,
@@ -200,15 +199,17 @@ describe('view state', () => {
   it('manages selection and active asset', () => {
     useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a'), b: makeAsset('b') }, assetOrder: ['a', 'b'] })
     useAssetLibraryStore.getState().selectAsset('a')
-    // 单击单选图片：同步打开右侧图片信息栏
-    expect(useAssetLibraryStore.getState().detailOpen).toBe(true)
+    // 单击**只做选中**：不再顺带弹出详情面板（2026-09-21 起详情走双击弹窗，见 AssetViewer）
+    expect(useAssetLibraryStore.getState().activeAssetId).toBe('a')
+    expect(useAssetLibraryStore.getState().viewerAssetId).toBeNull()
     useAssetLibraryStore.getState().toggleSelectAsset('b')
     expect(useAssetLibraryStore.getState().selectedAssetIds).toEqual(['a', 'b'])
     useAssetLibraryStore.getState().toggleSelectAsset('a')
     expect(useAssetLibraryStore.getState().selectedAssetIds).toEqual(['b'])
     useAssetLibraryStore.getState().setActiveAsset('a')
     expect(useAssetLibraryStore.getState().activeAssetId).toBe('a')
-    expect(useAssetLibraryStore.getState().detailOpen).toBe(true)
+    // 「设为当前素材」同样不打开任何面板（原先会顺带 detailOpen: true）
+    expect(useAssetLibraryStore.getState().viewerAssetId).toBeNull()
     useAssetLibraryStore.getState().clearSelection()
     expect(useAssetLibraryStore.getState().selectedAssetIds).toEqual([])
     expect(useAssetLibraryStore.getState().activeAssetId).toBeNull()

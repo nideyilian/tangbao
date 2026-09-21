@@ -886,7 +886,7 @@ export default function InputBar() {
     [activeWorkspaceTabId, gallerySopFolderKey, gallerySopId, gallerySopScopeKey],
   )
 
-  // 素材详情侧栏「复用 SOP」：应用素材来源 SOP 为当前 SOP 并切到画廊模式
+  // 素材详情弹窗「复用 SOP」：应用素材来源 SOP 为当前 SOP 并切到画廊模式
   useEffect(() => {
     const handleApplySop = (event: Event) => {
       const sopId = (event as CustomEvent<{ sopId?: string }>).detail?.sopId

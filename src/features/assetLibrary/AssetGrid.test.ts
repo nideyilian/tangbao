@@ -35,7 +35,7 @@ beforeEach(() => {
     vi.fn(() => 1),
   )
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
-  useAssetLibraryStore.setState({ selectedAssetIds: [], activeAssetId: null, detailOpen: false })
+  useAssetLibraryStore.setState({ selectedAssetIds: [], activeAssetId: null })
 })
 
 afterEach(() => {

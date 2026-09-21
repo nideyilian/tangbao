@@ -7,7 +7,7 @@ import { useAssetLibraryStore } from '../features/assetLibrary/store'
  *
  * 判定：素材的 origins 全部为 `kind: 'reference'`——这些不是生成结果，只是被用过一次的输入图。
  * 删除不写墓碑（参考图并非被永久删除的生成结果，未来真正生成同内容可正常重新归档）。
- * parentAssetIds 中的残留引用由衍生链渲染时自动过滤（AssetDetailPanel.DerivedChain 按 id 查无则跳过）。
+ * parentAssetIds 中的残留引用由衍生链渲染时自动过滤（AssetDetailSections.DerivedChain 按 id 查无则跳过）。
  *
  * 幂等：第二次运行找不到参考图素材即返回 0。启动水合后调用一次。
  */

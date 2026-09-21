@@ -124,7 +124,6 @@ export interface AssetLibraryStoreState {
   /** 当前鼠标悬停的素材（按空格直接预览悬停素材，无需先点选；仅内存，不持久化） */
   hoveredAssetId: string | null
   sidebarOpen: boolean
-  detailOpen: boolean
   /** 剪贴板（复制/剪切的项目或素材；仅内存，不持久化） */
   clipboard: AssetClipboardEntry | null
   /** 撤销/重做栈（Eagle 式 Ctrl+Z / Ctrl+Shift+Z；上限 50 条，仅内存） */
@@ -187,7 +186,6 @@ export interface AssetLibraryStoreState {
   selectAllVisibleAssets: (assetIds: string[]) => void
   setActiveAsset: (id: string | null) => void
   setSidebarOpen: (open: boolean) => void
-  setDetailOpen: (open: boolean) => void
 
   /** 保存当前范围/关键词/筛选为智能文件夹 */
   addSavedFilter: (name: string) => AssetSavedFilter | null
@@ -604,7 +602,6 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       quickPreviewAssetId: null,
       hoveredAssetId: null,
       sidebarOpen: false,
-      detailOpen: false,
       clipboard: null,
       undoStack: [],
       redoStack: [],
@@ -778,14 +775,15 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
         }
         return get().importExternalFiles(files)
       },
+      // 单击只做「选中」。原先这里会顺带 `detailOpen: true` 弹出右侧详情栏，2026-09-21 起
+      // 素材详情改由**双击**打开弹窗（见 `AssetViewer`），单击不再弹任何东西 —— 别再把它加回来，
+      // 那会让「点一下就浮出一块面板」重现。
       selectAsset: (id) =>
         set((state) => ({
           selectedAssetIds: state.selectedAssetIds.includes(id)
             ? state.selectedAssetIds
             : [...state.selectedAssetIds, id],
           activeAssetId: id,
-          // 单击图片单选：同步打开右侧图片信息栏
-          detailOpen: true,
         })),
       toggleSelectAsset: (id) =>
         set((state) => ({
@@ -810,9 +808,8 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
             activeAssetId: next.length > 0 ? state.activeAssetId : null,
           }
         }),
-      setActiveAsset: (id) => set((state) => ({ activeAssetId: id, detailOpen: id ? true : state.detailOpen })),
+      setActiveAsset: (id) => set({ activeAssetId: id }),
       setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
-      setDetailOpen: (detailOpen) => set({ detailOpen }),
 
       addSavedFilter: (name) => {
         const trimmed = name.trim()

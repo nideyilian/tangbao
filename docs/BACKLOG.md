@@ -3042,3 +3042,84 @@ taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本�
      `if (background)` 分支根本不进，这个参数不生效。改了也没有任何视觉差异（查证结论）。
   3. ⚠️ 水印预设编辑器（`PresetCanvasEditor.tsx:258`）的预览仍是 `crop-fill`，**这是对的**：
      适配模式只影响背景，水印叠在最终画布上按 `targetSize` 定位，两者互不影响。
+
+---
+
+### TB-079 素材详情：去掉右侧栏，双击改为「左图右参」大弹窗
+
+- **来源**：杰哥 2026-09-21：「去除素材详情页的右侧栏，将原本显示在右侧栏的参数信息迁移到双击素材时打开的
+  弹窗中。双击打开时不要使用全屏模式，改为较大的弹窗展示。弹窗采用左右布局：左侧显示图片，右侧显示参数信息。」
+  追加口径：「项目归属参数模块不需要了」「右键菜单已有的参数不要删除」。
+- **状态**：DOING · 写线：主写线 ——
+  ⚠️ **未完成**：弹窗已居中（实测左右边距各 51px），但**右侧参数栏在本机实测不显示**，见文末「未解决的问题」
+- **改前是「一个素材两套参数、两个入口」**
+  1. **单击**素材 → 右侧浮出「素材详情」浮动面板（`WordLibrarySidebar` 承载 `AssetDetailPanel`，可拖宽/停靠/收起）。
+     触发点是 `store.selectAsset` 里写死的 `detailOpen: true` —— 用户以为的「素材详情页右侧栏」就是它。
+  2. **双击**素材 → 铺满全屏的黑底查看器（`AssetViewer`），右侧另有一条 `w-80` 信息栏。
+  两处内容还不一样：侧栏独有（操作按钮组 / SOP / 来源明细 / 输入图片数 / 项目归属），
+  查看器独有（颜色标签 / 注释 / 衍生关系）。所以这活不是「搬家」，是**把两套并成一套**。
+- **改了什么**
+  1. **只留一处**：详情 = 双击弹窗。`detailOpen` / `setDetailOpen` 状态、`WordLibrarySidebar` 浮层、
+     窄屏详情抽屉、`AssetDetailPanel` 主体**整体删除**（删 3 个文件）。
+  2. `AssetViewer` 从全屏改**大弹窗**：`w-[min(1440px,94vw)] h-[88vh]` 居中 + 圆角 + `bg-ds-scrim/45` 遮罩，
+     左图右参（`md:flex-row`；窄屏自动折成上下，参数栏高 45% 自己滚）。
+  3. 参数栏合并两边内容并按组排：评分/收藏 → 颜色标签 → 文件信息（含输入图片数）→
+     来源与参数（`AssetParamBreakdown` + 多来源列表）→ 提示词 → SOP → 注释 → 衍生关系，
+     底部固定条放「移入回收站」/「恢复」。
+  4. **不加「项目归属」模块**：右键菜单的「添加到项目」就是改归属的入口，弹窗里再来一块是同一件事的第二入口。
+  5. **操作只留右键菜单没有的**：「查看来源任务」放进「来源与参数」标题行；SOP 区块自带复用入口。
+     其余（查看大图 / 找相似 / 复制 / 收藏 / 添加到项目 / 用作水印预览底图 / 复用提示词与参数 /
+     导出原图 / 打开文件位置 / 移入回收站）右键菜单都有，弹窗内不再各放一份；顶部图标条保留现状。
+  6. 可复用区块搬到新文件 `AssetDetailSections.tsx`（注释编辑 / 衍生关系），删掉 `AssetDetailPanel.tsx`；
+     顺带去掉那两块写死的 `mt-4`（间距交给容器的 `space-y-4`，否则在弹窗里会叠成两倍）。
+  7. `AssetViewer` 的写死色改成语义 token（hex 7 → 0 处、裸 `rounded-*` 6 → 0 处），compliance 基线相应下调，
+     并删掉失效的 `AssetDetailPanel.tsx|bareRounded: 19` 条目。
+- **验收标准**（可测）
+  1. 单击素材：`activeAssetId` 变化，但 `viewerAssetId` 仍为 `null`（不再弹出任何面板）；
+  2. 双击素材：出现 `data-testid="asset-viewer"` 的弹窗，含左图与 `asset-viewer-info` 参数栏；
+  3. 参数栏有文件信息 / 来源与参数 / 提示词 / 注释 / 衍生关系；**不含**「项目归属」字样；
+  4. 回收站素材在弹窗里只给「恢复」；
+  5. 全仓不再有 `detailOpen` / `WordLibrarySidebar` / `AssetDetailPanel` 的**代码**引用（注释里的历史说明除外）；
+  6. `catalog.test.ts` 的「每个 UI 模块都登记、无失效登记」通过（新文件登记、删掉的登记项移除）。
+- **改动面**：`features/assetLibrary/{AssetViewer,AssetDetailSections(新),AssetLibraryWorkspace,store}`、
+  `App.tsx`、`design-system/{catalog,compliance.test}`、`lib/referenceAssetCleanup.ts`、
+  `components/{HelpModal,InputBar}`；**删除** `components/WordLibrarySidebar.tsx` 及其测试、
+  `features/assetLibrary/AssetDetailPanel.tsx`。
+- **验收证据**：`tsc -b` + `tsc -p electron/tsconfig.json --noEmit` 双端零错；
+  `design-system` + `assetLibrary` **29 文件 / 539 例全绿**（含 catalog 登记守卫与 compliance 棘轮）。
+- **知情取舍 / 遗留**
+  1. `wordLibrarySidebar_pos_v2` / `wordLibrarySidebar_dock_v1` 两个 localStorage 键成了遗留数据；
+     共享键 `floating_panel_width_v1` 仍被 `WorkspaceTabBar` 使用，**不能清**。前者留着无害，未做清理。
+  2. 弹窗里**没有**「永久删除」：它要先弹引用冲突确认（`AssetPurgeModal`），而那个确认弹窗挂在素材库
+     工作区上（要读它的 `requestPurge`），弹窗拿不到。回收站素材的右键菜单里有这个入口，不算丢功能。
+  3. 深色画布只落在图片区（`bg-ds-scrim/40`），弹窗外框与参数栏走 `bg-ds-surface` ——
+     与 `DetailModal` 的做法一致（同一套「弹窗」语义），不再有全屏黑底。
+
+#### ⚠️ 未解决的问题（本条**不能算完**）
+
+**现象**：双击打开弹窗后只有左侧图片区可见，**右参数栏不显示**。
+界面临时调试条实测：弹窗 `L51 T73 W1284 H717`（在 1386×863 视口里左右/上下边距各 51/73，**完全居中**）、
+`infoOpen=true`，但参数栏所在区域看到的是图片内容。
+
+**已排除的假设**
+
+1. JSX 结构 —— 读完源码确认：`</div>`（图片区）与 `{infoOpen && <aside data-testid="asset-viewer-info">}`
+   是**同级**，参数栏是弹窗容器的直接子元素。
+2. 组件身份 —— 全仓只有 `AssetViewer` 渲染「素材信息」文案，弹窗确实是它（不是 DetailModal / Lightbox）。
+3. 样式是否生成 —— `h-[88vh]` / `w-[94vw]` / `max-w-[1440px]` / `md:w-96` 在 dev server 的 CSS 里**都有规则**。
+4. 遮罩定位 —— 已修：`fixed` 类挂上后**实际不生效**（遮罩留在壳层内容流里，被
+   `--app-docked-left-width` 推着偏右、也盖不住顶栏），改成**内联** `position:fixed; inset:0` 后正常。
+5. 弹窗尺寸 —— 已修：改成**内联** `display/flexDirection/width/height` 后精确居中。
+6. 响应式前缀 —— 已改成 JS 判断（`useMediaQuery('(min-width: 768px)')`），参数栏宽度也改内联
+   `width: wide ? 384 : '100%'` —— **仍然不显示**。
+
+**本机限制（这条为什么没查下去）**：这个环境拿不到渲染进程的 DevTools ——
+`Ctrl+R` / `Ctrl+Shift+R` 在 Electron 里**都没有绑定**（`main.ts` 只有 `autoHideMenuBar: true`，
+没有 reload 菜单项），也没有可用的 CDP 端口；只能靠「PrintWindow 截图 + 界面上的临时调试条」诊断。
+最后一轮把参数栏宽度写死成内联 384px 仍不可见，**必须在有 DevTools 的环境里看
+`asset-viewer-info` 的真实盒模型（`getBoundingClientRect` / computed style）才能继续**。
+
+**复现方式**：`npm run dev` → 双击任一素材 → 看弹窗右侧有没有「素材信息」。
+> 过程提醒：**删文件后 vite 的 HMR 不再可靠**（探针改了三次界面都不动），
+> 期间只能靠重启 dev 让改动生效；而 dev 冷启动 + 页面水合需要 **60–90 秒**，
+> 截太早会看到空白页（我因此误判了好几轮）。

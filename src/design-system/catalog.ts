@@ -764,12 +764,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Tooltip'],
   },
   {
-    module: 'src/components/WordLibrarySidebar.tsx',
-    responsibility: '可停靠词库侧栏',
-    decision: 'retain',
-    targets: ['SplitPane', 'Panel', 'SearchField', 'NavList'],
-  },
-  {
     module: 'src/components/WorkspaceTabBar.tsx',
     responsibility: '可停靠标签页侧栏、分组和右键菜单',
     decision: 'retain',
@@ -795,10 +789,10 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['IconButton', 'Tooltip'],
   },
   {
-    module: 'src/features/assetLibrary/AssetDetailPanel.tsx',
-    responsibility: '素材详情（大图、评分、收藏、来源、项目、标签）',
+    module: 'src/features/assetLibrary/AssetDetailSections.tsx',
+    responsibility: '素材详情的可复用区块（注释编辑、衍生关系），供素材详情弹窗（AssetViewer）使用',
     decision: 'compose',
-    targets: ['IconButton', 'Tooltip', 'Badge'],
+    targets: [],
   },
   {
     module: 'src/features/assetLibrary/FilterControlStrip.tsx',
@@ -1233,7 +1227,7 @@ export const interactionPatterns: InteractionPattern[] = [
   {
     id: 'dockable-sidebar',
     name: '可停靠侧栏',
-    appliesTo: 'WorkspaceTabBar、WordLibrarySidebar',
+    appliesTo: 'WorkspaceTabBar',
     recipe: ['SplitPane', 'Panel', 'SearchField', 'NavList', 'ListRow', 'IconButton', 'Tooltip'],
     rules: [
       '停靠态与浮动态的视觉切换遵循 MASTER 4.6；宽度、停靠边和展开状态必须持久化',

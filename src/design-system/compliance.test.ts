@@ -193,7 +193,6 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'features/assetLibrary/AssetLibrarySidebar.tsx|hex': 10,
   'features/assetLibrary/AssetLibraryToolbar.tsx|hex': 7,
   'features/assetLibrary/AssetListView.tsx|hex': 7,
-  'features/assetLibrary/AssetViewer.tsx|hex': 7,
   'features/composite/components/PresetLayerPanel.tsx|hex': 1,
   'features/composite/lib/compositeDefaults.ts|hex': 18,
   // IDENTIFIER_FALLBACK_STYLE 的白/黑是画布水印默认色（写入持久化数据、不随主题变），非 UI 样式类
@@ -213,7 +212,6 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'components/HelpModal.tsx|bareRounded': 23,
   'components/AgentWorkspace.tsx|bareRounded': 20,
   'components/DetailModal.tsx|bareRounded': 20,
-  'features/assetLibrary/AssetDetailPanel.tsx|bareRounded': 19,
   'components/ScheduleModal.tsx|bareRounded': 16,
   'components/FavoriteCollections.tsx|bareRounded': 15,
   'components/InputBar.tsx|bareRounded': 12,
@@ -224,7 +222,6 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'components/WorkspaceTabManagerModal.tsx|bareRounded': 7,
   'features/composite/components/FloatingLogoLibrary.tsx|bareRounded': 7,
   'features/composite/components/PresetLayerPanel.tsx|bareRounded': 7,
-  'features/assetLibrary/AssetViewer.tsx|bareRounded': 6,
   'components/LegacyDataImportModal.tsx|bareRounded': 5,
   'components/TaskCard.tsx|bareRounded': 5,
   'features/assetLibrary/AssetBatchView.tsx|bareRounded': 5,

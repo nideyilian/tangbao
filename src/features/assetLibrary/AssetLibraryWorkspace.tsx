@@ -14,11 +14,9 @@ import AssetFilterTabBar from './AssetFilterTabBar'
 import AssetGrid from './AssetGrid'
 import AssetListView from './AssetListView'
 import AssetGroupedView from './AssetBatchView'
-import AssetDetailPanel from './AssetDetailPanel'
 import SubfolderStrip from './SubfolderStrip'
 import AssetPurgeModal from './AssetPurgeModal'
 import AssetDuplicateModal from './AssetDuplicateModal'
-import AssetViewer from './AssetViewer'
 import { AssetQuickPreview } from './AssetQuickPreview'
 import { assetCommands } from '../../lib/assetCommands'
 import { useAssetLibraryShortcuts } from '../../hooks/useAssetLibraryShortcuts'
@@ -87,10 +85,8 @@ function AssetLibraryWorkspaceInner() {
   const setActiveFavoriteCollectionId = useStore((s) => s.setActiveFavoriteCollectionId)
   const mainTasks = useStore((s) => s.tasks)
   const favoriteCollections = useStore((s) => s.favoriteCollections)
-  const detailOpen = useAssetLibraryStore((state) => state.detailOpen)
   const sidebarOpen = useAssetLibraryStore((state) => state.sidebarOpen)
   const setSidebarOpen = useAssetLibraryStore((state) => state.setSidebarOpen)
-  const setDetailOpen = useAssetLibraryStore((state) => state.setDetailOpen)
   const applyUpsertedAssets = useAssetLibraryStore((state) => state.applyUpsertedAssets)
   const operationProgress = useAssetLibraryStore((state) => state.operationProgress)
   // 素材归属/状态变更版本号：桌面端目录计数（SQLite 聚合）依赖它重新拉取，保证移动/回收后计数即时更新
@@ -105,14 +101,12 @@ function AssetLibraryWorkspaceInner() {
   }, [debouncedMutationVersion, mutationVersion])
   const isNarrow = useMediaQuery('(max-width: 1023px)')
   const sidebarDrawerRef = useRef<HTMLDivElement>(null)
-  const detailDrawerRef = useRef<HTMLDivElement>(null)
-  const modalOpen = isNarrow && (sidebarOpen || detailOpen)
+  // 素材详情面板已改为双击弹窗（`AssetViewer`），窄屏不再有第二条抽屉 —— 这里只剩导航抽屉。
+  const modalOpen = isNarrow && sidebarOpen
 
-  useCloseOnEscape(isNarrow && detailOpen, () => setDetailOpen(false))
-  useCloseOnEscape(isNarrow && sidebarOpen && !detailOpen, () => setSidebarOpen(false))
-  useDialogFocusTrap(isNarrow && sidebarOpen && !detailOpen, sidebarDrawerRef)
-  useDialogFocusTrap(isNarrow && detailOpen, detailDrawerRef)
-  usePreventBackgroundScroll(modalOpen, detailOpen ? detailDrawerRef : sidebarDrawerRef)
+  useCloseOnEscape(isNarrow && sidebarOpen, () => setSidebarOpen(false))
+  useDialogFocusTrap(isNarrow && sidebarOpen, sidebarDrawerRef)
+  usePreventBackgroundScroll(modalOpen, sidebarDrawerRef)
 
   useEffect(() => {
     if (hydrationStatus === 'idle') void hydrate()
@@ -523,23 +517,6 @@ function AssetLibraryWorkspaceInner() {
     setPurgeRequest({ ids, title, forceByDefault })
   }, [])
 
-  // 详情面板连续浏览：按当前查询结果前后切换
-  const activeAssetId = useAssetLibraryStore((state) => state.activeAssetId)
-  const goPrevAsset = useCallback(() => {
-    const visible = effectiveResult.assets
-    if (visible.length === 0) return
-    const index = visible.findIndex((asset) => asset.id === activeAssetId)
-    const prev = index <= 0 ? visible[visible.length - 1] : visible[index - 1]
-    if (prev) useAssetLibraryStore.getState().setActiveAsset(prev.id)
-  }, [activeAssetId, effectiveResult.assets])
-  const goNextAsset = useCallback(() => {
-    const visible = effectiveResult.assets
-    if (visible.length === 0) return
-    const index = visible.findIndex((asset) => asset.id === activeAssetId)
-    const next = index < 0 || index >= visible.length - 1 ? visible[0] : visible[index + 1]
-    if (next) useAssetLibraryStore.getState().setActiveAsset(next.id)
-  }, [activeAssetId, effectiveResult.assets])
-
   // Eagle 式全局快捷键：空格/Enter 打开查看器、Esc 取消选择、Delete 回收站、1-5/F/C 评分/收藏/颜色
   const searchInputRef = useRef<HTMLInputElement>(null)
   const openViewerFromShortcut = useCallback(
@@ -720,10 +697,7 @@ function AssetLibraryWorkspaceInner() {
           {isNarrow && (
             <button
               type="button"
-              onClick={() => {
-                setDetailOpen(false)
-                setSidebarOpen(true)
-              }}
+              onClick={() => setSidebarOpen(true)}
               className="min-h-ds-control-lg self-start rounded-md border border-ds-border px-3 text-sm hover:bg-ds-muted/20"
             >
               浏览导航
@@ -902,26 +876,6 @@ function AssetLibraryWorkspaceInner() {
           </div>
         </div>
       )}
-      {isNarrow && detailOpen && (
-        <div
-          ref={detailDrawerRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label="素材详情"
-          tabIndex={-1}
-          className="absolute inset-0 z-overlay overflow-y-auto bg-ds-surface"
-          data-testid="asset-detail-panel-drawer"
-        >
-          <AssetDetailPanel onPrev={goPrevAsset} onNext={goNextAsset} onPurgeRequest={(ids) => requestPurge(ids)} />
-          <button
-            type="button"
-            onClick={() => setDetailOpen(false)}
-            className="absolute right-2 top-2 min-h-ds-control-lg rounded-md border border-ds-border px-3 text-sm"
-          >
-            关闭
-          </button>
-        </div>
-      )}
 
       <AssetPurgeModal
         open={purgeRequest !== null}
@@ -935,7 +889,6 @@ function AssetLibraryWorkspaceInner() {
 
       <AssetDuplicateModal open={duplicatesOpen} onOpenChange={setDuplicatesOpen} />
 
-      <AssetViewer />
       <AssetQuickPreview />
     </main>
   )

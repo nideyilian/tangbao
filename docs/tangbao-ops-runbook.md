@@ -190,6 +190,29 @@ ELECTRON_ENABLE_LOGGING=1 PATH="/c/Program Files/nodejs:$PATH" npm run dev
 ⚠️ **同仓禁止并行开两条工作线**：后一条的 HMR 会**整页刷新**前一条正在用的运行窗口，打断进行中的生成/保存。
 诊断「界面卡住」先看 dev 日志有没有 `page reload` / 密集 `hmr update`。
 
+### 改了代码但界面不动？按这个顺序排查（2026-09-21 实测，前三条各害我白跑一轮）
+
+1. **先确认改动进没进 dev server 的产物**：
+   `curl -s "http://127.0.0.1:41731/src/<改动文件>" | grep "<你新加的字符串>"`。
+   有 → 问题在渲染进程侧；没有 → 问题在 vite（编译失败/缓存）。
+2. **别指望键盘刷新**：本机 Electron **没有绑定 reload 快捷键** —— `electron/main.ts` 只有
+   `autoHideMenuBar: true`，**没有 `role: 'reload'` 菜单项**，所以 `Ctrl+R` / `Ctrl+Shift+R`
+   **全都无效**（发键盘事件也没人响应）。别再在这上面猜「刷新了但没生效」。
+3. **删过文件之后，HMR 基本就不再可靠**（探针改了三次界面纹丝不动）。
+   **唯一可靠的路径是重启 dev**：杀掉 41731 的占用进程 → `npm run dev`（vite 启动时会触发 full-reload）。
+4. **重启 dev 后页面水合要 60–90 秒**，别截太早：
+   用 PIL 数色数 —— **< 1 万色就是还没渲染**（空白页约 492 色），20 万色以上才是渲染完。
+5. **想让窗口重载的两种可行方式**：① 重启 vite（客户端重连 → full-reload）；
+   ② **杀渲染进程**触发主进程的 `render-process-gone` 自动恢复 —— 用
+   `CreateToolhelp32Snapshot` 枚举 electron 进程、杀主进程的子进程。
+   ⚠️ 本机 **PowerShell 工具静默无输出**（连 `Write-Output` 都不打印）、`wmic` 也不可用，
+   进程查询走 Bash `tasklist` 或 Python ctypes。
+6. **拿不到 DevTools 时的布局诊断**：在组件里塞一个绝对定位的调试条，把
+   `innerWidth / devicePixelRatio / 自己的 getBoundingClientRect / 目标元素的 rect` 打上去，
+   再截图读数字 —— **别靠眼睛在截图上估边界**（同一次调试我估错过三次）。
+   另：**PrintWindow 截图里的坐标是 CSS 像素**（窗口位图 1400×900 对应 innerWidth=1386、dpr=1.5），
+   拿截图量布局时不要再乘 dpr。
+
 ## 六、Electron 真机调试装置（低频，验证埋点用）
 
 - 启动：`electron.exe . --no-sandbox --disable-gpu --remote-debugging-port=<port>`
@@ -527,6 +550,26 @@ const fs = require('fs'),
 
 处理顺序**不能反**：先删残留在 `node_modules/.vite/` 下的 `deps_temp_*`，**再**起 dev，
 否则 vite 启动时还会再撞一次同一处护栏。
+
+### 判断 dev 是否还活着：别信后台任务的成败，去问端口
+
+2026-09-21 实测：后台任务在 9h27m 后被回收成 `failed`，日志末尾也没有崩溃栈 ——
+但同一时刻 `netstat` 显示 `127.0.0.1:41731` 仍 `LISTENING`，`curl` 返回 **HTTP 200**。
+**服务一直在跑，只是任务句柄不再跟踪它**（进程与 shell 会话分离）。
+误判的代价是重复启动 → 撞端口。
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 http://127.0.0.1:41731/
+```
+
+想确认「现在跑的就是我刚改的那份代码」，**直接问服务端要文件**（比翻 HMR 日志快）：
+
+```bash
+curl -s http://127.0.0.1:41731/src/features/strategy/styles.css | grep -c "刚加的那行声明"
+```
+
+返回 1 = 改动已被 dev server 提供（HMR 已推送）。注意 vite 对 CSS 是以 JS 模块返回的
+（`const __vite__css = "…"`），所以别按 CSS 语法去 grep 整块声明，**只 grep 那一行声明**最稳。
 
 ## 十一、UI 细节一致性改动的五条纪律（2026-09-19 实测定稿）
 

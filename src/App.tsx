@@ -21,7 +21,6 @@ import ConfirmDialog from './components/ConfirmDialog'
 import PromptInputDialog from './components/PromptInputDialog'
 import Toast from './components/Toast'
 import ImageContextMenu from './components/ImageContextMenu'
-import WordLibrarySidebar from './components/WordLibrarySidebar'
 import ErrorBoundary from './components/ErrorBoundary'
 import WorkspaceTabBar from './components/WorkspaceTabBar'
 import AppPageRail from './components/AppPageRail'
@@ -39,6 +38,7 @@ const AgentWorkspace = React.lazy(() => import('./components/AgentWorkspace'))
 const CompositeWorkspace = React.lazy(() => import('./features/composite/CompositeWorkspace'))
 // 策略（strategy）与下单（ordering）模块已屏蔽：不再懒加载对应工作区，历史 appMode 值兜底渲染素材库
 const DetailModal = React.lazy(() => import('./components/DetailModal'))
+const AssetViewer = React.lazy(() => import('./features/assetLibrary/AssetViewer'))
 const Lightbox = React.lazy(() => import('./components/Lightbox'))
 const SettingsModal = React.lazy(() => import('./components/SettingsModal'))
 const MaskEditorModal = React.lazy(() => import('./components/MaskEditorModal'))
@@ -140,7 +140,8 @@ export default function App() {
           if (asset) {
             useAssetLibraryStore.getState().applyUpsertedAssets([asset])
             useAssetLibraryStore.getState().setActiveAsset(asset.id)
-            useAssetLibraryStore.getState().setDetailOpen(true)
+            // 素材详情已改为双击弹窗（2026-09-21）：deep link 打开的直接是弹窗（原先打开的是详情侧栏）
+            useAssetLibraryStore.getState().openViewer(asset.id, [asset.id])
           }
           return
         }
@@ -475,6 +476,13 @@ export default function App() {
         {(appMode === 'gallery' || appMode === 'agent') && <InputBar />}
         <React.Suspense fallback={null}>
           <DetailModal />
+          {/*
+           * 素材详情弹窗挂在**顶层**（与 DetailModal / Lightbox 同级），不再放进素材库工作区。
+           *
+           * 2026-09-21 实测：放在 `<main>` 里时遮罩层盖不住顶栏、弹窗也偏到下方 ——
+           * 它的定位基准被框在「顶栏之下」的那块区域，而不是视口。弹窗本来就该挂顶层。
+           */}
+          <AssetViewer />
           <Lightbox />
           <SettingsModal />
           <ConfirmDialog />
@@ -485,7 +493,6 @@ export default function App() {
           <Toast />
           <MaskEditorModal />
           <ImageContextMenu />
-          {(appMode === 'gallery' || appMode === 'agent') && <WordLibrarySidebar />}
           <ScheduleModal />
           <ScheduleRunner />
           <AgentBatchQueueRunner />

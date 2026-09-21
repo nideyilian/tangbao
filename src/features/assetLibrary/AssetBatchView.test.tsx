@@ -146,7 +146,6 @@ beforeEach(() => {
   useAssetLibraryStore.setState({
     selectedAssetIds: [],
     activeAssetId: null,
-    detailOpen: false,
     batchFocusTaskId: null,
     groupedViewStyle: 'cards',
     viewMode: 'grid',

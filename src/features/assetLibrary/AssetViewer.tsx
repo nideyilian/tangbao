@@ -1,5 +1,30 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+/**
+ * 素材详情弹窗（原「Eagle 式全屏查看器」）。
+ *
+ * **2026-09-21 改版**：双击素材打开的原来是铺满全屏的黑底查看器，参数挤在右侧一条窄栏里；
+ * 同时素材库还有另一个「素材详情右侧栏」（`WordLibrarySidebar` 承载的浮动面板，单击素材即弹出）。
+ * 同一个素材两套参数展示、两处入口，且两处内容还不一样（侧栏有操作按钮组 / SOP / 来源明细 /
+ * 输入图片数，全屏查看器有颜色标签 / 注释 / 衍生关系）。
+ *
+ * 现在**只留这一处**：双击 → 大弹窗（不是全屏），左图右参，参数按组排完整。
+ * 侧栏那条链路（含单击弹出、窄屏抽屉、`detailOpen` 状态）整体删除。
+ *
+ * ## 为什么背景改成了「弹窗」而不是全屏
+ *
+ * 全屏把「看单张图」做成了「进另一个应用」：退出要先意识到自己在哪、参数栏还被挤到 320px。
+ * 弹窗留出四周的素材库上下文，参数栏能拿到 384px。
+ *
+ * ## 参数展示的取舍（2026-09-21 杰哥定）
+ *
+ * - **不要「项目归属」模块**：右键菜单的「添加到项目」就是改归属的地方，弹窗里再来一块是重复。
+ * - **操作按钮只放右键菜单没有的**：其余（查看大图 / 找相似 / 复制 / 收藏 / 添加到项目 /
+ *   用作水印预览底图 / 复用提示词与参数 / 导出原图 / 打开文件位置 / 移入回收站）右键都能点到，
+ *   弹窗里不再各放一份。这里的「查看来源任务」正是右键没有的那个。
+ */
+
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  BookOpenCheckIcon,
   CopyIcon,
   DownloadIcon,
   EyeIcon,
@@ -17,14 +42,16 @@ import { cycleColorLabel } from '../../lib/assetLibraryModel'
 import type { AssetColorLabel, AssetRating, GeneratedAsset } from '../../types'
 import { useAssetLibraryStore } from './store'
 import AssetParamBreakdown from './AssetParamBreakdown'
-import { DerivedChain, NotesEditor } from './AssetDetailPanel'
+import { DerivedChain, NotesEditor } from './AssetDetailSections'
 import { COLOR_LABELS_WITH_NAMES } from './colorLabels'
 import { clamp } from '../../lib/clamp'
+import { useMediaQuery } from '../../hooks/useMediaQuery'
+import { useRequirementPrototype } from '../requirementPrototype/store'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 8
 
-/** Eagle 式全屏查看器：大图缩放/拖拽 + 前后导航 + 右信息面板 + 底部类似图。 */
+/** 素材详情弹窗：大图缩放/拖拽 + 前后导航 + 右参数栏（左图右参，窄屏自动上下）。 */
 function AssetViewerInner() {
   const viewerAssetId = useAssetLibraryStore((state) => state.viewerAssetId)
   const viewerAssetIds = useAssetLibraryStore((state) => state.viewerAssetIds)
@@ -39,8 +66,23 @@ function AssetViewerInner() {
   const [src, setSrc] = useState('')
   const [similarAssets, setSimilarAssets] = useState<GeneratedAsset[]>([])
   const [infoOpen, setInfoOpen] = useState(true)
+  /**
+   * 左右布局还是上下布局。
+   *
+   * ⚠️ 用 JS 判断而不是 `md:` 前缀：这个弹窗上依赖响应式类的写法在本机实测不可靠
+   * （2026-09-21：参数栏被挤成 0 宽、遮罩定位也出过问题），逐个排查的代价远高于直接判断。
+   */
+  const wide = useMediaQuery('(min-width: 768px)')
   const [showToast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null)
 
+  /** 焦点容器（整个弹窗）：打开时聚焦，键盘快捷键才会生效 */
+  const dialogRef = useRef<HTMLDivElement>(null)
+  /**
+   * 图片舞台：滚轮缩放 / 拖拽平移的作用域。
+   *
+   * ⚠️ **不能拿弹窗容器共用**：那个矩形包含右侧参数栏，缩放中心会整体偏右
+   * （按 Ctrl 滚轮时图会往一边跑）。
+   */
   const containerRef = useRef<HTMLDivElement>(null)
   const scaleRef = useRef(1)
   const txRef = useRef(0)
@@ -49,12 +91,12 @@ function AssetViewerInner() {
   const [, forceRender] = useState(0)
   const rerender = useCallback(() => forceRender((n) => n + 1), [])
 
-  // 打开后立即把焦点拉进查看器：否则焦点停留在背后卡片上，空格/Esc 会被卡片 keydown
-  // 拦截（stopPropagation 挡掉 window 冒泡监听），表现为「要先点击查看器内其他地方才生效」。
+  // 打开后立即把焦点拉进弹窗：否则焦点停留在背后卡片上，空格/Esc 会被卡片 keydown
+  // 拦截（stopPropagation 挡掉 window 冒泡监听），表现为「要先点击弹窗内其他地方才生效」。
   // 关闭时把焦点还给打开前的元素，保证「空格开、空格关、再空格开」连续可用。
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    containerRef.current?.focus({ preventScroll: true })
+    dialogRef.current?.focus({ preventScroll: true })
     return () => {
       previous?.focus({ preventScroll: true })
     }
@@ -118,8 +160,8 @@ function AssetViewerInner() {
   )
 
   // 键盘：Esc/空格 关闭、←/→ 导航、1-5/0 评分、F 收藏、C 轮换颜色（Eagle 式）。
-  // capture 阶段拦截：查看器打开后（含图片加载中、焦点仍在背后卡片时）空格/Esc 立即生效，
-  // 不会被卡片的 keydown（打开查看器）抢先。
+  // capture 阶段拦截：弹窗打开后（含图片加载中、焦点仍在背后卡片时）空格/Esc 立即生效，
+  // 不会被卡片的 keydown（打开弹窗）抢先。
   useEffect(() => {
     if (!viewerAssetId) return
     const onKey = (event: KeyboardEvent) => {
@@ -165,7 +207,7 @@ function AssetViewerInner() {
             useStore.getState().showToast('操作失败', 'error'),
           )
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
-        // Eagle 式：删除当前素材（移入回收站），自动切换到下一张；删完最后一张则关闭查看器
+        // Eagle 式：删除当前素材（移入回收站），自动切换到下一张；删完最后一张则关闭弹窗
         event.preventDefault()
         event.stopImmediatePropagation()
         void (async () => {
@@ -243,9 +285,25 @@ function AssetViewerInner() {
     }
   }, [rerender])
 
+  const primaryOrigin = useMemo(
+    () =>
+      asset ? (asset.origins.find((origin) => origin.key === asset.primaryOriginKey) ?? asset.origins[0]) : undefined,
+    [asset],
+  )
+  const tasks = useStore((state) => state.tasks)
+  const sourceTask = useMemo(
+    () => tasks.find((task) => task.id === primaryOrigin?.taskId),
+    [primaryOrigin?.taskId, tasks],
+  )
+  const sopItems = useRequirementPrototype((state) => state.sopLibrary)
+  const sourceSop = useMemo(() => {
+    const sopId = sourceTask?.sopBatch?.sopId
+    if (!sopId) return undefined
+    return sopItems.find((item) => item.id === sopId)
+  }, [sourceTask?.sopBatch?.sopId, sopItems])
+
   if (!viewerAssetId || !asset) return null
 
-  const primaryOrigin = asset.origins.find((origin) => origin.key === asset.primaryOriginKey) ?? asset.origins[0]
   const s = scaleRef.current
   const isZoomed = s > 1
 
@@ -260,325 +318,459 @@ function AssetViewerInner() {
       toast(getClipboardFailureMessage('复制失败', error), 'error')
     }
   }
-  const openDetail = () => {
-    useAssetLibraryStore.getState().setActiveAsset(asset.id)
-    useAssetLibraryStore.getState().setDetailOpen(true)
-    closeViewer()
-  }
 
   const actionButtonClass =
-    'flex min-h-ds-control-lg min-w-11 items-center justify-center rounded-md text-ds-muted outline-none hover:bg-ds-surface/10 hover:text-white focus-visible:ring-2 focus-visible:ring-ds-focus/70'
+    'flex min-h-ds-control-lg min-w-11 items-center justify-center rounded-ds-md text-ds-muted outline-none hover:bg-ds-subtle hover:text-ds-text focus-visible:ring-2 focus-visible:ring-ds-focus/70'
 
   return (
     <div
-      ref={containerRef}
-      data-testid="asset-viewer"
-      role="dialog"
-      aria-modal="true"
-      aria-label="素材查看器"
-      tabIndex={-1}
-      className="fixed inset-0 z-modal flex bg-black/95"
+      className="z-modal flex items-center justify-center bg-ds-scrim/45 p-4 sm:p-6"
+      // ⚠️ 定位走内联样式：`fixed` 类挂在这里时**实际不生效**（2026-09-21 实测）——
+      // 遮罩层会留在壳层内容流里，被 `--app-docked-left-width` 推着偏右，也盖不住顶栏。
+      // 弹窗的定位基准必须是视口，不能赌某个工具类。
+      style={{ position: 'fixed', inset: 0 }}
+      onMouseDown={(event) => {
+        // 遮罩点击关闭：只认落在遮罩本身上的按下（弹窗内部的点击会冒泡到遮罩，但 target 不是它）
+        if (event.target === event.currentTarget) closeViewer()
+      }}
     >
-      {/* 主图区 */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-ds-12 shrink-0 items-center justify-between gap-3 px-3">
-          <div className="min-w-0 flex-1 truncate text-sm text-white/90">
-            {primaryOrigin?.prompt || `素材 ${asset.id}`}
-            {total > 1 && (
-              <span className="ml-2 text-xs tabular-nums text-white/50">
-                {currentIndex + 1} / {total}
+      <div
+        ref={dialogRef}
+        data-testid="asset-viewer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="素材详情"
+        tabIndex={-1}
+        className="overflow-hidden rounded-ds-xl border border-ds-border bg-ds-surface outline-none"
+        /*
+         * ⚠️ 尺寸与方向**全部走内联样式**，不依赖 Tailwind 的任意值类与响应式前缀。
+         * 2026-09-21 实测：这组类在这个弹窗上不可靠 —— `fixed` 类挂上后遮罩仍留在壳层内容流里
+         * （被 --app-docked-left-width 推着偏右、盖不住顶栏），参数栏也被挤成 0 宽。
+         * 排查代价远高于直接写死，所以这里要的是确定性，不是优雅。
+         */
+        style={{
+          display: 'flex',
+          flexDirection: wide ? 'row' : 'column',
+          width: 'min(1440px, 96%)',
+          height: '88%',
+          maxHeight: 900,
+        }}
+      >
+        {/* 左：图片区（深色画布，看图的传统底） */}
+        <div className="flex flex-col bg-ds-scrim/40" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+          <div className="flex h-ds-12 shrink-0 items-center justify-between gap-3 px-3">
+            <div className="min-w-0 flex-1 truncate text-sm text-ds-text">
+              {primaryOrigin?.prompt || `素材 ${asset.id}`}
+              {total > 1 && (
+                <span className="ml-2 shrink-0 text-xs text-ds-muted">
+                  {currentIndex + 1} / {total}
+                </span>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                className={actionButtonClass}
+                aria-label="复制图片"
+                onClick={() => void copyImage()}
+              >
+                <CopyIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className={actionButtonClass}
+                aria-label="导出原图"
+                onClick={() =>
+                  void assetCommands
+                    .exportAsset(asset.id)
+                    .then((ok) => toast(ok ? '已开始导出' : '导出失败', ok ? 'success' : 'error'))
+                }
+              >
+                <DownloadIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className={actionButtonClass}
+                aria-label="加入参考图"
+                onClick={() =>
+                  void assetCommands.useAsReference(asset.id).then((ok) => {
+                    if (ok) toast('已加入参考图')
+                  })
+                }
+              >
+                <ImagePlusIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className={actionButtonClass}
+                aria-label="用作水印预览底图"
+                onClick={() => {
+                  void assetCommands.openInPostprocess(asset.id)
+                  closeViewer()
+                }}
+              >
+                <WrenchIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className={actionButtonClass}
+                aria-label="找相似"
+                onClick={() => {
+                  useAssetLibraryStore.getState().setSimilarToAsset(asset.id)
+                  closeViewer()
+                }}
+              >
+                <Wand2Icon size={16} />
+              </button>
+              <button
+                type="button"
+                className={actionButtonClass}
+                aria-label="移入回收站"
+                onClick={() => {
+                  void useAssetLibraryStore
+                    .getState()
+                    .moveToTrash([asset.id])
+                    .then(() => useStore.getState().showToast('已移入回收站', 'success'))
+                    .catch(() => useStore.getState().showToast('操作失败', 'error'))
+                  closeViewer()
+                }}
+              >
+                <TrashIcon size={16} />
+              </button>
+              <button type="button" className={actionButtonClass} aria-label="关闭素材详情" onClick={closeViewer}>
+                <XIcon size={18} />
+              </button>
+            </div>
+          </div>
+
+          <div
+            ref={containerRef}
+            className="relative min-h-0 flex-1 overflow-hidden"
+            style={{ cursor: isZoomed ? 'grab' : 'default' }}
+            onDoubleClick={() => {
+              if (s > 1) {
+                scaleRef.current = 1
+                txRef.current = 0
+                tyRef.current = 0
+              } else {
+                scaleRef.current = 2.5
+              }
+              rerender()
+            }}
+          >
+            {src ? (
+              <img
+                src={src}
+                alt=""
+                draggable={false}
+                className="absolute left-1/2 top-1/2 max-h-full max-w-full select-none object-contain"
+                style={{
+                  transform: `translate(calc(-50% + ${txRef.current}px), calc(-50% + ${tyRef.current}px)) scale(${s})`,
+                  transition: dragRef.current.active ? 'none' : 'transform 0.15s ease-out',
+                }}
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-ds-muted">加载中…</div>
+            )}
+            {isZoomed && (
+              <span className="absolute bottom-3 left-3 rounded-full bg-ds-scrim px-2 py-1 text-xs text-ds-text-inverse">
+                {Math.round(s * 100)}%
               </span>
             )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <button type="button" className={actionButtonClass} aria-label="查看详情" onClick={openDetail}>
-              <EyeIcon size={16} />
-            </button>
-            <button type="button" className={actionButtonClass} aria-label="复制图片" onClick={() => void copyImage()}>
-              <CopyIcon size={16} />
-            </button>
-            <button
-              type="button"
-              className={actionButtonClass}
-              aria-label="导出原图"
-              onClick={() =>
-                void assetCommands
-                  .exportAsset(asset.id)
-                  .then((ok) => toast(ok ? '已开始导出' : '导出失败', ok ? 'success' : 'error'))
-              }
-            >
-              <DownloadIcon size={16} />
-            </button>
-            <button
-              type="button"
-              className={actionButtonClass}
-              aria-label="加入参考图"
-              onClick={() =>
-                void assetCommands.useAsReference(asset.id).then((ok) => {
-                  if (ok) toast('已加入参考图')
-                })
-              }
-            >
-              <ImagePlusIcon size={16} />
-            </button>
-            <button
-              type="button"
-              className={actionButtonClass}
-              aria-label="用作水印预览底图"
-              onClick={() => {
-                void assetCommands.openInPostprocess(asset.id)
-                closeViewer()
-              }}
-            >
-              <WrenchIcon size={16} />
-            </button>
-            <button
-              type="button"
-              className={actionButtonClass}
-              aria-label="找相似"
-              onClick={() => {
-                useAssetLibraryStore.getState().setSimilarToAsset(asset.id)
-                closeViewer()
-              }}
-            >
-              <Wand2Icon size={16} />
-            </button>
-            <button
-              type="button"
-              className={actionButtonClass}
-              aria-label="移入回收站"
-              onClick={() => {
-                void useAssetLibraryStore
-                  .getState()
-                  .moveToTrash([asset.id])
-                  .then(() => useStore.getState().showToast('已移入回收站', 'success'))
-                  .catch(() => useStore.getState().showToast('操作失败', 'error'))
-                closeViewer()
-              }}
-            >
-              <TrashIcon size={16} />
-            </button>
-            <button type="button" className={actionButtonClass} aria-label="关闭查看器" onClick={closeViewer}>
-              <XIcon size={18} />
-            </button>
-          </div>
-        </div>
 
-        <div
-          ref={containerRef}
-          className="relative min-h-0 flex-1 overflow-hidden"
-          style={{ cursor: isZoomed ? 'grab' : 'default' }}
-          onDoubleClick={() => {
-            if (s > 1) {
-              scaleRef.current = 1
-              txRef.current = 0
-              tyRef.current = 0
-            } else {
-              scaleRef.current = 2.5
-            }
-            rerender()
-          }}
-        >
-          {src ? (
-            <img
-              src={src}
-              alt=""
-              draggable={false}
-              className="absolute left-1/2 top-1/2 max-h-full max-w-full select-none object-contain"
-              style={{
-                transform: `translate(calc(-50% + ${txRef.current}px), calc(-50% + ${tyRef.current}px)) scale(${s})`,
-                transition: dragRef.current.active ? 'none' : 'transform 0.15s ease-out',
-              }}
-            />
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center text-sm text-white/50">加载中…</div>
-          )}
-          {isZoomed && (
-            <span className="absolute bottom-3 left-3 rounded-full bg-black/50 px-2 py-1 text-xs text-white/80">
-              {Math.round(s * 100)}%
-            </span>
-          )}
-        </div>
+            {total > 1 && (
+              <>
+                <button
+                  type="button"
+                  aria-label="上一张"
+                  onClick={() => navigate(-1)}
+                  className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-ds-scrim/70 p-2 text-ds-text-inverse outline-none hover:bg-ds-scrim focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  aria-label="下一张"
+                  onClick={() => navigate(1)}
+                  className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-ds-scrim/70 p-2 text-ds-text-inverse outline-none hover:bg-ds-scrim focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </>
+            )}
+          </div>
 
-        {/* 底部类似图 */}
-        {similarAssets.length > 0 && (
-          <div className="shrink-0 border-t border-white/10 px-3 py-2">
-            <p className="mb-1.5 text-xs text-white/50">类似图片</p>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {similarAssets.map((item) => (
-                <SimilarThumbnail key={item.id} asset={item} onClick={() => setViewerAsset(item.id)} />
-              ))}
+          {/* 底部类似图 */}
+          {similarAssets.length > 0 && (
+            <div className="shrink-0 border-t border-ds-border px-3 py-2">
+              <p className="mb-1.5 text-xs text-ds-muted">类似图片</p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {similarAssets.map((item) => (
+                  <SimilarThumbnail key={item.id} asset={item} onClick={() => setViewerAsset(item.id)} />
+                ))}
+              </div>
             </div>
+          )}
+        </div>
+
+        {/* 右：参数栏（窄屏折到下方，高度限 45% 并自己滚） */}
+        {infoOpen && (
+          <aside
+            data-testid="asset-viewer-info"
+            className="flex shrink-0 flex-col border-ds-border bg-ds-surface"
+            style={{
+              width: wide ? 384 : '100%',
+              maxHeight: wide ? undefined : '45%',
+              borderLeftWidth: wide ? 1 : 0,
+              borderTopWidth: wide ? 0 : 1,
+            }}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-ds-border px-3 py-2">
+              <span className="text-sm font-medium">素材信息</span>
+              <button
+                type="button"
+                aria-label="收起信息栏"
+                className="grid h-ds-control-sm w-ds-control-sm place-items-center rounded-ds-md text-ds-muted outline-none hover:bg-ds-subtle hover:text-ds-text"
+                onClick={() => setInfoOpen(false)}
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+              <div className="flex items-center justify-between">
+                <div role="radiogroup" aria-label="评分" className="flex items-center">
+                  {[1, 2, 3, 4, 5].map((rating) => (
+                    <button
+                      key={rating}
+                      type="button"
+                      role="radio"
+                      aria-checked={asset.rating === rating}
+                      aria-label={`${rating} 星`}
+                      onClick={() =>
+                        void patchAssets([asset.id], {
+                          rating: (asset.rating === rating ? 0 : rating) as AssetRating,
+                        }).catch(() => useStore.getState().showToast('操作失败', 'error'))
+                      }
+                      className="grid h-ds-control-sm w-ds-control-sm place-items-center text-ds-muted hover:text-ds-warning"
+                    >
+                      <StarIcon
+                        size={15}
+                        fill={rating <= asset.rating ? 'currentColor' : 'none'}
+                        className={rating <= asset.rating ? 'text-ds-warning' : ''}
+                      />
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  aria-pressed={asset.favorite}
+                  onClick={() =>
+                    void patchAssets([asset.id], { favorite: !asset.favorite }).catch(() =>
+                      useStore.getState().showToast('操作失败', 'error'),
+                    )
+                  }
+                  className={`flex h-ds-control-sm items-center gap-1 rounded-ds-md px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.favorite ? 'text-ds-warning' : 'text-ds-muted hover:text-ds-warning'}`}
+                >
+                  <StarIcon size={14} fill={asset.favorite ? 'currentColor' : 'none'} />
+                  {asset.favorite ? '已收藏' : '收藏'}
+                </button>
+              </div>
+
+              {/* 颜色标签 */}
+              <div>
+                <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">颜色标签</h4>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {COLOR_LABELS_WITH_NAMES.map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      aria-label={item.label}
+                      title={item.label}
+                      onClick={() => setColorLabel(asset.colorLabel === item.value ? null : item.value)}
+                      className={`h-5 w-5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.colorLabel === item.value ? 'ring-2 ring-ds-focus ring-offset-1' : ''}`}
+                      style={{ backgroundColor: item.color }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <section>
+                <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">文件信息</h4>
+                <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
+                  <dt className="text-ds-muted">尺寸</dt>
+                  <dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : '—'}</dd>
+                  <dt className="text-ds-muted">格式</dt>
+                  <dd>{asset.mimeType ?? '—'}</dd>
+                  <dt className="text-ds-muted">大小</dt>
+                  <dd>{asset.byteSize ? `${(asset.byteSize / 1024 / 1024).toFixed(1)} MB` : '—'}</dd>
+                  <dt className="text-ds-muted">生成时间</dt>
+                  <dd>{new Date(asset.createdAt).toLocaleString()}</dd>
+                  {primaryOrigin && (
+                    <>
+                      <dt className="text-ds-muted">输入图片</dt>
+                      <dd>{primaryOrigin.inputImageIds.length} 张</dd>
+                    </>
+                  )}
+                </dl>
+              </section>
+
+              {/* 参数解耦展示：任务级共享参数 + 本图专属参数（seed / 实际差异 / 文件名） */}
+              <section>
+                <div className="mb-1 flex items-center justify-between">
+                  <h4 className="text-xs font-medium uppercase tracking-wide text-ds-muted">来源与参数</h4>
+                  {/* 「查看来源任务」是右键菜单里没有的操作，所以它留在弹窗里才有入口 */}
+                  <button
+                    type="button"
+                    disabled={!sourceTask}
+                    title={sourceTask ? '切到任务卡片视图并定位该任务' : '该素材没有关联任务'}
+                    className="text-xs text-ds-primary outline-none hover:underline disabled:text-ds-muted disabled:no-underline"
+                    onClick={() => {
+                      if (!sourceTask) return
+                      const assetStore = useAssetLibraryStore.getState()
+                      assetStore.setGroupBy('grouped')
+                      assetStore.setBatchFocusTaskId(sourceTask.id)
+                      closeViewer()
+                    }}
+                  >
+                    查看来源任务 →
+                  </button>
+                </div>
+                <AssetParamBreakdown origin={primaryOrigin} />
+                {asset.origins.length > 1 && (
+                  <ul className="mt-2 space-y-1">
+                    {asset.origins.map((origin) => (
+                      <li key={origin.key} className="rounded-ds-md border border-ds-border px-2 py-1.5 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-medium">{origin.key}</span>
+                          <span className="shrink-0 text-ds-muted">{origin.apiModel ?? origin.sourceMode}</span>
+                        </div>
+                        <div className="mt-0.5 line-clamp-2 text-ds-muted">{origin.prompt}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section>
+                <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">提示词</h4>
+                <p className="whitespace-pre-wrap break-words text-xs leading-5">{primaryOrigin?.prompt || '—'}</p>
+                {primaryOrigin?.revisedPrompt && (
+                  <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-ds-muted">
+                    修订：{primaryOrigin.revisedPrompt}
+                  </p>
+                )}
+              </section>
+
+              {(sourceSop || sourceTask?.sopBatch) && (
+                <section>
+                  <h4 className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ds-muted">
+                    <BookOpenCheckIcon size={13} /> SOP
+                  </h4>
+                  {sourceSop ? (
+                    <button
+                      type="button"
+                      title="点击应用该 SOP 为当前生图 SOP"
+                      className="flex min-h-ds-control-lg w-full items-center justify-between gap-2 rounded-ds-md border border-ds-border px-2.5 text-xs transition-colors hover:border-ds-primary/40 hover:bg-ds-subtle"
+                      onClick={() => {
+                        void assetCommands.applyAssetSop(asset.id).then((ok) => {
+                          if (!ok) return
+                          useStore.getState().showToast(`已应用 SOP「${sourceSop.name}」`, 'success')
+                          closeViewer()
+                        })
+                      }}
+                    >
+                      <span className="truncate">{sourceSop.name}</span>
+                      <span className="shrink-0 text-ds-muted">点击复用 →</span>
+                    </button>
+                  ) : (
+                    <p className="text-xs text-ds-muted">
+                      {sourceTask?.sopBatch?.sopName || '未知 SOP'}（已从库中删除）
+                    </p>
+                  )}
+                </section>
+              )}
+
+              <NotesEditor assetId={asset.id} value={asset.notes ?? ''} />
+
+              <DerivedChain asset={asset} onNavigate={(id) => setViewerAsset(id)} />
+
+              {/*
+               * 刻意**没有**「项目归属」模块：右键菜单的「添加到项目」就是改归属的入口，
+               * 弹窗里再来一块是同一件事的第二入口（2026-09-21 杰哥定）。
+               */}
+            </div>
+
+            <div className="shrink-0 border-t border-ds-border p-2">
+              {asset.status === 'trashed' ? (
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void useAssetLibraryStore
+                        .getState()
+                        .restoreAssets([asset.id])
+                        .then(() => useStore.getState().showToast('已恢复', 'success'))
+                        .catch(() => useStore.getState().showToast('恢复失败', 'error'))
+                    }}
+                    className="flex min-h-ds-control-lg w-full items-center justify-center rounded-ds-md border border-ds-border px-2 text-xs"
+                  >
+                    恢复
+                  </button>
+                  {/*
+                   * 「永久删除」刻意不放在这里：它必须先弹引用冲突确认（`AssetPurgeModal`），
+                   * 而那个确认弹窗挂在素材库工作区上（要读它的 `requestPurge`），弹窗拿不到。
+                   * 回收站素材的**右键菜单**里有这个入口，所以不是丢功能。
+                   */}
+                  <p className="text-center text-xs text-ds-muted">永久删除请用右键菜单</p>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void useAssetLibraryStore
+                      .getState()
+                      .moveToTrash([asset.id])
+                      .then(() => {
+                        useStore.getState().showToast('已移入回收站', 'success')
+                        closeViewer()
+                      })
+                      .catch(() => useStore.getState().showToast('操作失败', 'error'))
+                  }}
+                  className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-ds-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+                >
+                  <TrashIcon size={13} /> 移入回收站
+                </button>
+              )}
+            </div>
+          </aside>
+        )}
+
+        {/* 参数栏收起后的展开入口 */}
+        {!infoOpen && (
+          <button
+            type="button"
+            onClick={() => setInfoOpen(true)}
+            className="absolute right-3 top-14 z-10 rounded-ds-md border border-ds-border bg-ds-surface/90 px-2 py-1 text-xs text-ds-text outline-none hover:bg-ds-subtle"
+          >
+            素材信息
+          </button>
+        )}
+
+        {showToast && (
+          <div
+            className={`absolute bottom-20 left-1/2 z-10 -translate-x-1/2 rounded-full px-3 py-1.5 text-xs ${
+              showToast.tone === 'error' ? 'bg-ds-danger text-ds-text-inverse' : 'bg-ds-scrim text-ds-text-inverse'
+            }`}
+          >
+            {showToast.message}
           </div>
         )}
       </div>
-
-      {/* 右侧信息面板 */}
-      <aside
-        data-testid="asset-viewer-info"
-        className={`${infoOpen ? 'flex' : 'hidden'} w-80 shrink-0 flex-col overflow-y-auto border-l border-white/10 bg-ds-surface/95`}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-ds-border bg-ds-surface px-3 py-2">
-          <span className="text-sm font-medium">素材信息</span>
-          <button
-            type="button"
-            aria-label="隐藏信息面板"
-            className="grid h-ds-control-sm w-ds-control-sm place-items-center rounded-md text-ds-muted outline-none hover:bg-ds-muted/20"
-            onClick={() => setInfoOpen(false)}
-          >
-            <XIcon size={14} />
-          </button>
-        </div>
-        <div className="space-y-4 p-3">
-          <div className="flex items-center justify-between">
-            <div role="radiogroup" aria-label="评分" className="flex items-center">
-              {[1, 2, 3, 4, 5].map((rating) => (
-                <button
-                  key={rating}
-                  type="button"
-                  role="radio"
-                  aria-checked={asset.rating === rating}
-                  aria-label={`${rating} 星`}
-                  onClick={() =>
-                    void patchAssets([asset.id], {
-                      rating: (asset.rating === rating ? 0 : rating) as AssetRating,
-                    }).catch(() => useStore.getState().showToast('操作失败', 'error'))
-                  }
-                  className="grid h-ds-control-sm w-ds-control-sm place-items-center text-ds-muted hover:text-ds-warning"
-                >
-                  <StarIcon
-                    size={15}
-                    fill={rating <= asset.rating ? 'currentColor' : 'none'}
-                    className={rating <= asset.rating ? 'text-ds-warning' : ''}
-                  />
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              aria-pressed={asset.favorite}
-              onClick={() =>
-                void patchAssets([asset.id], { favorite: !asset.favorite }).catch(() =>
-                  useStore.getState().showToast('操作失败', 'error'),
-                )
-              }
-              className={`flex h-ds-control-sm items-center gap-1 rounded-md px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.favorite ? 'text-ds-warning' : 'text-ds-muted hover:text-ds-warning'}`}
-            >
-              <StarIcon size={14} fill={asset.favorite ? 'currentColor' : 'none'} />
-              {asset.favorite ? '已收藏' : '收藏'}
-            </button>
-          </div>
-
-          {/* 颜色标签 */}
-          <div>
-            <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">颜色标签</h4>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {COLOR_LABELS_WITH_NAMES.map((item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  aria-label={item.label}
-                  title={item.label}
-                  onClick={() => setColorLabel(asset.colorLabel === item.value ? null : item.value)}
-                  className={`h-5 w-5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.colorLabel === item.value ? 'ring-2 ring-ds-focus ring-offset-1' : ''}`}
-                  style={{ backgroundColor: item.color }}
-                />
-              ))}
-            </div>
-          </div>
-
-          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
-            <dt className="text-ds-muted">尺寸</dt>
-            <dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : '—'}</dd>
-            <dt className="text-ds-muted">格式</dt>
-            <dd>{asset.mimeType ?? '—'}</dd>
-            <dt className="text-ds-muted">大小</dt>
-            <dd>{asset.byteSize ? `${(asset.byteSize / 1024 / 1024).toFixed(1)} MB` : '—'}</dd>
-            <dt className="text-ds-muted">生成时间</dt>
-            <dd>{new Date(asset.createdAt).toLocaleString()}</dd>
-            <dt className="text-ds-muted">来源</dt>
-            <dd>{asset.origins.length} 个</dd>
-          </dl>
-
-          {/* 参数解耦展示：任务级共享参数 + 本图专属参数（seed / 实际差异 / 文件名） */}
-          <AssetParamBreakdown origin={primaryOrigin} />
-
-          <NotesEditor assetId={asset.id} value={asset.notes ?? ''} />
-
-          <div>
-            <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">提示词</h4>
-            <p className="whitespace-pre-wrap break-words text-xs leading-5">{primaryOrigin?.prompt || '—'}</p>
-            {primaryOrigin?.revisedPrompt && (
-              <p className="mt-1 text-xs leading-5 text-ds-muted">修订：{primaryOrigin.revisedPrompt}</p>
-            )}
-          </div>
-
-          <DerivedChain asset={asset} onNavigate={(id) => setViewerAsset(id)} />
-
-          <button
-            type="button"
-            onClick={() =>
-              void useAssetLibraryStore
-                .getState()
-                .moveToTrash([asset.id])
-                .then(() => {
-                  useStore.getState().showToast('已移入回收站', 'success')
-                  closeViewer()
-                })
-                .catch(() => useStore.getState().showToast('操作失败', 'error'))
-            }
-            className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
-          >
-            <TrashIcon size={13} /> 移入回收站
-          </button>
-        </div>
-      </aside>
-
-      {/* 窄屏信息面板切换 */}
-      {!infoOpen && (
-        <button
-          type="button"
-          onClick={() => setInfoOpen(true)}
-          className="absolute right-3 top-14 z-10 rounded-md bg-ds-surface/10 px-2 py-1 text-xs text-white outline-none hover:bg-ds-surface/20"
-        >
-          信息
-        </button>
-      )}
-
-      {total > 1 && (
-        <>
-          <button
-            type="button"
-            aria-label="上一张"
-            onClick={() => navigate(-1)}
-            className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/40 p-2 text-white outline-none hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
-          >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            aria-label="下一张"
-            onClick={() => navigate(1)}
-            className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/40 p-2 text-white outline-none hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
-          >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        </>
-      )}
-
-      {showToast && (
-        <div
-          className={`absolute bottom-20 left-1/2 z-10 -translate-x-1/2 rounded-full px-3 py-1.5 text-xs ${
-            showToast.tone === 'error' ? 'bg-ds-danger text-ds-text-inverse' : 'bg-black/70 text-white'
-          }`}
-        >
-          {showToast.message}
-        </div>
-      )}
     </div>
   )
 }
@@ -604,12 +796,12 @@ function SimilarThumbnail({ asset, onClick }: { asset: GeneratedAsset; onClick: 
       type="button"
       onClick={onClick}
       title={asset.origins[0]?.prompt || asset.id}
-      className="h-ds-16 w-ds-16 shrink-0 overflow-hidden rounded-md border border-white/10 outline-none hover:border-ds-primary focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+      className="h-ds-16 w-ds-16 shrink-0 overflow-hidden rounded-ds-md border border-ds-border outline-none hover:border-ds-primary focus-visible:ring-2 focus-visible:ring-ds-focus/70"
     >
       {src ? (
         <img src={src} alt="" className="h-full w-full object-cover" />
       ) : (
-        <span className="flex h-full w-full items-center justify-center bg-ds-surface/5 text-white/40">
+        <span className="flex h-full w-full items-center justify-center bg-ds-subtle text-ds-muted">
           <EyeIcon size={14} />
         </span>
       )}
