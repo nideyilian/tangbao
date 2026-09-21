@@ -67,23 +67,26 @@ function ActiveRunBlock({ run }: { run: PostprocessRun }) {
         value={percent}
       />
       <div className="text-xs text-ds-muted">
-        {POSTPROCESS_STAGE_LABELS[run.stage]} · {SOURCE_LABELS[run.source]} · 已产出 {run.producedFiles} 个文件
-        {run.currentLabel ? ` · 正在写 ${run.currentLabel}` : ''}
+        {`${POSTPROCESS_STAGE_LABELS[run.stage]} · ${SOURCE_LABELS[run.source]} · 共 ${run.totalImages} 张 · 已产出 ${run.producedFiles} 个文件 · 开始于 ${formatRunTime(run.startedAt)}`}
       </div>
+      {/* 写盘文件名正是工具栏里被压掉的那一段：这里要能完整读到，长名字换行而不是溢出 */}
+      {run.currentLabel && <div className="break-all text-xs text-ds-text-subtle">{`正在写：${run.currentLabel}`}</div>}
     </div>
   )
 }
 
 function RunRow({ run }: { run: PostprocessRun }) {
   const { errors, skipped } = countPostprocessIssues(run)
+  const summary = `${formatRunTime(run.startedAt)} · ${SOURCE_LABELS[run.source]} · ${summarizePostprocessRun(run)}`
   return (
     <div
       data-testid="postprocess-run-row"
       className="flex items-center gap-2 rounded-ds-lg border border-ds-border px-3 py-2"
     >
       <StatusIndicator tone={STATUS_TONE[run.status]}>{POSTPROCESS_RUN_STATUS_LABELS[run.status]}</StatusIndicator>
-      <div className="min-w-0 flex-1 truncate text-xs text-ds-muted">
-        {`${formatRunTime(run.startedAt)} · ${SOURCE_LABELS[run.source]} · ${summarizePostprocessRun(run)}`}
+      {/* 行内为了紧凑会截断，全文挂在 title 上（hover 即得） */}
+      <div title={summary} className="min-w-0 flex-1 truncate text-xs text-ds-muted">
+        {summary}
       </div>
       {run.issues.length > 0 && (
         <Button size="sm" variant="ghost" onClick={() => showPostprocessIssuesDialog(run.issues)}>

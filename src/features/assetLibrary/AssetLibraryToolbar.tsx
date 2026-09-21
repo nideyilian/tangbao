@@ -35,7 +35,11 @@ import FilterControlStrip from './FilterControlStrip'
 import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
 import { runManualPostprocess, useStore } from '../../store'
 import { useLatestPostprocessRun, useRuntimeStore } from '../../stores/runtimeStore'
-import { countPostprocessIssues, formatPostprocessRunProgress } from '../postprocess/postprocessRun'
+import {
+  countPostprocessIssues,
+  formatPostprocessRunBadge,
+  formatPostprocessRunProgress,
+} from '../postprocess/postprocessRun'
 import { POSTPROCESS_STAGE_LABELS } from '../postprocess/postprocessIssue'
 import PostprocessRunsDialog from '../postprocess/PostprocessRunsDialog'
 
@@ -857,25 +861,20 @@ function ProjectTreeEntryButton() {
  *
  * 只在有选中时出现：空选中时点它无从判断该处理什么。
  *
- * 必须显示加载态，且**带上进度**：一次后处理要读图、逐渠道渲染并做体积二分压缩，几十秒内界面不会有
- * 任何其他变化——没有进度时，「跑到第几张」与「按钮没生效」在用户眼里完全一样。
+ * 必须显示加载态：一次后处理要读图、逐渠道渲染并做体积二分压缩，几十秒内界面不会有
+ * 任何其他变化 —— 没有加载态时，「跑到第几张」与「按钮没生效」在用户眼里完全一样。
+ *
+ * **但进度数字不归它**（2026-09-21 报障）：它和右侧常驻的「后处理」状态入口曾同时铺完整的
+ * 进度文本（含几十个字符的写盘文件名），两段加起来把整条工具栏占满。现在分工固定：
+ * 这个按钮只说「我点的这次在跑」，进度由状态入口给紧凑计数、详情归点开的面板。
  */
 function ManualPostprocessButton() {
   const selectedAssetIds = useAssetLibraryStore((s) => s.selectedAssetIds)
   const assetsById = useAssetLibraryStore((s) => s.assetsById)
   const showToast = useStore((state) => state.showToast)
   const running = useRuntimeStore((s) => s.postprocessRunning > 0)
-  const activeRun = useRuntimeStore((s) => {
-    for (const id of s.postprocessRunIds) {
-      const run = s.postprocessRuns[id]
-      if (run?.status === 'running') return run
-    }
-    return undefined
-  })
 
   if (selectedAssetIds.length === 0) return null
-
-  const progress = activeRun ? formatPostprocessRunProgress(activeRun) : ''
 
   const handleClick = () => {
     // 选中的是素材记录，后处理要的是图片 id；素材已被清理的（imageId 缺失）单独提示，
@@ -897,10 +896,14 @@ function ManualPostprocessButton() {
       size="sm"
       loading={running}
       data-testid="asset-manual-postprocess"
-      title="对选中素材跑一次后处理：参数与输出目录按每张图所属方向自动取值"
+      title={
+        running
+          ? '后处理正在跑：进度看右侧「后处理」入口，点它能打开完整面板'
+          : '对选中素材跑一次后处理：参数与输出目录按每张图所属方向自动取值'
+      }
       onClick={handleClick}
     >
-      {running ? `后处理中…${progress ? ` ${progress}` : ''}` : `跑后处理 (${selectedAssetIds.length})`}
+      {running ? '后处理中…' : `跑后处理 (${selectedAssetIds.length})`}
     </Button>
   )
 }
@@ -941,6 +944,9 @@ function PostprocessStatusEntry() {
         : `后处理跳过 (${skipped})`
       : null
   const showEntry = Boolean(activeRun) || idleLabel !== null
+  // 紧凑计数（不带写盘文件名）；完整进度含文件名，留给悬浮提示与点开的面板
+  const badge = activeRun ? formatPostprocessRunBadge(activeRun) : undefined
+  const fullProgress = activeRun ? formatPostprocessRunProgress(activeRun) : ''
 
   return (
     <>
@@ -949,18 +955,18 @@ function PostprocessStatusEntry() {
           <Button
             variant="ghost"
             size="sm"
+            // tabular-nums：数字等宽 —— 「0/100」涨到「100/100」时长宽不变，工具栏不抖
+            className="tabular-nums"
             data-testid={activeRun ? 'asset-postprocess-progress' : 'asset-postprocess-issues'}
             title={
               activeRun
-                ? `后处理进行中 · ${POSTPROCESS_STAGE_LABELS[activeRun.stage]}${
-                    activeRun.currentLabel ? ` · ${activeRun.currentLabel}` : ''
-                  }（点开看进度与最近记录）`
+                ? `后处理进行中 · ${POSTPROCESS_STAGE_LABELS[activeRun.stage]}${fullProgress ? ` · ${fullProgress}` : ''}（点开看完整进度与最近记录）`
                 : '看最近一次后处理的产出、跳过与错误，以及历次运行记录'
             }
             onClick={() => setOpen(true)}
           >
-            {activeRun && <LoaderCircleIcon className="h-3.5 w-3.5 animate-spin" />}
-            {activeRun ? formatPostprocessRunProgress(activeRun) || '后处理中' : idleLabel}
+            {activeRun && <LoaderCircleIcon className="h-3.5 w-3.5 shrink-0 animate-spin" />}
+            {activeRun ? (badge ? `后处理 ${badge}` : '后处理中') : idleLabel}
           </Button>
           {/* 只在跑完之后给 ×：进行中的记录要留着接进度上报，清掉会让后续上报全部落空 */}
           {!activeRun && latestRun && (

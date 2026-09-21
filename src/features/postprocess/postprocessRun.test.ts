@@ -4,6 +4,7 @@ import {
   countPostprocessIssues,
   createPostprocessRun,
   finishPostprocessRun,
+  formatPostprocessRunBadge,
   formatPostprocessRunProgress,
   getPostprocessRunPercent,
   resolvePostprocessRunStatus,
@@ -137,5 +138,21 @@ describe('后处理运行记录', () => {
     })
     expect(formatPostprocessRunProgress(next)).toBe('2/4 50% · 头条 1080x1920 · a.jpg')
     expect(formatPostprocessRunProgress(createPostprocessRun({ id: 'x', source: 'auto', totalImages: 0 }))).toBe('')
+  })
+
+  /**
+   * 紧凑进度是**工具栏专用口径**（2026-09-21 报障：工具栏被写盘文件名撑满）。
+   * 契约只有一条：**它永远不含当前产出文件名** —— 那个字段可能几十个字符。
+   */
+  it('紧凑进度只给计数与百分比，绝不带上当前产出文件名', () => {
+    const next = applyPostprocessProgress(run(4), {
+      completedImages: 2,
+      currentLabel: '纯净版 1280x720 · 20260921-快手-网赚-纯净版-陈泽杰-1280x720-1.jpg',
+    })
+
+    expect(formatPostprocessRunBadge(next)).toBe('2/4 50%')
+    expect(formatPostprocessRunBadge(next)).not.toContain('陈泽杰')
+    // 总数未知（分母为 0）→ 不给数字，界面据此显示一句「后处理中」而不是「0/0」
+    expect(formatPostprocessRunBadge(createPostprocessRun({ id: 'x', source: 'auto', totalImages: 0 }))).toBeUndefined()
   })
 })
