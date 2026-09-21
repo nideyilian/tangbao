@@ -106,15 +106,17 @@ describe('campaignRecipe 合规红线', () => {
   // 多样性策略被静默改写。清洗只应删候选值，不得改动维度的元数据。
   it('清洗保留维度的 weight（曾因重建对象而丢失，导致主控槽全线失效）', () => {
     const { config } = sanitizeCampaignRecipeConfig({
-      body: '{{主视觉}}，{{主体}}',
+      body: '{{主视觉}}，{{主体}}，{{背景}}',
       dimensions: [
         { name: '主视觉', options: ['日赚稳定', '侧脸特写'], weight: 3 },
         { name: '主体', options: ['耳机', '耳机'], weight: 2 },
+        { name: '背景', options: ['棚拍', '居家'] },
       ],
     })
-    expect(config.dimensions.map((item) => item.weight)).toEqual([3, 2])
-    // 端到端：清洗后仍能推导出主控槽，且指向 weight 最高的「主视觉」
-    expect(pickDominantIndices(config.dimensions)).toEqual([0])
+    expect(config.dimensions.map((item) => item.weight)).toEqual([3, 2, undefined])
+    // 端到端：清洗后仍能推导出主控槽，且**两个带 weight 的维度都入选**
+    // （口径见 pickDominantIndices：> 0 即主控，不比数值大小）
+    expect(pickDominantIndices(config.dimensions)).toEqual([0, 1])
   })
 })
 
@@ -286,6 +288,54 @@ describe('campaignRecipe 系列模式（组内一致 / 组间不同）', () => {
     expect(samples).toHaveLength(4)
   })
 
+  /**
+   * 回归（R-70）：组间不能逐组雷同。
+   *
+   * 真实资产的形态是「13 维、M 在最后、变化维度多达 10 个」，而**签名重掷**选槽用的是
+   * `dom[guard % dom.length]`（guard 从 0 起）—— 浅轮次只会碰靠前的几个槽，**靠后的槽
+   * （典型就是 M）永远轮不到重掷**，其取值完全由 `baseCandidate(k)` 决定。于是每组若沿用
+   * 同一个 seed，`baseCandidate(k)` 序列相同 ⇒ 三组的 M 逐位雷同（实测都是 `3,2,1,0`）。
+   * 修法是每组把 groupIndex 混进 seed，让出发点本身不同。
+   */
+  it('组间：靠后的变化维度也不能逐组雷同（每组必须换 seed）', () => {
+    const names = [
+      'S1主体',
+      'S2场景',
+      'S3动作',
+      'S4道具',
+      'S5服饰',
+      'S6光线',
+      'S7景别',
+      'S8情绪',
+      'S9风格',
+      'S10质感',
+      'S11标题',
+      'S12氛围',
+      'M',
+    ]
+    const realistic: CampaignRecipeConfig = {
+      body: names.map((name) => `{{${name}}}`).join('，'),
+      dimensions: names.map((name) => ({
+        name,
+        options: Array.from({ length: 6 }, (_, k) => `${name}选项${k}`),
+      })),
+    }
+    const groups = 3
+    const groupSize = 3
+    const samples = generateCampaignRecipeBatch(realistic, {
+      count: groups * groupSize,
+      seed: 's',
+      usedSignatures: new Set(),
+      seriesGroupSize: groupSize,
+    }).samples
+    // 取各组第一张的 M 槽取值：修 seed 之前三者**全同**（都为 baseCandidate(0) 的产物），
+    // 修之后至少出现分歧。注意 M 只有 6 个候选值，3 组随机取值本就有约 44% 概率碰撞，
+    // 所以断言「不全相同」而不是「两两不同」—— 后者会随机变红。
+    const mValues = Array.from({ length: groups }, (_, index) => samples[index * groupSize].values['M'])
+    expect(mValues).toHaveLength(groups)
+    expect(new Set(mValues).size).toBeGreaterThan(1)
+  })
+
   it('seriesGroupSize ≤ 1 时行为与单图模式完全一致（默认关闭）', () => {
     const plain = generateCampaignRecipeBatch(seriesRecipe, { count: 6, seed: 's', usedSignatures: new Set() })
     const withOne = generateCampaignRecipeBatch(seriesRecipe, {
@@ -386,12 +436,19 @@ describe('campaignRecipe 最远点采样（双层硬约束）', () => {
     }
   })
 
-  it('主控槽参与约束：全槽差异被拉到高位（8 维池实测下界 6 个槽不同）', () => {
+  it('主控槽参与约束：全槽差异被拉到高位（8 维池实测下界 4 个槽不同）', () => {
     const dimensions = Array.from({ length: 8 }, (_, index) => ({
       name: `D${index}`,
       options: Array.from({ length: 6 }, (_, k) => `v${index}_${k}`),
     }))
     const { selections } = farthestPointSample(dimensions, 10, { seed: 'dom', dominantIndices: [0, 1] })
+    // 形状必须先对：曾经 selection 被幻影槽位撑到 119 长并塞满 NaN（R-69），
+    // 那时下面所有差异统计都是被虚报的假数字 —— 旧断言写的 `>= 6` 正是被假数字校准出来的
+    // （真实值只有 2）。形状断言放在最前面，才能保证后面的数字有意义。
+    for (const selection of selections) {
+      expect(selection).toHaveLength(8)
+      expect(selection.some((value) => !Number.isFinite(value))).toBe(false)
+    }
     let minDom = Infinity
     let minAll = Infinity
     for (let i = 0; i < selections.length; i++) {
@@ -400,61 +457,53 @@ describe('campaignRecipe 最远点采样（双层硬约束）', () => {
         minAll = Math.min(minAll, selections[i].filter((value, slot) => value !== selections[j][slot]).length)
       }
     }
-    // 全槽差异必须被拉到高水平。数字是**实测值不是猜测**：8 维 × 6 选项、10 条、
-    // dominantIndices=[0,1] 时下界为 6（原先写 >= 5，过于宽松，测不出退化）。
-    // 原先这里还有一句 `expect(minDom).toBeGreaterThanOrEqual(0)` —— **恒真，等于没测**，
-    // 掩盖了「主控槽下限可能恒不满足」这一行为（详见下方专门的回归用例）。
-    expect(minAll).toBeGreaterThanOrEqual(6)
-    // 主控槽也必须被照顾到：2 个主控槽至少 1 个不同（同样是有信息的真断言）
+    // 全槽差异必须被拉到高水平。数字是**真实槽口径的实测值**：8 维 × 6 选项、10 条、
+    // dominantIndices=[0,1] 时下界为 4（修 R-68/R-69 之前的真实值是 2）。
+    expect(minAll).toBeGreaterThanOrEqual(4)
+    // 主控槽也必须被照顾到：2 个主控槽至少 1 个不同（有信息的真断言，非恒真）
     expect(minDom).toBeGreaterThanOrEqual(1)
   })
 
   /**
-   * 行为钉住用例：把「主控槽数 < minDom 时约束恒不满足」这一**已测量过的取舍**固定下来。
+   * 回归：主控槽下限必须**可达**，否则会把「总槽差异」约束整个短路（R-68）。
    *
-   * 为什么必须写：这个行为看起来像 bug（重掷次数恒定虚高），任何人顺手「修」成
-   * `min(2, 主控槽数)` 都会通过全部既有测试 —— 因为原来的断言是恒真的。
-   * 反向验证实测该「修复」会让全槽最小差异从 7.00 掉到 3.10（-56%），是净亏。
-   * 本用例的作用就是：谁再动这块，立刻看到代价（测试会红，并指向对照表）。
+   * 2026-09-21 之前的实现里 `minDomNear/Far` 默认 2，而单主控槽时 `domDiff` 上限只有 1 ⇒
+   * `domDiff < 2` **恒真** ⇒ 判据的 OR 关系让 `hamming` 那一侧永不参与判断 ⇒
+   * `minTotalNear/Far` 沦为死参数 ⇒ 退出时放行未满足约束的候选。
    *
-   * 详见 `campaignRecipe.ts` 里 `farthestPointSample` 的 JSDoc 对照表。
+   * 旧用例曾把「单主控槽时重掷恒打满 1081」当作**刻意保留的取舍**钉住 —— 但那个结论是用
+   * 被 R-69 污染的指标（`selection` 被撑长、差异虚报）校准出来的，已作废：用真实槽口径复测，
+   * 收窄成单主控槽反而让 9.4% 的组合对差异 <6。
    */
-  it('钉住行为：单主控槽时重掷打满预算，且全槽差异反而被拉满', () => {
+  it('主控槽下限会被收敛到可达范围，总差异约束不再被短路', () => {
     const dimensions = Array.from({ length: 7 }, (_, index) => ({
       name: `D${index}`,
-      /**
-       * 注意这里不能用 8 维：`minTotalNear` 默认 7，维度数不足 7 时「总槽差异 ≥ 7」
-       * 本身也恒不满足，会把重掷打满的原因混在一起、失去诊断价值。
-       * 用 7 维（总槽下限刚好可达）＋ 8 个候选值，确保打满的唯一原因就是主控槽约束。
-       */
       options: Array.from({ length: 8 }, (_, k) => `v${index}_${k}`),
     }))
-    // 单主控槽：domDiff 上限 = 1 < minDom(Near|Far) = 2 → 约束恒不满足
+    // 单主控槽：下限收敛为 1（等价于「主控槽必须不同」）⇒ 判据可达 ⇒ 会提前早退
     const single = farthestPointSample(dimensions, 10, { seed: 'pin', dominantIndices: [0] })
-    // 10 条 × maxAttempt(120) = 1200；实测恒定 1081（首条无窗口可比重掷 0 次，其余 9 条打满）
-    expect(single.totalAttempts).toBe(1081)
+    // 10 条 × maxAttempt(120) = 1200 是「一次都不早退」的上界；可达后必须显著低于它
+    expect(single.totalAttempts).toBeLessThan(1200)
 
-    // 约束虽「报失败」，产出质量却在高位：任意两条 7 个槽全不同
-    let minAll = Infinity
-    for (let i = 0; i < single.selections.length; i++) {
-      for (let j = i + 1; j < single.selections.length; j++) {
-        minAll = Math.min(
-          minAll,
-          single.selections[i].filter((value, slot) => value !== single.selections[j][slot]).length,
-        )
-      }
-    }
-    expect(minAll).toBe(7)
+    // 直接钉住「总差异下限不再是死参数」：调大它必须真的改变输出。
+    // 这是 R-68 最锋利的一条 —— 修复前把 minTotalFar 从 6 提到 10，指标**一个数都不变**。
+    const loose = farthestPointSample(dimensions, 10, { seed: 'pin', dominantIndices: [0], minTotalFar: 6 })
+    const tight = farthestPointSample(dimensions, 10, { seed: 'pin', dominantIndices: [0], minTotalFar: 10 })
+    expect(tight.totalAttempts).toBeGreaterThan(loose.totalAttempts)
   })
 
-  it('对照：主控槽数 ≥ minDom 时重掷预算不会被恒不满足地打满', () => {
+  it('回归：采样结果形状必须是「每条长度 = 维度数」且无 NaN', () => {
     const dimensions = Array.from({ length: 7 }, (_, index) => ({
       name: `D${index}`,
       options: Array.from({ length: 8 }, (_, k) => `v${index}_${k}`),
     }))
-    // 2 个主控槽：domDiff 上限 = 2，约束「可达」→ 不会恒定打满
-    const double = farthestPointSample(dimensions, 10, { seed: 'pin', dominantIndices: [0, 1] })
-    expect(double.totalAttempts).toBeLessThan(1081)
+    // 曾经 enforce 的 `Array(n)` 拿重掷轮次当槽位上界（R-69）：轮次 ≥ 维度数时产生幻影槽位，
+    // selection 被撑到 119 长、塞满 NaN，连 computeBatchMinDistance 都在报「1.000 完美」的假数。
+    const { selections } = farthestPointSample(dimensions, 20, { seed: 'shape' })
+    for (const selection of selections) {
+      expect(selection).toHaveLength(dimensions.length)
+      expect(selection.some((value) => !Number.isFinite(value))).toBe(false)
+    }
   })
 
   it('同种子结果可复现，换种子结果不同', () => {
@@ -729,7 +778,9 @@ describe('campaignRecipe 主控槽口径（展示必须跟随实际权重）', (
       { name: '主体', options: ['b'], weight: 2 },
       { name: '背景', options: ['c'] },
     ]
-    expect(resolveEffectiveDominantSlots(dimensions)).toEqual(['主视觉'])
+    // 口径：`weight > 0` 即主控槽，**不比数值大小** —— 用户给多个槽写权重，
+    // 本意是「这些都请保护起来」（与原始 Python 引擎的 `cfg["dominant"]` 显式列表同义）。
+    expect(resolveEffectiveDominantSlots(dimensions)).toEqual(['主视觉', '主体'])
   })
 
   it('权重并列时全部入选', () => {
@@ -758,15 +809,15 @@ describe('campaignRecipe 主控槽口径（展示必须跟随实际权重）', (
   })
 
   it('用户删掉权重后，主控槽随之失效（这是修复前会不一致的场景）', () => {
-    // 导入时：主视觉 weight 3、主体 weight 2 → 主控槽 = 主视觉
+    // 导入时：主视觉 weight 3、主体 weight 2 → 两个都算主控槽
     const imported = [
       { name: '主视觉', options: ['a'], weight: 3 },
       { name: '主体', options: ['b'], weight: 2 },
       { name: '背景', options: ['c'] },
     ]
-    expect(resolveEffectiveDominantSlots(imported)).toEqual(['主视觉'])
+    expect(resolveEffectiveDominantSlots(imported)).toEqual(['主视觉', '主体'])
 
-    // 用户把「主视觉」的权重清掉（改成与主体并列）→ 界面必须跟着变
+    // 用户把「主视觉」的权重清掉 → 界面必须跟着变，只剩「主体」
     const edited = [
       { name: '主视觉', options: ['a'] },
       { name: '主体', options: ['b'], weight: 2 },

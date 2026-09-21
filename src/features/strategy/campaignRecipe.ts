@@ -315,12 +315,23 @@ function signatureOf(variables: CampaignRecipeVariable[], selection: number[]): 
   return variables.map((variable, index) => variable.options[selection[index]]).join('|')
 }
 
+/**
+ * 两个组合的槽位差异数（汉明距离）。
+ *
+ * ⚠️ 上界取**两者长度的较小值**，不用 `left.length`。曾经用 `left.length`，而当时
+ * `enforce` 的 `n` 屏蔽会让 `selection` 数组被幻影槽位撑长（R-69），于是这里把
+ * `NaN` 与 `undefined` 也算成「不同」，差异被虚报成 ~100 ⇒ 近层/远层的「总槽差异」
+ * 约束形同不存在，而对外暴露的 `computeBatchMinDistance` 还会报出「1.000 完美」的假象。
+ * 长度不等本身就说明上游已坏，这里只做防御性截断，由测试的 shape 断言负责暴露。
+ */
 function hamming(left: number[], right: number[]): number {
+  const length = Math.min(left.length, right.length)
   let distance = 0
-  for (let index = 0; index < left.length; index++) if (left[index] !== right[index]) distance += 1
+  for (let index = 0; index < length; index++) if (left[index] !== right[index]) distance += 1
   return distance
 }
 
+/** 主控槽差异数。`dom` 的取值来自 `pickDominantIndices` 或调用方，下标必然落在维度范围内。 */
 function domDiff(left: number[], right: number[], dom: number[]): number {
   let distance = 0
   for (const index of dom) if (left[index] !== right[index]) distance += 1
@@ -337,47 +348,59 @@ function domDiff(left: number[], right: number[], dom: number[]): number {
  *    定向重掷「冲突最多的槽」，主控槽不足时优先重掷主控槽。
  * 3. 签名去重：撞历史签名（跨批次）或本批已用时继续重掷，最多 40 轮。
  *
- * ## ⚠️ 两条「看着像硬保证、实际不是」的行为（2026-09-20 实测钉住）
+ * 预算耗尽时以 **best-so-far 择优**收尾（见 `enforce`）—— 不拿随机游走的终点当结果。
  *
- * **① 主控槽下限在主控槽数 < 2 时恒不满足。**
- * `minDomNear` / `minDomFar` 默认 2，而 `domDiff` 的**上限就是主控槽个数**。
- * 真实资产的主控槽通常只有 1 个（`pickDominantIndices` 只取权重并列最高者），
- * 于是 `domDiff(...) < 2` **恒真** → 循环永远找得到 target → 每次跑满 `maxAttempt`。
- * 实测：7 维 × 8 选项 / 10 条 / 单主控槽，重掷次数在 10 个不同 seed 下**恒为 1081**。
+ * ## ⚠️ 三条「曾经踩过」的坑（2026-09-21 实测修正，勿回退）
  *
- * **② 这个「永不满足」反而在驱动多样性。**
- * 由于 `needDom` 恒为 true，重掷目标被强制导向主控槽；每轮重掷后会重新扫描近层窗口
- * 找新冲突，于是**其他槽也被推着一起变**。同一组参数、10 个 seed 的实测对照：
+ * **① 主控槽下限 > 主控槽数，会把「总槽差异」约束整个短路。**
+ * `domDiff` 的上限就是主控槽个数，而判据是
+ * `domDiff < minDom || hamming < minTotal` 这种**或**关系：只要 `minDom` 不可达，
+ * 条件便恒真 ⇒ `hamming` 那一侧**永不参与判断** ⇒ `minTotalNear/Far` 沦为死参数
+ * ⇒ 每轮都重掷、打满预算 ⇒ 退出时放行**未满足约束**的候选。
+ * 修法与实测见 `enforce` 内的 `minDomNearEffective` 与 R-68 的对照表。
  *
- * | 指标            | 现状（minDom=2）      | 改成 min(2, 主控槽数) |
- * | --------------- | --------------------- | --------------------- |
- * | 重掷次数        | 1081（**十个 seed 全同**） | 492（降 55%）         |
- * | 主控槽唯一数/10 | 6.1                   | 6.4                   |
- * | 全槽最小差异    | **7.00**（= 维度总数） | **3.10**（↓56%）      |
+ * **② 主控槽的口径决定一切（`pickDominantIndices`）。**
+ * 曾经只取「权重并列最高」者，真实资产 `S1=2,S3=2,S4=2,S8=3,M=2` 被收窄成单个 `S8情绪`
+ * ⇒ 直接触发①。改为「全部带 `weight` 的维度」后，30 条实测：
+ * 最小差异 1/13 → **6/13**、违约对 9.4% → **0%**、重掷 3481 → **126**（快 27 倍）。
  *
- * 结论：**放宽下限是净亏** —— 省下重掷，但「任意两条全槽差异」从 7 掉到 3，
- * 主控槽唯一数几乎没动（6.1 → 6.4）。
- * 故此处**刻意保留**该行为不动（详见下方 `enforce` 内的实现说明与
- * `campaignRecipe.test.ts` 的「钉住行为」用例）。
- * 若将来要动，必须先补回多样性（提高 `minTotalNear/Far` 或改阶梯收敛），
- * 并重跑上表对照确认不退化。
+ * **③ 曾经用来支撑「保留旧行为」的那张对照表，是用本文件被污染的指标量出来的，已作废。**
+ * 旧表（「放宽下限是净亏」「全槽最小差异 7.00 vs 3.10」）用的是 `computeBatchMinDistance`，
+ * 而它经 `hamming` 取 `left.length` 作上界、又叠加了 `selection` 数组被幻影槽位撑长的问题
+ * （R-69），数字虚高、**结论相反**。
+ * **凡要验收多样性，一律自己用「下标 < 维度数」的真实槽重算，不要复用引擎的自检函数。**
  */
 export interface CampaignRecipeCandidate {
   /** 维度名 */
   key: string
-  /** 主控槽权重：数值越大越优先保证「与窗口内任意点的取值都不相同」 */
+  /**
+   * 主控槽声明：**只要 `> 0` 即算主控槽，数值大小不参与任何判定**
+   * （见 `pickDominantIndices` —— 与原始 Python 引擎的 `cfg["dominant"]` 显式列表同义）。
+   * 语义 = 「这个槽对观感影响大，请优先保证它与窗口内的取值都不同」。
+   */
   weight?: number
 }
 
-/** 由维度的候选值声明推导主控槽下标（按 weight 降序）。 */
+/** 由维度的候选值声明推导主控槽下标。 */
 export function pickDominantIndices(dimensions: CampaignRecipeDimension[]): number[] | undefined {
+  // **判定口径：显式声明了正权重（`weight > 0`）即为主控槽，数值大小不参与比较。**
+  //
+  // 为什么不是「只取权重并列最高」：那是 2026-09-21 之前的行为，后果是真实资产
+  // `S1=2,S3=2,S4=2,S8=3,M=2` 被收窄成**单个** `S8情绪`，而 `farthestPointSample` 的
+  // `minDomNear/Far` 默认 2 > 主控槽数 1 ⇒ `domDiff < 2` **恒真** ⇒ 判据的**或**关系把
+  // 「总槽差异」那一侧整个短路，`minTotalNear/Far` 沦为死参数（R-68）。
+  // 实测（13 维 × 6 候选 / 30 条，只统计真实槽）：收窄成单槽时最小差异 1/13、
+  // 9.4% 的组合对差异 <6；改为「全部带 weight」后最小 6/13、**0% 违约**，重掷 3481 → 126。
+  //
+  // 与原始 Python 引擎的口径一致：那边 `cfg["dominant"]` 就是一张**显式列表**，
+  // 权重只表达「这个槽要保护起来」这一件事，不比大小。
   const weighted = dimensions
     .map((dimension, index) => ({ index, weight: dimension.weight }))
     .filter((item) => typeof item.weight === 'number' && Number.isFinite(item.weight) && item.weight > 0)
   if (weighted.length === 0) return undefined
-  // 只把「明显更重」的维度当主控：权重 >= 其次大者时入选，避免把全部维度都算主控
-  const maxWeight = Math.max(...weighted.map((item) => item.weight as number))
-  const dominant = weighted.filter((item) => item.weight === maxWeight).map((item) => item.index)
+  const dominant = weighted.map((item) => item.index)
+  // 全部维度都被声明成主控时返回 undefined，交给下游按「全槽平等」处理：
+  // 否则 dom.length === 维度数，`domDiff` 退化成 `hamming`，主控槽这一层就失去意义。
   return dominant.length > 0 && dominant.length < dimensions.length ? dominant : undefined
 }
 
@@ -459,49 +482,74 @@ export function farthestPointSample(
   /**
    * 贪心 max-min：对所有窗口组合逐对检查，定向重掷冲突最多的槽（主控优先）。
    *
-   * ## 为什么这里保留「主控槽下限恒不满足」的行为（勿顺手修）
+   * ## 这一版修掉了三个把 max-min 架空的缺陷（2026-09-21，勿回退）
    *
-   * `minDomNear/minDomFar` 默认 2，但当主控槽只有 1 个时 `domDiff` 最大值为 1，
-   * 判断恒真 → 必然跑到 `maxAttempt`。看着像 bug，**实测却是多样性的主要来源**：
-   * 因为 `needDom` 恒为 true，重掷焦点被钉在主控槽上，而每轮重掷后重新扫描近层窗口
-   * 会连带把其他槽改掉 —— 最终把「任意两条全槽差异」拉到等于维度总数。
+   * 1. **下限必须可达**：`minDom > 主控槽数` 时 `domDiff < minDom` 恒真，判据的 OR 关系会把
+   *    `hamming` 那一侧短路，`minTotal*` 变成死参数 —— 见下方 `minDomNearEffective`。
+   * 2. **槽位枚举必须用维度数**：曾写成 `Array(n)` 而 `n` 被循环变量遮蔽成轮次，产生幻影槽位
+   *    与 NaN（R-69），并让 `hamming` 虚报差异、连官方指标都在报假数。
+   * 3. **预算耗尽必须择优**：曾经直接用随机游走的终点，终点可能比起点更差 —— 见 `bestCandidate`。
    *
-   * 反向验证（把下限改成 min(2, 主控槽数)）实测：重掷从 1081 降到 492（-55%），
-   * 但全槽最小差异从 7.00 掉到 3.10（-56%），主控槽唯一数几乎没变（6.1 → 6.4）。
-   * 详细对照表见本函数上方的 JSDoc。
-   *
-   * **这不是「待修 bug」，是已测量过的取舍。** 真要动，先补回多样性再改。
+   * 三处都改完后的实测（13 维 × 6 候选 / 30 条，真实槽口径）：最小差异 1/13 → **6/13**，
+   * 差异 <6 的组合对 9.4% → **0%**，重掷 3481 → **126**。
    */
   const enforce = (candidate: number[], window: number[][]): number => {
     const near = window.slice(-windowNear)
     let attempts = 0
-    // ⚠️ 保真移植：原始代码此处循环变量名为 n，遮蔽了函数外的 const n = variables.length，
-    // 导致下方 [...Array(n).keys()] 实际用的是「重掷轮次」而非「维度总数」。
-    // 后果：轮次 0 时 sameSlots 恒为空 → 只重掷第 0 槽；轮次 k 时只在前 k 个槽里挑。
-    // 这是原始实现的行为（疑似 n 命名冲突的笔误），但已影响实际采样分布，
-    // 故此处逐字保留以维持结果一致 —— 详见 docs/RISK.md 的配方卡引擎条目。
-    for (let n = 0; n < maxAttempt; n++) {
+    // 下限不得超过可用槽数：`domDiff` 的上界就是主控槽个数，`minDom > 主控槽数` 会让
+    // 判据**恒真**，进而把判据里 OR 的「总槽差异」那一侧整个短路（`minTotal*` 沦为死参数）。
+    // 取 `min(下限, 主控槽数)` 后语义仍成立：主控槽数不足时等价于「主控槽必须全部不同」。
+    // 实测（13 维 / 30 条）：主控槽仅 1 个时违约率 9.4% → 0.9%；详见 docs/RISK.md R-68。
+    const minDomNearEffective = Math.min(minDomNear, dom.length)
+    const minDomFarEffective = Math.min(minDomFar, dom.length)
+    /**
+     * 过程中「与窗口最不相似」的候选（max-min 的目标值 = 与窗口的最小差异）。
+     *
+     * 为什么必须有：预算是有限的（`maxAttempt`），耗尽时**不能拿「随机游走的终点」当结果**
+     * —— 终点完全可能比起点更差，而它会被原样采用（这是「相似度过高」的直接来源，见 R-68）。
+     * 记下 best-so-far 并在收尾择优，可保证「无论预算够不够，结果都不差于过程中出现过的最优」。
+     */
+    let bestCandidate: number[] | null = null
+    let bestScore = -1
+    const scoreOf = (value: number[]): number => {
+      let min = Number.MAX_SAFE_INTEGER
+      for (const point of window) {
+        const distance = hamming(value, point)
+        if (distance < min) min = distance
+      }
+      return min
+    }
+    for (let round = 0; round < maxAttempt; round++) {
       attempts++
+      const score = scoreOf(candidate)
+      if (score > bestScore) {
+        bestScore = score
+        bestCandidate = [...candidate]
+      }
       let target: number[] | null = null
       let needDom = false
       for (const point of near) {
-        if (domDiff(candidate, point, dom) < minDomNear || hamming(candidate, point) < minTotalNear) {
+        if (domDiff(candidate, point, dom) < minDomNearEffective || hamming(candidate, point) < minTotalNear) {
           target = point
-          needDom = domDiff(candidate, point, dom) < minDomNear
+          needDom = domDiff(candidate, point, dom) < minDomNearEffective
           break
         }
       }
       if (!target) {
         for (const point of window) {
-          if (domDiff(candidate, point, dom) < minDomFar || hamming(candidate, point) < minTotalFar) {
+          if (domDiff(candidate, point, dom) < minDomFarEffective || hamming(candidate, point) < minTotalFar) {
             target = point
-            needDom = domDiff(candidate, point, dom) < minDomFar
+            needDom = domDiff(candidate, point, dom) < minDomFarEffective
             break
           }
         }
       }
       if (!target) break
-      const sameSlots = [...Array(n).keys()].filter((slot) => candidate[slot] === target![slot])
+      // ⚠️ 槽位枚举必须用**维度数**（`sizes.length`），不能用重掷轮次。曾经这里写成
+      // `Array(n).keys()` 而 `n` 被循环变量遮蔽成轮次：轮次 ≥ 维度数时 `candidate[slot]`
+      // 与 `target[slot]` 同为 `undefined` ⇒ 幻影槽位当选 ⇒ `nextValue` 里 `% undefined`
+      // 得 NaN ⇒ selection 被撑到 119 长、塞满 NaN（R-69）。
+      const sameSlots = [...Array(sizes.length).keys()].filter((slot) => candidate[slot] === target![slot])
       const candidates = needDom ? sameSlots.filter((slot) => dom.includes(slot)).concat(sameSlots) : sameSlots
       // 选在窗口里和当前值重合最多的槽重掷
       let slot = candidates[0] ?? 0
@@ -515,6 +563,12 @@ export function farthestPointSample(
         }
       }
       candidate[slot] = nextValue(slot, candidate[slot])
+    }
+    // 收尾择优：预算耗尽时 candidate 可能仍不满足约束，此时改用过程里评分最高的那个。
+    // 必须**原地改写**（`candidate` 是调用方持有的引用），不能返回新数组。
+    const best = bestCandidate
+    if (best && bestScore > scoreOf(candidate)) {
+      for (let index = 0; index < candidate.length; index++) candidate[index] = best[index]
     }
     return attempts
   }
@@ -851,6 +905,10 @@ function sampleCampaignRecipeSelections(
     const fixedSelection = pickSeriesFixedSelection(fixedDimensions, groupIndex, options.seed, usedFixedCombos)
     const sampledVariables = farthestPointSample(variableDimensions, size, {
       ...options,
+      // 每组必须换 seed：`baseCandidate(k)` 只由 `seed + k` 决定，沿用同一个 seed 会让
+      // 每组的「变化维度」出发点序列**完全相同** —— 实测 3 组的 M 槽取值都是 `3,2,1,0`，
+      // 组间只剩 40 轮 L3 签名重掷在兜，且完全不接 L2 的 max-min 约束（R-70）。
+      seed: `${options.seed}|group|${groupIndex}`,
       dominantIndices: variableDominant.length ? variableDominant : undefined,
     })
     totalAttempts += sampledVariables.totalAttempts

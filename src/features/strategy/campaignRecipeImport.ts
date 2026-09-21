@@ -17,7 +17,11 @@ import { parseCampaignRecipeConfig, type CampaignRecipeConfig } from './campaign
 export interface ParsedCampaignRecipeDimension {
   name: string
   options: string[]
-  /** 权重（master 条目常见）。仅作展示，采样时不参与权重计算。 */
+  /**
+   * 权重（master 条目常见）。
+   * **语义：`> 0` 即声明该维度为主控槽**，数值大小不参与判定（见 `campaignRecipe.ts` 的
+   * `pickDominantIndices`）。原先这里写「仅作展示、采样时不参与计算」，与引擎的实际用法不符。
+   */
   weight?: number
   /** 中文名 → 英文描述（真实资产里维度值常带 en 字段）。 */
   englishByOption?: Record<string, string>
