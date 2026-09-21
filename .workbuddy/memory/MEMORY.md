@@ -87,6 +87,12 @@
   正常时 `Get-Process electron | Select MainWindowTitle` = `糖包`。
 - **门禁假象**：`noUnusedLocals/Parameters` 关着、`no-unused-vars` 仅 warn → 死 import 零告警
   （存量 116 处，见 `BACKLOG.md` TB-021）。
+- **⭐ 同仓并行两条写线时怎么收口（2026-09-21 实踩）**：中途发现工作区冒出我没碰过的文件
+  （`Toast.test.tsx` 的 **mtime 就在一分钟前** ⇒ 有人正在写，光看文件名只知道「改过」）→
+  ① **不要跑全量 `npm run verify`**（工作区混着对方 WIP，绿/红都不可信，就是 R-74 的成因），
+  改跑定向用例 + 逐条 `tsc`/`lint`/`format:check`；② 提交只 `git add` 自己那批文件；
+  ③ **一个字节都别碰对方的文件**（哪怕 HEAD 被它改红了也先报告 —— 对方往往自己会修，
+  你顺手改就是白做 + 撞车）；④ **任务号会撞**（对方同期也编了 TB-072）→ 开工前在 BACKLOG 占号。
 - **⭐ 报障排查第一步：拿界面原文字符串去 `grep`**。比读文档/猜链路快一个数量级
   （实例：`导出位置不可用` → `outputRoots.ts:47` 一击命中，2026-09-20）。
 - **⭐ IPC handler 里 `catch (err) { console.error(...); return false }` 是可诊断性缺陷**：

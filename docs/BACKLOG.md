@@ -2897,12 +2897,12 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
   `features/composite/lib/{controlConsoleSections,consoleWorkbook,consoleImport}.ts`、
   `features/postprocess/PostprocessNamingFields.tsx`；文档 `docs/adr/0013-*.md`（新）、
   `docs/adr/0011-*.md`（加取代指针）、`docs/architecture-constraints.md` §4.2.1（新）、`docs/RISK.md` R-63。
-- **验收证据**（四条门禁**逐条**跑，因为 `verify` 串不起来，见下）：
-  `npm run typecheck:electron` 干净；`npm run lint` **全仓**干净；`npm run format:check` **全仓**干净；
-  `npx vitest run` **258 文件 / 2959 例全绿**；受影响 12 个文件 **442 例**全绿。
-  ⚠️ **`npm run verify` 未整体跑**：它第一步是 `tsc -b`，而 HEAD 上有**另一条写线的类型错**
-  （`src/components/Toast.test.tsx:70` `Property 'props' does not exist on type 'string | ReactTestInstance'`，
-  随其 TB-072 提交进来的，与本轮无关）→ 链条在第一步就断。**生产代码 0 类型错**（本轮 18 个文件干净）。
+- **验收证据**：提交 **`396dd08`**（未推送）；`npm run verify` **在提交态上全绿**
+  —— **258 文件 / 2959 例**（tsc 双端 + lint + format:check + test 四环齐过）；
+  受影响 12 个文件 **442 例**全绿。
+  > 过程中一度只能逐条跑：提交前 HEAD 上还压着另一条写线的类型错（`src/components/Toast.test.tsx:70`），
+  > `verify` 在第一步就断；对方随后自己修了（`19be835`），本条的完整门禁才补上。
+  > **别把「逐条跑过」当成等价于「verify 全绿」**——它少了「四环在同一份代码上一起过」这个信息。
 - **反向验证**（3 个变异，逐个确认精确变红）
   | 变异                                          | 结果                                                                           |
   | --------------------------------------------- | ------------------------------------------------------------------------------ |
