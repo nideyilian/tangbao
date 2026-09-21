@@ -161,6 +161,15 @@ export function patchTaskForPurgedSlots(task: TaskRecord, slots: number[]): Task
 export interface AssetPurgeExecutorDeps {
   getTask: (taskId: string) => Promise<TaskRecord | undefined>
   purgeRecords: (records: PurgeRecords) => Promise<void>
+  /**
+   * 收集这些图 id 对应的**磁盘原图路径**。会在删除记录**之前**调用 —— 时机是契约的一部分：
+   * 记录一删，`localPath` 就查不到了，之后按记录去找文件的步骤会静默删不到任何东西
+   * （2026-09-21 实测：132 张素材记录被永久删除，而 `cache-images/` 里文件一张不少，
+   * `561 = 429 + 132` 精确吻合）。
+   */
+  collectImagePaths?: (imageIds: string[]) => Promise<string[]>
+  /** 删除磁盘原图文件（收 {@link collectImagePaths} 的结果，在删记录之后执行） */
+  deleteImageFiles?: (filePaths: string[]) => Promise<void>
   /** 删除单张图片字节（IndexedDB 图片+缩略图，以及磁盘缓存文件）；批量接口缺省时逐张调用 */
   deleteImage?: (imageId: string) => Promise<void>
   /** 批量删除图片字节（分块提交）；性能远优于逐张删除，优先使用。onProgress 用于汇报删除进度 */
@@ -183,6 +192,13 @@ export async function executeAssetPurge(
   onProgress?: (stage: AssetPurgeProgressStage, done?: number, total?: number) => void,
 ): Promise<void> {
   if (plan.allowedAssetIds.length === 0) return
+  // ⚠️ 顺序契约：磁盘路径必须在 `purgeRecords` **之前**取。
+  // `purgeRecords` 会把素材记录与图记录一起删掉，之后谁再去查 `localPath` 都查不到，
+  // 「删文件」那一步就变成空转 —— 用户看到的是素材没了、磁盘上的原图却还在。
+  const imageFilePaths =
+    deps.collectImagePaths && plan.imageIdsToDelete.length > 0
+      ? await deps.collectImagePaths(plan.imageIdsToDelete)
+      : []
   const tasksToPatch: TaskRecord[] = []
   for (const cleanup of plan.taskOutputCleanups) {
     const task = await deps.getTask(cleanup.taskId)
@@ -207,4 +223,6 @@ export async function executeAssetPurge(
       onProgress?.('images', index + 1, total)
     }
   }
+  // 记录已删，按**事先取好的**路径删磁盘原图（此刻按图记录已经查不到路径了）
+  if (imageFilePaths.length > 0) await deps.deleteImageFiles?.(imageFilePaths)
 }

@@ -7144,11 +7144,22 @@ export async function purgeGeneratedAssets(
   const purgeLocalSavedPaths = collectLocalSavedOutputPaths([...tasksById.values()], (imageId) =>
     plan.imageIdsToDelete.includes(imageId),
   )
+  // 磁盘原图路径由 `executeAssetPurge` 在删记录**之前**回调收集（顺序契约写在那个函数里）：
+  // 记录一删就再也查不到 localPath，磁盘原图会静默残留。
   await executeAssetPurge(
     plan,
     {
       getTask: async (taskId) => tasksById.get(taskId),
       purgeRecords: purgeGeneratedAssetsNow,
+      collectImagePaths: async (imageIds) => {
+        const { batchGetImages } = await import('./lib/db')
+        const images = await batchGetImages(imageIds)
+        return [...images.values()].map((image) => image.localPath).filter((path): path is string => Boolean(path))
+      },
+      deleteImageFiles: async (filePaths) => {
+        const { deleteRawCacheImages } = await import('./lib/localSave')
+        await deleteRawCacheImages(filePaths)
+      },
       // 批量删除图片字节（分块事务 + 磁盘缓存分批清理），清空回收站/批量删除时避免逐张事务
       deleteImages: async (imageIds, onImagesProgress) => {
         if (imageIds.length === 0) return
@@ -11127,7 +11138,10 @@ async function purgeTaskOutputAssets(
   if (plan.allowedAssetIds.length > 0) {
     await purgeGeneratedAssets(
       assets.map((asset) => asset.id),
-      { plan },
+      {
+        plan,
+        reason: 'task-deleted',
+      },
     )
   }
   return { purged: plan.allowedAssetIds.length, kept: plan.blocked.length }

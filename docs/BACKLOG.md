@@ -3255,3 +3255,64 @@ taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本�
      「全部素材 429 张」口径不同，两者并排容易被读成「素材丢了」。**未改**：口径怎么显示属于交互取舍，
      待杰哥定（可选：概览直接显示全库总数，或写成「已加载 120 / 共 429」）。
   4. 未经真机渲染验证：红条 × 的位置与观感、提示「关掉不再复活」的手感，请在运行中的应用里过目。
+
+---
+
+### TB-083 删任务连带删图（磁盘那一步没删掉）+ 卡片标「已删除」+ 提示一律可关
+
+- **来源**：杰哥 2026-09-21 22:07 三条需求：
+  ① 「删除任务卡片时，应同时删除该任务关联生成的所有图片」；
+  ② 「当素材库中的图片被删除后，对应的任务卡片上直接将该图片状态显示为『已删除』，而无需移除卡片其他内容」；
+  ③ 「整个界面中禁止出现任何无法关闭的提示，所有提示都必须提供明确的关闭方式」。
+- **状态**：DONE（③ 的**范围**待杰哥确认，见遗留 1）
+- **① 的核查与真 bug**
+  - 链路本来是接好的：`removeTask` / `removeMultipleTasks` → `purgeTaskOutputAssets` → `purgeGeneratedAssets`，
+    且按「被其他任务/会话引用则保留」的口径（文案也是这么写的）。
+  - **但磁盘原图删不掉**：`executeAssetPurge` 的次序是「先删素材/图记录（事务）→ 再删图片字节」，
+    而字节删除要按**图记录里的 `localPath`** 去找文件 —— 记录已经没了，这一步静默空转，一个文件都删不动。
+  - **本机实测佐证**：132 张素材记录被永久删除，而 `cache-images/` 里文件**一张不少**
+    （`561 = 429 + 132` 精确吻合）；`deleteCacheImageFiles` 的失败也只是回给了一个**没人看的**
+    `{ deleted, failed }`。
+  - **改法（把顺序变成契约）**：`AssetPurgeExecutorDeps` 新增 `collectImagePaths`（**在 `purgeRecords` 之前**回调）
+    与 `deleteImageFiles`（删完记录后按路径删文件）；`purgeGeneratedAssets` 实现这两个钩子
+    （`batchGetImages` 取路径 → `deleteRawCacheImages` 删文件）。顺序写在 `executeAssetPurge` 里，
+    单测直接按调用顺序断言。
+- **② 的改法**
+  - 数据侧**本来就对**：素材被永久删除时 `patchTaskForPurgedSlots` 会把 `outputImages[slot]` 置空
+    并把槽位号记进 `purgedOutputSlots`，**任务与卡片都不删**（本机库里 72 个任务带这个字段）。
+  - 缺的是界面：`TaskCard` 从来没读 `purgedOutputSlots`，于是被删的封面槽位只显示一个**没有任何说明**的空白占位。
+  - 改法：`TaskCard` 增加 `coverPurged`（封面槽位在 `purgedOutputSlots` 里）→ 直接渲染「已删除」，
+    排在「加载中占位 / 图片已丢失」之前（这一格的结论是确定的，不必等加载）；
+    张数角标从 `outputImages.length` 改为**仍在的槽位数**，否则会报一个用户点不开的数字。
+- **③ 的清点与改法**
+  - 浮层类：Toast（上一轮加 × + 关掉后不重播）、ConfirmDialog（有 ×）、`PromptInputDialog` / 各类 Modal（有取消/关闭）。
+  - **常驻条**（本轮补）：素材库「素材索引补齐失败」红条（上一轮加 ×）；
+    「生成中 / N 个任务失败」提示条 —— 原来整条是个 `<button>`，**没有任何关闭入口**。
+    改成「可点区域 + 右侧 ×」，关闭口径：**只有失败数继续上涨才重新出现**
+    （「生成中」数量变化不重弹，否则任务一路跑、条一路弹，用户只会觉得关不掉）。
+  - 进度类（`正在补齐素材索引 X/Y`、加载骨架屏、工具栏「后处理 3/100」）按**状态**处理：
+    到点自行消失，不属「提示」，不加 ×（口径待确认，见遗留 1）。
+- **验收标准**（可测）
+  1. 删任务 / 删素材后，该图在 `cache-images/` 里的原图文件也被删除（路径在删记录前收集）；
+  2. 顺序契约：`collectImagePaths` → `purgeRecords` → 删字节 → `deleteImageFiles`；
+  3. 素材被删后，任务卡封面位置显示「已删除」，卡片其余内容（提示词/参数/耗时）保留，状态仍为完成；
+  4. 张数角标只计仍在的图；
+  5. 素材库两条常驻提示条都能关，且关掉后不会因为「生成中」数量变化立刻弹回来。
+- **改动面**：`src/lib/assetPurge.ts`（+ `AssetPurgeExecutorDeps` 两个钩子）、`src/lib/assetPurge.test.ts`、
+  `src/store.ts`（实现钩子 + `reason: 'task-deleted'`）、`src/components/TaskCard.tsx`（+ 测试）、
+  `src/features/assetLibrary/AssetLibraryWorkspace.tsx`。
+- **验收证据**：`tsc -b` + `tsc -p electron/tsconfig.json --noEmit` 双端零错；`npm run lint` 零告警；
+  `npm run format:check` 通过；全量 `vitest run` **258 文件 / 2987 例全绿**。
+  新增用例 3 个：`assetPurge` 顺序契约 1 例（`collect → records → bytes → files`）、`TaskCard` 2 例
+  （被删槽位标「已删除」且不误报「图片已丢失」/ 未删的卡片不误标）。
+  **反向验证**：临时禁用 `collectImagePaths`（改成 `[]`）后顺序用例立刻变红、改回即绿；
+  临时把 `coverPurged` 写死 `false` 后「已删除」用例变红、改回即绿。
+- **知情取舍 / 遗留**
+  1. **③ 的适用范围请杰哥定**：本轮把「浮层 + 常驻提示条」全部做成了可关；
+     **面板内的内联错误文字**（如 SOP 批量弹窗底部的红字、表单校验提示）**没加 ×** ——
+     它们随操作消失、且关掉弹窗即消失，按惯例不加关闭按钮。若你要求连这些也各自带关闭入口，我再补。
+  2. **磁盘删除失败仍是静默的**：主进程 `deleteCacheImageFiles` 返回 `{ deleted, failed }`，
+     渲染侧 `deleteRawCacheImages` 直接丢掉返回值 —— 路径不匹配（如库根换过）或 `unlink` 失败时，
+     UI 与日志都无痕。**本轮未改**（改它会让删除接口的返回语义变化），已登记 `docs/RISK.md` R-78。
+  3. 本机库里那 **132 个孤儿原图**（记录已删、文件还在，共约 630MB）源自这次修掉的顺序缺陷。
+     **未做清理** —— 清之前想先确认这批是不是杰哥自己删的（见 TB-082 遗留 1）。

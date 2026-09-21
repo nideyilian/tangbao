@@ -40,11 +40,13 @@ const dbMockState = vi.hoisted(() => ({
   // 模拟 Electron：storeImage 同时落盘 cache-images（StoredImage.localPath）
   emitLocalPath: false,
   putTaskFailuresRemaining: 0,
+  // 图记录表提到这里：删除级联要断言「磁盘原图路径被交给删除接口」，必须能直接种一条带 localPath 的记录
+  images: new Map<string, StoredImage>(),
 }))
 
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
-  const images = new Map<string, StoredImage>()
+  const images = dbMockState.images
   const thumbnails = new Map<string, StoredImageThumbnail>()
   const compositeAssets = new Map<string, StoredCompositeAsset>()
   const agentConversations = new Map<string, AgentConversation>()
@@ -305,6 +307,8 @@ vi.mock('./lib/localSave', async (importOriginal) => {
   return {
     ...actual,
     deleteLocalImageFiles: vi.fn(async () => 0),
+    // 测试环境没有真实磁盘文件：换成 spy，供「永久删除素材时原图文件也要删掉」的断言使用
+    deleteRawCacheImages: vi.fn(async () => {}),
   }
 })
 

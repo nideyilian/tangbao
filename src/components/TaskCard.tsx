@@ -103,6 +103,17 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
   const pendingSwipeOffsetRef = useRef(0)
   const swipeFrameRef = useRef<number | null>(null)
   const displayTaskStatus = task.status === 'error' && hasCompletedTaskOutputs(task) ? 'done' : task.status
+  /**
+   * 封面槽位（slot 0）的图是否已被删除。
+   *
+   * 素材被永久删除时 `patchTaskForPurgedSlots` 会把 `outputImages[slot]` 置空并记进
+   * `purgedOutputSlots`，**任务与卡片本身都不删**。据此把封面直接标成「已删除」，
+   * 卡片其余内容（提示词、参数、耗时）保持原样（2026-09-21 需求）。
+   */
+  const purgedOutputSlots = task.purgedOutputSlots ?? []
+  const coverPurged = purgedOutputSlots.includes(0)
+  /** 仍在的产出张数：被删的槽位不计入，否则角标会报一个用户点不开的数字 */
+  const liveOutputCount = (task.outputImages ?? []).filter(Boolean).length
   /** 后处理产出数量；只在有产出时渲染徽章，卡片高度不受影响（列表按固定行高虚拟化） */
   const postprocessCount = task.postprocessOutputs?.length ?? 0
   /**
@@ -550,7 +561,7 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                   <img
                     src={thumbSrc}
                     data-image-id={task.outputImages[0]}
-                    data-output-image-ids={task.outputImages.join(',')}
+                    data-output-image-ids={(task.outputImages ?? []).filter(Boolean).join(',')}
                     className="saveable-image w-full h-full object-cover"
                     loading="lazy"
                     decoding="async"
@@ -646,18 +657,18 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                 <img
                   src={thumbSrc}
                   data-image-id={task.outputImages[0]}
-                  data-output-image-ids={task.outputImages.join(',')}
+                  data-output-image-ids={(task.outputImages ?? []).filter(Boolean).join(',')}
                   className="saveable-image w-full h-full object-cover"
                   loading="lazy"
                   decoding="async"
                   onError={handleThumbError}
                   alt=""
                 />
-                {(task.outputImages?.length ?? 0) > 1 && (
+                {liveOutputCount > 1 && (
                   <span className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
                     {task.batchItemStatuses
                       ? `${task.batchItemStatuses.filter((s) => s === 'done').length}/${task.batchItemStatuses.length}`
-                      : (task.outputImages?.length ?? 0)}
+                      : liveOutputCount}
                   </span>
                 )}
                 {hasPartialFailure && (
@@ -666,6 +677,26 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                   </span>
                 )}
               </>
+            )}
+            {/* 图片已被永久删除：直接标状态，卡片其余内容不动（2026-09-21 需求）。
+                排在「加载中占位 / 图片已丢失」之前：这一格的结论是确定的，不必等加载。 */}
+            {!thumbSrc && coverPurged && (
+              <span className="flex flex-col items-center gap-1 px-2 text-center">
+                <svg
+                  className="gallery-placeholder-icon w-ds-control-sm h-ds-control-sm"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+                <span className="gallery-task-meta text-xs">已删除</span>
+              </span>
             )}
             {hasPartialSuccess && !thumbSrc && !thumbLost && (
               <svg
@@ -705,16 +736,16 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                 <img
                   src={thumbSrc}
                   data-image-id={task.outputImages[0]}
-                  data-output-image-ids={task.outputImages.join(',')}
+                  data-output-image-ids={(task.outputImages ?? []).filter(Boolean).join(',')}
                   className="saveable-image w-full h-full object-cover"
                   loading="lazy"
                   decoding="async"
                   onError={handleThumbError}
                   alt=""
                 />
-                {!task.isFavorite && (task.outputImages?.length ?? 0) > 1 && (
+                {!task.isFavorite && liveOutputCount > 1 && (
                   <span className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
-                    {task.outputImages?.length ?? 0}
+                    {liveOutputCount}
                   </span>
                 )}
                 {!task.isFavorite && hasPartialFailure && (

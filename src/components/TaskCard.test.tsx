@@ -289,3 +289,54 @@ describe('TaskCard · 后处理状态徽章', () => {
     expect(renderer.root.findAllByProps({ 'data-testid': 'task-postprocess-issues' })).toHaveLength(0)
   })
 })
+
+/**
+ * 图片被永久删除后的卡片表现（2026-09-21 需求）：
+ * 「素材库里的图片被删除后，任务卡片上直接把该图片标成『已删除』，不要移除卡片其他内容」。
+ *
+ * 数据侧由 `patchTaskForPurgedSlots` 保证：槽位置空 + 槽位号记进 `purgedOutputSlots`，
+ * **任务与卡片都不删**。这里守的是卡片那一半：读到被删的封面槽位要给出「已删除」，
+ * 而不是留一个没有任何说明的空白占位。
+ */
+describe('TaskCard · 封面图已被删除', () => {
+  const collectTexts = (renderer: ReturnType<typeof create>) =>
+    renderer.root.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children)
+
+  it('封面槽位被删时标「已删除」，卡片本身仍在、不误报「图片已丢失」', async () => {
+    const purgedTask: TaskRecord = {
+      ...task,
+      // patchTaskForPurgedSlots 的实际写法：槽位置空 + 槽位号入 purgedOutputSlots
+      outputImages: [undefined as unknown as string],
+      purgedOutputSlots: [0],
+    }
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <TaskCard task={purgedTask} onReuse={vi.fn()} onEditOutputs={vi.fn()} onDelete={vi.fn()} onClick={vi.fn()} />,
+      )
+    })
+    mountedRenderers.push(renderer)
+
+    expect(collectTexts(renderer)).toContain('已删除')
+    expect(collectTexts(renderer)).not.toContain('图片已丢失')
+    // 卡片还在、状态仍是完成（删图不删任务）
+    expect(renderer.root.find((node) => node.props['data-status']).props['data-status']).toBe('done')
+  })
+
+  it('没被删的卡片不会误标「已删除」', async () => {
+    storeMocks.ensureImageThumbnailCached.mockResolvedValueOnce({
+      dataUrl: 'data:image/webp;base64,thumb',
+      width: 512,
+      height: 512,
+      thumbnailVersion: 5,
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <TaskCard task={task} onReuse={vi.fn()} onEditOutputs={vi.fn()} onDelete={vi.fn()} onClick={vi.fn()} />,
+      )
+    })
+    mountedRenderers.push(renderer)
+    expect(collectTexts(renderer)).not.toContain('已删除')
+  })
+})

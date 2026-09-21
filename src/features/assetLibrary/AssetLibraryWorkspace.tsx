@@ -264,6 +264,16 @@ function AssetLibraryWorkspaceInner() {
     return { running, failed }
   }, [collections, mainTasks, scope])
 
+  // 「生成中 / N 个任务失败」提示条同样必须能关（2026-09-21 需求：界面上不允许关不掉的提示）。
+  // 关闭口径：只有**失败数又涨了**才重新出现（说明出了新失败，值得再提醒一次）；
+  // 「生成中」的数量变化不重新弹出 —— 任务一路跑、条一路弹，用户只会觉得关不掉。
+  const [dismissedFailedCount, setDismissedFailedCount] = useState<number | null>(null)
+  const runningFailedNoticeVisible =
+    groupBy === 'none' &&
+    !filterFavorite &&
+    runningFailedCounts !== null &&
+    (dismissedFailedCount === null || runningFailedCounts.failed > dismissedFailedCount)
+
   const queryResult = useMemo(
     () =>
       queryAssets(
@@ -776,30 +786,42 @@ function AssetLibraryWorkspaceInner() {
           {/* 子文件夹区块（Eagle 式）：进入文件夹时顶部展示直接子文件夹封面，点击进入；与「包含子文件夹」开关正交 */}
           <SubfolderStrip counts={counts} />
           {/* 图片模式运行/失败任务提示条：图片网格只展示已入库素材，生成中/失败任务不可见；
-              此处给出持续可见的反馈（不打断浏览），点击一键切换到任务卡片视图查看进度与失败原因 */}
-          {groupBy === 'none' && !filterFavorite && runningFailedCounts && (
-            <button
-              type="button"
+              此处给出持续可见的反馈（不打断浏览），点击一键切换到任务卡片视图查看进度与失败原因。
+              右侧 × 可关闭 —— 关掉后只有「失败数继续上涨」才会重新出现（见 runningFailedNoticeVisible）。 */}
+          {runningFailedNoticeVisible && runningFailedCounts && (
+            <div
               role="status"
               data-testid="asset-running-tasks-notice"
-              onClick={() => setGroupBy('grouped')}
-              className="flex shrink-0 items-center gap-3 border-b border-ds-primary/35 bg-ds-primary-subtle px-8 py-1.5 text-xs text-ds-primary transition-colors hover:bg-ds-primary/10 dark:border-ds-primary/20 dark:bg-ds-primary/10 dark:text-ds-primary dark:hover:bg-ds-primary/15"
-              title="点击切换到任务卡片视图查看进度"
+              className="flex shrink-0 items-center gap-2 border-b border-ds-primary/35 bg-ds-primary-subtle px-8 py-1.5 text-xs text-ds-primary transition-colors hover:bg-ds-primary/10 dark:border-ds-primary/20 dark:bg-ds-primary/10 dark:text-ds-primary dark:hover:bg-ds-primary/15"
             >
-              {runningFailedCounts.running > 0 && (
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-ds-primary" />
-                  生成中 {runningFailedCounts.running} 个任务
-                </span>
-              )}
-              {runningFailedCounts.failed > 0 && (
-                <span className="flex items-center gap-1.5 text-ds-danger">
-                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-ds-danger" />
-                  {runningFailedCounts.failed} 个任务失败
-                </span>
-              )}
-              <span className="ml-auto shrink-0 underline-offset-2 hover:underline">点击查看任务卡片 →</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setGroupBy('grouped')}
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                title="点击切换到任务卡片视图查看进度"
+              >
+                {runningFailedCounts.running > 0 && (
+                  <span className="flex items-center gap-1.5">
+                    <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-ds-primary" />
+                    生成中 {runningFailedCounts.running} 个任务
+                  </span>
+                )}
+                {runningFailedCounts.failed > 0 && (
+                  <span className="flex items-center gap-1.5 text-ds-danger">
+                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-ds-danger" />
+                    {runningFailedCounts.failed} 个任务失败
+                  </span>
+                )}
+                <span className="ml-auto shrink-0 underline-offset-2 hover:underline">点击查看任务卡片 →</span>
+              </button>
+              <IconButton
+                className="min-h-ds-control-lg min-w-11 shrink-0"
+                size="sm"
+                aria-label="关闭提示"
+                icon={<XIcon size={16} />}
+                onClick={() => setDismissedFailedCount(runningFailedCounts.failed)}
+              />
+            </div>
           )}
           {inFavoritesOverview ? (
             /* 收藏夹概览：嵌入素材库内容区（侧栏与顶部工具栏保持不变），搜索框过滤收藏夹名 */

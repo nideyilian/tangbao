@@ -250,6 +250,45 @@ describe('executeAssetPurge', () => {
     expect(deleteImage).not.toHaveBeenCalled()
   })
 
+  it('collects disk paths BEFORE deleting records, then removes the files', async () => {
+    // 顺序契约（2026-09-21 实测）：删记录之后再按图记录查 `localPath` 是查不到的 ——
+    // 磁盘原图会静默残留。本机实测 132 张素材记录被永久删除，而 cache-images 里文件一张不少。
+    const plan: AssetPurgePlan = {
+      allowedAssetIds: ['asset-a'],
+      blocked: [],
+      taskOutputCleanups: [],
+      imageIdsToDelete: ['img-a'],
+      tombstones: [{ id: 'asset-a', imageId: 'img-a', purgedAt: 1, lastOriginOccurredAt: 1 }],
+      forceDetach: [],
+    }
+    const order: string[] = []
+    const collectImagePaths = vi.fn(async () => {
+      order.push('collect')
+      return ['D:/lib/cache-images/img-a.png']
+    })
+    const purgeRecords = vi.fn(async () => {
+      order.push('records')
+    })
+    const deleteImages = vi.fn(async () => {
+      order.push('bytes')
+    })
+    const deleteImageFiles = vi.fn(async () => {
+      order.push('files')
+    })
+
+    await executeAssetPurge(plan, {
+      getTask: async () => undefined,
+      purgeRecords,
+      collectImagePaths,
+      deleteImages,
+      deleteImageFiles,
+    })
+
+    expect(collectImagePaths).toHaveBeenCalledWith(['img-a'])
+    expect(order).toEqual(['collect', 'records', 'bytes', 'files'])
+    expect(deleteImageFiles).toHaveBeenCalledWith(['D:/lib/cache-images/img-a.png'])
+  })
+
   it('falls back to per-image deletion when no batch API is provided', async () => {
     const plan: AssetPurgePlan = {
       allowedAssetIds: ['img-a'],
