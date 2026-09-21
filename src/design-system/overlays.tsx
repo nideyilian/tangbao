@@ -6,6 +6,7 @@ import {
   type HTMLAttributes,
   type MouseEvent,
   type ReactNode,
+  type Ref,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { IconButton, cx } from './components'
@@ -192,6 +193,11 @@ export function Tooltip({ children, className, content, side = 'top', ...props }
 export interface PopoverProps extends HTMLAttributes<HTMLDivElement> {
   label: string
   arrow?: boolean
+  /**
+   * React 19：`ref` 作为普通 prop 透传到容器节点。
+   * 下拉浮层要用 `useDismissableLayer` 判定"指针落点是否在面板内"，必须能拿到这个节点。
+   */
+  ref?: Ref<HTMLDivElement>
 }
 
 export function Popover({ arrow = true, children, className, label, ...props }: PopoverProps) {
@@ -205,6 +211,8 @@ export function Popover({ arrow = true, children, className, label, ...props }: 
 
 export interface MenuProps extends HTMLAttributes<HTMLDivElement> {
   label: string
+  /** 同 `Popover`：透传容器节点，供 `useDismissableLayer` 做"点外关闭"判定。 */
+  ref?: Ref<HTMLDivElement>
 }
 
 export function Menu({ className, label, onKeyDown, ...props }: MenuProps) {

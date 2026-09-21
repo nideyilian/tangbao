@@ -19,6 +19,9 @@ function globalKeyDown(e: KeyboardEvent) {
 let listenerAttached = false
 function ensureListener() {
   if (listenerAttached) return
+  // 非浏览器环境（node 环境的组件测试）没有 window：静默降级，不注册即可。
+  // 组件测试常用 react-test-renderer + node 环境，这里崩掉会把无关用例一起带红。
+  if (typeof window === 'undefined') return
   listenerAttached = true
   window.addEventListener('keydown', globalKeyDown)
 }

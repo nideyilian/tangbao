@@ -612,6 +612,8 @@ function InputIconOptionButton({
   menuClass?: string
 }) {
   const [open, setOpen] = useState(false)
+  // 参数下拉统一关闭：点外部（下方透明遮罩）或 Esc
+  useCloseOnEscape(open, () => setOpen(false))
   const baseClass =
     'inline-flex h-ds-control-md w-ds-control-md shrink-0 items-center justify-center rounded-ds-lg shadow-sm transition-[background-color,transform,box-shadow] duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40'
   const idleClass =
@@ -1378,6 +1380,9 @@ export default function InputBar() {
   const [showCustomAdRuleDialog, setShowCustomAdRuleDialog] = useState(false)
   const customAdRuleDialogRef = useRef<HTMLFormElement>(null)
   useCloseOnEscape(showCustomAdRuleDialog, () => setShowCustomAdRuleDialog(false))
+  // 输出位置下拉 / 移动端上传来源菜单：点外部（透明遮罩）已能关，这里补 Esc，与其它下拉一致
+  useCloseOnEscape(outputMenuOpen, () => setOutputMenuOpen(false))
+  useCloseOnEscape(showMobileUploadMenu, () => setShowMobileUploadMenu(false))
   usePreventBackgroundScroll(showCustomAdRuleDialog, customAdRuleDialogRef)
   useDialogFocusTrap(showCustomAdRuleDialog, customAdRuleDialogRef)
   const [customAdRuleName, setCustomAdRuleName] = useState('')
@@ -1469,6 +1474,8 @@ export default function InputBar() {
   // 一键衍生必须由用户显式开启，避免挂图后拦截普通图生图。
   const [oneClickDeriveEnabled, setOneClickDeriveEnabled] = useState(false)
   const [referenceStyleEnabled, setReferenceStyleEnabled] = useState(false)
+  // 视觉 Skill 面板：点外部（透明遮罩）已能关，这里补 Esc
+  useCloseOnEscape(referenceStyleEnabled, () => setReferenceStyleEnabled(false))
   const [referenceStylePhase, setReferenceStylePhase] = useState('')
   const [referenceStylePreview, setReferenceStylePreview] = useState<{
     theme: string

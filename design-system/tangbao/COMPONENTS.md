@@ -107,13 +107,13 @@
 
 | 组件              | 用途                                 | 变体                                 | 强制规则                                            |
 | ----------------- | ------------------------------------ | ------------------------------------ | --------------------------------------------------- |
-| `Dialog`          | 确认、短表单和高风险任务             | sm / md / lg / xl                    | 锁定焦点、Escape 关闭、关闭后归还焦点               |
+| `Dialog`          | 确认、短表单和高风险任务             | sm / md / lg / xl                    | 锁定焦点、点遮罩空白 / Escape 关闭、关闭后归还焦点（见 MASTER 6.9） |
 | `DialogWorkspace` | 复杂弹窗内部工作区                   | single / split / triple              | 所有 Tab 共用同一 pane 语法，不在弹窗内再套页面背景 |
 | `DialogPane`      | 复杂弹窗内的侧栏、列表、内容或状态区 | sidebar / content / canvas / scroll  | pane 顺序等于阅读顺序；不为装饰套卡片               |
-| `Drawer`          | 属性、素材库和窄屏侧栏               | left / right / bottom / sm / md / lg | 保留主上下文；继承 Dialog 焦点管理                  |
+| `Drawer`          | 属性、素材库和窄屏侧栏               | left / right / bottom / sm / md / lg | 保留主上下文；继承 Dialog 焦点与关闭行为            |
 | `Tooltip`         | 解释陌生图标或控件                   | top / right / bottom / left          | 深色气泡（无边框）；仅补充信息；键盘聚焦可显示      |
-| `Popover`         | 筛选、颜色、尺寸和短设置             | arrow                                | 打开状态和位置由业务调用方管理                      |
-| `Menu`            | 右键和更多命令                       | item / danger / separator / shortcut | 方向键、Home、End 移动焦点                          |
+| `Popover`         | 筛选、颜色、尺寸和短设置             | arrow                                | 打开状态与位置由调用方管理；关闭统一用 `useDismissableLayer`（点外部 + Escape） |
+| `Menu`            | 右键和更多命令                       | item / danger / separator / shortcut | 点任意处 / Escape 关闭；方向键、Home、End 移动焦点  |
 
 工具提示统一为「深色气泡」视觉：背景 `--ds-color-text`、文字 `--ds-color-text-inverse`、
 圆角 `--ds-radius-md`、无边框。两种渲染方式共用同一视觉，行为统一由 `useTooltip(options?)` 控制：

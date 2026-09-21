@@ -23,6 +23,8 @@ import {
   useStore,
 } from '../store'
 import { useRuntimeStore } from '../stores/runtimeStore'
+import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import { getPromptMentionParts } from '../lib/promptImageMentions'
 import { isLocalImageUrl } from '../lib/localImageUrl'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
@@ -527,6 +529,9 @@ export default function AgentWorkspace() {
   const setSidebarCollapsed = useStore((s) => s.setAgentSidebarCollapsed)
   const desktopSidebarCollapsed = useStore((s) => s.agentDesktopSidebarCollapsed)
   const setDesktopSidebarCollapsed = useStore((s) => s.setAgentDesktopSidebarCollapsed)
+  const desktopViewport = useMediaQuery('(min-width: 1024px)')
+  // 窄屏会话抽屉是一级浮层：补 Esc 关闭（原来只能点遮罩或点会话）。桌面端侧栏常驻，Esc 不参与。
+  useCloseOnEscape(!desktopViewport && !sidebarCollapsed, () => setSidebarCollapsed(true))
   const reorderConversations = useStore((s) => s.reorderAgentConversations)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
   const setAgentMobileHeaderVisible = useStore((s) => s.setAgentMobileHeaderVisible)
@@ -1159,6 +1164,15 @@ export default function AgentWorkspace() {
               >
                 <PlusIcon className="h-4 w-4" />
                 新建对话
+              </button>
+              {/* 窄屏抽屉的显式关闭入口：此前只能点遮罩或点会话关闭（一级浮层应恒有关闭按钮） */}
+              <button
+                type="button"
+                aria-label="关闭会话列表"
+                onClick={() => setSidebarCollapsed(true)}
+                className="grid h-ds-control-md w-ds-control-md shrink-0 place-items-center rounded-ds-lg border border-ds-border text-ds-muted transition-colors hover:bg-ds-subtle hover:text-ds-text lg:hidden"
+              >
+                <CloseIcon className="h-4 w-4" />
               </button>
             </div>
           </div>

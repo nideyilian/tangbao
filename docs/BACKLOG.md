@@ -3365,3 +3365,62 @@ taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本�
 
 - 「产出 N 个文件」在正常路径用的是**变体数**（`result.outputs.length`，双写只记一份），
   而进度里滚动的是**文件数**。两个口径并存，本轮不动（统一会牵到 toast 与任务卡文案）。
+
+---
+
+### TB-085 统一浮层关闭：一级弹窗「点空白 + Esc」、下拉浮层「点外 + Esc」
+
+- **来源**：杰哥 2026-09-21：「统一一级弹窗的关闭交互方式……部分下拉弹窗和一级弹窗只能通过再次点击
+  触发按钮或点击关闭按钮来关闭，造成交互不一致和用户困惑……同时明确下拉弹窗等特殊类型的关闭规则，
+  确保交互逻辑一致、无冲突。」
+- **状态**：DONE · 写线：主写线（与 TB-082~084 的后处理线并行；本轮只碰浮层相关文件）
+- **摸底结论**（逐个核实 30+ 个浮层，其中**推翻了两处误判**，见下）
+  1. 一级弹窗（独立遮罩）**绝大多数早已支持点空白关闭**（部分走共享 `isModalBackdropEvent`，
+     部分手写 `target === currentTarget`）。真正"点空白不关"的只有 `AgentBatchPlannerModal` 内那个
+     「执行方式确认」二级弹窗。
+  2. 用户真正感觉"关不掉、只能再点一次触发按钮"的是**下拉浮层**：`AssetLibraryToolbar` 的
+     筛选 / 排序 / 保存智能文件夹，`FilterControlStrip` 的「+」菜单（只认 `onMouseLeave`），
+     `SettingsModal` 的 API 配置下拉（缺 Esc），`InputBar` 的若干下拉（缺 Esc）。
+  3. 根因：`Popover` / `Menu` 是**纯壳子**（只有样式、没有任何关闭逻辑），每个调用方各写一套 →
+     必然不一致；且 `useCloseOnEscape`（window 上的 escStack）与 `overlayManager`（document 上的
+     overlayStack）**两套 Esc 栈并存**，已有组件只能靠 `stopPropagation` 打补丁。
+  4. 两处误判（本轮核实）：`SopTextEditor` 查找替换**本来就有** Esc + 点外部（两份自写 effect）；
+     `GallerySopBatchModal` 的提示词库右键菜单**本来就有** Esc（capture 阶段抢先）。
+- **改了什么**
+  1. 新增 `src/hooks/useDismissableLayer.ts`：下拉浮层统一关闭（document 级 `pointerdown` capture
+     判"点在外面" + Esc 走 `useCloseOnEscape` 的栈，保证只关最内层）；**排除面板自身与触发按钮**，
+     否则点按钮会「先关再开」闪一下。配 4 例单测。
+  2. 接入：素材库筛选 / 排序 / 保存面板（3 处）、`FilterControlStrip`「+」菜单（**去掉** `onMouseLeave`）、
+     `SopTextEditor` 查找替换（两份自写 effect 收敛到 hook）。
+  3. 补 Esc：`InputBar` 参数下拉 / 输出位置 / 移动端上传来源 / 视觉 Skill 面板、`SettingsModal`
+     API 配置下拉、`ImageContextMenu` 右键菜单。
+  4. 一级浮层：`SopManagementCenter` 补 Esc（此前只有遮罩 + 关闭按钮）；`AgentWorkspace` 窄屏会话抽屉
+     补 Esc + 显式关闭按钮（`lg:hidden`）；`AgentBatchPlannerModal`「执行方式确认」补「点空白返回上一步」
+     + Esc 返回上一步（此前 Esc 会直接把整个工作台关掉，只剩「返回修改」一条退路）。
+  5. `Popover` / `Menu` 增加 `ref` 透传（React 19 ref-as-prop），调用方才能判定"指针是否落在面板内"。
+  6. `useCloseOnEscape` / `useDismissableLayer` 补非浏览器环境守卫 —— node 环境的组件测试没有
+     `window` / `document`，此前会把无关用例整片带红（本轮实际踩到）。
+  7. 规范落地：`MASTER.md` 新增 **§6.9 浮层关闭**（按类型给规则 + 例外），§6.2 的 Escape 行加指针；
+     `COMPONENTS.md` §2.7 的 Dialog / Drawer / Popover / Menu 行补关闭口径。
+- **验收标准**（可测）
+  1. 素材库三个面板：点面板外任意处或按 Esc 关闭；点触发按钮仍正常开合、不闪；
+  2. `FilterControlStrip`「+」菜单：鼠标移开**不再**关闭，点外部 / Esc 关闭；
+  3. 上述每个一级浮层按 Esc 只关自己，不穿透到下层；
+  4. `useDismissableLayer` 单测：面板内点击不关、触发按钮上点击不关、面板外点击关闭、Esc 关闭；
+  5. `compliance` 基线不超（新增 UI 类不得引入旧工具类 —— 本轮新按钮第一版用了 `rounded-lg`，
+     实跑即被基线拦下，已改 `rounded-ds-lg`）。
+- **改动面**：`src/hooks/{useDismissableLayer(新),useCloseOnEscape}`、`src/design-system/overlays.tsx`、
+  `features/assetLibrary/{AssetLibraryToolbar,FilterControlStrip}`、
+  `features/strategy/{SopTextEditor,SopManagementCenter}`、
+  `components/{InputBar,SettingsModal,ImageContextMenu,AgentWorkspace,AgentBatchPlannerModal}`、
+  `design-system/tangbao/{MASTER,COMPONENTS}.md`。
+- **验收证据**：`tsc -b` + `tsc -p electron/tsconfig.json --noEmit` 零错；`eslint .` 与 `prettier --check`
+  通过；定向测试分两批全绿 —— `hooks`+`features/strategy`+`features/assetLibrary`+`design-system`
+  **68 文件 / 1035 例**，`components` **16 文件 / 98 例**（含新增 4 例与 compliance 基线）。
+  ⚠️ **未跑全量 `verify`**：工作区混着另一条写线（TB-082~084）的未提交改动，绿/红都不可信。
+- **明确不做（作为规则登记，非遗漏）**：右键菜单保持「点任意处 / 滚轮关闭」不加遮罩；
+  tooltip / 悬停预览不做点击关闭；遮罩编辑画布（`MaskEditorModal`）刻意不响应点空白（防误关丢未保存
+  改动）；破坏性操作执行中（删除、提交）忽略关闭请求。
+- **遗留（单开一轮）**：`useCloseOnEscape`（window 栈）与 `overlayManager`（document 栈）**两套 Esc 栈
+  尚未合并**。本轮统一的是"谁能关"，"谁先关"在极端嵌套下仍靠 `stopPropagation` 补丁维系
+  （`Select.tsx`、`GallerySopBatchModal` 的提示词库菜单）。合并要动所有手写弹窗，需要一轮完整回归。

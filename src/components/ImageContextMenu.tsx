@@ -12,6 +12,7 @@ import {
 import { suppressGlobalClicks } from '../lib/clickSuppression'
 import { CopyIcon, DownloadIcon, EditIcon } from './icons'
 import { Menu, MenuItem } from '../design-system'
+import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 
 export default function ImageContextMenu() {
   const [menuInfo, setMenuInfo] = useState<{
@@ -27,6 +28,8 @@ export default function ImageContextMenu() {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const menuRef = useRef<HTMLDivElement>(null)
+  // 「点任意处 / 滚轮 / 滚动」关闭已由下面的 window 监听覆盖，这里补 Esc（走全局 Esc 栈，只关最内层）
+  useCloseOnEscape(Boolean(menuInfo), () => setMenuInfo(null))
 
   useEffect(() => {
     if (isEmbeddedPage()) return

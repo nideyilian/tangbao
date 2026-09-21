@@ -35,6 +35,7 @@ import FilterControlStrip from './FilterControlStrip'
 import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
 import { runManualPostprocess, useStore } from '../../store'
 import { useLatestPostprocessRun, useRuntimeStore } from '../../stores/runtimeStore'
+import { useDismissableLayer } from '../../hooks/useDismissableLayer'
 import {
   countPostprocessIssues,
   formatPostprocessRunBadge,
@@ -154,6 +155,23 @@ function AssetLibraryToolbar({
 
   const [filterOpen, setFilterOpen] = useState(false)
   const [sortOpen, setSortOpen] = useState(false)
+  // 筛选 / 排序面板统一关闭：点面板外任意处或 Esc（原来只能再点一次触发按钮）
+  const filterPanelRef = useRef<HTMLDivElement>(null)
+  const filterAnchorRef = useRef<HTMLButtonElement>(null)
+  const sortPanelRef = useRef<HTMLDivElement>(null)
+  const sortAnchorRef = useRef<HTMLButtonElement>(null)
+  useDismissableLayer({
+    enabled: filterOpen,
+    onDismiss: () => setFilterOpen(false),
+    ref: filterPanelRef,
+    anchorRef: filterAnchorRef,
+  })
+  useDismissableLayer({
+    enabled: sortOpen,
+    onDismiss: () => setSortOpen(false),
+    ref: sortPanelRef,
+    anchorRef: sortAnchorRef,
+  })
 
   const activeFilterCount = [
     filters.favoriteOnly,
@@ -238,6 +256,7 @@ function AssetLibraryToolbar({
       <div className="relative">
         <Badge tone={activeFilterCount > 0 ? 'info' : 'neutral'}>
           <button
+            ref={filterAnchorRef}
             type="button"
             className="flex items-center gap-1.5"
             aria-expanded={filterOpen}
@@ -251,7 +270,7 @@ function AssetLibraryToolbar({
           </button>
         </Badge>
         {filterOpen && (
-          <Popover label="素材筛选" className="!absolute left-0 top-full z-dropdown mt-2 w-72">
+          <Popover ref={filterPanelRef} label="素材筛选" className="!absolute left-0 top-full z-dropdown mt-2 w-72">
             <div className="max-h-[28rem] space-y-3 overflow-y-auto p-3">
               <label className="flex items-center justify-between text-xs">
                 <span className="flex items-center gap-1">
@@ -471,6 +490,7 @@ function AssetLibraryToolbar({
       <div className="relative">
         <Badge tone="neutral">
           <button
+            ref={sortAnchorRef}
             type="button"
             className="flex items-center gap-1.5"
             aria-expanded={sortOpen}
@@ -485,7 +505,7 @@ function AssetLibraryToolbar({
           </button>
         </Badge>
         {sortOpen && (
-          <Popover label="素材排序" className="!absolute left-0 top-full z-dropdown mt-2 w-52">
+          <Popover ref={sortPanelRef} label="素材排序" className="!absolute left-0 top-full z-dropdown mt-2 w-52">
             <Menu label="排序方式">
               {SORT_OPTIONS.map((option) => (
                 <MenuItem
@@ -716,6 +736,10 @@ function SaveFilterButton() {
   const addSavedFilter = useAssetLibraryStore((s) => s.addSavedFilter)
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
+  // 保存面板同样支持「点外 / Esc」关闭：原来只能再点一次触发按钮
+  const panelRef = useRef<HTMLDivElement>(null)
+  const anchorRef = useRef<HTMLButtonElement>(null)
+  useDismissableLayer({ enabled: open, onDismiss: () => setOpen(false), ref: panelRef, anchorRef })
 
   const hasActiveCriteria = Boolean(query.trim()) || Object.keys(filters).length > 0 || scope !== 'all'
   if (!hasActiveCriteria) return null
@@ -724,6 +748,7 @@ function SaveFilterButton() {
     <div className="relative">
       <Badge tone="neutral">
         <button
+          ref={anchorRef}
           type="button"
           className="flex items-center gap-1.5"
           aria-expanded={open}
@@ -738,7 +763,7 @@ function SaveFilterButton() {
         </button>
       </Badge>
       {open && (
-        <Popover label="保存智能文件夹" className="!absolute right-0 top-full z-dropdown mt-2 w-60">
+        <Popover ref={panelRef} label="保存智能文件夹" className="!absolute right-0 top-full z-dropdown mt-2 w-60">
           <form
             className="flex items-center gap-2 p-2"
             onSubmit={(event) => {

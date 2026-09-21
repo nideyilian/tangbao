@@ -39,6 +39,7 @@ import { resolveInitialSopGroupId } from './sopInitialGroup'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { isModalBackdropEvent } from '../../lib/modalBackdrop'
 import { useAppDialog } from '../../hooks/useAppDialog'
+import { useCloseOnEscape } from '../../hooks/useCloseOnEscape'
 import { LARGE_MODAL_SIZE_STYLE, useLargeModalMode } from '../../hooks/useLargeModalMode'
 import LargeModalToggle from '../../components/LargeModalToggle'
 import AssetPickerModal from '../assetLibrary/AssetPickerModal'
@@ -526,6 +527,10 @@ export default function SopManagementCenter({
     // 生成运行中同样允许关闭：生成在后台继续，完成后右下角提示。
     runAfterUnsavedConfirmation(onClose)
   }
+
+  // 一级弹窗统一关闭：点遮罩空白早已能关（见 1415 的 isModalBackdropEvent），这里补上 Esc。
+  // 组件由父级条件渲染，渲染即打开；子弹窗（封面选择等）后挂载、在 Esc 栈顶，不会被打扰。
+  useCloseOnEscape(true, closeSafely)
 
   const selectItem = (item: SopLibraryItem) => {
     if (item.id === selectedItemId) {

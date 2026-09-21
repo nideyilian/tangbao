@@ -16,6 +16,7 @@ import { transformSopDocument, type SopAiOperation } from '../../lib/agentApi'
 import { getAgentTextApiProfile, validateApiProfile } from '../../lib/apiProfiles'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../../lib/clipboard'
 import { useStore } from '../../store'
+import { useDismissableLayer } from '../../hooks/useDismissableLayer'
 import { autoParagraphSopText, cleanPastedSopText, formatSopDocument } from './sopTextFormatting'
 import { parseElementPool } from './elementPool'
 import SopAiRevisionPanel from './SopAiRevisionPanel'
@@ -154,15 +155,17 @@ export default function SopTextEditor({
   const [aiError, setAiError] = useState('')
   const [aiResult, setAiResult] = useState<AiResultState | null>(null)
   const [findReplaceOpen, setFindReplaceOpen] = useState(false)
-
-  useEffect(() => {
-    if (!findReplaceOpen) return
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setFindReplaceOpen(false)
-    }
-    document.addEventListener('keydown', handleEscape)
-    return () => document.removeEventListener('keydown', handleEscape)
-  }, [findReplaceOpen])
+  /**
+   * 查找替换面板的统一关闭：点面板外任意处或 Esc。
+   * `findReplaceRef` 指向含触发按钮的外层容器（`.sop-center-editor-search`），
+   * 所以点触发按钮不会被判成"点在外面"，不需要额外的 anchor 排除。
+   * （原为两份自写 effect —— 一份 keydown、一份 mousedown，收敛到共享 hook。）
+   */
+  useDismissableLayer({
+    enabled: findReplaceOpen,
+    onDismiss: () => setFindReplaceOpen(false),
+    ref: findReplaceRef,
+  })
 
   /** 正文是否为「层级式元素池」多变体 SOP（影响可用指令集） */
   const elementPool = useMemo(() => parseElementPool(value), [value])
@@ -202,15 +205,6 @@ export default function SopTextEditor({
   }, [documentId])
 
   useEffect(() => () => aiAbortRef.current?.abort(), [])
-
-  useEffect(() => {
-    if (!findReplaceOpen) return
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (!findReplaceRef.current?.contains(event.target as Node)) setFindReplaceOpen(false)
-    }
-    document.addEventListener('mousedown', closeOnOutsideClick)
-    return () => document.removeEventListener('mousedown', closeOnOutsideClick)
-  }, [findReplaceOpen])
 
   function syncHistoryState() {
     setHistoryState({

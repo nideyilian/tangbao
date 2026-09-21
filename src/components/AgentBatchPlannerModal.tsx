@@ -143,6 +143,12 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
   const [executing, setExecuting] = useState(false)
   const [submitted, setSubmitted] = useState(0)
   const [pendingExecution, setPendingExecution] = useState<'immediate' | 'scheduled' | null>(null)
+  /**
+   * 「执行方式确认」二级弹窗的统一关闭：点空白 / Esc 都回到上一步。
+   * 此前它既不能点空白关、Esc 又会直接把整个工作台关掉，只剩「返回修改」一条退路。
+   * 本 hook 在 `pendingExecution` 变非空时才入栈，因此始终位于外层工作台之上（Esc 只关它）。
+   */
+  useCloseOnEscape(pendingExecution !== null, () => setPendingExecution(null))
   const [queues, setQueues] = useState<AgentBatchQueue[]>(() => loadAgentBatchQueues())
 
   useEffect(() => {
@@ -1325,7 +1331,14 @@ export default function AgentBatchPlannerModal({ onClose }: { onClose: () => voi
         </div>
       </div>
       {pendingExecution && plan && (
-        <div className="absolute inset-0 flex items-center justify-center bg-ds-scrim/0.48 p-4">
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-ds-scrim/0.48 p-4"
+          // 点空白 = 返回修改（与其它一级/二级弹窗一致）。用 mousedown 而不是 click：
+          // 在弹窗内拖选文字、松手落在遮罩上时不该被当成"点了外面"。
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingExecution(null)
+          }}
+        >
           <div className="ds-modal-surface w-full max-w-lg rounded-ds-xl p-5">
             <h3 className="text-lg font-semibold text-ds-text dark:text-white">
               确认{pendingExecution === 'immediate' ? '立即执行' : '按日自动执行'}

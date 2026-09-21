@@ -940,6 +940,8 @@ export default function SettingsModal() {
   const [agentTimeoutInput, setAgentTimeoutInput] = useState(String(settings.agentProfile.timeout))
   const [showApiKey, setShowApiKey] = useState(false)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
+  // API 配置下拉：点外部已能关（见 1368 的 pointerdown 监听），这里补 Esc，与其它下拉一致
+  useCloseOnEscape(showProfileMenu, () => setShowProfileMenu(false))
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
   const [showZipDownloadRouteManager, setShowZipDownloadRouteManager] = useState(false)

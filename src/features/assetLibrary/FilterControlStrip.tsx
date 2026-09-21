@@ -1,8 +1,9 @@
-import { memo, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import type { AssetLibraryFilters, FilterControlKey } from '../../types'
 import { CheckIcon, PlusIcon } from '../../design-system/icons'
 import { COLOR_LABEL_OPTIONS } from './colorLabels'
 import { useAssetLibraryStore } from './store'
+import { useDismissableLayer } from '../../hooks/useDismissableLayer'
 
 /**
  * 顶部工具栏筛选控件条：用户通过「+」菜单自主选择把哪些「整个筛选参数（维度）」
@@ -46,6 +47,15 @@ function FilterControlStrip({ providerOptions = [] }: FilterControlStripProps) {
   const visibleControls = useAssetLibraryStore((s) => s.visibleFilterControls)
   const setVisibleFilterControls = useAssetLibraryStore((s) => s.setVisibleFilterControls)
   const [menuOpen, setMenuOpen] = useState(false)
+  // 「+」菜单统一关闭：点菜单外任意处或 Esc（原来只有「鼠标移开菜单才关」，移到别处就失灵）
+  const menuRef = useRef<HTMLDivElement>(null)
+  const addAnchorRef = useRef<HTMLButtonElement>(null)
+  useDismissableLayer({
+    enabled: menuOpen,
+    onDismiss: () => setMenuOpen(false),
+    ref: menuRef,
+    anchorRef: addAnchorRef,
+  })
 
   const patchFilters = (patch: Partial<AssetLibraryFilters>) => {
     setFilters({ ...filters, ...patch })
@@ -262,6 +272,7 @@ function FilterControlStrip({ providerOptions = [] }: FilterControlStripProps) {
       {/* 「+」菜单：自主选择放出的筛选项（维度） */}
       <div className="relative shrink-0">
         <button
+          ref={addAnchorRef}
           type="button"
           aria-label="添加筛选项"
           aria-expanded={menuOpen}
@@ -274,11 +285,11 @@ function FilterControlStrip({ providerOptions = [] }: FilterControlStripProps) {
         </button>
         {menuOpen && (
           <div
+            ref={menuRef}
             role="menu"
             aria-label="添加筛选项"
             data-testid="filter-control-add-menu"
             className="absolute right-0 top-full z-dropdown mt-1 w-40 rounded-md border border-ds-border bg-ds-surface p-1 shadow-lg"
-            onMouseLeave={() => setMenuOpen(false)}
           >
             {CONTROL_OPTIONS.map((option) => {
               const checked = visible.has(option.key)
