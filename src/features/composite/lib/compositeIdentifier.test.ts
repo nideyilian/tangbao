@@ -15,6 +15,7 @@ function presetWithLayers(layers: CompositeV2Preset['layers']): CompositeV2Prese
   return {
     id: 'p1',
     name: '测试水印',
+    productId: '',
     baseCanvas: { width: 1080, height: 1920 },
     sampleBackgroundPath: '',
     layers,

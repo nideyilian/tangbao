@@ -67,6 +67,7 @@ function makeInput(overrides: Partial<ConsoleExportInput> = {}): ConsoleExportIn
       {
         id: 'preset-global',
         name: '角标A',
+        productId: '',
         baseCanvas: { width: 1280, height: 720 },
         sampleBackgroundPath: 'D:/bg.png',
         layers: [

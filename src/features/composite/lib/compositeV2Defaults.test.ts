@@ -6,6 +6,8 @@ describe('composite v2 defaults', () => {
     expect(createDefaultCompositeV2Preset(1)).toEqual({
       id: 'preset-default',
       name: '默认产品预设',
+      // 出厂预设不带产品：水印库按产品隔离，它落在「未分配」区，用户选一个产品后一键归过去
+      productId: '',
       baseCanvas: { width: 1280, height: 720 },
       sampleBackgroundPath: '',
       layers: [],

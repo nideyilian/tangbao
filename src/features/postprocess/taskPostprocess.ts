@@ -60,6 +60,8 @@ const UNLIMITED_QUALITY = 0.92
 const PLAIN_PRESET: CompositeV2Preset = {
   id: 'postprocess-no-watermark',
   name: '后处理（无水印）',
+  // 工具预设，不落库也不进任何产品的库：归属留空即可
+  productId: '',
   baseCanvas: { width: 1, height: 1 },
   sampleBackgroundPath: '',
   layers: [],

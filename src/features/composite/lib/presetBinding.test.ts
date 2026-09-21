@@ -3,7 +3,15 @@ import type { CompositeV2Preset } from './compositeV2Types'
 import { bindPresetToNode, summarizeBoundPresets, unbindPresetFromNode } from './presetBinding'
 
 function preset(id: string, name = id): CompositeV2Preset {
-  return { id, name, baseCanvas: { width: 1, height: 1 }, sampleBackgroundPath: '', layers: [], updatedAt: 0 }
+  return {
+    id,
+    name,
+    productId: '',
+    baseCanvas: { width: 1, height: 1 },
+    sampleBackgroundPath: '',
+    layers: [],
+    updatedAt: 0,
+  }
 }
 
 describe('bindPresetToNode', () => {

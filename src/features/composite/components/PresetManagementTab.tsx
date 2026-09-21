@@ -7,7 +7,7 @@ import {
   PlusIcon as Plus,
   TrashIcon as Trash2,
 } from '../../../design-system/icons'
-import { filterPresetsByQuery } from '../lib/compositePresetLibrary'
+import { filterPresetsByProduct, filterPresetsByQuery, filterUnassignedPresets } from '../lib/compositePresetLibrary'
 import type { CompositeFsImage } from '../lib/compositeTypes'
 import {
   dataUrlToCompositeBlob,
@@ -34,9 +34,10 @@ import {
   type PresetImportPlan,
 } from '../lib/compositePresetTransfer'
 import { bindPresetToNode } from '../lib/presetBinding'
+import { runPresetProductMigration } from '../presetProductMigrationRunner'
 import { useCompositeV2Store } from '../storeV2'
 import { useStore } from '../../../store'
-import { resolveNodeWatermarkBinding } from '../../projectTree/params'
+import { resolveNodeWatermarkBinding, resolveOwningProductId } from '../../projectTree/params'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
@@ -87,13 +88,36 @@ export function PresetManagementTab() {
   const scopeName = isGlobal ? '全局默认' : (collections.find((item) => item.id === scope)?.name ?? '全局默认')
 
   /**
-   * 全局默认没有渠道这一层：切过去时把渠道选择归位。
+   * 当前作用域所属的**产品**：水印库按产品隔离，这个值决定「现在看的是哪个产品的库」。
+   *
+   * - 产品节点 → 它自己；
+   * - 方向（及更深）→ 往上取第二级；
+   * - 产品线 / 全局默认 → `null`。
+   *
+   * 后两种没有「自己的库」：水印是产品的资产，在这两层既没有归属对象、也没有可勾的清单
+   * （`byMedia` 那一层在数据上就不存在），所以界面直接给一句「先选一个产品」，
+   * 而不是把下辖所有产品的水印堆在一起 —— 那正是改版前「分不清谁是谁」的根源。
+   */
+  const productId = useMemo(
+    () => (isGlobal ? null : resolveOwningProductId(collections, scope)),
+    [collections, scope, isGlobal],
+  )
+  const productName = productId ? (collections.find((item) => item.id === productId)?.name ?? '') : ''
+  const hasProduct = Boolean(productId)
+
+  /** 一次性迁移（幂等）：把 v6 的全局 / 产品线级清单摊到产品，并按现有归属推断每套水印归谁。 */
+  useEffect(() => {
+    runPresetProductMigration()
+  }, [])
+
+  /**
+   * 没有产品这一层时把渠道选择归位。
    * 否则从「方向A + 头条」切到全局再切回某个方向，会停在一个上次用过的渠道上 ——
    * 而用户的心智是「刚进来看的应该是这个方向的通用值」。
    */
   useEffect(() => {
-    if (isGlobal) setMediaScope(null)
-  }, [isGlobal])
+    if (!hasProduct) setMediaScope(null)
+  }, [hasProduct])
 
   const activeMedia = mediaScope ? media.find((item) => item.id === mediaScope) : undefined
   const mediaName = activeMedia?.name ?? ''
@@ -146,7 +170,7 @@ export function PresetManagementTab() {
    * 两者在数据层是**同层**关系（渠道值优先于本级通用值），所以一次只动一格。
    */
   const writePresetIds = (nextIds: string[]) => {
-    if (isGlobal) return
+    if (!hasProduct) return
     if (mediaScope) setPostprocessOverride(scope, { byMedia: { [mediaScope]: { watermarkPresetIds: nextIds } } })
     else setPostprocessOverride(scope, { watermarkPresetIds: nextIds })
   }
@@ -158,7 +182,7 @@ export function PresetManagementTab() {
    * 会把继承来的其余水印静默丢掉——症状是「我只想减一个，结果另外两个也没了」。
    */
   const togglePresetEnabled = (presetId: string) => {
-    if (isGlobal) return
+    if (!hasProduct) return
     const next = effectivePresetIds.includes(presetId)
       ? effectivePresetIds.filter((id) => id !== presetId)
       : [...effectivePresetIds, presetId]
@@ -172,7 +196,7 @@ export function PresetManagementTab() {
    * 以后改上层就再也影响不到这里（与「输出位置」分区的「恢复继承」同一个口径）。
    */
   const resetCurrentScope = () => {
-    if (isGlobal) return
+    if (!hasProduct) return
     if (mediaScope) {
       setPostprocessOverride(scope, { byMedia: { [mediaScope]: { watermarkPresetIds: undefined } } })
       useStore.getState().showToast(`「${scopeName}」在${mediaName}已改回跟随通用`, 'success')
@@ -182,9 +206,21 @@ export function PresetManagementTab() {
     useStore.getState().showToast(`「${scopeName}」已改回跟随上级`, 'success')
   }
 
+  /**
+   * 把「未分配」的水印归到当前产品。
+   *
+   * 只改归属这一个字段：归过去之后它就落在本产品的库里，是否启用由产品 / 方向层自己决定 ——
+   * 与「在这个库里新建一套」的后续行为完全一致，不额外替用户勾上或取消。
+   */
+  const assignUnassigned = (presetIds: string[]) => {
+    if (!hasProduct || presetIds.length === 0) return
+    store.assignPresetsToProduct(presetIds, productId ?? '')
+    useStore.getState().showToast(`已归到「${productName}」`, 'success')
+  }
+
   /** 库栏副标题：这一勾会落到哪一层，以及没写过的值是从哪儿来的。 */
-  const scopeHint = isGlobal
-    ? '先在左侧项目树选一个方向，再逐套开关'
+  const scopeHint = !hasProduct
+    ? '水印属于产品 —— 先在左侧选一个产品，再逐套开关'
     : inheritedFromName
       ? `继承自「${inheritedFromName}」· 改动即在${mediaScope ? `本方向的${mediaName}` : '本范围'}单独生效`
       : `勾选 = 「${scopeName}」${mediaScope ? `在${mediaName} ` : ''}用这套水印`
@@ -232,11 +268,28 @@ export function PresetManagementTab() {
     }
   }, [store.projectLogos])
 
-  const visiblePresets = useMemo(() => filterPresetsByQuery(store.presets, query), [query, store.presets])
-  const activePreset = store.presets.find((preset) => preset.id === store.selectedPreviewPresetId) ?? null
+  /** 本产品的库（**不含**搜索过滤）：画布的「当前预设」在这一层找，所以搜到看不见也不会把画布清空。 */
+  const libraryPresets = useMemo(
+    () => filterPresetsByProduct(store.presets, productId ?? ''),
+    [store.presets, productId],
+  )
+  const visiblePresets = useMemo(() => filterPresetsByQuery(libraryPresets, query), [query, libraryPresets])
+  /** 未分配的（不属于任何产品的库）：列在下方，可一键归到当前产品，否则它会永远用不上。 */
+  const unassignedPresets = useMemo(
+    () => (hasProduct ? filterPresetsByQuery(filterUnassignedPresets(store.presets), query) : []),
+    [hasProduct, store.presets, query],
+  )
+  /**
+   * 画布上的当前预设**只在当前产品的库里找**。
+   *
+   * 两个后果都是有意的：① 搜索把当前这套滤掉时画布照旧显示它（改版前就是这行为）；
+   * ② 切到另一个产品时它自动让位给新产品的第一套 —— 否则画布上会一直停着上一个产品的水印，
+   * 而左栏列表里根本没有它，看起来像「选中的东西不见了」。
+   */
+  const activePreset = libraryPresets.find((preset) => preset.id === store.selectedPreviewPresetId) ?? null
   useEffect(() => {
-    if (!activePreset && visiblePresets[0]) setSelectedPreviewPresetId(visiblePresets[0].id)
-  }, [activePreset, setSelectedPreviewPresetId, visiblePresets])
+    if (!activePreset && libraryPresets[0]) setSelectedPreviewPresetId(libraryPresets[0].id)
+  }, [activePreset, libraryPresets, setSelectedPreviewPresetId])
 
   useEffect(() => {
     if (!activePreset?.layers.some((layer) => layer.id === selectedLayerId)) {
@@ -378,9 +431,12 @@ export function PresetManagementTab() {
    * （2026-09-21 改版），勾选与导出不再是同一件事，绑在一起会让人以为「勾上 = 要导出」。
    */
   async function handleExportPresets() {
-    const targets = store.presets
+    if (!hasProduct) return
+    // 只导**当前产品**的库：按产品隔离之后，把别产品的水印一起导出去没有意义 ——
+    // 接收方导入时会被归到他自己选的当前产品下，等于把两个产品的水印搅在一起。
+    const targets = libraryPresets
     if (targets.length === 0) {
-      useStore.getState().showToast('水印库是空的，没有可导出的水印', 'info')
+      useStore.getState().showToast(`「${productName}」的水印库是空的，没有可导出的水印`, 'info')
       return
     }
     const bindings = collectPresetBindings({
@@ -437,7 +493,10 @@ export function PresetManagementTab() {
   }
 
   async function applyImport(plan: PresetImportPlan) {
-    const presets = await restorePresetAssets(plan.presets)
+    const restored = await restorePresetAssets(plan.presets)
+    // 文件里的 `productId` 是**导出方机器上的产品 id**，在本机根本不存在。不改写的话这套水印会
+    // 归到一个查无此人的产品下 —— 既不在任何产品的库、也不在「未分配」区，导入完就消失了。
+    const presets = restored.map((preset) => ({ ...preset, productId: productId ?? '' }))
     store.mergeImportedPresets(presets)
     for (const binding of plan.bindings) {
       // 每次都取最新 params：循环里连写多条，用闭包里的旧值会把前一条覆盖掉
@@ -512,7 +571,9 @@ export function PresetManagementTab() {
       >
         <header className="flex items-center justify-between border-b border-ds-border px-3 py-2 dark:border-ds-border shrink-0">
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">水印库</h2>
+            {/* 标题带上产品名：库按产品隔离后，「这是谁的库」必须一眼可见 ——
+                只写「水印库」的话，切产品时列表内容整批换掉而标题不变，看起来像同一批水印在变魔术。 */}
+            <h2 className="truncate text-sm font-semibold">{hasProduct ? `水印库 · ${productName}` : '水印库'}</h2>
             {/* 副标题写清这一勾落到哪一层、没写过的值是从哪儿来的 —— 不写的话
                 「库里显示的那几套」会被当成「本范围的设置」，而它可能只是从产品继承来的。 */}
             <p className="truncate text-xs text-ds-muted" title={scopeHint}>
@@ -522,30 +583,33 @@ export function PresetManagementTab() {
           <div className="flex shrink-0 items-center gap-0.5">
             <button
               type="button"
-              title="导入水印预设文件"
+              title={hasProduct ? '导入水印预设文件' : '先在左侧选一个产品'}
               aria-label="导入水印预设文件"
+              disabled={!hasProduct}
               onClick={() => void handleImportPresets()}
-              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md text-ds-muted hover:bg-ds-subtle hover:text-ds-primary dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
+              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md text-ds-muted hover:bg-ds-subtle hover:text-ds-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:pointer-events-none dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
             >
               <ImportIcon className="h-4 w-4" />
             </button>
             <button
               type="button"
-              title="导出水印预设到文件"
+              title={hasProduct ? '导出水印预设到文件' : '先在左侧选一个产品'}
               aria-label="导出水印预设到文件"
+              disabled={!hasProduct}
               onClick={() => void handleExportPresets()}
-              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md text-ds-muted hover:bg-ds-subtle hover:text-ds-primary dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
+              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md text-ds-muted hover:bg-ds-subtle hover:text-ds-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:pointer-events-none dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
             >
               <ExportIcon className="h-4 w-4" />
             </button>
             <button
               type="button"
-              title="新建预设"
+              title={hasProduct ? `在「${productName}」下新建水印` : '先在左侧选一个产品'}
+              disabled={!hasProduct}
               onClick={() => {
-                store.createPreset('新预设')
-                useStore.getState().showToast('已创建预设', 'success')
+                store.createPreset('新预设', productId ?? '')
+                useStore.getState().showToast(`已创建水印（归属「${productName}」）`, 'success')
               }}
-              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md border border-ds-border dark:border-ds-border hover:bg-ds-subtle dark:hover:bg-ds-subtle"
+              className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md border border-ds-border hover:bg-ds-subtle disabled:cursor-not-allowed disabled:opacity-40 disabled:pointer-events-none dark:border-ds-border dark:hover:bg-ds-subtle"
             >
               <Plus className="h-4 w-4" />
             </button>
@@ -555,10 +619,11 @@ export function PresetManagementTab() {
           {/*
            * 生效范围：决定下面那些勾选写进「本范围的通用水印」还是「某个渠道单独的水印」。
            *
-           * 全局默认下整块不渲染 —— 全局基线只有一套、数据层就没有 `byMedia` 这一层，
-           * 摆一排点不动的渠道只会让人以为「全局也能按渠道配，只是现在锁着」。
+           * 没有产品这一层（产品线 / 全局默认）时整块不渲染 —— 那时界面主体是
+           * 「先选一个产品」，数据层也没有 `byMedia` 这一层，摆一排点不动的渠道
+           * 只会让人以为「这里也能按渠道配，只是现在锁着」。
            */}
-          {!isGlobal && (
+          {hasProduct && (
             <div
               data-layout="preset-scope-switch"
               className="space-y-1 border-b border-ds-border pb-2 dark:border-ds-border"
@@ -661,8 +726,15 @@ export function PresetManagementTab() {
           </div>
         </div>
         <div className="flex-1 overflow-y-auto space-y-0.5 px-2 pb-2">
-          {visiblePresets.length === 0 && (
-            <p className="px-2 py-3 text-xs text-ds-muted">没有匹配的水印。点右上角 + 新建一个。</p>
+          {!hasProduct && (
+            <p className="px-2 py-3 text-xs text-ds-muted">
+              水印库按产品分开管理。在左侧项目树里选中一个产品（或它下面的方向），这里就会列出那个产品自己的水印。
+            </p>
+          )}
+          {hasProduct && visiblePresets.length === 0 && (
+            <p className="px-2 py-3 text-xs text-ds-muted">
+              {query ? '没有匹配的水印。' : `「${productName}」还没有水印。点右上角 + 新建一个。`}
+            </p>
           )}
           {visiblePresets.map((preset) => (
             <div
@@ -691,22 +763,15 @@ export function PresetManagementTab() {
                 <div className="flex items-center gap-2">
                   {/* 勾选 = **当前范围启用这套水印**（2026-09-21 改版后的唯一归属入口）。
                       原先它兼着「选几个再拖到归属树上」的批量语义，归属树退役后拖拽目标
-                      已不存在，勾选框回归它本来的意思。全局默认下禁用——全局基线是各方向的
-                      兜底值，在前端没有写入点，给一个点了没反应的控件比不给更糟。 */}
+                      已不存在，勾选框回归它本来的意思。
+                      库按产品隔离后，能出现在这里的只有当前作用域那个产品的水印
+                      （见 `libraryPresets`），所以「勾 A 产品的水印」在物理上就不可能落到 B 产品上。 */}
                   <Checkbox
                     checked={isPresetEnabled(preset.id)}
-                    disabled={isGlobal}
+                    disabled={!hasProduct}
                     onChange={() => togglePresetEnabled(preset.id)}
-                    aria-label={
-                      isGlobal
-                        ? `「${preset.name}」的启用在方向层设置`
-                        : `${isPresetEnabled(preset.id) ? '停用' : '启用'}「${preset.name}」${mediaScope ? `（${mediaName}）` : ''}`
-                    }
-                    title={
-                      isGlobal
-                        ? '全局默认是各方向的兜底值，先在左侧项目树选一个方向，再逐套开关'
-                        : `写进：${scopeName} · ${mediaScope ? mediaName : '通用'}`
-                    }
+                    aria-label={`${isPresetEnabled(preset.id) ? '停用' : '启用'}「${preset.name}」${mediaScope ? `（${mediaName}）` : ''}`}
+                    title={`写进：${scopeName} · ${mediaScope ? mediaName : '通用'}`}
                     className="shrink-0"
                   />
                   <button
@@ -759,6 +824,51 @@ export function PresetManagementTab() {
               )}
             </div>
           ))}
+
+          {/*
+           * 未分配区：v7 之前水印库是全局一批，升级后「没有任何产品的方向勾过它」的那些水印
+           * 就没有归属。它们不属于任何产品的库，但**不能就这么消失** —— 产出链路按 id 全局找预设，
+           * 照样会用它，而界面上哪儿都看不见（这种「生成图带了水印、库里却查不到」最难排查）。
+           * 这里给一个显式出口：看得见、能归到当前产品。
+           */}
+          {unassignedPresets.length > 0 && (
+            <div
+              data-layout="preset-unassigned"
+              className="mt-2 space-y-0.5 border-t border-ds-border pt-2 dark:border-ds-border"
+            >
+              <div className="flex items-center justify-between gap-2 px-2">
+                <span className="text-xs font-medium text-ds-muted dark:text-ds-muted">
+                  未分配（{unassignedPresets.length}）
+                </span>
+                <button
+                  type="button"
+                  onClick={() => assignUnassigned(unassignedPresets.map((preset) => preset.id))}
+                  className="shrink-0 cursor-pointer text-xs text-ds-muted underline-offset-2 hover:text-ds-primary hover:underline dark:text-ds-muted dark:hover:text-ds-primary"
+                >
+                  全部归到「{productName}」
+                </button>
+              </div>
+              <p className="px-2 text-xs text-ds-muted dark:text-ds-muted">
+                这些水印不属于任何产品，所以哪个产品的库里都不会列出它们。归到当前产品后即可勾选使用。
+              </p>
+              {unassignedPresets.map((preset) => (
+                <div key={preset.id} className="flex items-center gap-2 px-2 py-1">
+                  <span className="min-w-0 flex-1 truncate text-ds-sm text-ds-text dark:text-ds-text-subtle">
+                    {preset.name}
+                  </span>
+                  {/* 文字链接风格，与上面那排「跟随上级 / 跟随通用」一致 ——
+                      这一区是次要动作，配个带边框的按钮反而比主列表更抢眼 */}
+                  <button
+                    type="button"
+                    onClick={() => assignUnassigned([preset.id])}
+                    className="shrink-0 cursor-pointer text-xs text-ds-muted underline-offset-2 hover:text-ds-primary hover:underline dark:text-ds-muted dark:hover:text-ds-primary"
+                  >
+                    归到「{productName}」
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

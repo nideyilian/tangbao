@@ -25,10 +25,11 @@ function collection(id: string, name: string, parentId: string | null = null): A
   }
 }
 
-function preset(id: string, name: string): CompositeV2Preset {
+function preset(id: string, name: string, productId = ''): CompositeV2Preset {
   return {
     id,
     name,
+    productId,
     baseCanvas: { width: 1080, height: 1920 },
     sampleBackgroundPath: '',
     layers: [],

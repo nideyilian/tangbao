@@ -82,6 +82,23 @@ export function resolveProjectNodePathNames(
 }
 
 /**
+ * 某个节点**所属的产品**（项目树第二级）id。
+ *
+ * - 产品节点 → 自己（路径第 2 段的 id 就是它）；
+ * - 方向及更深 → 往上取第二级；
+ * - 产品线（路径只有一段）/ 不存在的 id / 空 id → `null`。
+ *
+ * **水印库按产品隔离**后，「现在该看谁的库」全工作区只走这一个函数 —— 界面过滤与
+ * 存量数据的一次性归属推断共用一份实现。各写一遍遍历的话，迟早在「产品线层算不算」
+ * 或「回收站节点怎么办」这类细节上分叉，而分叉的症状只是「某几个方向的水印莫名少一套」。
+ */
+export function resolveOwningProductId(collections: AssetCollection[], collectionId: string | null): string | null {
+  if (!collectionId) return null
+  const path = resolveCollectionPath(collections, collectionId)
+  return path[1]?.id ?? null
+}
+
+/**
  * 从一张图的若干归属 id 里挑出「最具体」的那个（层级最深）作为它的方向归属。
  *
  * 素材可以同时挂在产品线和方向上（自动归档是**追加** collectionIds，不是替换），

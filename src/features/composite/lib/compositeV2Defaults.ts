@@ -11,6 +11,9 @@ export function createDefaultCompositeV2Preset(now = Date.now()): CompositeV2Pre
   return {
     id: 'preset-default',
     name: '默认产品预设',
+    // 出厂预设不预设产品：水印库按产品隔离，这一套会落在「未分配」区，
+    // 用户在左侧选一个产品后一键归过去即可（新建产品时不去猜他想要哪个产品）。
+    productId: '',
     baseCanvas: { width: 1280, height: 720 },
     sampleBackgroundPath: '',
     layers: [],

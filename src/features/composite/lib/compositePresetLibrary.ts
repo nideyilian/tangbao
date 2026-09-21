@@ -57,3 +57,31 @@ export function filterPresetsByQuery(presets: CompositeV2Preset[], query: string
   if (!keyword) return presets
   return presets.filter((preset) => preset.name.toLowerCase().includes(keyword))
 }
+
+/**
+ * 产品 id 归一化：只认去空白后的非空字符串，其余（`undefined` / `null` / 数字 / 空白）一律算**未分配**。
+ *
+ * 迁移、store 写入、界面过滤三处共用这一份 —— 各写一遍的话，某处把 `"   "` 当成了产品 id，
+ * 那套水印就会既不属于任何产品的库、又不在「未分配」区，谁都看不见也删不掉。
+ */
+export function normalizePresetProductId(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * 取某个产品的库。
+ *
+ * `productId` 为空串时**返回空数组**而不是「全部」：未分配的预设不属于任何产品，
+ * 「没选产品」这个状态有自己的界面（提示先选产品），拿它当通配会让隔离形同虚设 ——
+ * 选到产品线层就能看见所有产品的水印，正是这次要治的问题。
+ */
+export function filterPresetsByProduct(presets: CompositeV2Preset[], productId: string): CompositeV2Preset[] {
+  const id = normalizePresetProductId(productId)
+  if (!id) return []
+  return presets.filter((preset) => normalizePresetProductId(preset.productId) === id)
+}
+
+/** 取出全部未分配的预设（老数据第一次升级后、或用户主动摘出来的那些）。 */
+export function filterUnassignedPresets(presets: CompositeV2Preset[]): CompositeV2Preset[] {
+  return presets.filter((preset) => normalizePresetProductId(preset.productId) === '')
+}

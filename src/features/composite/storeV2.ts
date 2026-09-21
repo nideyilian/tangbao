@@ -5,6 +5,15 @@
  * 分发、输出规则、历史记录、自定义命名变量）。编排已统一到 `features/postprocess`
  * 那一套，本 store 只保留前者。
  *
+ * ⚠️ **水印库按产品隔离**（2026-09-21）：`presets` 仍是**一个扁平数组**，隔离靠每条的
+ * `productId` 字段 + 界面上按产品的过滤（`filterPresetsByProduct`），
+ * **不是** `Record<productId, presets[]>`。选扁平 + 标签而不是分桶，理由有三个：
+ * ① 归属引用（`params[节点].postprocess.watermarkPresetIds`）存的是 **preset id**，
+ *    分桶后「这套预设现在在哪个桶里」要多一层查找，且搬桶就是换 id，引用会集体失效；
+ * ② 撤销快照 / 导入导出 / 资产引用扫描（`compositeAssets.ts`）都在遍历这一份数组，
+ *    分桶等于把这几条链路全部改一遍，收益却一样；
+ * ③ id 全局唯一本来就保证了「不会张冠李戴」，隔离要解决的是**看与选**，不是 id 冲突。
+ *
  * 持久化：localStorage（`tangbao-composite-v2-workspace-storage`）。
  * version 3 → 4：编排字段（预设的输出目录、命名模板、自定义变量、渠道尺寸覆盖）随 A 套退役。
  * version 4 → 5：**预设组**退役。它当时唯一的作用是给左栏库做筛选，与归属/产出零关系，
@@ -15,6 +24,7 @@ import { create } from 'zustand'
 import { createStore } from 'zustand/vanilla'
 import { persist } from 'zustand/middleware'
 import { createPreviewHistory } from './lib/compositeBackgrounds'
+import { normalizePresetProductId } from './lib/compositePresetLibrary'
 import { createDefaultCompositeV2State } from './lib/compositeV2Defaults'
 import { createDefaultIdentifier, normalizeIdentifier } from './lib/compositeIdentifier'
 import { fitCompositeTextLayer } from './lib/compositeTextLayout'
@@ -62,6 +72,21 @@ type CompositeV2UndoState = {
   canRedo: boolean
 }
 
+/**
+ * store 自己的记账字段（不属于水印数据模型，但必须跟着持久化走）。
+ */
+type CompositeV2LocalState = {
+  /**
+   * 「按现有归属推断水印归属产品」这次迁移跑过的版本号；0 = 没跑过。见
+   * `lib/compositePresetProductMigration.ts`。
+   *
+   * **必须留这个标记**：迁移的输入是「哪个产品下的方向勾了这套水印」，而
+   * **未分配是合法状态**（用户能主动把水印摘出产品）。没有标记的话，用户摘出来的水印
+   * 会在下次启动被「自动收回」——最难查的那类「我明明删了，它自己又回来了」。
+   */
+  presetProductMigrationVersion: number
+}
+
 type CompositeV2StoreActions = {
   undo: () => void
   redo: () => void
@@ -82,9 +107,22 @@ type CompositeV2StoreActions = {
   pushPreviewBackground: (path: string) => void
   previousPreviewBackground: () => void
   nextPreviewBackground: () => void
-  createPreset: (name: string) => void
+  createPreset: (name: string, productId: string) => void
   deletePreset: (presetId: string) => void
   duplicatePreset: (presetId: string) => void
+  /**
+   * 把预设改归到某个产品（空串 = 摘成「未分配」）。
+   *
+   * 两个使用者：① 启动时按现有归属推断产品的一次性迁移；② 界面上「未分配」区的一键指派。
+   */
+  assignPresetProduct: (presetId: string, productId: string) => void
+  /**
+   * 批量指派（产品被删时把它的水印摘成未分配、或一次性收编一批未分配水印）。
+   *
+   * 逐条走 `assignPresetProduct` 的成本是每次一条撤销记录，批量的场景下会把撤销栈打满，
+   * 所以这里合并成一次写入。
+   */
+  assignPresetsToProduct: (presetIds: string[], productId: string) => void
   mergeImportedPresets: (imported: CompositeV2State['presets']) => void
   copyLayer: (presetId: string, layerId: string) => void
   pasteLayer: (presetId: string) => void
@@ -95,10 +133,14 @@ type CompositeV2StoreActions = {
 
 export type CompositeV2StoreState = CompositeV2BatchState &
   CompositeV2UndoState &
+  CompositeV2LocalState &
   CompositeV2State &
   CompositeV2StoreActions
 
-export type CompositeV2PersistedState = CompositeV2PersistedSnapshot
+export type CompositeV2PersistedState = CompositeV2PersistedSnapshot & {
+  /** 见 `CompositeV2LocalState.presetProductMigrationVersion` */
+  presetProductMigrationVersion: number
+}
 
 export type CreateCompositeV2StoreOptions = {
   pickRandomIndex?: (length: number) => number
@@ -117,10 +159,17 @@ const HISTORY_MERGE_WINDOW_MS = 1200
  *   会把脏字段写回，且 `merge` 还会拿它去校验当前预览的预设，导致选中态莫名清空。
  * 5 → 6：新增**水印标识符**（`identifier`，全局一份）。旧数据没有这个字段，迁移时补默认值
  *   （空文本 = 不附加），因此升级后已配好的水印**渲染结果不变**。
+ * 6 → 7：新增**预设归属产品**（`preset.productId`），水印库从「全局一批」改为**按产品隔离**。
+ *   迁移这里只补空串（= 未分配），**真正的归属推断在启动后另跑一次**（`migratePresetProducts`）——
+ *   `persist.migrate` 拿不到 `collections` / `params`（它们是另外两个 store），
+ *   在那个位置算不出「这套水印被哪个产品的方向勾过」。
  */
-const COMPOSITE_V2_PERSIST_VERSION = 6
+const COMPOSITE_V2_PERSIST_VERSION = 7
 
-export function createCompositeV2StoreState(): CompositeV2BatchState & CompositeV2UndoState & CompositeV2State {
+export function createCompositeV2StoreState(): CompositeV2BatchState &
+  CompositeV2UndoState &
+  CompositeV2LocalState &
+  CompositeV2State {
   const defaults = createDefaultCompositeV2State()
 
   return {
@@ -142,6 +191,7 @@ export function createCompositeV2StoreState(): CompositeV2BatchState & Composite
     lastHistoryMeta: null,
     canUndo: false,
     canRedo: false,
+    presetProductMigrationVersion: 0,
   }
 }
 
@@ -156,6 +206,7 @@ export function getCompositeV2PersistedState(state: CompositeV2StoreState): Comp
     backgroundFolders: state.backgroundFolders,
     recursiveBackgrounds: state.recursiveBackgrounds,
     selectedPreviewPresetId: state.selectedPreviewPresetId,
+    presetProductMigrationVersion: state.presetProductMigrationVersion ?? 0,
   }
 }
 
@@ -193,6 +244,8 @@ export function migrateCompositeV2PersistedState(persistedState: unknown, _versi
     .map((preset): CompositeV2State['presets'][number] => ({
       id: typeof preset.id === 'string' ? preset.id : '',
       name: typeof preset.name === 'string' ? preset.name : '',
+      // 老数据没有这个字段 → 空串 = 未分配；启动后由 `migratePresetProducts` 按现有归属推断
+      productId: normalizePresetProductId(preset.productId),
       baseCanvas: normalizeCanvas(preset.baseCanvas),
       sampleBackgroundPath: typeof preset.sampleBackgroundPath === 'string' ? preset.sampleBackgroundPath : '',
       layers: Array.isArray(preset.layers) ? (preset.layers as CompositeV2State['presets'][number]['layers']) : [],
@@ -211,6 +264,10 @@ export function migrateCompositeV2PersistedState(persistedState: unknown, _versi
     recursiveBackgrounds: Boolean(legacy.recursiveBackgrounds),
     selectedPreviewPresetId:
       typeof legacy.selectedPreviewPresetId === 'string' ? legacy.selectedPreviewPresetId : undefined,
+    presetProductMigrationVersion:
+      typeof legacy.presetProductMigrationVersion === 'number' && Number.isFinite(legacy.presetProductMigrationVersion)
+        ? Math.trunc(legacy.presetProductMigrationVersion)
+        : 0,
   }
 }
 
@@ -228,7 +285,14 @@ function normalizeFitMode(value: unknown): CompositeV2FitMode {
   return value === 'contain-blur' || value === 'stretch' || value === 'crop-fill' ? value : 'crop-fill'
 }
 
-export function replaceCompositeV2PersistedState(snapshot: CompositeV2PersistedState): void {
+/**
+ * 用外部快照（备份恢复 / 导入）整体替换预设状态。
+ *
+ * 参数收 `CompositeV2PersistedSnapshot`（不含 `presetProductMigrationVersion`）：备份 ZIP 里的
+ * compositeState 是 v7 之前导出的，本来就没有这个字段。缺字段时按 0 处理 → 恢复后会重跑一次
+ * 归属迁移，而迁移对**已有归属**的预设是空操作（`planPresetProductClaim` 直接跳过），所以安全。
+ */
+export function replaceCompositeV2PersistedState(snapshot: CompositeV2PersistedSnapshot): void {
   const merged = mergeCompositeV2PersistedState(snapshot, useCompositeV2Store.getState())
   useCompositeV2Store.setState(getCompositeV2PersistedState(merged))
 }
@@ -429,12 +493,15 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           setWithoutHistory((state) => createPreviewHistoryState(state, (preview) => preview.previous())),
         nextPreviewBackground: () =>
           setWithoutHistory((state) => createPreviewHistoryState(state, (preview) => preview.next())),
-        createPreset: (name) =>
+        createPreset: (name, productId) =>
           setWithHistory((state) => {
             const now = Date.now()
             const preset: CompositeV2State['presets'][number] = {
               id: uniqueId('preset'),
               name: name.trim() || '新预设',
+              // 落库即定归属：水印库按产品隔离，新建的水印必须属于当前作用域的那个产品 ——
+              // 否则它会掉进「未分配」区，在当前产品的库里根本看不见（等于建了个看不见的东西）。
+              productId: normalizePresetProductId(productId),
               baseCanvas: { width: 1080, height: 1920 },
               sampleBackgroundPath: '',
               layers: [],
@@ -445,6 +512,20 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
               selectedPreviewPresetId: preset.id,
             }
           }, 'presets:structure'),
+        assignPresetProduct: (presetId, productId) =>
+          setWithHistory(
+            (state) => ({
+              presets: assignPresetsProduct(state.presets, [presetId], normalizePresetProductId(productId)),
+            }),
+            'presets:structure',
+          ),
+        assignPresetsToProduct: (presetIds, productId) =>
+          setWithHistory(
+            (state) => ({
+              presets: assignPresetsProduct(state.presets, presetIds, normalizePresetProductId(productId)),
+            }),
+            'presets:structure',
+          ),
         deletePreset: (presetId) =>
           setWithHistory((state) => {
             const presets = state.presets.filter((preset) => preset.id !== presetId)
@@ -477,6 +558,11 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
          *
          * 覆盖不新增条目是「导入 = 恢复」的语义；留在原位是为了不打断用户排好的顺序
          * （顺序即归属里的产出顺序，整体追加会把已有水印挤到后面）。
+         *
+         * ⚠️ **归属由调用方在送进来之前定好**：文件里的 `productId` 是**导出方机器上的产品 id**，
+         * 在本机根本不存在，直接用会把这套水印归到一个查无此人的产品下（界面上既不在当前产品的库、
+         * 也不在「未分配」区，等于导入完就消失）。所以调用方必须先按本机情况改写 `productId`，
+         * 这里只负责合并，不做推断。
          */
         mergeImportedPresets: (imported) =>
           setWithHistory((state) => {
@@ -637,6 +723,30 @@ function areUndoSnapshotsEqual(a: CompositeV2UndoSnapshot, b: CompositeV2UndoSna
 function getPresetPatchMergeKey(presetId: string, patch: Partial<CompositeV2State['presets'][number]>) {
   const keys = Object.keys(patch).sort()
   return `preset:${presetId}:${keys.join(',') || 'update'}`
+}
+
+/**
+ * 把一批预设改归到某个产品（空串 = 摘成未分配）。
+ *
+ * 已经是该产品的条目**原样返回**，让 `setWithHistory` 的「前后快照相等」判断生效 ——
+ * 否则一次什么都没改的指派也会往撤销栈里塞一条，用户按 Ctrl+Z 会感觉「撤了但没反应」。
+ */
+function assignPresetsProduct(
+  presets: CompositeV2State['presets'],
+  presetIds: string[],
+  productId: string,
+): CompositeV2State['presets'] {
+  const wanted = new Set(presetIds.map(normalizePresetProductId).filter(Boolean))
+  if (wanted.size === 0) return presets
+  // 指派只动归属这一个字段，**不碰 `updatedAt`**：它记的是「水印内容什么时候改的」，
+  // 把归属变更算进去会让「按更新时间看谁刚被改过」这件事失真。
+  let changed = false
+  const next = presets.map((preset) => {
+    if (!wanted.has(preset.id) || normalizePresetProductId(preset.productId) === productId) return preset
+    changed = true
+    return { ...preset, productId }
+  })
+  return changed ? next : presets
 }
 
 function updatePresets(

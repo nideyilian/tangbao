@@ -2470,3 +2470,72 @@ BigInt 版才是真正的「与原始引擎逐位一致」。
   处理：**只把那一行断言（`{seq}` → `{序号}`）并入本次提交**（先 `git show HEAD:<path>` 回基线、
   改这一行、再恢复对方的 WIP），没有把对方的 WIP 卷进来。对方那条线的改动仍未提交、仍在工作区。
 - **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）
+
+---
+
+### TB-067 水印库改为按产品隔离（每个产品一个独立水印库）
+
+- **来源**：杰哥原话「水印库应改为按产品隔离，即每个产品各自维护独立的水印库，而不再使用全局通用的
+  一批水印预设；请调整水印库的组织与归属逻辑，使每个产品下的水印库相互独立，便于分别管理、按产品选择
+  和区分，避免混淆，并确保产品之间不共用同一套水印预设」（2026-09-21）
+- **状态**：DONE · 写线：主写线（承接 TB-064；与另一条线 TB-066 **无文件重叠**）
+- **背景（诊断）**：水印库原本是**一个全局数组**，与左树选中谁无关 ——
+  `CompositeV2Preset` 上没有「属于哪个产品」这个字段（`compositeV2Types.ts`），
+  库列表直接渲染全量 `store.presets`（`PresetManagementTab.tsx` 的 `visiblePresets`），
+  新建也只是往这个数组末尾追加（`storeV2.ts` 的 `createPreset`）。
+  于是左边点 A 产品、点 B 产品，看到的库**一模一样**，任何一套水印都能被任意产品的方向勾上。
+- **改了什么**
+  1. **预设加归属字段** `CompositeV2Preset.productId`（可选；缺省或空串 = 未分配）。
+     库仍是**一个扁平数组 + 每条一个产品标签**，不是 `Record<productId, presets[]>` —— 理由写在
+     `storeV2.ts` 头注：归属引用（`watermarkPresetIds`）存的是 preset id、撤销快照 / 导入导出 /
+     资产引用扫描都在遍历这一份数组；隔离要解决的是「看与选」，不是 id 冲突。
+  2. **库按产品过滤**：中控台左栏只列「当前作用域所属产品」的预设（`filterPresetsByProduct`），
+     标题带产品名（「水印库 · 百万医疗险」）。「作用域 → 产品」的解析收敛成一个函数
+     `resolveOwningProductId`（产品节点 = 它自己；方向 = 往上一级；产品线 / 全局 = 无）。
+  3. **产品线 / 全局默认两层不再有库**：只给一句「水印属于产品 —— 先在左侧选一个产品」，
+     新建 / 导入 / 导出三个入口同时禁用（点不动的控件比不给更糟）。
+  4. **新建 / 导入落当前产品**：`createPreset(name, productId)`；导入文件里的 `productId` 是
+     **导出方机器上的 id**，本机不存在，落库前必须改写成本机的当前产品（否则导入完就「消失了」）。
+  5. **导出只导当前产品**（归属也只带这个产品下的节点）。
+  6. **「未分配」区**：升级后没有任何产品的节点勾过的水印单独成区，可单个或一键归到当前产品。
+  7. **一次性迁移**（`lib/compositePresetProductMigration.ts` 纯函数计划 +
+     `presetProductMigrationRunner.ts` 跨 store 写入，挂在 `PresetManagementTab` 挂载时跑，幂等）：
+     - 先**摊旧清单**：v6 的全局基线 / 产品线级 `watermarkPresetIds` 摊到每个产品（产品自己写过的
+       不动），摊完清掉产品线那一格与全局基线 —— 不摊就等于直接抹掉用户已配的水印（R-63）；
+     - 再**推断归属**：按「哪个产品的节点显式勾过它」归位；**跨产品共用的各复制一份**并把引用改指到
+       各自的副本（隔离的语义就是互不共用）；没人勾过的保持未分配；
+     - **两步顺序不能反**（先摊后猜）：否则那些「只在全局清单里出现过」的水印会保持未分配，
+       而产出链路按 id 照样找得到它 —— 变成「生成图带了这套水印，界面上哪儿都没有」；
+     - 跑过的标记 `presetProductMigrationVersion` 落盘。**没有标记**的话，用户主动摘出来的水印会在
+       下次启动被自动收回 —— 最难查的那类「我明明删了，它自己又回来了」。
+- **验收标准**（可测）
+  1. 选中产品 A 时库里只有 A 的预设；产品 B 的水印**不出现在界面文本里**、也没有可勾的框；
+  2. 标题形如「水印库 · 〈产品名〉」；选中产品线 / 全局默认时列表为空且提示「水印属于产品」，
+     新建 / 导入 / 导出三个按钮 `disabled`，且不存在「生效范围」那一排；
+  3. 新建的水印 `productId` = 当前作用域所属产品；
+  4. 未分配的预设不进任何产品的库，但出现在「未分配（N）」区；点「归到〈产品〉」后归属立即变更；
+  5. 迁移后：单一产品勾过 → 归它且参数不动；两个产品共用 → 新增一份副本 + 后一个产品的引用改指副本；
+     没人勾过 → 保持未分配；同一份数据跑两次副本 id 相同（确定性）；
+  6. 标记已置位时再打开水印库，**不会**把用户摘出来的水印自动收回。
+- **改动面**
+  - 新增：`features/composite/lib/compositePresetProductMigration.ts`（计划 + 推断）、
+    `features/composite/presetProductMigrationRunner.ts`（读三个 store 并写回）
+  - 修改：`lib/compositeV2Types.ts`（+`productId`）、`lib/compositeV2Defaults.ts`、
+    `lib/compositePresetLibrary.ts`（+3 个过滤 / 归一化函数）、`storeV2.ts`（v6→v7、
+    `createPreset` 带产品、`assignPresetProduct` / `assignPresetsToProduct`、
+    `presetProductMigrationVersion`）、`components/PresetManagementTab.tsx`（库过滤 + 未分配区 + 迁移调用）、
+    `projectTree/params.ts`（+`resolveOwningProductId`）、`lib/compositePresetTransfer.ts`（读归属）、
+    `features/postprocess/taskPostprocess.ts`（工具预设补空归属）
+- **验收证据**：`npm run verify` 全绿；新增 `compositePresetProductMigration.test.ts` **13 例**；
+  `PresetManagementTab.test.tsx` 新增 6 例（只列本产品 / 未分配区与一键指派 / 新建落产品 /
+  存量按归属归位 / 迁移只跑一次 / 无产品层不给库）；`storeV2.test.ts` 新增 1 例（改归属不动内容）。
+- **知情取舍**（口径已与杰哥确认）
+  - **产品线级的「配一次、全线继承」退役**：隔离后水印是产品的资产，产品线层没有可勾的清单。
+    迁移会把旧值摊到每个产品，之后要改得逐产品改。
+  - **产出链路不校验产品归属**：`taskPostprocess.ts` 仍按 preset id 全局找预设，所以一旦归属数据是
+    「跨产品」的（例如 Excel 导入把 A 产品的方向绑上 B 产品的预设），产出照样会叠上去 ——
+    界面层已经选不到，但**数据层不拦**。要彻底拦需要在产出前加一道「预设属于该节点所属产品」的校验，
+    那会让现有跨产品绑定突然不出图，留待单独评估。
+- **⚠️ 未经渲染自证**：本机做不了网页渲染验证（环境级限制，见 `~/.workbuddy/MEMORY.md`），
+  按产品过滤后的列表、「未分配」区与标题形态**未经真机过目**，请在中控台「水印」分区里核对。
+- **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）

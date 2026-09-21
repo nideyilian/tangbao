@@ -23,6 +23,7 @@ import type { PostprocessMedia } from '../../../lib/postprocessMedia'
 import type { AssetCollection } from '../../../types'
 import type { ProjectNodeParamsMap } from '../../projectTree/types'
 import { normalizeIdentifier } from './compositeIdentifier'
+import { normalizePresetProductId } from './compositePresetLibrary'
 import { dataUrlToCompositeBlob, getCompositeAssetObjectUrl, storeCompositeBlobs } from './compositeAssets'
 import type {
   CompositeV2IdentifierConfig,
@@ -132,6 +133,9 @@ export function normalizeImportedPreset(raw: unknown): CompositeV2Preset | null 
   return {
     id,
     name: typeof value.name === 'string' && value.name.trim() ? value.name : '导入的水印',
+    // 文件里的归属是**导出方机器上的产品 id**，本机多半不存在。这里照读不丢，
+    // 但导入落库前必须由调用方改写成「本机的当前产品」—— 见 `PresetManagementTab.applyImport`。
+    productId: normalizePresetProductId(value.productId),
     baseCanvas: {
       width: Number.isFinite(width) && width > 0 ? width : 1080,
       height: Number.isFinite(height) && height > 0 ? height : 1920,

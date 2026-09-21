@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, create, type ReactTestInstance } from 'react-test-renderer'
 import { createDefaultCompositeV2Preset } from '../lib/compositeV2Defaults'
+import type { CompositeV2Preset } from '../lib/compositeV2Types'
 import { useStore } from '../../../store'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { DEFAULT_POSTPROCESS_MEDIA } from '../../../lib/postprocessMedia'
@@ -48,6 +49,39 @@ function findInputByAriaLabel(root: ReactTestInstance, label: string) {
 function findScopePill(renderer: ReturnType<typeof create>, label: string) {
   const scope = renderer.root.find((node) => node.props['data-layout'] === 'preset-scope-switch')
   return scope.findAll((node: ReactTestInstance) => node.type === 'button').find((node) => getNodeText(node) === label)
+}
+
+/** 标准现场：产品线A → 机器人（= 当前产品）/ 电池（= 另一个产品）。 */
+const LINE_ID = 'line-a'
+const PRODUCT_ID = 'product-b'
+const OTHER_PRODUCT_ID = 'product-c'
+
+function buildTree(extra: Array<Record<string, unknown>> = []) {
+  return [
+    { id: LINE_ID, name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+    { id: PRODUCT_ID, name: '机器人', parentId: LINE_ID, order: 0, createdAt: 0, updatedAt: 0 },
+    { id: OTHER_PRODUCT_ID, name: '电池', parentId: LINE_ID, order: 1, createdAt: 0, updatedAt: 0 },
+    ...extra,
+  ] as never
+}
+
+/** 把作用域落到某个节点上（默认落在产品「机器人」）。 */
+function seedScope(scopeId: string = PRODUCT_ID, extra: Array<Record<string, unknown>> = []) {
+  useAssetLibraryStore.setState({
+    scope: { kind: 'collection', id: scopeId },
+    collections: buildTree(extra),
+  })
+}
+
+/**
+ * 造一套属于某产品的预设。
+ *
+ * 水印库按产品隔离后，「往 store 里塞 preset」**不等于**「界面上看得见它」——
+ * 库列表读的是**当前作用域所属产品**的预设，所以用例必须同时把归属和树准备好
+ * （`seedScope`）。漏了这一步的症状是「界面上一套水印都没有」，而 store 里其实躺着一堆。
+ */
+function productPreset(id: string, name: string, productId: string = PRODUCT_ID): CompositeV2Preset {
+  return { ...createDefaultCompositeV2Preset(1), id, name, productId }
 }
 
 describe('PresetManagementTab', () => {
@@ -125,7 +159,8 @@ describe('PresetManagementTab', () => {
   })
 
   it('replaces an existing LOGO layer instead of adding an image layer', async () => {
-    const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-logo' }
+    const preset = productPreset('preset-logo', 'LOGO 水印')
+    seedScope()
     useCompositeV2Store.setState({
       presets: [preset],
       selectedPreviewPresetId: preset.id,
@@ -175,7 +210,8 @@ describe('PresetManagementTab', () => {
   })
 
   it('基准尺寸选择器挂在画布工具栏上（原「预设详情」栏已退役）', () => {
-    const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-size' }
+    const preset = productPreset('preset-size', '尺寸水印')
+    seedScope()
     useCompositeV2Store.setState({
       presets: [preset],
       selectedPreviewPresetId: preset.id,
@@ -209,7 +245,8 @@ describe('PresetManagementTab', () => {
     })
   })
   it('auto-selects the newly created layer after adding text', () => {
-    const preset = createDefaultCompositeV2Preset(1)
+    const preset = { ...createDefaultCompositeV2Preset(1), productId: PRODUCT_ID }
+    seedScope()
     useCompositeV2Store.setState({
       presets: [preset],
       selectedPreviewPresetId: preset.id,
@@ -261,8 +298,9 @@ describe('PresetManagementTab', () => {
     expect(useCompositeV2Store.getState().projectLogos[0]?.name).toBe('new.png')
   })
 
-  it('creates a preset only in the global preset library', () => {
-    const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
+  it('⭐ 新建的水印落进当前产品的库，并成为当前编辑对象', () => {
+    const presetA = productPreset('preset-a', 'Alpha Preset')
+    seedScope()
 
     useCompositeV2Store.setState({
       presets: [presetA],
@@ -275,21 +313,71 @@ describe('PresetManagementTab', () => {
     })
     mountedRenderers.push(renderer!)
 
-    const createPresetButtons = renderer!.root.findAllByProps({ title: '新建预设' })
-    const libraryCreateButton = createPresetButtons.at(-1)
+    const libraryCreateButton = renderer!.root.findAllByProps({ title: '在「机器人」下新建水印' }).at(-1)
 
     act(() => {
       libraryCreateButton?.props.onClick()
     })
 
-    expect(useCompositeV2Store.getState().presets).toHaveLength(2)
+    const presets = useCompositeV2Store.getState().presets
+    expect(presets).toHaveLength(2)
+    // 归属跟着当前作用域的产品走：不落归属它会掉进「未分配」区，在这个产品的库里直接看不见
+    expect(presets[1]!.productId).toBe(PRODUCT_ID)
     // 新建的预设直接进库并成为当前编辑对象，不需要「先建组、再入组」这类前置动作
-    expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe(useCompositeV2Store.getState().presets[1]!.id)
+    expect(useCompositeV2Store.getState().selectedPreviewPresetId).toBe(presets[1]!.id)
+  })
+
+  it('⭐ 库列表只列当前产品的预设，别的产品的看不见', () => {
+    const mine = productPreset('preset-a', 'Alpha Preset')
+    const others = productPreset('preset-b', 'Beta Preset', OTHER_PRODUCT_ID)
+    const orphan = createDefaultCompositeV2Preset(1) // productId = '' → 未分配
+    seedScope()
+    useCompositeV2Store.setState({ presets: [mine, others, orphan], selectedPreviewPresetId: mine.id })
+
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    const text = getNodeText(renderer!.root)
+    expect(text).toContain('Alpha Preset')
+    // 隔离的硬要求：别产品的水印既不出现在列表里，也不可能被勾到
+    expect(text).not.toContain('Beta Preset')
+    // 标题带上产品名，切产品时不会看起来像「同一批水印在变魔术」
+    expect(text).toContain('水印库 · 机器人')
+    // 未分配的不进任何产品的库，但必须**看得见**（否则它既用不上也删不掉）
+    expect(text).toContain('未分配（1）')
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-unassigned')).toHaveLength(1)
+  })
+
+  it('⭐ 未分配的水印可一键归到当前产品', () => {
+    const mine = productPreset('preset-a', 'Alpha Preset')
+    const orphan = { ...createDefaultCompositeV2Preset(1), name: '老水印' }
+    seedScope()
+    useCompositeV2Store.setState({ presets: [mine, orphan], selectedPreviewPresetId: mine.id })
+
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    const assignButton = renderer!.root.findAllByType('button').find((node) => getNodeText(node) === '归到「机器人」')
+    expect(assignButton).toBeTruthy()
+    act(() => {
+      assignButton!.props.onClick()
+    })
+
+    expect(useCompositeV2Store.getState().presets.find((preset) => preset.id === orphan.id)?.productId).toBe(PRODUCT_ID)
+    // 归过去之后未分配区就空了
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-unassigned')).toHaveLength(0)
   })
 
   it('deletes a preset from the library and falls back to a valid preview selection', () => {
-    const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
-    const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
+    const presetA = productPreset('preset-a', 'Alpha Preset')
+    const presetB = productPreset('preset-b', 'Beta Preset')
+    seedScope()
 
     useCompositeV2Store.setState({
       presets: [presetA, presetB],
@@ -322,8 +410,9 @@ describe('PresetManagementTab', () => {
   })
 
   it('keeps the current preset details when filtering hides it from the library list', () => {
-    const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
-    const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
+    const presetA = productPreset('preset-a', 'Alpha Preset')
+    const presetB = productPreset('preset-b', 'Beta Preset')
+    seedScope()
 
     useCompositeV2Store.setState({
       presets: [presetA, presetB],
@@ -346,8 +435,9 @@ describe('PresetManagementTab', () => {
   })
 
   it('keeps rendering the current preset details when the library filter returns no results', () => {
-    const presetA = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
-    const presetB = { ...createDefaultCompositeV2Preset(2), id: 'preset-b', name: 'Beta Preset' }
+    const presetA = productPreset('preset-a', 'Alpha Preset')
+    const presetB = productPreset('preset-b', 'Beta Preset')
+    seedScope()
 
     useCompositeV2Store.setState({
       presets: [presetA, presetB],
@@ -370,16 +460,12 @@ describe('PresetManagementTab', () => {
   })
 
   it('⭐ 库行勾选 = 当前范围启用这套水印', () => {
-    const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
+    const preset = productPreset('preset-a', 'Alpha Preset')
     useCompositeV2Store.setState({ presets: [preset], selectedPreviewPresetId: preset.id })
     usePostprocessMediaStore.setState({ watermarkPresetIds: [] })
-    useAssetLibraryStore.setState({
-      scope: { kind: 'collection', id: 'direction-moon' },
-      collections: [
-        { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
-        { id: 'direction-moon', name: '月亮', parentId: 'line-a', order: 0, createdAt: 0, updatedAt: 0 },
-      ] as never,
-    })
+    seedScope('direction-moon', [
+      { id: 'direction-moon', name: '月亮', parentId: PRODUCT_ID, order: 0, createdAt: 0, updatedAt: 0 },
+    ])
 
     let renderer: ReturnType<typeof create>
     act(() => {
@@ -402,8 +488,9 @@ describe('PresetManagementTab', () => {
     ])
   })
 
-  it('全局默认下不给开关：全局基线是各方向的兜底值，前端没有写入点', () => {
-    const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
+  it('没有产品这一层（产品线 / 全局默认）时不给库：只提示先选一个产品', () => {
+    const preset = productPreset('preset-a', 'Alpha Preset')
+    seedScope()
     useCompositeV2Store.setState({ presets: [preset], selectedPreviewPresetId: preset.id })
     useAssetLibraryStore.setState({ scope: 'all' })
 
@@ -413,13 +500,66 @@ describe('PresetManagementTab', () => {
     })
     mountedRenderers.push(renderer!)
 
-    // 给一个点了没反应的控件比不给更糟：这里直接禁用并把原因写在可访问名里
-    const box = renderer!.root.findByProps({ 'aria-label': '「Alpha Preset」的启用在方向层设置' })
-    expect(box.props.disabled).toBe(true)
-    expect(getNodeText(renderer!.root)).toContain('先在左侧项目树选一个方向')
-    // 全局默认连「生效范围」那一排都不渲染：数据层没有 byMedia 这一层，
-    // 摆一排点不动的渠道会让人以为「全局也能按渠道配，只是现在锁着」
+    // 给一个点了没反应的库比不给更糟：说清「水印属于产品」，并让三个入口都给出同一条下一步
+    expect(getNodeText(renderer!.root)).toContain('水印属于产品')
+    expect(renderer!.root.findAllByProps({ title: '先在左侧选一个产品' }).length).toBeGreaterThan(0)
+    // 生效范围那一排也不渲染：数据层没有 byMedia 这一层，
+    // 摆一排点不动的渠道会让人以为「这里也能按渠道配，只是现在锁着」
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-scope-switch')).toHaveLength(0)
+    // 连「未分配」区都不出现：没有产品就没有可归的对象，摆出来只会让人白点
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-unassigned')).toHaveLength(0)
+  })
+
+  it('⭐ 打开水印库时把存量水印按现有归属归到产品（v6 数据没有归属字段）', () => {
+    // v6 的水印库是全局一批、预设上没有归属；升级后靠「哪个产品的方向勾过它」补上这个字段
+    const preset = { ...createDefaultCompositeV2Preset(1), name: '老水印' }
+    seedScope('direction-moon', [
+      { id: 'direction-moon', name: '月亮', parentId: PRODUCT_ID, order: 0, createdAt: 0, updatedAt: 0 },
+    ])
+    useCompositeV2Store.setState({
+      presets: [preset],
+      selectedPreviewPresetId: preset.id,
+      presetProductMigrationVersion: 0,
+    })
+    useProjectTreeParamsStore.setState({
+      params: { 'direction-moon': { postprocess: { watermarkPresetIds: [preset.id] } } },
+    })
+
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    // 归到「月亮」所在的产品 ⇒ 它出现在本产品的库里，而不是掉进「未分配」
+    expect(useCompositeV2Store.getState().presets[0]!.productId).toBe(PRODUCT_ID)
+    expect(useCompositeV2Store.getState().presetProductMigrationVersion).toBe(1)
+    expect(getNodeText(renderer!.root)).toContain('老水印')
+  })
+
+  it('⭐ 迁移只跑一次：用户主动摘出来的水印不会被下次打开自动收回', () => {
+    const preset = { ...createDefaultCompositeV2Preset(1), name: '刚摘出来的' }
+    seedScope('direction-moon', [
+      { id: 'direction-moon', name: '月亮', parentId: PRODUCT_ID, order: 0, createdAt: 0, updatedAt: 0 },
+    ])
+    // 标记已是 1（跑过了），而这个预设归属为空 = 用户刚把它摘出来
+    useCompositeV2Store.setState({
+      presets: [preset],
+      selectedPreviewPresetId: preset.id,
+      presetProductMigrationVersion: 1,
+    })
+    useProjectTreeParamsStore.setState({
+      params: { 'direction-moon': { postprocess: { watermarkPresetIds: [preset.id] } } },
+    })
+
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    // 归属必须还是空的，否则「我明明把它摘出来了，它自己又回来了」——最难查的一类问题
+    expect(useCompositeV2Store.getState().presets[0]!.productId).toBe('')
   })
 
   describe('按渠道单独设水印', () => {
@@ -435,16 +575,11 @@ describe('PresetManagementTab', () => {
           { id: 'baidu', name: '百度' },
         ] as never,
       })
-      useAssetLibraryStore.setState({
-        scope: { kind: 'collection', id: 'direction-moon' },
-        collections: [
-          { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
-          { id: 'product-b', name: '机器人', parentId: 'line-a', order: 0, createdAt: 0, updatedAt: 0 },
-          { id: 'direction-moon', name: '月亮', parentId: 'product-b', order: 0, createdAt: 0, updatedAt: 0 },
-        ] as never,
-      })
+      seedScope('direction-moon', [
+        { id: 'direction-moon', name: '月亮', parentId: PRODUCT_ID, order: 0, createdAt: 0, updatedAt: 0 },
+      ])
       useProjectTreeParamsStore.setState({
-        params: { 'product-b': { postprocess: { watermarkPresetIds: ['preset-shared'] } } },
+        params: { [PRODUCT_ID]: { postprocess: { watermarkPresetIds: ['preset-shared'] } } },
       })
     }
 
@@ -468,7 +603,8 @@ describe('PresetManagementTab', () => {
 
     it('⭐ 切到某个渠道后勾选 = 该渠道单独的水印（写 byMedia，不动通用那格）', () => {
       seedProductLevelWatermark()
-      const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
+      // 归属「机器人」：水印库按产品隔离，这套得属于当前方向所在的产品才会出现在库里
+      const preset = productPreset('preset-a', 'Alpha Preset')
       useCompositeV2Store.setState({ presets: [preset], selectedPreviewPresetId: preset.id })
 
       let renderer: ReturnType<typeof create>
@@ -501,7 +637,7 @@ describe('PresetManagementTab', () => {
       seedProductLevelWatermark()
       useProjectTreeParamsStore.setState({
         params: {
-          'product-b': { postprocess: { watermarkPresetIds: ['preset-shared'] } },
+          [PRODUCT_ID]: { postprocess: { watermarkPresetIds: ['preset-shared'] } },
           'direction-moon': { postprocess: { byMedia: { toutiao: { watermarkPresetIds: ['preset-toutiao'] } } } },
         },
       })
@@ -531,7 +667,7 @@ describe('PresetManagementTab', () => {
       seedProductLevelWatermark()
       useProjectTreeParamsStore.setState({
         params: {
-          'product-b': { postprocess: { watermarkPresetIds: ['preset-shared'] } },
+          [PRODUCT_ID]: { postprocess: { watermarkPresetIds: ['preset-shared'] } },
           'direction-moon': { postprocess: { watermarkPresetIds: ['preset-own'] } },
         },
       })

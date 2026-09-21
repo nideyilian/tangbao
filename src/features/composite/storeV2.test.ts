@@ -20,6 +20,8 @@ describe('composite v2 store state factory', () => {
     expect(preset).toEqual({
       id: 'preset-default',
       name: '默认产品预设',
+      // 出厂预设不预设产品：水印库按产品隔离，它会落在「未分配」区等用户指派
+      productId: '',
       baseCanvas: { width: 1280, height: 720 },
       sampleBackgroundPath: '',
       layers: [],
@@ -56,6 +58,8 @@ describe('composite v2 store state factory', () => {
       {
         id: 'preset-default',
         name: '默认产品预设',
+        // 老快照里没有归属字段：迁移补空串 = 未分配，之后由一次性迁移按现有归属推断
+        productId: '',
         baseCanvas: { width: 1280, height: 720 },
         sampleBackgroundPath: '',
         layers: [],
@@ -131,6 +135,7 @@ describe('composite v2 store state factory', () => {
       backgroundFolders: ['D:/bg'],
       recursiveBackgrounds: true,
       selectedPreviewPresetId: store.getState().selectedPreviewPresetId,
+      presetProductMigrationVersion: 0,
     })
     expect(persisted).not.toHaveProperty('previewHistory')
     expect(persisted).not.toHaveProperty('backgrounds')
@@ -370,15 +375,36 @@ describe('composite v2 store state factory', () => {
 
   it('creates, duplicates and deletes presets without any grouping side effect', () => {
     const store = createCompositeV2Store()
-    store.getState().createPreset('Campaign')
+    store.getState().createPreset('Campaign', 'product-a')
     const created = store.getState().presets.find((preset) => preset.name === 'Campaign')
     expect(created).toBeTruthy()
+    // 归属随「当前产品」一起落库：不落的话它会掉进「未分配」区，在当前产品的库里根本看不见
+    expect(created!.productId).toBe('product-a')
 
     store.getState().duplicatePreset(created!.id)
-    expect(store.getState().presets.some((preset) => preset.name === 'Campaign 副本')).toBe(true)
+    // 副本沿用原份的归属：否则「复制一套改改」会把它变成未分配、从本产品的库里消失
+    expect(store.getState().presets.find((preset) => preset.name === 'Campaign 副本')?.productId).toBe('product-a')
 
     store.getState().deletePreset(created!.id)
     expect(store.getState().presets.some((preset) => preset.id === created!.id)).toBe(false)
+  })
+
+  it('⭐ 改归属不动内容，也不给未分配的预设乱指派', () => {
+    const store = createCompositeV2Store()
+    store.getState().createPreset('Campaign', 'product-a')
+    const created = store.getState().presets.find((preset) => preset.name === 'Campaign')!
+    const before = store.getState().presets.map((preset) => preset.updatedAt)
+
+    store.getState().assignPresetProduct(created.id, 'product-b')
+
+    expect(store.getState().presets.find((preset) => preset.id === created.id)?.productId).toBe('product-b')
+    // `updatedAt` 记的是「水印内容什么时候改的」，改归属不该算进去
+    expect(store.getState().presets.map((preset) => preset.updatedAt)).toEqual(before)
+
+    // 没点名的预设一个都不动
+    store.getState().assignPresetsToProduct([created.id], 'product-c')
+    expect(store.getState().presets.find((preset) => preset.id === created.id)?.productId).toBe('product-c')
+    expect(store.getState().presets.find((preset) => preset.id === 'preset-default')?.productId).toBe('')
   })
 
   it('updates the global fit mode', () => {
@@ -406,7 +432,7 @@ describe('composite v2 store state factory', () => {
   it('merges imported presets in place for known ids and appends new ones', () => {
     const store = createCompositeV2Store()
     const first = store.getState().presets[0]!
-    store.getState().createPreset('第二个')
+    store.getState().createPreset('第二个', 'product-a')
     const before = store.getState().presets.map((preset) => preset.id)
 
     store.getState().mergeImportedPresets([

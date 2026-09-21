@@ -144,6 +144,22 @@ export const IDENTIFIER_FALLBACK_STYLE = {
 export type CompositeV2Preset = {
   id: string
   name: string
+  /**
+   * 归属产品：项目树第二级（`AssetCollection.id`，`ProjectNodeKind === 'product'`）。
+   *
+   * **水印库按产品隔离**（2026-09-21）：这个字段决定「这套水印属于哪个产品的库」，
+   * 库列表只列当前作用域所属产品的预设，勾选也只能在本产品的库内选 ——
+   * 于是两个产品的同名水印不会互相顶替，也不会出现「A 产品的水印被 B 产品勾上」。
+   *
+   * **缺省或空串 = 未分配**。两种来路：① 老数据第一次升级、又没有任何方向勾过它；
+   * ② 用户主动把水印从产品里摘出来。未分配的预设**不进任何产品的库**，
+   * 界面上单独成区，可一键指派到当前产品（否则它会永远用不上、也删不掉）。
+   *
+   * 字段刻意做成**可选**而不是必填：读取侧一律过 `normalizePresetProductId` 兜底
+   * （缺省与空串等价），于是「造一个预设」不必处处想着这个字段 —— 归属是**老数据要补**的东西，
+   * 不是每个字面量都得手写的负担。
+   */
+  productId?: string
   baseCanvas: { width: number; height: number }
   sampleBackgroundPath: string
   layers: CompositeV2Layer[]
