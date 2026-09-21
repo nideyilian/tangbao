@@ -1,114 +1,73 @@
 /**
- * 中控台 · 左侧配置资产库树（两级：**配置维度 → 作用域**）。
+ * 中控台 · 左侧项目树。
  *
- * 形态源头是「灵境 · 策略中心」的左栏「策略资产库」（搜索 + 总览项 + 项目树 +
- * 节点行 = 箭头 + 名称 + 计数徽章），糖包的语义映射：
+ * 它是**整个框架的唯一管理入口**：业务线 → 产品 → 方向的层级在这里增删改查。
+ * 画廊侧栏与项目树读的是同一份 `useAssetLibraryStore.collections`，
+ * 所以这里改一笔，那两处自动跟上 —— 树只有一份，没有「同步」这个动作。
+ *
+ * 右边那排 tab（水印 / 输出位置 / 渠道与尺寸 / 分发）**跟着这棵树走**：
+ * 树上选到哪一层，右区改的就是那一层的参数；选「全局默认」改的是全局基线。
  *
  * ```
- * ▾ 水印                      4        ← 一级 = 配置维度（维度组）
- *     全局默认                12       ← 二级 = 作用域（全局基线）
- *     ▾ 智能客服                      ← 二级 = 作用域（产品线 / 产品 / 方向）
- *         ▾ 机器人
- *             竖版展示
- * ▸ 输出位置
- * ▸ 渠道与尺寸                        ← scopeAware=false：不铺方向树
- * ▸ 分发
- * ▸ 方向
+ * ▾ 智能客服            ← 业务线（点名称 = 选中；悬停出行内操作）
+ *     ▾ 机器人           ← 产品
+ *         竖版展示        ← 方向
  * ```
  *
- * ## 为什么维度要在树里（2026-09-21 改版）
+ * ## 两个刻意的做法
  *
- * 维度与作用域是同一个问题的两半（「改什么」×「改谁」）。改版前它们分散在
- * 「右区工具栏下拉 + 左树」两处：定一个落点要动两个地方，而且**「哪些维度能按方向配」
- * 这个约束在界面上完全看不出来**（用户会以为「渠道与尺寸」也能按方向配，选了半天方向
- * 却发现改的是全局 —— 那正是 `controlConsoleSections.ts` 头注里说的「给了作用域却
- * 什么都不变，比不给更糟」）。
+ * 1. **增删改查在树里直接做**（行内输入框，不弹窗）。这是杰哥 2026-09-21 的要求：
+ *    树不只是显示，还要"能增加业务线、产品、方向，增删改查"。行内编辑的好处是
+ *    改完立刻在树上看到结果，层级关系不会被弹窗遮住。
+ * 2. **删掉当前选中节点时，作用域一并归位到「全局默认」**。否则右区标题会指着一个
+ *    已经不存在的节点，参数写进去没人看得到。
  *
- * 合到一棵树之后：
- * 1. **点一次就到** —— 维度与作用域同时确定；
- * 2. **约束由结构表达** —— `scopeAware=false` 的维度下面只有「全局一套」一项，
- *    不铺方向树，用户一眼就知道它不按方向分；
- * 3. 右区工具栏空出一格，不再同时承担「切维度」与「筛当前维度内容」两种职责。
+ * ## 前身教训（2026-09-21 上午，别再犯）
  *
- * ## 三条口径
- *
- * - **点纯全局维度会把作用域一并归位到「全局默认」**。否则右区标题显示着某个方向、
- *   内容却是全局一套，等于自己制造一次「所见非所改」。
- * - **展开状态跟着当前维度走**：切到哪个维度就展开哪个组（外部跳转改了 `section` 也会
- *   自动展开），其余组折叠 —— 不然 5 份作用域树同时铺开，这栏就没法看了。
- * - **搜索只作用于作用域树**，并在此态下只显示 `scopeAware` 的维度组：
- *   搜的是「方向名」，而纯全局维度里根本没有可搜的节点，留着只是噪音。
+ * 曾把「配置维度」挂成树的一级，做成「维度 → 作用域」两级树。结果**每个能按方向配的
+ * 维度各挂了一棵完整的作用域树**：展开水印组是一棵，展开输出位置组又是一棵，
+ * 两棵一模一样 —— 维度和作用域是两个控件维度，套成一层嵌套必然会复制数据。
+ * 现在**树只有一棵，维度交给右区的 tab**。
  */
 
-import { useEffect, useMemo, useState } from 'react'
-import { Badge, SearchField, SegmentedControl } from '../../../design-system'
-import { ChevronDownIcon, ChevronRightIcon } from '../../../design-system/icons'
+import { useMemo, useState } from 'react'
+import { Button, SearchField, SegmentedControl } from '../../../design-system'
+import { ChevronDownIcon, ChevronRightIcon, PencilIcon, PlusIcon, TrashIcon } from '../../../design-system/icons'
 import { buildPostprocessProjectTree, flattenPostprocessProjectTree } from '../../../lib/postprocessProjectTree'
 import type { PostprocessProjectTreeNode } from '../../../lib/postprocessProjectTree'
+import { useStore } from '../../../store'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
-import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
-import {
-  CONTROL_CONSOLE_SECTIONS,
-  isGlobalScope,
-  type ControlConsoleSection,
-  type ControlConsoleSectionId,
-  type ConsoleScope,
-} from '../lib/controlConsoleSections'
+import { isGlobalScope, type ConsoleScope } from '../lib/controlConsoleSections'
 
 interface Props {
-  /** 当前配置维度 */
-  section: ControlConsoleSectionId
-  onSectionChange: (section: ControlConsoleSectionId) => void
-  /** 当前作用域（`GLOBAL_NODE_ID` 或某个 collection id） */
+  /** 当前选中的作用域（`GLOBAL_NODE_ID` 或某个 collection id） */
   value: ConsoleScope
   onValueChange: (value: ConsoleScope) => void
 }
 
+/** 正在编辑哪一格：新增（挂在谁下面）或改名（改哪一个）。 */
+type EditTarget = { kind: 'create'; parentId: string | null } | { kind: 'rename'; id: string }
+
 /**
  * 缩进阶梯：每深一层缩进一级，超过就不再缩（深层节点挤在左栏没法看）。
- * 第 0 档留给维度组标题，作用域节点从第 1 档起。
  */
 const INDENT_CLASS = ['pl-2', 'pl-5', 'pl-8', 'pl-11'] as const
 
-type ParamsMap = ReturnType<typeof useProjectTreeParamsStore.getState>['params']
-
-/** 数某节点在**这个维度**上写了几个覆盖字段。 */
-function countFieldsForSection(section: ControlConsoleSectionId, nodeId: string, params: ParamsMap): number {
-  const override = params[nodeId]?.postprocess
-  if (!override) return 0
-  if (section === 'watermark') return override.watermarkPresetIds !== undefined ? 1 : 0
-  if (section === 'output') {
-    let count = 0
-    // 空的 outputDir 不算「写了」—— 它与「没写」在解析里等价（都是向上继承）
-    if (override.outputDir !== undefined && override.outputDir !== '') count += 1
-    if (override.byMedia !== undefined) count += 1
-    return count
-  }
-  // 其余维度不按方向分，节点上不存在属于它们的覆盖
-  return 0
-}
-
-export function ConsoleAssetTree({ section, onSectionChange, value, onValueChange }: Props) {
+export function ConsoleAssetTree({ value, onValueChange }: Props) {
   const collections = useAssetLibraryStore((state) => state.collections)
-  const params = useProjectTreeParamsStore((state) => state.params)
+  const createCollection = useAssetLibraryStore((state) => state.createCollection)
+  const renameCollection = useAssetLibraryStore((state) => state.renameCollection)
+  const deleteCollection = useAssetLibraryStore((state) => state.deleteCollection)
+  const restoreCollection = useAssetLibraryStore((state) => state.restoreCollection)
+  const showToast = useStore((state) => state.showToast)
+  const setConfirmDialog = useStore((state) => state.setConfirmDialog)
+
   const [query, setQuery] = useState('')
   /** 灵境的「全部 / 已归档」两个 tab；糖包对应「全部 / 回收站」 */
   const [tab, setTab] = useState<'active' | 'trashed'>('active')
-  const [expandedSections, setExpandedSections] = useState<Set<ControlConsoleSectionId>>(() => new Set([section]))
-
-  /**
-   * 当前维度必须展开：外部跳转（`useJumpToControlConsole`）只改 `section`，
-   * 不展开的话用户跳过来看到的是折叠着的组 —— 等于没跳。
-   */
-  useEffect(() => {
-    setExpandedSections((current) => {
-      if (current.has(section)) return current
-      const next = new Set(current)
-      next.add(section)
-      return next
-    })
-  }, [section])
+  const [editing, setEditing] = useState<EditTarget | null>(null)
+  const [draft, setDraft] = useState('')
 
   /**
    * 树数据源。回收站视图把 `trashedAt` 抹平后再建树——
@@ -150,10 +109,8 @@ export function ConsoleAssetTree({ section, onSectionChange, value, onValueChang
     return keep(tree)
   }, [tree, query])
   const searching = query.trim().length > 0
-  /** 搜索态只留 scopeAware 的组：搜的是方向名，纯全局维度里没有可搜的节点 */
-  const visibleSections = searching
-    ? CONTROL_CONSOLE_SECTIONS.filter((item) => item.scopeAware)
-    : CONTROL_CONSOLE_SECTIONS
+  /** 回收站视图是平铺列表（回收节点在数据源里已被放到根上），把树摊平即可 */
+  const trashedFlat = useMemo(() => flattenPostprocessProjectTree(visibleTree), [visibleTree])
 
   const toggleExpand = (nodeId: string) => {
     setExpandedIds((current) => {
@@ -164,48 +121,153 @@ export function ConsoleAssetTree({ section, onSectionChange, value, onValueChang
     })
   }
 
-  const toggleSection = (id: ControlConsoleSectionId) => {
-    setExpandedSections((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  /** 某节点下面的全部后代 id（删除前算影响面，删后判断作用域要不要归位）。 */
+  const descendantsOf = (id: string): string[] => {
+    const result: string[] = []
+    const walk = (parentId: string) => {
+      for (const item of collections) {
+        if (item.parentId === parentId) {
+          result.push(item.id)
+          walk(item.id)
+        }
+      }
+    }
+    walk(id)
+    return result
+  }
+
+  const startCreate = (parentId: string | null) => {
+    setEditing({ kind: 'create', parentId })
+    setDraft('')
+  }
+
+  const startRename = (nodeId: string, currentName: string) => {
+    setEditing({ kind: 'rename', id: nodeId })
+    setDraft(currentName)
+  }
+
+  const cancelEdit = () => {
+    setEditing(null)
+    setDraft('')
   }
 
   /**
-   * 选中一个「维度 + 作用域」组合。
+   * 提交当前编辑。
    *
-   * 纯全局维度会**连带把作用域归位到全局默认**：否则右区标题写着某个方向、内容却是
-   * 全局一套 —— 那正是这次改版要消灭的「所见非所改」。
+   * 新建成功后**自动选中新节点**并把父级展开 —— 用户加完一个方向，下一步必然是在
+   * 右区给它配参数；不选中的话他还得自己在树上再找一遍。
    */
-  const pickSection = (item: ControlConsoleSection, scope: ConsoleScope) => {
-    onSectionChange(item.id)
-    if (!item.scopeAware) onValueChange(GLOBAL_NODE_ID)
-    else onValueChange(scope)
+  const submitEdit = async () => {
+    const target = editing
+    if (!target) return
+    const name = draft.trim()
+    if (!name) {
+      cancelEdit()
+      return
+    }
+    if (target.kind === 'rename') {
+      cancelEdit()
+      try {
+        await renameCollection(target.id, name)
+      } catch {
+        showToast('改名失败，请重试', 'error')
+      }
+      return
+    }
+    cancelEdit()
+    try {
+      const created = await createCollection(name, target.parentId)
+      if (!created) {
+        showToast('同级已有同名节点', 'error')
+        return
+      }
+      if (target.parentId) {
+        setExpandedIds((current) => new Set(current).add(target.parentId!))
+      }
+      onValueChange(created.id)
+    } catch {
+      showToast('创建失败，请重试', 'error')
+    }
   }
 
-  const overrideCountByNode = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const node of flatNodes) map.set(node.id, countFieldsForSection(section, node.id, params))
-    return map
-  }, [flatNodes, params, section])
+  const askDelete = (node: PostprocessProjectTreeNode) => {
+    const removed = [node.id, ...descendantsOf(node.id)]
+    const descendantCount = removed.length - 1
+    setConfirmDialog({
+      title: `删除「${node.name}」？`,
+      message:
+        (descendantCount > 0 ? `这会连同 ${descendantCount} 个子节点一起删除。` : '') +
+        '此操作不可恢复（可在素材库里撤销）。文件夹内的图片不会被删除，只会变为「未整理」；节点上已配置的参数会保留，若之后重建同名结构不会自动继承。',
+      confirmText: '删除',
+      cancelText: '取消',
+      tone: 'danger',
+      action: () => {
+        void deleteCollection(node.id)
+        // 删掉正是当前作用域（或它的某个后代）时归位全局，否则右区会指着一个不存在的节点
+        if (removed.includes(value)) onValueChange(GLOBAL_NODE_ID)
+      },
+    })
+  }
 
-  const globalSelected = isGlobalScope(value)
+  /** 行内输入框：改名与新增共用一套键盘行为（回车提交、Esc 取消）。 */
+  const renderEditor = (placeholder: string) => (
+    <input
+      autoFocus
+      aria-label={placeholder}
+      placeholder={placeholder}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') void submitEdit()
+        if (event.key === 'Escape') cancelEdit()
+      }}
+      className="ds-input h-6 min-w-0 flex-1 px-1.5 py-0 text-sm"
+    />
+  )
 
-  /** 渲染作用域树。`ownerSection` 用来判断「这一行是不是当前维度的选中项」。 */
-  const renderNodes = (nodes: PostprocessProjectTreeNode[], ownerSection: ControlConsoleSectionId) => (
+  const renderCreateRow = (depth: number) => (
+    <div
+      data-layout="console-tree-new"
+      className={`mr-2 flex items-center gap-1 rounded-ds-lg pr-1 ${INDENT_CLASS[Math.min(depth, 3)]}`}
+    >
+      <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+      {renderEditor('名称，回车确认')}
+    </div>
+  )
+
+  const renderTrashedRow = (node: PostprocessProjectTreeNode) => (
+    <div
+      key={node.id}
+      data-layout="console-tree-node"
+      className={`group mr-2 flex items-center gap-1 rounded-ds-lg pr-1 ${INDENT_CLASS[0]}`}
+    >
+      <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate py-1.5 text-sm text-ds-text/80 dark:text-ds-text/80">{node.name}</span>
+      <button
+        type="button"
+        aria-label={`恢复 ${node.name}`}
+        className="flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-ds-md px-1.5 text-xs text-ds-muted opacity-0 group-hover:opacity-100 focus-visible:opacity-100 dark:text-ds-muted"
+        onClick={() => void restoreCollection(node.id)}
+      >
+        <PlusIcon className="h-3.5 w-3.5" />
+        恢复
+      </button>
+    </div>
+  )
+
+  /** 渲染项目树。行内操作只在悬停/聚焦时出现，避免默认状态下满屏按钮。 */
+  const renderNodes = (nodes: PostprocessProjectTreeNode[]) => (
     <>
       {nodes.map((node) => {
         const expanded = searching || expandedIds.has(node.id)
         const hasChildren = searching || parentIds.has(node.id)
-        const selected = ownerSection === section && value === node.id
-        const overrideCount = ownerSection === section ? (overrideCountByNode.get(node.id) ?? 0) : 0
+        const selected = value === node.id
+        const renaming = editing?.kind === 'rename' && editing.id === node.id
         return (
           <div key={node.id}>
             <div
-              data-layout="console-scope-node"
-              className={`mr-2 flex items-center gap-1 rounded-ds-lg pr-1 ${
+              data-layout="console-tree-node"
+              className={`group mr-2 flex items-center gap-1 rounded-ds-lg pr-1 ${
                 INDENT_CLASS[Math.min(node.depth + 1, 3)]
               } ${selected ? 'bg-ds-subtle dark:bg-ds-subtle' : ''}`}
             >
@@ -220,119 +282,83 @@ export function ConsoleAssetTree({ section, onSectionChange, value, onValueChang
               >
                 {expanded ? <ChevronDownIcon className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />}
               </button>
-              <button
-                type="button"
-                aria-current={selected ? 'true' : undefined}
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-1.5 text-left"
-                onClick={() => onValueChange(node.id)}
-              >
-                <span
-                  className={`truncate text-sm ${
-                    selected ? 'font-medium text-ds-text dark:text-ds-text' : 'text-ds-text/80 dark:text-ds-text/80'
-                  }`}
-                >
-                  {node.name}
-                </span>
-                {overrideCount > 0 && (
-                  <Badge tone="warning" className="ml-auto shrink-0">
-                    {overrideCount}
-                  </Badge>
-                )}
-              </button>
+
+              {renaming ? (
+                renderEditor(`重命名 ${node.name}`)
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    aria-current={selected ? 'true' : undefined}
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-1.5 text-left"
+                    onClick={() => onValueChange(node.id)}
+                  >
+                    <span
+                      className={`truncate text-sm ${
+                        selected ? 'font-medium text-ds-text dark:text-ds-text' : 'text-ds-text/80 dark:text-ds-text/80'
+                      }`}
+                    >
+                      {node.name}
+                    </span>
+                  </button>
+                  <div className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                    <button
+                      type="button"
+                      aria-label={`在 ${node.name} 下新增`}
+                      title="新增子级"
+                      className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-ds-md text-ds-muted hover:text-ds-text dark:text-ds-muted dark:hover:text-ds-text"
+                      onClick={() => startCreate(node.id)}
+                    >
+                      <PlusIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`重命名 ${node.name}`}
+                      title="重命名"
+                      className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-ds-md text-ds-muted hover:text-ds-text dark:text-ds-muted dark:hover:text-ds-text"
+                      onClick={() => startRename(node.id, node.name)}
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`删除 ${node.name}`}
+                      title="删除"
+                      className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-ds-md text-ds-muted hover:text-ds-danger dark:text-ds-muted"
+                      onClick={() => askDelete(node)}
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
-            {expanded && hasChildren && node.children.length > 0 && (
-              <div>{renderNodes(node.children, ownerSection)}</div>
-            )}
+
+            {/*
+              新增子级的输入框**不能**放在「展开且已有子节点」的分支里：给一个还没有
+              子节点的方向加子级，恰恰就是这种情况 —— 那样点了「+」什么都不会出现。
+            */}
+            {editing?.kind === 'create' && editing.parentId === node.id && renderCreateRow(node.depth + 2)}
+            {expanded && node.children.length > 0 && <div>{renderNodes(node.children)}</div>}
           </div>
         )
       })}
     </>
   )
 
-  /** 「全局默认」行：所有维度都有（纯全局维度里它是唯一一项）。 */
-  const renderGlobalRow = (item: ControlConsoleSection, hint?: string) => {
-    const selected = section === item.id && globalSelected
-    return (
-      <div
-        data-layout="console-scope-node"
-        className={`mr-2 flex items-center rounded-ds-lg pr-1 ${INDENT_CLASS[1]} ${
-          selected ? 'bg-ds-subtle dark:bg-ds-subtle' : ''
-        }`}
-      >
-        <span className="h-6 w-6 shrink-0" aria-hidden="true" />
-        <button
-          type="button"
-          aria-current={selected ? 'true' : undefined}
-          aria-label={`${item.label} · 全局默认`}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-1.5 text-left"
-          onClick={() => pickSection(item, GLOBAL_NODE_ID)}
-        >
-          <span
-            className={`truncate text-sm ${
-              selected ? 'font-medium text-ds-text dark:text-ds-text' : 'text-ds-text/80 dark:text-ds-text/80'
-            }`}
-          >
-            {hint ?? '全局默认'}
-          </span>
-          {item.scopeAware && (
-            <Badge tone={selected ? 'info' : 'neutral'} className="ml-auto shrink-0">
-              {flatNodes.length}
-            </Badge>
-          )}
-        </button>
-      </div>
-    )
-  }
-
-  /** 维度组标题行：展开箭头 + 名称 + 「有几个节点为它单独配过」的计数。 */
-  const renderSectionRow = (item: ControlConsoleSection) => {
-    const expanded = searching || expandedSections.has(item.id)
-    const active = section === item.id
-    const affected = item.scopeAware
-      ? flatNodes.filter((node) => countFieldsForSection(item.id, node.id, params) > 0).length
-      : 0
-    return (
-      <div data-layout="console-dimension-node" className="mr-2 flex items-center gap-1 rounded-ds-lg pl-2 pr-1">
-        <button
-          type="button"
-          aria-label={expanded ? `收起配置维度 ${item.label}` : `展开配置维度 ${item.label}`}
-          aria-expanded={expanded}
-          className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-ds-muted dark:text-ds-muted"
-          onClick={() => toggleSection(item.id)}
-        >
-          {expanded ? <ChevronDownIcon className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />}
-        </button>
-        <button
-          type="button"
-          aria-current={active ? 'true' : undefined}
-          aria-label={`配置维度 ${item.label}`}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-1.5 text-left"
-          onClick={() => pickSection(item, value)}
-        >
-          <span
-            className={`truncate text-sm font-medium ${
-              active ? 'text-ds-text dark:text-ds-text' : 'text-ds-text/70 dark:text-ds-text/70'
-            }`}
-          >
-            {item.label}
-          </span>
-          {affected > 0 && (
-            <Badge tone="warning" className="ml-auto shrink-0" title="有节点单独配过这一项">
-              {affected}
-            </Badge>
-          )}
-        </button>
-      </div>
-    )
-  }
-
   return (
     <nav
-      aria-label="中控台配置资产库"
+      aria-label="项目树"
       className="flex w-64 shrink-0 flex-col overflow-hidden border-r border-ds-border dark:border-ds-border"
     >
       <div className="shrink-0 space-y-2 px-3 pt-3">
-        <h2 className="text-sm font-semibold text-ds-text dark:text-ds-text">配置资产库</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-ds-text dark:text-ds-text">项目树</h2>
+          <Button variant="ghost" size="sm" onClick={() => startCreate(null)}>
+            <PlusIcon className="h-3.5 w-3.5" />
+            业务线
+          </Button>
+        </div>
         <SearchField label="搜索节点" placeholder="搜索节点" size="sm" value={query} onChange={setQuery} />
         {/* 灵境的「全部 N / 已归档」tab：糖包对应「全部 / 回收站」 */}
         <SegmentedControl
@@ -347,37 +373,46 @@ export function ConsoleAssetTree({ section, onSectionChange, value, onValueChang
         />
       </div>
 
-      {/* 全部视图：维度组 → 作用域 */}
-      <div className={tab === 'active' ? 'min-h-0 flex-1 overflow-y-auto px-1 pb-3 pt-2' : 'hidden'}>
-        {visibleSections.map((item) => {
-          const expanded = searching || expandedSections.has(item.id)
-          return (
-            <div key={item.id} className="pb-1">
-              {renderSectionRow(item)}
-              {expanded &&
-                (item.scopeAware ? (
-                  <>
-                    {renderGlobalRow(item)}
-                    {renderNodes(visibleTree, item.id)}
-                    {visibleTree.length === 0 && (
-                      <p className={`${INDENT_CLASS[2]} py-2 pr-2 text-xs text-ds-muted dark:text-ds-muted`}>
-                        {searching ? '没有匹配的节点。' : '还没有项目节点。'}
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  renderGlobalRow(item, '全局一套（不按方向分）')
-                ))}
-            </div>
-          )
-        })}
-      </div>
+      {/* 全部视图：业务线 → 产品 → 方向。
+          **条件渲染，不用 CSS 隐藏** —— 隐藏的话这棵树还留在 DOM 里，切到回收站时
+          页面里就同时有两份节点，等于自己把同一棵树复制了一遍（展开态存在 state 里，不会丢）。 */}
+      {tab === 'active' && (
+        <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-3 pt-2">
+          <button
+            type="button"
+            aria-label="全局默认"
+            aria-current={isGlobalScope(value) ? 'true' : undefined}
+            className={`mb-1 mr-2 flex w-[calc(100%-0.5rem)] cursor-pointer items-center rounded-ds-lg py-1.5 text-left ${INDENT_CLASS[1]} ${
+              isGlobalScope(value) ? 'bg-ds-subtle dark:bg-ds-subtle' : ''
+            }`}
+            onClick={() => onValueChange(GLOBAL_NODE_ID)}
+          >
+            <span
+              className={`truncate text-sm ${
+                isGlobalScope(value)
+                  ? 'font-medium text-ds-text dark:text-ds-text'
+                  : 'text-ds-text/80 dark:text-ds-text/80'
+              }`}
+            >
+              全局默认
+            </span>
+          </button>
 
-      {/* 回收站视图：只列已回收节点，不套维度组 —— 回收站节点不参与参数解析，
-          所以这里点选只用于「看一眼有哪些」，不会成为编辑作用域。 */}
+          {editing?.kind === 'create' && editing.parentId === null && renderCreateRow(1)}
+          {renderNodes(visibleTree)}
+          {visibleTree.length === 0 && editing?.kind !== 'create' && (
+            <p className={`${INDENT_CLASS[1]} py-2 pr-2 text-xs text-ds-muted dark:text-ds-muted`}>
+              {searching ? '没有匹配的节点。' : '还没有节点，点右上角「业务线」开始。'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 回收站视图：只列已回收节点，不套层级 —— 它们在参数解析里已经出局，
+          这里点选只用于「看一眼有哪些、要不要恢复」，不会成为编辑作用域。 */}
       {tab === 'trashed' && (
         <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-3 pt-2">
-          {renderNodes(visibleTree, section)}
+          {trashedFlat.map(renderTrashedRow)}
           {visibleTree.length === 0 && (
             <p className="px-2 py-3 text-xs text-ds-muted dark:text-ds-muted">回收站是空的。</p>
           )}

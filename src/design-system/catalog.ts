@@ -959,14 +959,14 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/ConsoleAssetTree.tsx',
     responsibility:
-      '中控台左栏「配置资产库」作用域树（复刻灵境策略中心）：搜索 + 全部/回收站 tab + 全局默认总览项 + 项目树（节点带覆盖计数徽章）；点节点 = 切作用域',
+      '中控台左栏「项目树」：整个框架的唯一管理入口（业务线 → 产品 → 方向），搜索 + 全部/回收站 + 全局默认项；点节点 = 定作用域，节点行悬停可增子级 / 改名 / 删除（行内输入框，不弹窗）',
     decision: 'compose',
-    targets: ['Badge', 'SearchField', 'SegmentedControl'],
+    targets: ['SearchField', 'SegmentedControl', 'Button'],
   },
   {
     module: 'src/features/composite/components/ConsoleToolbar.tsx',
     responsibility:
-      '中控台右区工具栏（复刻灵境策略中心）：配置维度/归属范围筛选 + 搜索 + 每行数量 + 网格列表切换，下行是批量启用/停用/复制/删除',
+      '中控台右区工具栏（复刻灵境策略中心）：归属范围筛选 + 搜索 + 每行数量 + 网格列表切换，下行是批量启用/停用/复制/删除。「改什么」已交给右区那排 tab，工具栏不再兼任切分区',
     decision: 'compose',
     targets: ['Toolbar', 'SelectField', 'SearchField', 'SegmentedControl', 'Button'],
   },
@@ -985,25 +985,11 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Card', 'Thumbnail', 'Badge', 'Checkbox', 'Button', 'Popover', 'Menu'],
   },
   {
-    module: 'src/features/composite/components/ConsoleDirectionTables.tsx',
-    responsibility:
-      '中控台「方向」分区的两张表：方向结构（名称 / 层级 / 上级 / 子项 / 增删，含成环保护）+ 方向级参数（参与产出 / 输出目录 / 水印 / 设置来源）',
-    decision: 'compose',
-    targets: ['DataGrid', 'SectionHeader', 'Alert', 'Button', 'IconButton', 'TextField'],
-  },
-  {
-    module: 'src/features/composite/components/ConsoleWatermarkBindings.tsx',
-    responsibility:
-      '中控台「方向」分区的水印归属表：一行一条「方向 → 预设」显式声明，区分「移除」（写空数组 = 显式不加水印）与「改为继承」（写 undefined）两种写入语义',
-    decision: 'compose',
-    targets: ['DataGrid', 'SectionHeader', 'Alert', 'Button', 'IconButton', 'SelectField'],
-  },
-  {
     module: 'src/features/composite/components/ConsoleMediaTables.tsx',
     responsibility:
-      '中控台「渠道与尺寸」分区的表格本体：渠道表（含参与产出勾选与尺寸计数）+ 尺寸表（含跨渠道移动），规格增删改就地完成',
+      '中控台「渠道与尺寸」分区的表格本体：渠道表（参与产出勾选与尺寸计数）+ 尺寸表（一行一个渠道、详细尺寸是复选框组，折行自适应；点尺寸名展开 SizeEditor 改宽高/体积上限/跨渠道移动）',
     decision: 'compose',
-    targets: ['DataGrid', 'SectionHeader', 'Alert', 'Button', 'IconButton', 'SelectField', 'TextField'],
+    targets: ['DataGrid', 'SectionHeader', 'Checkbox', 'Button', 'IconButton', 'SelectField', 'TextField'],
   },
   {
     module: 'src/features/composite/components/MediaSection.tsx',
@@ -1069,7 +1055,8 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/postprocess/PostprocessParamPanel.tsx',
-    responsibility: '后处理参数详情面板（唯一编辑区，按 paramSchema 渲染字段与继承状态）',
+    responsibility:
+      '后处理参数详情面板（唯一编辑区）：按 paramSchema 渲染字段与继承状态，三组只用 1px 分隔线分段、不渲染卡片标题；参与方式整行，水印是「文案 + 按渠道 tab + 跳转入口」一行 + 下方 16:9 预览',
     decision: 'compose',
     targets: [
       'Alert',

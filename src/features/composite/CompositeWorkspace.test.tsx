@@ -10,16 +10,13 @@ import { useStore } from '../../store'
 /**
  * 中控台装配测试。
  *
- * 复刻灵境策略中心后的形态是**左树 + 右内容**：
- * - 左栏作用域树（`ConsoleAssetTree`）；
- * - 右区 = 作用域标题 + 工具栏（配置维度下拉切换分区）+ 内容。
+ * 形态是**左树 + 右 tab**：
+ * - 左栏项目树（`ConsoleAssetTree`）管「改谁」，增删改查都在树上；
+ * - 右区 = 作用域标题 + 一排 tab（管「改什么」）+ 内容。
  *
- * 分区内容各自 mock 成占位文本：这里锁的是**分区注册表 → 渲染分支**的对应关系，
+ * 分区内容各自 mock 成占位文本：这里锁的是**分区注册表 → tab → 渲染分支**的对应关系，
  * 以及「树 → 作用域 → 右区标题」这条链 —— 不是各分区内部的业务逻辑。
  */
-vi.mock('./components/ConsoleDirectionTables', () => ({
-  ConsoleDirectionTables: () => <div>directions-screen</div>,
-}))
 vi.mock('./components/ConsolePresetGrid', () => ({
   ConsolePresetGrid: () => <div>preset-screen</div>,
 }))
@@ -47,17 +44,17 @@ function collectText(children: unknown): string {
 }
 
 /**
- * 切到某个配置维度：**点左树上的维度组**（2026-09-21 改版后维度由树承载，
- * 不再是工具栏里的下拉 —— 这条 helper 的改法本身就是那次改版的断言）。
+ * 切到某个分区：**点右区那排 tab**（2026-09-21 改版后「改什么」只在 tab 上，
+ * 维度不再进树 —— 这条 helper 的改法本身就是那次改版的断言）。
  */
 function switchSection(renderer: ReturnType<typeof create>, sectionId: string) {
   const label = CONTROL_CONSOLE_SECTIONS.find((item) => item.id === sectionId)?.label
-  if (!label) throw new Error(`未知维度：${sectionId}`)
-  const button = renderer.root.find(
-    (node) => node.type === 'button' && node.props['aria-label'] === `配置维度 ${label}`,
+  if (!label) throw new Error(`未知分区：${sectionId}`)
+  const tab = renderer.root.find(
+    (node) => node.type === 'button' && node.props.role === 'tab' && collectText(node.props.children).includes(label),
   )
   act(() => {
-    ;(button.props.onClick as () => void)()
+    ;(tab.props.onClick as () => void)()
   })
 }
 
@@ -122,8 +119,8 @@ describe('CompositeWorkspace', () => {
     })
 
     expect(renderer.root.findByType('main').props['aria-label']).toBe('中控台工作区')
-    // 左栏配置资产库（配置维度 → 作用域）是复刻灵境策略中心的核心部件，必须有稳定可访问名
-    expect(renderer.root.findByProps({ 'aria-label': '中控台配置资产库' })).toBeTruthy()
+    // 左栏项目树是整个框架的管理入口，必须有稳定可访问名
+    expect(renderer.root.findByProps({ 'aria-label': '项目树' })).toBeTruthy()
   })
 
   it('switches to each registered section and renders exactly one at a time', () => {
@@ -134,7 +131,6 @@ describe('CompositeWorkspace', () => {
 
     const expectations: Record<string, string> = {
       watermark: 'preset-screen',
-      directions: 'directions-screen',
       media: 'media-screen',
       output: 'output-screen',
       distribution: 'distribution-screen',
@@ -191,18 +187,29 @@ describe('CompositeWorkspace', () => {
     expect(renderer.root.findAllByProps({ children: 'output-screen' })).toHaveLength(0)
   })
 
-  it('右区标题同时说明「当前维度」与「当前作用域」', () => {
-    // 维度切换挪到左树之后，右区必须自己说清现在在哪一项 —— 否则从树上点了作用域，
-    // 右区内容属于哪个维度就看不出来了（标题里带维度名前缀就是为了这个）
+  it('右区标题跟着左树走：树选到哪一层，标题就是哪一层', () => {
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('水印 · 全局默认')
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('全局默认')
 
     clickTreeButton(renderer, '月亮')
-    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('水印 · 月亮')
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
+  })
+
+  it('切到全局 tab 时明说「所有方向共用」（渠道与尺寸 / 分发不按方向分）', () => {
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    switchSection(renderer, 'media')
+    expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(1)
+
+    switchSection(renderer, 'watermark')
+    expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(0)
   })
 
   it('方向作用域下「批量启用」才可用（全局默认下置灰并给出原因）', () => {
@@ -230,7 +237,7 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('水印 · 月亮')
+    expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
   })
 
   it('在树里选方向会写回全局指针，别的入口能读到同一个值', () => {

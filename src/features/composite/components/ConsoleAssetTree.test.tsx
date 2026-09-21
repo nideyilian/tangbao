@@ -1,26 +1,52 @@
 /**
- * 中控台左栏「配置资产库」树的行为测试（2026-09-21 改版后：**两级 = 配置维度 → 作用域**）。
+ * 中控台左栏「项目树」的行为测试。
  *
- * 锁六件事，其中后三件是这次改版的核心承诺：
- * 1. 「全局默认」总览项存在且徽章 = 节点总数（灵境「全部策略 N」的对应物）；
- * 2. 点节点 = 切作用域（`onValueChange` 收到节点 id）；
- * 3. 点维度组 = 切维度（`onSectionChange` 收到维度 id）；
- * 4. **纯全局维度的组里不铺方向树** —— 约束由结构表达，不靠文案警告；
- * 5. **点纯全局维度会把作用域一并归位到「全局默认」** —— 否则右区标题写着某方向、
- *    内容却是全局一套，等于自己制造一次「所见非所改」；
- * 6. 覆盖徽章按**当前维度**计，不是「总共写了几个字段」——
- *    在输出位置维度看到「1」、在水印维度看到「0」，才答得了「这个维度下谁偏离了全局」。
+ * 锁三组事：
+ *
+ * 1. ⭐ **树只有一棵**（2026-09-21 的回归断言）—— 上一版把「配置维度」挂成树的一级，
+ *    于是每个能按方向配的维度各挂一棵完整的作用域树，展开两个组就是两棵一模一样的
+ *    方向树。这里直接数节点行：每个集合在树上只出现一次。
+ * 2. **树管「改谁」**：点节点 / 点「全局默认」→ `onValueChange`。
+ * 3. **树管增删改查**：新增业务线、在某节点下新增、改名、删除（删除走确认弹窗）。
  */
 
 import { act, create } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConsoleAssetTree } from './ConsoleAssetTree'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
-import type { ControlConsoleSectionId } from '../lib/controlConsoleSections'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
-import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
+import { useStore } from '../../../store'
+
+/** 新建出来的节点形状（与 `AssetCollection` 对齐；`null` 表示被 store 拒绝了） */
+type CreatedCollection = {
+  id: string
+  name: string
+  parentId: string | null
+  order: number
+  createdAt: number
+  updatedAt: number
+}
+
+const createCollection = vi.fn(
+  async (name: string, parentId: string | null = null): Promise<CreatedCollection | null> => ({
+    id: 'created-1',
+    name,
+    parentId,
+    order: 0,
+    createdAt: 0,
+    updatedAt: 0,
+  }),
+)
+const renameCollection = vi.fn(async () => undefined)
+const deleteCollection = vi.fn(async () => undefined)
+const restoreCollection = vi.fn(async () => undefined)
 
 function seedStores() {
+  createCollection.mockClear()
+  renameCollection.mockClear()
+  deleteCollection.mockClear()
+  restoreCollection.mockClear()
+  useStore.setState({ confirmDialog: null })
   useAssetLibraryStore.setState({
     collections: [
       { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
@@ -28,35 +54,19 @@ function seedStores() {
       { id: 'direction-moon', name: '月亮', parentId: 'product-a', order: 0, createdAt: 0, updatedAt: 0 },
       { id: 'direction-sun', name: '太阳', parentId: 'product-a', order: 1, createdAt: 0, updatedAt: 0 },
     ] as never,
+    createCollection: createCollection as never,
+    renameCollection: renameCollection as never,
+    deleteCollection: deleteCollection as never,
+    restoreCollection: restoreCollection as never,
   })
-  useProjectTreeParamsStore.setState({
-    params: {
-      // 月亮写了输出目录 ⇒ 它在「输出位置」维度下偏离了全局；水印维度下没写
-      'direction-moon': { postprocess: { outputDir: 'D:/月亮' } },
-    },
-  })
-}
-
-interface TreeProps {
-  section?: ControlConsoleSectionId
-  onSectionChange?: (section: ControlConsoleSectionId) => void
-  value?: string
-  onValueChange?: (value: string) => void
 }
 
 /** 必须在 `act` 里创建，否则拿不到已挂载的树 */
-function renderTree(props: TreeProps = {}) {
-  const { section = 'watermark', onSectionChange = () => {}, value = GLOBAL_NODE_ID, onValueChange = () => {} } = props
+function renderTree(props: { value?: string; onValueChange?: (value: string) => void } = {}) {
+  const { value = GLOBAL_NODE_ID, onValueChange = () => {} } = props
   let renderer!: ReturnType<typeof create>
   act(() => {
-    renderer = create(
-      <ConsoleAssetTree
-        section={section}
-        onSectionChange={onSectionChange}
-        value={value}
-        onValueChange={onValueChange}
-      />,
-    )
+    renderer = create(<ConsoleAssetTree value={value} onValueChange={onValueChange} />)
   })
   return renderer
 }
@@ -72,11 +82,12 @@ function collectText(children: unknown): string {
   return ''
 }
 
-/** 取渲染树里所有「无 aria-label」按钮的可见文本（有 aria-label 的是展开箭头，不参与文本匹配） */
-function buttonLabels(renderer: ReturnType<typeof create>) {
-  return renderer.root
-    .findAll((node) => node.type === 'button' && typeof node.props['aria-label'] !== 'string')
-    .map((node) => collectText(node.props.children))
+/** 按可访问名点按钮 */
+function clickByAriaLabel(renderer: ReturnType<typeof create>, label: string) {
+  const node = renderer.root.find((item) => item.props['aria-label'] === label)
+  act(() => {
+    ;(node.props.onClick as () => void)()
+  })
 }
 
 /** 按可见文本点一个按钮 */
@@ -87,130 +98,164 @@ function clickButton(renderer: ReturnType<typeof create>, text: string) {
   })
 }
 
-/** 按可访问名点按钮（展开箭头用这个，它们的 children 是图标、没有文本） */
-function clickByAriaLabel(renderer: ReturnType<typeof create>, label: string) {
-  const node = renderer.root.find((item) => item.props['aria-label'] === label)
+/** 树上所有节点行 */
+function nodeRows(renderer: ReturnType<typeof create>) {
+  return renderer.root.findAll((node) => node.props['data-layout'] === 'console-tree-node')
+}
+
+/** 把树上所有行的文本拼起来（断言「某个名字在不在树上」用） */
+function treeText(renderer: ReturnType<typeof create>) {
+  return nodeRows(renderer)
+    .map((row) => collectText(row.props.children))
+    .join('|')
+}
+
+/** 找到当前的编辑输入框（改名与新增共用一套渲染） */
+function findEditor(renderer: ReturnType<typeof create>) {
+  return renderer.root.find((node) => node.type === 'input' && typeof node.props['aria-label'] === 'string')
+}
+
+/** 在输入框里打字并回车 */
+async function typeAndSubmit(renderer: ReturnType<typeof create>, text: string) {
+  const input = findEditor(renderer)
   act(() => {
-    ;(node.props.onClick as () => void)()
+    ;(input.props.onChange as (event: { target: { value: string } }) => void)({ target: { value: text } })
+  })
+  await act(async () => {
+    ;(input.props.onKeyDown as (event: { key: string }) => void)({ key: 'Enter' })
+    await Promise.resolve()
   })
 }
 
-describe('ConsoleAssetTree（两级：配置维度 → 作用域）', () => {
+describe('ConsoleAssetTree（项目树：一棵树管整个框架）', () => {
   beforeEach(() => {
     seedStores()
   })
 
-  it('五个配置维度都在树上（维度由树承载，不再是独立的下拉）', () => {
+  it('⭐ 树只有一棵：每个节点在树上只渲染一次（维度不再挂在树上）', () => {
     const renderer = renderTree()
-    for (const label of ['水印', '渠道与尺寸', '输出位置', '分发', '方向']) {
-      // 维度行带 aria-label（它的可见文本后面会跟计数徽章，拿文本定位不稳）
-      expect(
-        renderer.root.findAll((node) => node.props['aria-label'] === `配置维度 ${label}`).length,
-        `树上缺少维度「${label}」`,
-      ).toBe(1)
+    const rows = nodeRows(renderer)
+    expect(rows).toHaveLength(4)
+    for (const name of ['产品线A', '产品A', '月亮', '太阳']) {
+      const matched = rows.filter((row) => collectText(row.props.children).includes(name))
+      expect(matched, `「${name}」在树上出现了 ${matched.length} 次`).toHaveLength(1)
     }
   })
 
-  it('默认展开当前维度组：水印组下有「全局默认」+ 节点，徽章 = 节点总数', () => {
-    const renderer = renderTree({ section: 'watermark' })
-    const globalRow = renderer.root.find((node) => node.props['aria-label'] === '水印 · 全局默认')
-    // 4 个节点（产品线A / 产品A / 月亮 / 太阳）
-    expect(collectText(globalRow.props.children)).toBe('全局默认4')
-    expect(buttonLabels(renderer).some((label) => label.includes('月亮'))).toBe(true)
+  it('层级三层都在：业务线 → 产品 → 方向', () => {
+    const renderer = renderTree()
+    const labels = nodeRows(renderer).map((row) => collectText(row.props.children))
+    expect(labels.join('|')).toContain('产品线A')
+    expect(labels.join('|')).toContain('产品A')
+    expect(labels.join('|')).toContain('月亮')
   })
 
-  it('点维度组 = 切维度：onSectionChange 收到维度 id', () => {
-    const onSectionChange = vi.fn()
-    const renderer = renderTree({ onSectionChange })
-    clickButton(renderer, '输出位置')
-    expect(onSectionChange).toHaveBeenCalledWith('output')
-  })
-
-  it('纯全局维度的组里**不铺方向树**：只有「全局一套」一行，没有节点', () => {
-    // 初始只展开当前维度（media），水印组是折叠的 —— 所以月亮本就不该出现
-    const renderer = renderTree({ section: 'media' })
-    const globalRow = renderer.root.find((node) => node.props['aria-label'] === '渠道与尺寸 · 全局默认')
-    expect(collectText(globalRow.props.children)).toContain('全局一套（不按方向分）')
-
-    const allTexts = renderer.root
-      .findAll((node) => node.type === 'button')
-      .map((node) => collectText(node.props.children))
-    expect(allTexts.some((label) => label.includes('月亮'))).toBe(false)
-    expect(allTexts.some((label) => label.includes('产品线A'))).toBe(false)
-  })
-
-  it('维度组可折叠：折叠后组内的作用域节点不再渲染', () => {
-    const renderer = renderTree({ section: 'watermark' })
-    expect(buttonLabels(renderer).some((label) => label.includes('月亮'))).toBe(true)
-    clickByAriaLabel(renderer, '收起配置维度 水印')
-    expect(buttonLabels(renderer).some((label) => label.includes('月亮'))).toBe(false)
-  })
-
-  it('⭐ 点纯全局维度会把作用域一并归位到「全局默认」（不能只切维度）', () => {
-    const onSectionChange = vi.fn()
-    const onValueChange = vi.fn()
-    const renderer = renderTree({
-      section: 'watermark',
-      value: 'direction-moon',
-      onSectionChange,
-      onValueChange,
-    })
-    clickButton(renderer, '渠道与尺寸')
-    expect(onSectionChange).toHaveBeenCalledWith('media')
-    expect(onValueChange).toHaveBeenCalledWith(GLOBAL_NODE_ID)
-  })
-
-  it('点按方向分的维度时保留当前作用域（切回来还在原处）', () => {
-    const onSectionChange = vi.fn()
-    const onValueChange = vi.fn()
-    const renderer = renderTree({
-      section: 'watermark',
-      value: 'direction-moon',
-      onSectionChange,
-      onValueChange,
-    })
-    clickButton(renderer, '输出位置')
-    expect(onSectionChange).toHaveBeenCalledWith('output')
-    expect(onValueChange).toHaveBeenCalledWith('direction-moon')
-  })
-
-  it('点节点 = 切作用域：onValueChange 收到节点 id', () => {
+  it('点节点 = 定作用域：onValueChange 收到节点 id', () => {
     const onValueChange = vi.fn()
     const renderer = renderTree({ onValueChange })
     clickButton(renderer, '月亮')
     expect(onValueChange).toHaveBeenCalledWith('direction-moon')
   })
 
-  it('点「全局默认」= 回到全局基线', () => {
+  it('点「全局默认」= 作用域归位', () => {
     const onValueChange = vi.fn()
     const renderer = renderTree({ value: 'direction-moon', onValueChange })
-    clickButton(renderer, '全局默认')
+    clickByAriaLabel(renderer, '全局默认')
     expect(onValueChange).toHaveBeenCalledWith(GLOBAL_NODE_ID)
   })
 
-  it('覆盖徽章按当前维度计：输出位置维度下月亮有、水印维度下没有', () => {
-    const inOutput = renderTree({ section: 'output' })
-    const outputLabels = buttonLabels(inOutput)
-    expect(outputLabels.some((label) => label === '月亮1')).toBe(true)
-
-    const inWatermark = renderTree({ section: 'watermark' })
-    const watermarkLabels = buttonLabels(inWatermark)
-    // 月亮没写 watermarkPresetIds ⇒ 在这个维度上不算偏离全局
-    expect(watermarkLabels.some((label) => label === '月亮1')).toBe(false)
-    expect(watermarkLabels.some((label) => label === '月亮')).toBe(true)
+  it('折叠箭头能收起子树', () => {
+    const renderer = renderTree()
+    expect(treeText(renderer)).toContain('月亮')
+    clickByAriaLabel(renderer, '收起 产品A')
+    expect(treeText(renderer)).not.toContain('月亮')
   })
 
-  it('搜索过滤：命中节点保留，无关节点剪掉', () => {
+  it('搜索命中的节点保留，并且带出它的祖先链', () => {
     const renderer = renderTree()
-    // 触发的是内层 <input> 的 DOM 事件（SearchField 的外层 onChange 收的是纯字符串）
-    const input = renderer.root.findByType('input')
+    const search = renderer.root.find((node) => node.type === 'input' && node.props.type === 'search')
     act(() => {
-      ;(input.props.onChange as (event: { target: { value: string } }) => void)({
-        target: { value: '月亮' },
-      })
+      ;(search.props.onChange as (event: { target: { value: string } }) => void)({ target: { value: '月亮' } })
     })
-    const labels = buttonLabels(renderer)
-    expect(labels.some((label) => label.includes('月亮'))).toBe(true)
-    expect(labels.some((label) => label.includes('太阳'))).toBe(false)
+    expect(treeText(renderer)).toContain('月亮')
+    expect(treeText(renderer)).toContain('产品A')
+    expect(treeText(renderer)).not.toContain('太阳')
+  })
+
+  it('新增业务线：点右上角按钮 → 输入名称回车 → createCollection(name, null)', async () => {
+    const onValueChange = vi.fn()
+    const renderer = renderTree({ onValueChange })
+    clickButton(renderer, '业务线')
+    await typeAndSubmit(renderer, '新业务线')
+    expect(createCollection).toHaveBeenCalledWith('新业务线', null)
+    // 加完自动选中新节点：下一步必然是在右区给它配参数，不该再让用户自己找一遍
+    expect(onValueChange).toHaveBeenCalledWith('created-1')
+  })
+
+  it('新增子级：点节点行悬停的「+」→ createCollection(name, 该节点 id)', async () => {
+    const renderer = renderTree()
+    clickByAriaLabel(renderer, '在 月亮 下新增')
+    await typeAndSubmit(renderer, '新方向')
+    expect(createCollection).toHaveBeenCalledWith('新方向', 'direction-moon')
+  })
+
+  it('同名节点被拒时给出提示，不静默失败', async () => {
+    createCollection.mockResolvedValueOnce(null)
+    const renderer = renderTree()
+    clickButton(renderer, '业务线')
+    await typeAndSubmit(renderer, '产品线A')
+    expect(useStore.getState().toast?.message ?? '').toContain('同名')
+  })
+
+  it('改名：输入框预填原名，回车写回 store', async () => {
+    const renderer = renderTree()
+    clickByAriaLabel(renderer, '重命名 月亮')
+    const input = findEditor(renderer)
+    expect(input.props.value).toBe('月亮')
+    await typeAndSubmit(renderer, '月亮（改）')
+    expect(renameCollection).toHaveBeenCalledWith('direction-moon', '月亮（改）')
+  })
+
+  it('删除走确认弹窗，标题带上节点名（不直接删）', () => {
+    const renderer = renderTree()
+    clickByAriaLabel(renderer, '删除 产品A')
+    expect(deleteCollection).not.toHaveBeenCalled()
+    expect(useStore.getState().confirmDialog?.title).toContain('产品A')
+    expect(useStore.getState().confirmDialog?.message).toContain('2 个子节点')
+  })
+
+  it('⭐ 删掉的正是当前作用域时，作用域归位到「全局默认」', () => {
+    const onValueChange = vi.fn()
+    const renderer = renderTree({ value: 'direction-moon', onValueChange })
+    clickByAriaLabel(renderer, '删除 月亮')
+    act(() => {
+      useStore.getState().confirmDialog?.action?.()
+    })
+    expect(deleteCollection).toHaveBeenCalledWith('direction-moon')
+    expect(onValueChange).toHaveBeenCalledWith(GLOBAL_NODE_ID)
+  })
+
+  it('删父节点时，后代也在归位判定里（不能留下悬空作用域）', () => {
+    const onValueChange = vi.fn()
+    const renderer = renderTree({ value: 'direction-sun', onValueChange })
+    clickByAriaLabel(renderer, '删除 产品A')
+    act(() => {
+      useStore.getState().confirmDialog?.action?.()
+    })
+    expect(onValueChange).toHaveBeenCalledWith(GLOBAL_NODE_ID)
+  })
+
+  it('回收站：切过去只列已回收节点，可一键恢复', () => {
+    useAssetLibraryStore.setState({
+      collections: [
+        { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'gone', name: '删掉的', parentId: null, order: 0, createdAt: 0, updatedAt: 0, trashedAt: 1 },
+      ] as never,
+    })
+    const renderer = renderTree()
+    clickButton(renderer, '回收站')
+    expect(nodeRows(renderer)).toHaveLength(1)
+    clickByAriaLabel(renderer, '恢复 删掉的')
+    expect(restoreCollection).toHaveBeenCalledWith('gone')
   })
 })

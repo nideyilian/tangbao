@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button } from '../../design-system'
+import { Button, Tabs } from '../../design-system'
 import { PlusIcon } from '../../design-system/icons'
 import {
   CONTROL_CONSOLE_SECTIONS,
@@ -9,7 +9,6 @@ import {
   type ConsoleScope,
 } from './lib/controlConsoleSections'
 import { ConsoleAssetTree } from './components/ConsoleAssetTree'
-import { ConsoleDirectionTables } from './components/ConsoleDirectionTables'
 import { ConsolePresetGrid } from './components/ConsolePresetGrid'
 import { ConsoleToolbar, type ConsoleBindingFilter, type ConsoleViewMode } from './components/ConsoleToolbar'
 import { DistributionSection } from './components/DistributionSection'
@@ -45,21 +44,32 @@ import { usePostprocessGlobalConfig } from '../postprocess/usePostprocessGlobalC
 /**
  * 中控台（顶栏 tab，原「水印预设」工作区）。
  *
- * 形态完全对齐「灵境 · 策略中心」（strategy/center，2026-09-20 登录实测）：
- * **左树 + 右内容**。左栏「配置资产库」= 搜索 + 全局默认总览项 + 项目树
- * （节点带覆盖计数徽章）；右区 = 作用域标题 + 操作按钮 + 两行工具栏（筛选 / 批量）+ 内容。
+ * 形态对齐「灵境 · 策略中心」（strategy/center，2026-09-20 登录实测）：**左树 + 右内容**。
+ *
+ * ```
+ * 左：项目树                            右：一排 tab
+ * 业务线 → 产品 → 方向                  水印 / 输出位置 / 渠道与尺寸 / 分发
+ * 管「改谁」，增删改查都在树上           管「改什么」，跟着树上选中哪一层走
+ * ```
+ *
+ * **树是全局的**（杰哥 2026-09-21）：它管的是整个框架，画廊侧栏与项目树读的是同一份
+ * `useAssetLibraryStore.collections`，所以树上一处改动三处同步。
  *
  * **业务模型：方向自带一整套参数，生成图时直接调用**（杰哥 2026-09-20 明确）。
  * 所以左树是参数的组织骨架，不是可选的筛选器：
  * - 选中某个方向 ⇒ 右区就是**该方向的参数**——水印卡片网格上直接开停用，
- *   其余维度（渠道与尺寸 / 输出位置 / 分发）同理由分区面板就地编辑；
- * - 选中「全局默认」⇒ 右区是全局基线与总览（水印在此是只读总览：
+ *   输出位置按这个方向改；
+ * - 选中「全局默认」⇒ 右区是全局基线（水印在此是只读总览：
  *   全局清单在前端没有写入点，各方向自己声明才是权威）。
  *
  * ⚠️ 准入约束：**有节点级字段的参数才消费作用域**。
  * `PostprocessNodeOverride`（ADR-0011 收窄后）只有 `outputDir` / `byMedia` /
  * `watermarkPresetIds` / `enabled`；`distribution` / `autoCompanionClean` /
- * `selectedMediaIds` 不在其中，所以「渠道与尺寸」「分发」是纯全局分区。
+ * `selectedMediaIds` 不在其中，所以「渠道与尺寸」「分发」是全局一套（`globalOnly`）。
+ *
+ * ⚠️ 模型教训（2026-09-21 上午）：曾经把配置维度挂到树上当一级（「维度 → 作用域」两级树），
+ * 结果是每个能按方向配的维度各挂一棵完整的方向树，展开两个组就是两棵一模一样的树。
+ * 维度与作用域是两条轴，套成一层嵌套必然会复制数据 —— 现在树只有一棵，维度就是这排 tab。
  *
  * 顶栏 `SegmentedControl` 的一个 tab，与素材库 / Agent 同级。
  */
@@ -73,7 +83,6 @@ export default function CompositeWorkspace() {
   const setSelectedPreviewPresetId = useCompositeV2Store((state) => state.setSelectedPreviewPresetId)
 
   const collections = useAssetLibraryStore((state) => state.collections)
-  const createCollection = useAssetLibraryStore((state) => state.createCollection)
   const params = useProjectTreeParamsStore((state) => state.params)
   const setPostprocessOverride = useProjectTreeParamsStore((state) => state.setPostprocessOverride)
   const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
@@ -152,7 +161,12 @@ export default function CompositeWorkspace() {
     setSelectedIds([])
   }, [scope])
 
-  const active = CONTROL_CONSOLE_SECTIONS.find((item) => item.id === section) ?? CONTROL_CONSOLE_SECTIONS[0]!
+  /**
+   * store 里可能残留已下线的分区 id（例如上一版的 `directions`），所以先归一化再用：
+   * 否则那排 tab 一个选中项都没有，右区还是空白。
+   */
+  const activeSection = normalizeControlConsoleSection(section)
+  const active = CONTROL_CONSOLE_SECTIONS.find((item) => item.id === activeSection) ?? CONTROL_CONSOLE_SECTIONS[0]!
   const isGlobal = isGlobalScope(scope)
 
   const scopeTitle = useMemo(() => {
@@ -256,7 +270,7 @@ export default function CompositeWorkspace() {
     showToast(`已复制 ${ids.length} 个预设`, 'success')
   }
 
-  const isCardView = section === 'watermark' && watermarkView === 'cards'
+  const isCardView = activeSection === 'watermark' && watermarkView === 'cards'
 
   /**
    * 导出中控台全量数据为 Excel。
@@ -381,57 +395,38 @@ export default function CompositeWorkspace() {
       className="flex h-[calc(100dvh-7rem)] min-h-0 overflow-hidden bg-ds-surface text-ds-text sm:h-[calc(100dvh-var(--app-header-offset))] dark:bg-ds-scrim dark:text-ds-text-subtle"
     >
       {/*
-       * 左树现在承载两级：**配置维度 → 作用域**（2026-09-21 改版）。
-       * 点一次同时定「改什么」与「改谁」；纯全局维度的组里不铺方向树，约束由结构表达。
+       * 左树 = 项目树（业务线 / 产品 / 方向）：管「改谁」，增删改查都在树上做。
+       * 「改什么」交给右区那排 tab —— 维度**不进树**：树只有一棵，维度是另一条轴，
+       * 两者套成一层嵌套必然把同一棵作用域树复制好几份（2026-09-21 上午的教训）。
        */}
-      <ConsoleAssetTree
-        section={section}
-        onSectionChange={(next) => {
-          setControlConsoleSection(normalizeControlConsoleSection(next))
-          // 切维度时回到卡片视图：否则从编辑器切走再切回来会停在编辑器，与工具栏筛选不一致
-          setWatermarkView('cards')
-        }}
-        value={scope}
-        onValueChange={setScope}
-      />
+      <ConsoleAssetTree value={scope} onValueChange={setScope} />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex shrink-0 items-start justify-between gap-3 px-4 pt-3">
           <div className="min-w-0">
-            {/* 维度名进标题：维度切换在左树，右区必须明说「现在在哪个维度」——
-                不然用户从树上点了个作用域，会不知道右区内容属于哪一项 */}
-            <h1 className="truncate text-base font-semibold text-ds-text dark:text-ds-text">
-              {active.label} · {scopeTitle}
-            </h1>
+            {/* 标题只写「改谁」——「改什么」由下面那排 tab 自己说 */}
+            <h1 className="truncate text-base font-semibold text-ds-text dark:text-ds-text">{scopeTitle}</h1>
             <p className="truncate text-xs text-ds-muted dark:text-ds-muted">
               {scopePath} · {active.description}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {/*
+             * 「新建方向」撤掉了：项目树每个节点悬停就有「+」，两处入口迟早出现
+             * 「在 A 加了、在 B 看不到」。一个动作只留一个入口。
+             */}
             {isCardView && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    void createCollection('新方向', isGlobal ? null : scope)
-                  }}
-                >
-                  <PlusIcon className="h-3.5 w-3.5" />
-                  新建方向
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    createPreset('新预设')
-                    setWatermarkView('editor')
-                  }}
-                >
-                  <PlusIcon className="h-3.5 w-3.5" />
-                  新建预设
-                </Button>
-              </>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  createPreset('新预设')
+                  setWatermarkView('editor')
+                }}
+              >
+                <PlusIcon className="h-3.5 w-3.5" />
+                新建预设
+              </Button>
             )}
             {/*
              * 导出放在工作区标题栏而不是某个分区里：它导的是**整个中控台**的数据面，
@@ -446,9 +441,27 @@ export default function CompositeWorkspace() {
           </div>
         </header>
 
+        {/*
+         * 「改什么」就是这一排。它跟着左树选中的节点走：树管「谁」、tab 管「哪块」，
+         * 各点一次，互不重叠。
+         */}
+        <div className="shrink-0 px-4 pt-2.5">
+          <Tabs
+            aria-label="参数分区"
+            size="sm"
+            value={activeSection}
+            items={CONTROL_CONSOLE_SECTIONS.map((item) => ({ value: item.id, label: item.label }))}
+            onValueChange={(next) => {
+              setControlConsoleSection(next)
+              // 切 tab 时回到卡片视图：否则从编辑器切走再切回来会停在编辑器，与工具栏筛选不一致
+              setWatermarkView('cards')
+            }}
+          />
+        </div>
+
         <div className="pt-2.5">
           <ConsoleToolbar
-            presetCardMode={section === 'watermark'}
+            presetCardMode={activeSection === 'watermark'}
             bindingFilter={bindingFilter}
             onBindingFilterChange={setBindingFilter}
             query={query}
@@ -476,7 +489,18 @@ export default function CompositeWorkspace() {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {section === 'watermark' && watermarkView === 'cards' && (
+          {/*
+           * 「渠道与尺寸」「分发」是全局唯一的，选哪个节点看到的都是同一套。
+           * 这里只加一句说明，**不隐藏也不置灰** —— 藏起来会让人切来切去找不着，
+           * 而它确实是要改的东西，只是不按方向分。
+           */}
+          {active.globalOnly && (
+            <p className="mb-2 text-xs text-ds-muted dark:text-ds-muted">
+              全局设置，所有方向共用 —— 这一块不按方向分。
+            </p>
+          )}
+
+          {activeSection === 'watermark' && watermarkView === 'cards' && (
             <ConsolePresetGrid
               presets={visiblePresets}
               perRow={perRow}
@@ -498,7 +522,7 @@ export default function CompositeWorkspace() {
             />
           )}
 
-          {section === 'watermark' && watermarkView === 'editor' && (
+          {activeSection === 'watermark' && watermarkView === 'editor' && (
             <div className="flex min-h-0 flex-col gap-2">
               <div className="flex shrink-0 items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setWatermarkView('cards')}>
@@ -512,10 +536,9 @@ export default function CompositeWorkspace() {
             </div>
           )}
 
-          {section === 'directions' && <ConsoleDirectionTables />}
-          {section === 'media' && <MediaSection />}
-          {section === 'output' && <OutputSection scope={scope} />}
-          {section === 'distribution' && <DistributionSection />}
+          {activeSection === 'media' && <MediaSection />}
+          {activeSection === 'output' && <OutputSection scope={scope} />}
+          {activeSection === 'distribution' && <DistributionSection />}
         </div>
       </div>
     </main>
