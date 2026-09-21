@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PARAMS, type AgentConversation, type AgentRound, type TaskRecord } from '../types'
 import {
   authorizeOutputDirectory,
+  deleteRawCacheImages,
   formatAgentRoundSummaryMarkdown,
   getExplicitImageSaveDirectory,
   getLocalImageSaveDirectoryForSegments,
@@ -401,5 +402,61 @@ describe('TB-049 · 导出目录授权先于建目录', () => {
       vi.fn(async () => true),
     )
     await expect(getExplicitImageSaveDirectory('D:/导出/保险')).resolves.toBe('D:/导出/保险')
+  })
+})
+
+/**
+ * 原图删除的**失败必须看得见**。
+ *
+ * 背景（2026-09-21）：`deleteRawCacheImages` 以前把主进程返回的 `{ deleted, failed }` 直接丢掉，
+ * 删除失败全程无痕 —— 路径不在库根的 `cache-images/` 下（库根换过）或 `unlink` 失败时，
+ * 用户看到的是「素材删了、磁盘没瘦」，而日志里一个字都没有。
+ */
+describe('原图删除的失败必须看得见', () => {
+  function installDeleteApi(deleteCacheImages: ReturnType<typeof vi.fn>) {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electronAPI: { isElectron: true, deleteCacheImages } },
+    })
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'window')
+    vi.restoreAllMocks()
+  })
+
+  it('全部成功：返回删除数量，不打日志', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installDeleteApi(vi.fn(async () => ({ deleted: ['a.png', 'b.png'], failed: [] })))
+
+    const result = await deleteRawCacheImages(['D:\\lib\\cache-images\\a.png', 'D:\\lib\\cache-images\\b.png'])
+
+    expect(result).toEqual({ deleted: 2, failed: [] })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('部分失败：失败路径回给调用方，并留下可查的日志', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installDeleteApi(vi.fn(async () => ({ deleted: ['a.png'], failed: ['D:\\other\\x.png'] })))
+
+    const result = await deleteRawCacheImages(['D:\\lib\\cache-images\\a.png', 'D:\\other\\x.png'])
+
+    expect(result.deleted).toBe(1)
+    expect(result.failed).toEqual(['D:\\other\\x.png'])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('删除失败'), expect.anything())
+  })
+
+  it('接口抛错：算作全部失败，不把异常抛给调用方（删除是尽力而为）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installDeleteApi(
+      vi.fn(async () => {
+        throw new Error('ipc down')
+      }),
+    )
+
+    const result = await deleteRawCacheImages(['D:\\lib\\cache-images\\a.png'])
+
+    expect(result).toEqual({ deleted: 0, failed: ['D:\\lib\\cache-images\\a.png'] })
+    expect(warn).toHaveBeenCalled()
   })
 })

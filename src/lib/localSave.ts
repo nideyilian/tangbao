@@ -1124,9 +1124,36 @@ export async function getDiskStorageUsage(): Promise<{
   return getAPI()?.getDiskStorageUsage?.() ?? null
 }
 
-export async function deleteRawCacheImages(filePaths: string[]): Promise<void> {
+/** 原图删除的结果：删除失败的文件必须能被看见（此前返回值被丢弃，删除失败全程无痕）。 */
+export interface DeleteRawCacheImagesResult {
+  deleted: number
+  failed: string[]
+}
+
+export async function deleteRawCacheImages(filePaths: string[]): Promise<DeleteRawCacheImagesResult> {
   const api = getAPI()
-  if (api?.deleteCacheImages && filePaths.length > 0) await api.deleteCacheImages(filePaths)
+  if (!api?.deleteCacheImages || filePaths.length === 0) return { deleted: 0, failed: [] }
+  try {
+    const result = await api.deleteCacheImages(filePaths)
+    const failed = result?.failed ?? []
+    if (failed.length > 0) {
+      // 失败基本只有两类原因：路径不在库根的 `cache-images/` 下（例如库根换过、记录里还是旧路径），
+      // 或 unlink 失败（文件被占用 / 无权限）。这行日志是排查「素材删了、磁盘没瘦」的唯一线索
+      // （2026-09-21：132 张素材被删而文件一张不少，就是因为失败信息没人看）。
+      console.warn('[cache-image-delete] 原图文件删除失败（这些文件仍留在磁盘上）', {
+        requested: filePaths.length,
+        failed: failed.length,
+        sample: failed.slice(0, 3),
+      })
+    }
+    return { deleted: result?.deleted?.length ?? 0, failed }
+  } catch (error) {
+    console.warn('[cache-image-delete] 原图删除请求失败', {
+      requested: filePaths.length,
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    })
+    return { deleted: 0, failed: filePaths }
+  }
 }
 
 /** 删除本地导出的图片文件（可位于库根外自定义目录）；非 Electron 或无 API 时静默跳过。 */

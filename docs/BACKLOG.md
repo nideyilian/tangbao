@@ -3314,5 +3314,54 @@ taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本�
   2. **磁盘删除失败仍是静默的**：主进程 `deleteCacheImageFiles` 返回 `{ deleted, failed }`，
      渲染侧 `deleteRawCacheImages` 直接丢掉返回值 —— 路径不匹配（如库根换过）或 `unlink` 失败时，
      UI 与日志都无痕。**本轮未改**（改它会让删除接口的返回语义变化），已登记 `docs/RISK.md` R-78。
-  3. 本机库里那 **132 个孤儿原图**（记录已删、文件还在，共约 630MB）源自这次修掉的顺序缺陷。
-     **未做清理** —— 清之前想先确认这批是不是杰哥自己删的（见 TB-082 遗留 1）。
+  3. 本机库里那 **132 个孤儿原图**（记录已删、文件还在）源自这次修掉的顺序缺陷。
+     **已在追加段里清理**（见下）。
+- **追加（同日 22:3x-22:5x，杰哥确认「是我删的，一起做」）**
+  1. **磁盘删除失败不再静默**：`deleteRawCacheImages` 改为返回 `{ deleted, failed }`；
+     `failed` 非空、或 IPC 抛错时打 `[cache-image-delete]` 日志（请求数 / 失败数 / 前 3 个失败路径）。
+     这正是「132 张记录被删、文件一张不少」当初查不出原因的那一环。
+     新增 3 例单测：全成功不打日志 / 部分失败回路径且打日志 / IPC 抛错算全失败且不向调用方外抛。
+  2. **本机那 132 个孤儿原图已清理**：判据 = 「文件名（内容哈希）出现在 `tombstones` 里，
+     且**不被任何现存记录引用**」——全文本扫 `app_data_records` 全部 namespace，
+     外加 `assets` / `blobs` / `asset_machine_index` / `asset_semantic_buckets` / `asset_usage_events` / `collections`。
+     命中 132 个、267.4 MB。
+     **先备份再删**（`%TEMP%\tangbao-orphan-backup-20260921-223047`，132 个文件齐全可回滚），
+     删完 `cache-images` 从 616 → **484 个文件**，正好等于「被现存记录引用的哈希数」。
+     清理脚本 `%TEMP%\tb-orphan-scan.py`（默认只预览，`--delete` 才动手）。
+  3. 结论：TB-082 里「132 张素材被永久删除」的来源**至此闭环** ——
+     是杰哥自己在 16:36 / 16:45 / 16:47 删的（三批），而文件没跟着删是上面那个顺序缺陷。
+
+---
+
+### TB-084 后处理记录：跳过型问题不再标红「失败」+ 异常收尾保住已产出数
+
+**验收标准**
+
+1. `resolvePostprocessRunStatus({ producedFiles: 0, issues: [只有 skipped 级别] })` 返回
+   **`skipped`**（不再是 `failed`）；面板标签显示灰色「已跳过」，一行结论写「后处理没有产出：N 项被跳过」。
+2. `{ producedFiles: 0, issues: [有 error 级别] }` 仍返回 `failed`（红灯不放松）。
+3. `{ producedFiles: 0, issues: [] }` 仍返回 `succeeded`（本次没有可做的事）。
+4. 执行体中途抛异常时（`store.ts` 的 catch 兜底），收尾写入的产出数**取进度里最后一次上报的值**，
+   不再是写死的 0 —— 磁盘上已有产物时，记录必须显示「部分完成」而不是「没有产出文件」。
+
+**背景**（2026-09-21 22:30 报障「为什么后处理的记录里有这么多显示失败的，但实际上最后是成功的」）
+
+- 界面上 7 条「失败 · 自动触发 · 后处理结束：没有产出文件 · 查看跳过 (1)」，下面一条
+  「成功 · 手动触发 · 产出 100 个文件」。判据：按钮文案是「查看跳过」⇒ `errors === 0`。
+- 真实原因：杰哥 22:22:51 关掉了 `builtin-direction-17`（= 百万医疗险 / **图标**）的
+  「自动后处理」开关（库里 `projectTreeParams`），那批图都属于该方向 ⇒ 每个任务完成触发的
+  自动后处理都被 `PP-SCOPE-002` 跳过（`taskPostprocess.ts:256` 刻意只拦自动触发）⇒ 零产出。
+  22:25 手动跑不受该开关限制 ⇒ 产出 100 个文件。「这么多」= 每个任务各触发一次。
+- 即：**处理过程本身没错，错的是零产出那条判定没看 severity**，把「配置使然的跳过」渲染成了红色故障。
+
+**改动**
+
+- `src/features/postprocess/postprocessRun.ts`：`PostprocessRunStatus` 增加 `skipped`；
+  判定改为「零产出先看有没有 error」；`summarizePostprocessRun` 增 `skipped` 档。
+- `src/features/postprocess/PostprocessRunsDialog.tsx`：状态色调表补 `skipped: 'neutral'`（灰，不是红）。
+- `src/store.ts`：`executePostprocessImageIds` 暂存进度里的产出数，异常兜底带上它。
+
+**不做**（已知而不改，避免扩大范围）
+
+- 「产出 N 个文件」在正常路径用的是**变体数**（`result.outputs.length`，双写只记一份），
+  而进度里滚动的是**文件数**。两个口径并存，本轮不动（统一会牵到 toast 与任务卡文案）。
