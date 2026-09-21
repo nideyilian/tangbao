@@ -11,6 +11,14 @@ import {
   usePostprocessMediaStore,
 } from './storePostprocessMedia'
 import { isRecord } from './lib/typeGuards'
+import {
+  buildTreeConfigBundle,
+  toAssetCollections,
+  toNodeParams,
+  toPostprocessMediaConfig,
+  validateTreeConfigBundle,
+  type TreeConfigBundle,
+} from './lib/treeConfigBundle'
 // 只引类型：执行体在 `scheduleTaskPostprocess` 里动态 import。
 // 静态 import 会把 features/postprocess → features/composite 整条链拉进 store.ts 的模块图，
 // 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
@@ -132,7 +140,11 @@ import {
 import { getTaskSourceMode, type AssetTaskContext } from './lib/generatedAssetOrigin'
 import { upsertFromTask } from './lib/assetLibraryRepository'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
-import { pickDeepestCollectionId } from './features/projectTree/params'
+import {
+  pickDeepestCollectionId,
+  resolveProjectNodeIdChain,
+  resolveProjectNodeKind,
+} from './features/projectTree/params'
 import { useProjectTreeParamsStore } from './features/projectTree/storeProjectTreeParams'
 import { isScrollActive } from './lib/scrollActivity'
 import { buildLocalImageUrl, isLocalImageUrl, localImageUrlToDataUrl } from './lib/localImageUrl'
@@ -11723,6 +11735,52 @@ async function restoreCompositeBackup(data: ExportData, unzipped: Record<string,
 }
 
 /** 导出数据为 ZIP */
+/**
+ * 从当前各 store 抽一份**以树为骨架**的配置快照（导出侧的唯一入口）。
+ *
+ * 抽成函数是因为 `exportData`（浏览器分支）与 `exportDataToPath`（桌面分支）**各有一份
+ * manifest 组装代码** —— 两处各写一遍的话，迟早有一处忘了带树，而那正是这轮要修的病。
+ */
+async function snapshotTreeConfigBundle(exportedAt: number): Promise<TreeConfigBundle> {
+  // composite store 只能动态 import：静态引它会在模块初始化期与 composite 侧互相等，
+  // 结果是 `useCompositeV2Store` 拿到 undefined（store.ts 顶部那条注释记的就是这个坑）。
+  const { useCompositeV2Store } = await import('./features/composite/storeV2')
+  const collections = useAssetLibraryStore.getState().collections
+  return buildTreeConfigBundle({
+    collections,
+    nodeParams: useProjectTreeParamsStore.getState().params,
+    presets: useCompositeV2Store.getState().presets,
+    postprocess: getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
+    // 层级复用中控台表格那套口径，免得"包里的层级"与"界面标的层级"变成两套说法
+    resolveKind: (collectionId) =>
+      resolveProjectNodeKind(resolveProjectNodeIdChain(collections, collectionId).length - 1),
+    exportedAt: new Date(exportedAt).toISOString(),
+  })
+}
+
+/**
+ * 恢复 v8 配置包：立树 → 灌节点参数 → 挂渠道与输出位置（水印库由调用方先行恢复）。
+ *
+ * ⚠️ **立树用的是「同 id 覆盖 + 保留本地独有」，不是彻底替换**（2026-09-22 的取舍）：
+ * 彻底替换会把使用者自己建的方向、以及挂在上面的素材一起变成孤儿，而换来的只是
+ * "树长得更一致"。覆盖已经保证了**包里有的一律以包为准** —— 那才是「拉取标准配置」的实质；
+ * 本地多出来的分支留着不影响产出。
+ *
+ * 节点参数则是**整表替换**：参数是"这份配置"的一部分，留着本地的旧值会出现
+ * 「界面显示的是新树、产出用的却是旧参数」这种最难查的不一致。
+ */
+async function restoreTreeConfigBundle(bundle: TreeConfigBundle): Promise<void> {
+  await mergeImportedAssetLibrary({
+    assets: [],
+    collections: toAssetCollections(bundle),
+    tags: [],
+    tombstones: [],
+  })
+  await useAssetLibraryStore.getState().hydrate()
+  useProjectTreeParamsStore.setState({ params: toNodeParams(bundle) })
+  restorePostprocessMediaConfig(toPostprocessMediaConfig(bundle))
+}
+
 export async function exportData(
   // 默认值与设置页一致：只导必要数据（配置 + 项目树/素材库索引），
   // 任务与图片体量大，需显式开启（杰哥 2026-09-19 裁决）。
@@ -11878,7 +11936,7 @@ export async function exportData(
     const omittedOriginalImageCount = missingOriginalImageIds.size
 
     const manifest: ExportData = {
-      version: 7,
+      version: 8,
       exportedAt: new Date(exportedAt).toISOString(),
       // 档位标记（TB-042）：含任务或图片即完整包，否则为精简包。
       // ⚠️ 旧备份没有这个字段，导入侧必须把「缺字段」当 full（见 types.ts ExportData.profile 注释）。
@@ -11892,6 +11950,10 @@ export async function exportData(
       manifest.settings = sanitizeSettingsForBackup(settings, options.includeSecrets === true)
       manifest.favoriteCollections = favoriteCollections
       manifest.defaultFavoriteCollectionId = defaultFavoriteCollectionId
+      // v8：以树为骨架的配置快照（树 + 每个节点自己的参数 + 挂在产品下的水印库 + 根上的渠道字典）
+      manifest.treeConfig = await snapshotTreeConfigBundle(exportedAt)
+      // ⚠️ 过渡期**双写**：≤0.3.2 的老版本不认识 `treeConfig`，只认下面这几个字段。
+      // 只写新字段的话，老版本导入这份包会**静默什么都不恢复**。全员升级后才可删。
       manifest.compositeState = compositeBackup!.compositeState
       manifest.compositeAssetFiles = compositeBackup!.compositeAssetFiles
       manifest.postprocessMediaState = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
@@ -11970,6 +12032,8 @@ export async function exportDataToPath(
     const imagePlan = options.exportImages
       ? await buildElectronImageExportEntries(ids, getImage)
       : { entries: [], omittedCount: 0, omittedImageIds: [] }
+    // v8：以树为骨架的配置快照。在 manifest 之前算好 —— 对象字面量里不能 `await`
+    const treeBundle = options.exportConfig ? await snapshotTreeConfigBundle(exportedAt) : undefined
     // 原图缺失**不再让整包导出失败**：跳过缺失项，由 `omittedCount` 在完成提示里报数。
     // 用户要的是一次能用的备份，而不是因为一张图丢了什么都导不出（这是「导出经常失败」的首因）。
     const { entries, omittedCount } = imagePlan
@@ -12006,7 +12070,7 @@ export async function exportDataToPath(
       }
     }
     const manifest: ExportData = {
-      version: 7,
+      version: 8,
       exportedAt: new Date(exportedAt).toISOString(),
       // 档位标记（TB-042）：含任务或图片即完整包，否则为精简包。
       // ⚠️ 旧备份没有这个字段，导入侧必须把「缺字段」当 full（见 types.ts ExportData.profile 注释）。
@@ -12019,6 +12083,10 @@ export async function exportDataToPath(
             settings: sanitizeSettingsForBackup(state.settings, options.includeSecrets === true),
             favoriteCollections: state.favoriteCollections,
             defaultFavoriteCollectionId: state.defaultFavoriteCollectionId,
+            // v8：以树为骨架的配置快照（见 `snapshotTreeConfigBundle`）
+            treeConfig: treeBundle,
+            // ⚠️ 过渡期**双写**：≤0.3.2 的老版本不认识 `treeConfig`，只认下面这几个字段。
+            // 只写新字段的话，老版本导入这份包会**静默什么都不恢复**。全员升级后才可删。
             compositeState: compositeBackup!.compositeState,
             compositeAssetFiles: compositeBackup!.compositeAssetFiles,
             postprocessMediaState: getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
@@ -12523,8 +12591,12 @@ async function importBackupTail(
 
   if (options.importConfig) {
     await restoreCompositeBackup(data, Object.fromEntries(state.compositeFiles))
-    // 旧备份无 postprocessMediaState：按默认配置恢复，不覆盖成空
-    restorePostprocessMediaConfig(data.postprocessMediaState)
+    // v8：包里带 `treeConfig` 时优先走「树为骨架」的恢复 —— 树 + 每个节点的参数 + 渠道一起落地；
+    // 水印库仍由上面的 `restoreCompositeBackup` 负责（过渡期双写，见导出侧注释）。
+    const treeBundle = validateTreeConfigBundle(data.treeConfig)
+    if (treeBundle.ok) await restoreTreeConfigBundle(treeBundle.bundle)
+    // 旧备份（v7 及更早）没有 treeConfig：按老字段恢复；无 postprocessMediaState 时按默认配置，不覆盖成空
+    else restorePostprocessMediaConfig(data.postprocessMediaState)
     const mainState = useStore.getState()
 
     if (data.settings) {

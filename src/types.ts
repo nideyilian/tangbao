@@ -4,6 +4,7 @@ import type { CompositeV2PersistedSnapshot } from './features/composite/lib/comp
 import type { AssistantActionPreferences } from './features/assistantActions/types'
 import type { SopCampaignRecipeConfig, SopExecutionMode } from './features/strategy/types'
 import type { PostprocessMediaConfig } from './lib/postprocessMedia'
+import type { TreeConfigBundle } from './lib/treeConfigBundle'
 
 export type ApiMode = 'images' | 'responses'
 export type AgentApiConfigMode = 'native' | 'hybrid'
@@ -1271,6 +1272,13 @@ export interface ExportData {
       thumbnailVersion?: number
     }
   >
+  /**
+   * 配置包 v8：**以项目树为骨架**的中控台配置快照（见 `src/lib/treeConfigBundle.ts`）。
+   *
+   * 导入侧见到它就优先走新路径（树 + 节点参数 + 水印 + 渠道一起恢复）；见不到
+   * （v7 及更早的包）照旧走下面那几个老字段。**两条路都留着**，老备份不作废。
+   */
+  treeConfig?: TreeConfigBundle
   compositeState?: CompositeV2PersistedSnapshot
   /**
    * 后处理编排配置（媒体表 + 上次选择 + 命名模板）。

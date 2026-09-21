@@ -536,7 +536,10 @@ describe('data export', () => {
       })
       const fullArchive = unzipSync(new Uint8Array(await exportedBlob!.arrayBuffer()))
       const fullManifest = JSON.parse(new TextDecoder().decode(fullArchive['manifest.json'])) as ExportData
-      expect(fullManifest.version).toBe(7)
+      expect(fullManifest.version).toBe(8)
+      // v8：以树为骨架的配置快照必须随包走 —— 少了它，拿到别的机器上就是「树在、参数空」
+      expect(fullManifest.treeConfig?.version).toBe(8)
+      expect(fullManifest.treeConfig?.root.channels.length).toBeGreaterThan(0)
       expect(fullManifest.includesOriginalImages).toBe(false)
       expect(fullManifest.imageFiles).toBeUndefined()
       expect(fullManifest.imageRefs?.['input-a']).toMatchObject({ available: false })
