@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Tabs } from '../../design-system'
-import { PlusIcon } from '../../design-system/icons'
 import {
   CONTROL_CONSOLE_SECTIONS,
   DEFAULT_CONTROL_CONSOLE_SECTION,
@@ -9,22 +8,18 @@ import {
   type ConsoleScope,
 } from './lib/controlConsoleSections'
 import { ConsoleAssetTree } from './components/ConsoleAssetTree'
-import { ConsolePresetGrid } from './components/ConsolePresetGrid'
-import { ConsoleToolbar, type ConsoleBindingFilter, type ConsoleViewMode } from './components/ConsoleToolbar'
 import { DistributionSection } from './components/DistributionSection'
 import { MediaSection } from './components/MediaSection'
 import { OutputSection } from './components/OutputSection'
 import { PresetManagementTab } from './components/PresetManagementTab'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
-import { resolveNodeWatermarkBinding } from '../projectTree/params'
 import { resolveCollectionPath } from '../../lib/postprocessProjectTree'
 import {
   getPostprocessMediaConfigSnapshot,
   restorePostprocessMediaConfig,
   usePostprocessMediaStore,
 } from '../../storePostprocessMedia'
-import { useAppDialog } from '../../hooks/useAppDialog'
 import { useStore } from '../../store'
 import { GLOBAL_NODE_ID } from '../postprocess/paramSchema'
 import { useCompositeV2Store } from './storeV2'
@@ -57,10 +52,19 @@ import { usePostprocessGlobalConfig } from '../postprocess/usePostprocessGlobalC
  *
  * **业务模型：方向自带一整套参数，生成图时直接调用**（杰哥 2026-09-20 明确）。
  * 所以左树是参数的组织骨架，不是可选的筛选器：
- * - 选中某个方向 ⇒ 右区就是**该方向的参数**——水印卡片网格上直接开停用，
+ * - 选中某个方向 ⇒ 右区就是**该方向的参数**——水印库里逐套勾选开关，
  *   输出位置按这个方向改；
- * - 选中「全局默认」⇒ 右区是全局基线（水印在此是只读总览：
+ * - 选中「全局默认」⇒ 右区是全局基线（水印在此只读：
  *   全局清单在前端没有写入点，各方向自己声明才是权威）。
+ *
+ * ⚠️ 水印分区的形态（杰哥 2026-09-21 定了三条，别再改回去）：
+ * 1. **不再有「水印归属」侧栏**：归属看的就是左边这棵树（同一份 `collections`、
+ *    同一个选中），编辑器里再放一棵等于同一件事开两个入口；
+ * 2. **不做「卡片 → 点编辑 → 编辑器」的中转**：水印分区打开就是编辑器本身；
+ * 3. **编辑器高度撑满剩余分区**：它不吃滚动容器 —— 套上 `overflow-y-auto` 之后
+ *    会被内容高度顶住，窗口再高也不长，下面就是一片空白。
+ * 归属的编辑动作（这个方向用哪几套）落在编辑器水印库的**行勾选框**上，
+ * 见 `PresetManagementTab` 里 `togglePresetEnabled`。
  *
  * ⚠️ 准入约束：**有节点级字段的参数才消费作用域**。
  * `PostprocessNodeOverride`（ADR-0011 收窄后）只有 `outputDir` / `byMedia` /
@@ -77,18 +81,11 @@ export default function CompositeWorkspace() {
   const canUndo = useCompositeV2Store((state) => state.canUndo)
   const undo = useCompositeV2Store((state) => state.undo)
   const presets = useCompositeV2Store((state) => state.presets)
-  const createPreset = useCompositeV2Store((state) => state.createPreset)
-  const deletePreset = useCompositeV2Store((state) => state.deletePreset)
-  const duplicatePreset = useCompositeV2Store((state) => state.duplicatePreset)
-  const setSelectedPreviewPresetId = useCompositeV2Store((state) => state.setSelectedPreviewPresetId)
 
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
-  const setPostprocessOverride = useProjectTreeParamsStore((state) => state.setPostprocessOverride)
-  const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
 
   const showToast = useStore((state) => state.showToast)
-  const { openConfirmDialog } = useAppDialog()
 
   /** 导出用的全局基线（与各分区读的是同一份，`usePostprocessGlobalConfig` 就是为此收口的）。 */
   const globalConfig = usePostprocessGlobalConfig()
@@ -126,14 +123,7 @@ export default function CompositeWorkspace() {
   const setScope = (next: ConsoleScope) => {
     setCollectionContextScope(isGlobalScope(next) ? null : next)
   }
-  /** 水印分区有两个视图：卡片网格（管理）/ 编辑器（画布 + 库）。其余分区只有一种。 */
-  const [watermarkView, setWatermarkView] = useState<'cards' | 'editor'>('cards')
-  const [bindingFilter, setBindingFilter] = useState<ConsoleBindingFilter>('all')
-  const [query, setQuery] = useState('')
-  const [perRow, setPerRow] = useState(4)
-  const [view, setView] = useState<ConsoleViewMode>('grid')
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
-
+  /** Ctrl+Z 撤销。输入框里不接管——否则打错字按 Ctrl+Z 会撤掉上一次画布操作。 */
   useEffect(() => {
     if (typeof window === 'undefined') return
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -156,11 +146,6 @@ export default function CompositeWorkspace() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [canUndo, undo])
 
-  // 作用域换节点时清掉选择：跨方向的批量操作没有意义，留着只会误导
-  useEffect(() => {
-    setSelectedIds([])
-  }, [scope])
-
   /**
    * store 里可能残留已下线的分区 id（例如上一版的 `directions`），所以先归一化再用：
    * 否则那排 tab 一个选中项都没有，右区还是空白。
@@ -180,97 +165,6 @@ export default function CompositeWorkspace() {
       .map((item) => item.name)
       .join(' / ')
   }, [collections, scope, isGlobal])
-
-  /**
-   * 各预设被多少个方向**显式声明**在用。
-   *
-   * 只数显式声明（节点自己写了 `watermarkPresetIds` 或 `byMedia[*]`），
-   * 不数继承来的值——否则「全局清单」会让每个预设都显示「N 个方向在用」，
-   * 这个数字就失去意义了。它要回答的是「谁特意挑过这一套」。
-   */
-  const explicitUsage = useMemo(() => {
-    const map = new Map<string, Set<string>>()
-    for (const [collectionId, entry] of Object.entries(params)) {
-      const override = entry?.postprocess
-      if (!override) continue
-      const declared = new Set<string>(override.watermarkPresetIds ?? [])
-      for (const perMedia of Object.values(override.byMedia ?? {})) {
-        for (const id of perMedia?.watermarkPresetIds ?? []) declared.add(id)
-      }
-      for (const id of declared) {
-        const set = map.get(id) ?? new Set<string>()
-        set.add(collectionId)
-        map.set(id, set)
-      }
-    }
-    return map
-  }, [params])
-
-  /** 当前作用域（某个方向）生效的水印清单；全局作用域下就是全局基线 */
-  const effectivePresetIds = useMemo(() => {
-    if (isGlobal) return globalWatermarkPresetIds
-    return resolveNodeWatermarkBinding(collections, params, scope, globalWatermarkPresetIds).presetIds
-  }, [isGlobal, collections, params, scope, globalWatermarkPresetIds])
-
-  const usedByCount = (presetId: string) => explicitUsage.get(presetId)?.size ?? 0
-
-  /** 方向作用域下就地改该方向的水印清单（首次改动即物化：把生效清单写成显式数组再改） */
-  const writeNodePresetIds = (nextIds: string[]) => {
-    if (isGlobal) return
-    setPostprocessOverride(scope, { watermarkPresetIds: nextIds })
-  }
-
-  const toggleEnabled = (presetId: string) => {
-    if (isGlobal) return
-    const next = effectivePresetIds.includes(presetId)
-      ? effectivePresetIds.filter((id) => id !== presetId)
-      : [...effectivePresetIds, presetId]
-    writeNodePresetIds(next)
-  }
-
-  const visiblePresets = useMemo(() => {
-    const q = query.trim()
-    return presets.filter((preset) => {
-      if (q && !preset.name.includes(q)) return false
-      if (bindingFilter === 'bound' && (explicitUsage.get(preset.id)?.size ?? 0) === 0) return false
-      if (bindingFilter === 'unbound' && (explicitUsage.get(preset.id)?.size ?? 0) > 0) return false
-      return true
-    })
-  }, [presets, query, bindingFilter, explicitUsage])
-
-  const toggleSelect = (presetId: string) => {
-    setSelectedIds((current) =>
-      current.includes(presetId) ? current.filter((id) => id !== presetId) : [...current, presetId],
-    )
-  }
-
-  const openInEditor = (presetId: string) => {
-    setSelectedPreviewPresetId(presetId)
-    setWatermarkView('editor')
-  }
-
-  const confirmDelete = (ids: string[]) => {
-    if (ids.length === 0) return
-    openConfirmDialog({
-      title: ids.length === 1 ? '删除这个预设？' : `删除选中的 ${ids.length} 个预设？`,
-      message: '删除后无法恢复。若已有方向在用它，那些方向的产出会少这一层水印。',
-      confirmText: '删除',
-      tone: 'danger',
-      action: () => {
-        for (const id of ids) deletePreset(id)
-        setSelectedIds((current) => current.filter((id) => !ids.includes(id)))
-        showToast(`已删除 ${ids.length} 个预设`, 'success')
-      },
-    })
-  }
-
-  const duplicateMany = (ids: string[]) => {
-    for (const id of ids) duplicatePreset(id)
-    setSelectedIds([])
-    showToast(`已复制 ${ids.length} 个预设`, 'success')
-  }
-
-  const isCardView = activeSection === 'watermark' && watermarkView === 'cards'
 
   /**
    * 导出中控台全量数据为 Excel。
@@ -412,22 +306,10 @@ export default function CompositeWorkspace() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {/*
-             * 「新建方向」撤掉了：项目树每个节点悬停就有「+」，两处入口迟早出现
-             * 「在 A 加了、在 B 看不到」。一个动作只留一个入口。
+             * 「新建预设」撤掉了：水印库栏右上角就有「+」，而水印分区现在打开即编辑器，
+             * 不再有「先去卡片层、再点编辑」这一步。「新建方向」也是同一个道理 ——
+             * 树节点悬停就有「+」。一个动作只留一个入口。
              */}
-            {isCardView && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  createPreset('新预设')
-                  setWatermarkView('editor')
-                }}
-              >
-                <PlusIcon className="h-3.5 w-3.5" />
-                新建预设
-              </Button>
-            )}
             {/*
              * 导出放在工作区标题栏而不是某个分区里：它导的是**整个中控台**的数据面，
              * 不属于任何单一分区（放进分区会让人以为只导那一块）。
@@ -451,95 +333,37 @@ export default function CompositeWorkspace() {
             size="sm"
             value={activeSection}
             items={CONTROL_CONSOLE_SECTIONS.map((item) => ({ value: item.id, label: item.label }))}
-            onValueChange={(next) => {
-              setControlConsoleSection(next)
-              // 切 tab 时回到卡片视图：否则从编辑器切走再切回来会停在编辑器，与工具栏筛选不一致
-              setWatermarkView('cards')
-            }}
+            onValueChange={setControlConsoleSection}
           />
         </div>
 
-        <div className="pt-2.5">
-          <ConsoleToolbar
-            presetCardMode={activeSection === 'watermark'}
-            bindingFilter={bindingFilter}
-            onBindingFilterChange={setBindingFilter}
-            query={query}
-            onQueryChange={setQuery}
-            perRow={perRow}
-            onPerRowChange={setPerRow}
-            view={view}
-            onViewChange={setView}
-            visibleCount={visiblePresets.length}
-            selectedCount={selectedIds.length}
-            onSelectAll={() => setSelectedIds(visiblePresets.map((preset) => preset.id))}
-            onClearSelection={() => setSelectedIds([])}
-            canToggleEnabled={!isGlobal}
-            onEnableSelected={() => {
-              writeNodePresetIds(Array.from(new Set([...effectivePresetIds, ...selectedIds])))
-              setSelectedIds([])
-            }}
-            onDisableSelected={() => {
-              writeNodePresetIds(effectivePresetIds.filter((id) => !selectedIds.includes(id)))
-              setSelectedIds([])
-            }}
-            onDuplicateSelected={() => duplicateMany(selectedIds)}
-            onDeleteSelected={() => confirmDelete(selectedIds)}
-          />
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {/*
-           * 「渠道与尺寸」「分发」是全局唯一的，选哪个节点看到的都是同一套。
-           * 这里只加一句说明，**不隐藏也不置灰** —— 藏起来会让人切来切去找不着，
-           * 而它确实是要改的东西，只是不按方向分。
-           */}
-          {active.globalOnly && (
-            <p className="mb-2 text-xs text-ds-muted dark:text-ds-muted">
-              全局设置，所有方向共用 —— 这一块不按方向分。
-            </p>
-          )}
-
-          {activeSection === 'watermark' && watermarkView === 'cards' && (
-            <ConsolePresetGrid
-              presets={visiblePresets}
-              perRow={perRow}
-              view={view}
-              inNodeScope={!isGlobal}
-              isEnabled={(presetId) => effectivePresetIds.includes(presetId)}
-              usedByCount={usedByCount}
-              selectedIds={selectedIds}
-              onToggleSelect={toggleSelect}
-              onToggleEnabled={toggleEnabled}
-              onEdit={openInEditor}
-              onDuplicate={(presetId) => duplicateMany([presetId])}
-              onDelete={(presetId) => confirmDelete([presetId])}
-              emptyHint={
-                presets.length === 0
-                  ? '水印库是空的，点右上角「新建预设」开始。'
-                  : '当前筛选条件下没有预设，换个关键词或把「归属范围」调回「全部预设」。'
-              }
-            />
-          )}
-
-          {activeSection === 'watermark' && watermarkView === 'editor' && (
-            <div className="flex min-h-0 flex-col gap-2">
-              <div className="flex shrink-0 items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setWatermarkView('cards')}>
-                  返回卡片
-                </Button>
-                <span className="text-xs text-ds-muted dark:text-ds-muted">画布编辑与预设库；改动即时写回卡片。</span>
-              </div>
-              <div className="flex min-h-[32rem] flex-col overflow-hidden rounded-ds-lg border border-ds-border dark:border-ds-border">
-                <PresetManagementTab />
-              </div>
-            </div>
-          )}
-
-          {activeSection === 'media' && <MediaSection />}
-          {activeSection === 'output' && <OutputSection scope={scope} />}
-          {activeSection === 'distribution' && <DistributionSection />}
-        </div>
+        {/*
+         * 高度分两种给法：
+         * - **水印**是编辑器：画布与图层面板要自己吃掉剩余高度，套一层滚动容器会让它被
+         *   内容高度顶住 —— 窗口高的时候下面就是一片空白（2026-09-21 修）；
+         * - 其余分区是表格 / 表单：内容可能超长，交给滚动容器。
+         */}
+        {activeSection === 'watermark' ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col px-4 py-3">
+            <PresetManagementTab />
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+            {/*
+             * 「渠道与尺寸」「分发」是全局唯一的，选哪个节点看到的都是同一套。
+             * 这里只加一句说明，**不隐藏也不置灰** —— 藏起来会让人切来切去找不着，
+             * 而它确实是要改的东西，只是不按方向分。
+             */}
+            {active.globalOnly && (
+              <p className="mb-2 text-xs text-ds-muted dark:text-ds-muted">
+                全局设置，所有方向共用 —— 这一块不按方向分。
+              </p>
+            )}
+            {activeSection === 'media' && <MediaSection />}
+            {activeSection === 'output' && <OutputSection scope={scope} />}
+            {activeSection === 'distribution' && <DistributionSection />}
+          </div>
+        )}
       </div>
     </main>
   )

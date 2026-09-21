@@ -938,23 +938,17 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/components/PresetManagementTab.tsx',
-    responsibility: '中控台「水印」分区三栏装配（归属树 / 水印库 / 画布编辑）',
-    decision: 'retain',
-    targets: ['Tabs', 'Panel', 'ListRow', 'Menu', 'EmptyState'],
-  },
-  {
-    module: 'src/features/composite/components/PresetProjectTree.tsx',
     responsibility:
-      '水印归属树：项目树层级管理（新建/改名/删除/移动）+ 归属（拖入绑定、按渠道就地设置）。行上不挂分类 / 来源 / 状态标签，没绑定就一个节点一行',
+      '中控台「水印」分区两栏装配（水印库 / 画布编辑）。库行勾选框 = 这个范围启用这套水印（原卡片层的开关与归属树的拖拽都已在 2026-09-21 退役）',
     decision: 'retain',
-    targets: ['Panel', 'ListRow', 'IconButton', 'Button', 'EmptyState'],
+    targets: ['Panel', 'ListRow', 'Checkbox', 'SegmentedControl', 'Menu'],
   },
   {
     module: 'src/features/composite/CompositeWorkspace.tsx',
     responsibility:
-      '中控台工作区装配（复刻灵境策略中心）：左栏作用域树 + 右区（作用域标题 + 分区 SegmentedControl + 分区内容）+ 撤销栈',
+      '中控台工作区装配（复刻灵境策略中心）：左栏作用域树 + 右区（作用域标题 + 分区 tab + 分区内容）；水印分区打开即编辑器（不做卡片中转），高度按分区给（编辑器撑满、表格走滚动）+ 撤销栈',
     decision: 'retain',
-    targets: ['SplitPane', 'Panel', 'Toolbar', 'Tabs'],
+    targets: ['SplitPane', 'Panel', 'Tabs'],
   },
   {
     module: 'src/features/composite/components/ConsoleAssetTree.tsx',
@@ -962,27 +956,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
       '中控台左栏「项目树」：整个框架的唯一管理入口（业务线 → 产品 → 方向），搜索 + 全部/回收站 + 全局默认项；点节点 = 定作用域，节点行悬停可增子级 / 改名 / 删除（行内输入框，不弹窗）',
     decision: 'compose',
     targets: ['SearchField', 'SegmentedControl', 'Button'],
-  },
-  {
-    module: 'src/features/composite/components/ConsoleToolbar.tsx',
-    responsibility:
-      '中控台右区工具栏（复刻灵境策略中心）：归属范围筛选 + 搜索 + 每行数量 + 网格列表切换，下行是批量启用/停用/复制/删除。「改什么」已交给右区那排 tab，工具栏不再兼任切分区',
-    decision: 'compose',
-    targets: ['Toolbar', 'SelectField', 'SearchField', 'SegmentedControl', 'Button'],
-  },
-  {
-    module: 'src/features/composite/components/ConsolePresetGrid.tsx',
-    responsibility:
-      '中控台水印卡片网格：按每行数量排布、网格/列表两种视图；徽章随作用域在「N 个方向在用」与「已启用/未启用」之间切换',
-    decision: 'compose',
-    targets: ['EmptyState'],
-  },
-  {
-    module: 'src/features/composite/components/ConsolePresetCard.tsx',
-    responsibility:
-      '中控台水印卡片：真实画布封面（renderCompositeV2ToCanvas）+ 使用状态徽章 + 编号 + 画布/图层说明 + 悬停操作条（启用停用/编辑/预览/复制/更多/删除）',
-    decision: 'compose',
-    targets: ['Card', 'Thumbnail', 'Badge', 'Checkbox', 'Button', 'Popover', 'Menu'],
   },
   {
     module: 'src/features/composite/components/ConsoleMediaTables.tsx',

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, create, type ReactTestInstance } from 'react-test-renderer'
 import { createDefaultCompositeV2Preset } from '../lib/compositeV2Defaults'
 import { useStore } from '../../../store'
+import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { createCompositeV2StoreState, useCompositeV2Store } from '../storeV2'
@@ -79,7 +80,7 @@ describe('PresetManagementTab', () => {
     })
   })
 
-  it('splits the left rail into the unified tree and the watermark library', () => {
+  it('splits the workspace into the watermark library and the canvas', () => {
     let renderer: ReturnType<typeof create>
     act(() => {
       renderer = create(<PresetManagementTab />)
@@ -89,9 +90,10 @@ describe('PresetManagementTab', () => {
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-management-workspace')).toHaveLength(
       1,
     )
-    // 三栏并列：归属树 | 水印库 | 画布。
-    // 左栏不再分段（树与库各占一栏），也就不需要分隔条；「预设详情」栏退役后由水印库补位。
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(1)
+    // 两栏并列：水印库 | 画布。
+    // 2026-09-21 改版把「水印归属」整栏删了 —— 归属读的就是中控台左边那棵项目树
+    // （同一份 collections、同一个选中），编辑器里再放一棵等于同一件事开两个入口。
+    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(0)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-library')).toHaveLength(1)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-rail')).toHaveLength(0)
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(0)
@@ -102,7 +104,10 @@ describe('PresetManagementTab', () => {
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'layer-bottom-panel')).toHaveLength(1)
 
     const workspace = renderer!.root.find((node) => node.props['data-layout'] === 'preset-management-workspace')
+    // h-full 是「高度自适应」的另一半：中控台把剩余高度交给它（不再套滚动容器），
+    // 这里必须真的长满，否则窗口高了下方仍是空白。
     expect(workspace.props.className).toContain('h-full')
+    expect(workspace.props.className).toContain('grid-cols-[300px_minmax(0,1fr)]')
 
     const fixedMinimumHeightNodes = renderer!.root.findAll(
       (node) => typeof node.props.className === 'string' && node.props.className.includes('min-h-[680px]'),
@@ -355,41 +360,43 @@ describe('PresetManagementTab', () => {
     expect(getNodeText(renderer!.root)).toContain('Beta Preset')
   })
 
-  it('三栏并列：归属树 | 水印库 | 画布，没有分隔条也不再分段', () => {
+  it('⭐ 库行勾选 = 当前范围启用这套水印', () => {
+    const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
+    useCompositeV2Store.setState({ presets: [preset], selectedPreviewPresetId: preset.id })
+    usePostprocessMediaStore.setState({ watermarkPresetIds: [] })
+    useAssetLibraryStore.setState({
+      scope: { kind: 'collection', id: 'direction-moon' },
+      collections: [
+        { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'direction-moon', name: '月亮', parentId: 'line-a', order: 0, createdAt: 0, updatedAt: 0 },
+      ] as never,
+    })
+
     let renderer: ReturnType<typeof create>
     act(() => {
       renderer = create(<PresetManagementTab />)
     })
     mountedRenderers.push(renderer!)
 
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-project-tree')).toHaveLength(1)
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-library')).toHaveLength(1)
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-rail')).toHaveLength(0)
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'tree-resizer')).toHaveLength(0)
-    // 预设组退役后不再有「组」这一层，也就不该再有第二根分隔条
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'rail-resizer')).toHaveLength(0)
-    expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'stacked-library-rail')).toHaveLength(0)
+    // 作用域写在副标题里：库行勾选框的语义是「这个范围用不用这套水印」，
+    // 不再是原来的「选几个准备拖到归属树」。看不清这一点就会以为勾选是为了导出。
+    expect(getNodeText(renderer!.root)).toContain('勾选 = 「月亮」用这套水印')
 
-    // 水印库与归属树同屏是硬要求：绑定的动作就是「从库里拖到一个方向上」，两者不同屏就做不成
-    const grid = renderer!.root.find((node) => node.props['data-layout'] === 'preset-management-workspace')
-    expect(grid.props.className).toContain('grid-cols-[300px_260px_minmax(0,1fr)]')
+    act(() => {
+      renderer!.root.findByProps({ 'aria-label': '启用「Alpha Preset」' }).props.onChange(true)
+    })
+
+    // 写的是这个方向的覆盖（不是全局清单）：继承态下首次改动必须物化成显式数组，
+    // 否则「加一个」会被理解成「只留这一个」，把继承来的其余水印静默丢掉。
+    expect(useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.watermarkPresetIds).toEqual([
+      preset.id,
+    ])
   })
 
-  it('从预设库拖一个水印到树节点上，绑定的就是这个预设', () => {
-    // 跨组件的拖拽靠两处共用同一个 MIME 常量，各写一份字面量的话这里会静默不生效
-    useAssetLibraryStore.setState({
-      collections: [
-        {
-          id: 'line-a',
-          name: '智能客服',
-          normalizedName: '智能客服',
-          parentId: null,
-          order: 0,
-          createdAt: 0,
-          updatedAt: 0,
-        },
-      ],
-    })
+  it('全局默认下不给开关：全局基线是各方向的兜底值，前端没有写入点', () => {
+    const preset = { ...createDefaultCompositeV2Preset(1), id: 'preset-a', name: 'Alpha Preset' }
+    useCompositeV2Store.setState({ presets: [preset], selectedPreviewPresetId: preset.id })
+    useAssetLibraryStore.setState({ scope: 'all' })
 
     let renderer: ReturnType<typeof create>
     act(() => {
@@ -397,30 +404,9 @@ describe('PresetManagementTab', () => {
     })
     mountedRenderers.push(renderer!)
 
-    const preset = useCompositeV2Store.getState().presets[0]!
-    const libraryRow = renderer!.root
-      .findAll((node) => node.props.draggable === true && typeof node.props.onDragStart === 'function')
-      .find((node) => getNodeText(node).includes(preset.name))
-    expect(libraryRow).toBeTruthy()
-
-    // 复刻浏览器行为：setData 决定 types，getData 只能取回已 set 的类型
-    const bag = new Map<string, string>()
-    act(() => {
-      libraryRow!.props.onDragStart({
-        dataTransfer: { effectAllowed: '', setData: (type: string, value: string) => bag.set(type, value) },
-      })
-    })
-
-    const treeNode = renderer!.root.find((node) => node.props['data-preset-tree-node'] === 'line-a')
-    const dropTarget = treeNode.find((node) => typeof node.props.onDrop === 'function')
-    act(() => {
-      dropTarget.props.onDrop({
-        preventDefault: () => {},
-        stopPropagation: () => {},
-        dataTransfer: { types: [...bag.keys()], getData: (type: string) => bag.get(type) ?? '' },
-      })
-    })
-
-    expect(useProjectTreeParamsStore.getState().params['line-a']?.postprocess?.watermarkPresetIds).toEqual([preset.id])
+    // 给一个点了没反应的控件比不给更糟：这里直接禁用并把原因写在可访问名里
+    const box = renderer!.root.findByProps({ 'aria-label': '「Alpha Preset」的启用在方向层设置' })
+    expect(box.props.disabled).toBe(true)
+    expect(getNodeText(renderer!.root)).toContain('先在左侧项目树选一个方向')
   })
 })

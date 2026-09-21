@@ -17,9 +17,6 @@ import { useStore } from '../../store'
  * 分区内容各自 mock 成占位文本：这里锁的是**分区注册表 → tab → 渲染分支**的对应关系，
  * 以及「树 → 作用域 → 右区标题」这条链 —— 不是各分区内部的业务逻辑。
  */
-vi.mock('./components/ConsolePresetGrid', () => ({
-  ConsolePresetGrid: () => <div>preset-screen</div>,
-}))
 vi.mock('./components/MediaSection', () => ({
   MediaSection: () => <div>media-screen</div>,
 }))
@@ -66,10 +63,6 @@ function clickTreeButton(renderer: ReturnType<typeof create>, text: string) {
   })
 }
 
-function findByText(renderer: ReturnType<typeof create>, text: string) {
-  return renderer.root.find((node) => node.type === 'button' && collectText(node.props.children).includes(text))
-}
-
 describe('CompositeWorkspace', () => {
   beforeEach(() => {
     usePostprocessMediaStore.setState({ selectedMediaIds: [], watermarkPresetIds: [] })
@@ -108,7 +101,7 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    expect(renderer.root.findByProps({ children: 'preset-screen' })).toBeTruthy()
+    expect(renderer.root.findByProps({ children: 'editor-screen' })).toBeTruthy()
     expect(renderer.root.findAllByProps({ children: 'media-screen' })).toHaveLength(0)
   })
 
@@ -130,7 +123,7 @@ describe('CompositeWorkspace', () => {
     })
 
     const expectations: Record<string, string> = {
-      watermark: 'preset-screen',
+      watermark: 'editor-screen',
       media: 'media-screen',
       output: 'output-screen',
       distribution: 'distribution-screen',
@@ -183,7 +176,7 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    expect(renderer.root.findByProps({ children: 'preset-screen' })).toBeTruthy()
+    expect(renderer.root.findByProps({ children: 'editor-screen' })).toBeTruthy()
     expect(renderer.root.findAllByProps({ children: 'output-screen' })).toHaveLength(0)
   })
 
@@ -212,20 +205,38 @@ describe('CompositeWorkspace', () => {
     expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(0)
   })
 
-  it('方向作用域下「批量启用」才可用（全局默认下置灰并给出原因）', () => {
+  it('⭐ 水印分区打开就是编辑器，没有「卡片 → 点编辑」的中转', () => {
+    // 2026-09-21 改版：卡片网格、卡片工具栏、「返回卡片」按钮整体退役，
+    // 水印分区渲染的就是编辑器本身（原路径是 卡片 → 编辑 → 编辑器）。
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    // 全局默认：没有「启用」这个概念（水印由各方向自己声明），按钮置灰且带说明
-    const globalButton = findByText(renderer, '批量启用')
-    expect(globalButton.props.disabled).toBe(true)
-    expect(String(globalButton.props.title)).toContain('方向')
+    expect(renderer.root.findByProps({ children: 'editor-screen' })).toBeTruthy()
+  })
 
-    clickTreeButton(renderer, '月亮')
-    // 换成方向后不再置灰（仍未选中卡片时会 disabled，但原因变成「没选卡片」，不再是「必须是方向」）
-    expect(findByText(renderer, '批量启用').props.title).toBeUndefined()
+  it('⭐ 水印分区不吃滚动容器：高度交给编辑器自己撑满（否则窗口高了下方留白）', () => {
+    // 编辑器（画布 + 图层面板）要靠 flex 长满剩余高度。套一层 overflow-y-auto 之后
+    // 它会被「内容高度」顶住，窗口再高也不会长，下面就是一片空白 —— 这次修的就是这条。
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<CompositeWorkspace />)
+    })
+
+    /** 分区内容槽：中控台右区里那一格「填满剩余高度 + 内边距」的容器 */
+    const isSectionSlot = (className: unknown) =>
+      typeof className === 'string' && className.includes('flex-1') && className.includes('px-4 py-3')
+
+    const editorSlot = renderer.root.findAll((node) => isSectionSlot(node.props.className))
+    expect(editorSlot).toHaveLength(1)
+    expect(editorSlot[0]!.props.className).not.toContain('overflow-y-auto')
+
+    // 对照：表格型分区那一格仍要能滚（水印是特例，不能把别的分区也带成不可滚）
+    switchSection(renderer, 'media')
+    const scrollSlot = renderer.root.findAll((node) => isSectionSlot(node.props.className))
+    expect(scrollSlot).toHaveLength(1)
+    expect(scrollSlot[0]!.props.className).toContain('overflow-y-auto')
   })
 
   it('作用域读的是**全局上下文指针**：打开即默认选中当前方向', () => {

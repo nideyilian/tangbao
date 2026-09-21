@@ -240,7 +240,6 @@ const LEGACY_SNAPSHOT: Record<string, number> = {
   'components/PromptInputDialog.tsx|bareRounded': 2,
   'features/assetLibrary/AssetListView.tsx|bareRounded': 2,
   'features/assetLibrary/FilterControlStrip.tsx|bareRounded': 2,
-  'features/composite/components/PresetProjectTree.tsx|bareRounded': 2,
   'components/DerivePolicyModal.tsx|bareRounded': 1,
   'components/ErrorBoundary.tsx|bareRounded': 1,
   'components/GalleryImageTile.tsx|bareRounded': 1,

@@ -3,9 +3,13 @@ import type { CompositeV2Preset } from './compositeV2Types'
 /**
  * 拖拽 MIME 类型。
  *
- * 放在这里而不是各自组件里定义：水印库（`PresetManagementTab`）是拖出方，
- * 统一树（`PresetProjectTree`）是拖入方，两处必须是同一份字面量，
- * 否则拖过去不认，且现象是「拖了没反应」这种最难查的静默失败。
+ * ⚠️ **2026-09-21 起没有使用者**：原先的拖出方（水印库）改成了「库行勾选开关」，
+ * 拖入方（水印归属树 `PresetProjectTree`）整栏退役 —— 归属改看中控台左边那棵项目树。
+ *
+ * 留着不删的理由：绑定的动作本身没变，只是换了入口；「把库里这套直接拖到左边树上」
+ * 仍是最顺手的交互，恢复时不必重写载荷编解码与它的边界用例。
+ * 真要恢复，拖出方与拖入方**必须共用这一份字面量** —— 各写一份的话拖过去不认，
+ * 现象是「拖了没反应」这种最难查的静默失败。
  */
 export const PRESET_LIBRARY_DRAG_TYPE = 'application/x-tangbao-library-preset'
 
@@ -14,6 +18,8 @@ export const PRESET_LIBRARY_DRAG_TYPE = 'application/x-tangbao-library-preset'
  *
  * 载荷是 **id 数组**而不是单个 id：库里多选之后拖进树里要能一次绑好几个，
  * 而「一次绑一组」正是原先「预设组」唯一不可替代的能力——组退役后由它承接。
+ * （多选这个入口随归属树一起下线了，但形状保持数组：改成单 id 只会让恢复时再改一遍，
+ *   而数组形式天然兼容单 id。）
  *
  * `parse` 兼容裸 id：拖拽虽然只在本进程内用，但早期版本的单 id 载荷、
  * 以及外部拖进来的普通文本都会落到同一个 MIME 上，解析不能假设一定是 JSON。

@@ -7,11 +7,7 @@ import {
   PlusIcon as Plus,
   TrashIcon as Trash2,
 } from '../../../design-system/icons'
-import {
-  PRESET_LIBRARY_DRAG_TYPE as LIBRARY_PRESET_DRAG_TYPE,
-  filterPresetsByQuery,
-  serializePresetDragPayload,
-} from '../lib/compositePresetLibrary'
+import { filterPresetsByQuery } from '../lib/compositePresetLibrary'
 import type { CompositeFsImage } from '../lib/compositeTypes'
 import {
   dataUrlToCompositeBlob,
@@ -44,10 +40,10 @@ import { resolveNodeWatermarkBinding } from '../../projectTree/params'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
+import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import { FloatingLogoLibrary } from './FloatingLogoLibrary'
 import { PresetCanvasEditor } from './PresetCanvasEditor'
 import { PresetLayerPanel } from './PresetLayerPanel'
-import { PresetProjectTree } from './PresetProjectTree'
 import { useAppDialog } from '../../../hooks/useAppDialog'
 
 export function PresetManagementTab() {
@@ -60,27 +56,49 @@ export function PresetManagementTab() {
   const [selectedLayerId, setSelectedLayerId] = useState('')
   const [editingPresetId, setEditingPresetId] = useState('')
   const [editingPresetName, setEditingPresetName] = useState('')
-  const [draggingLibraryPresetId, setDraggingLibraryPresetId] = useState('')
 
-  /**
-   * 库里多选出来、准备批量绑定的预设。
-   *
-   * 这是「预设组」退役后唯一需要补的能力：以前把一伙水印打进一个组，往方向上一拖
-   * 就是一次绑一组；组没了之后，勾几个再拖/点 + 就是同一个动作，而且不用先去建组。
-   * 存数组不存 Set：顺序即绑定顺序，而绑定顺序即产出顺序。
-   */
-  const [librarySelection, setLibrarySelection] = useState<string[]>([])
   const setSelectedPreviewPresetId = useCompositeV2Store((state) => state.setSelectedPreviewPresetId)
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
+  const setPostprocessOverride = useProjectTreeParamsStore((state) => state.setPostprocessOverride)
   const media = usePostprocessMediaStore((state) => state.media)
   const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
   const identifier = store.identifier ?? createDefaultIdentifier()
 
-  const toggleLibrarySelection = (presetId: string) =>
-    setLibrarySelection((prev) =>
-      prev.includes(presetId) ? prev.filter((id) => id !== presetId) : [...prev, presetId],
-    )
+  /**
+   * 当前范围 = 中控台左树选中的那个节点。
+   *
+   * 作用域读的是**全局上下文指针** `useAssetLibraryStore.scope`，与中控台左树、右区标题
+   * 是同一个值，所以不会出现「库里勾的方向和树上选的不一致」这种错位。
+   */
+  const libraryScope = useAssetLibraryStore((state) => state.scope)
+  const scope =
+    typeof libraryScope === 'object' && libraryScope.kind === 'collection' ? libraryScope.id : GLOBAL_NODE_ID
+  const isGlobal = scope === GLOBAL_NODE_ID
+  const scopeName = isGlobal ? '全局默认' : (collections.find((item) => item.id === scope)?.name ?? '全局默认')
+
+  /** 当前范围生效的水印清单。全局默认下是全局基线——它前端没有写入点，所以只读。 */
+  const effectivePresetIds = useMemo(() => {
+    if (isGlobal) return globalWatermarkPresetIds
+    return resolveNodeWatermarkBinding(collections, params, scope, globalWatermarkPresetIds).presetIds
+  }, [isGlobal, collections, params, scope, globalWatermarkPresetIds])
+
+  const isPresetEnabled = (presetId: string) => effectivePresetIds.includes(presetId)
+
+  /**
+   * 逐套开关**当前范围**的水印。这是「这个方向用哪几套」唯一的编辑入口
+   * （原卡片层的开关与归属树的拖拽都已在 2026-09-21 改版中退役）。
+   *
+   * **首次改动即物化**：继承态下把生效清单复制成显式数组再改。直接写「剩下的这几个」
+   * 会把继承来的其余水印静默丢掉——症状是「我只想减一个，结果另外两个也没了」。
+   */
+  const togglePresetEnabled = (presetId: string) => {
+    if (isGlobal) return
+    const next = effectivePresetIds.includes(presetId)
+      ? effectivePresetIds.filter((id) => id !== presetId)
+      : [...effectivePresetIds, presetId]
+    setPostprocessOverride(scope, { watermarkPresetIds: next })
+  }
 
   const sortedLogoAssets = useMemo(() => {
     const assets =
@@ -257,14 +275,13 @@ export function PresetManagementTab() {
   }
 
   /**
-   * 导出：库里勾了就导勾选的那批，没勾就导全部（「我要备份整个水印库」是默认预期）。
-   * 归属与图片资产一并带走，保证接收方导入即可用。
+   * 导出整个水印库。归属与图片资产一并带走，保证接收方导入即可用。
+   *
+   * 不再支持「只导勾选的那几个」：库行上的勾选框已改为**当前范围是否启用这套水印**
+   * （2026-09-21 改版），勾选与导出不再是同一件事，绑在一起会让人以为「勾上 = 要导出」。
    */
   async function handleExportPresets() {
-    const targets =
-      librarySelection.length > 0
-        ? store.presets.filter((preset) => librarySelection.includes(preset.id))
-        : store.presets
+    const targets = store.presets
     if (targets.length === 0) {
       useStore.getState().showToast('水印库是空的，没有可导出的水印', 'info')
       return
@@ -387,16 +404,11 @@ export function PresetManagementTab() {
   return (
     <div
       data-layout="preset-management-workspace"
-      className="grid h-full min-h-0 min-w-[1180px] flex-1 grid-cols-[300px_260px_minmax(0,1fr)] overflow-hidden border border-ds-border bg-ds-surface dark:border-ds-border dark:bg-ds-scrim"
+      className="grid h-full min-h-0 min-w-[880px] flex-1 grid-cols-[300px_minmax(0,1fr)] overflow-hidden border border-ds-border bg-ds-surface dark:border-ds-border dark:bg-ds-scrim"
     >
-      {/* 左栏：水印归属。整栏只回答一件事——「这个产品 / 这个方向用哪几套水印」。
-          调参（输出目录、命名、渠道规格）全在后处理那边，这里一概不放：同一个参数
-          有两个入口，迟早会出现「在 A 改了、在 B 看不到」。 */}
-      <PresetProjectTree librarySelection={librarySelection} />
-
-      {/* 中栏：水印库。原先它在左栏下段、与归属树共用一条分隔条；「预设详情」栏在归属与
-          参数各自归位后已经空了，把库挪过来正好补上这个位置——拖出方（库）与拖入方（树）
-          仍在一屏之内，一次绑定不用换界面。 */}
+      {/* 左栏：水印库。2026-09-21 改版后**不再有「水印归属」树**：归属读的就是中控台
+          左边那棵项目树（同一份 collections、同一个选中），编辑器里再放一棵等于同一件事
+          开了两个入口。归属的编辑动作（当前方向用哪几套）改为下面库行上的勾选框。 */}
       <section
         data-layout="preset-library"
         className="flex min-h-0 flex-col overflow-hidden border-r border-ds-border bg-ds-surface dark:border-ds-border dark:bg-ds-scrim"
@@ -404,8 +416,10 @@ export function PresetManagementTab() {
         <header className="flex items-center justify-between border-b border-ds-border px-3 py-2 dark:border-ds-border shrink-0">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">水印库</h2>
+            {/* 副标题写明「勾选」现在是什么语义：库行上的勾选框不再是批量选择，
+                而是「当前范围是否启用这套水印」。不写清就会有人以为勾上只是为了导出。 */}
             <p className="truncate text-xs text-ds-muted">
-              {librarySelection.length > 0 ? `已选 ${librarySelection.length} 个` : '拖到上方方向即可归属'}
+              {isGlobal ? '先在左侧项目树选一个方向，再逐套开关' : `勾选 = 「${scopeName}」用这套水印`}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
@@ -420,7 +434,7 @@ export function PresetManagementTab() {
             </button>
             <button
               type="button"
-              title="导出水印预设到文件（勾选时只导勾选的）"
+              title="导出水印预设到文件"
               aria-label="导出水印预设到文件"
               onClick={() => void handleExportPresets()}
               className="inline-flex h-ds-control-sm w-ds-control-sm cursor-pointer items-center justify-center rounded-md text-ds-muted hover:bg-ds-subtle hover:text-ds-primary dark:text-ds-muted dark:hover:bg-ds-subtle dark:hover:text-ds-primary"
@@ -448,15 +462,6 @@ export function PresetManagementTab() {
             aria-label="搜索预设"
             className="w-full rounded-md border border-ds-border bg-ds-surface px-3 py-2 text-sm dark:border-ds-border dark:bg-ds-scrim"
           />
-          {librarySelection.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setLibrarySelection([])}
-              className="cursor-pointer text-xs text-ds-muted underline-offset-2 hover:text-ds-primary hover:underline dark:text-ds-muted dark:hover:text-ds-primary"
-            >
-              清空选择
-            </button>
-          )}
 
           {/* 标识符是全局一份：改一次对所有预设同时生效，所以它挨着「水印库」而不是塞进
               单个预设的图层面板——放在预设里会让人以为它只管这一个水印。 */}
@@ -501,20 +506,7 @@ export function PresetManagementTab() {
           {visiblePresets.map((preset) => (
             <div
               key={preset.id}
-              draggable={editingPresetId !== preset.id}
-              onDragStart={(event) => {
-                event.dataTransfer.effectAllowed = 'copy'
-                // 拖的那一行如果在多选里，就把整批带上。否则用户勾了三个却只绑上一个，
-                // 界面上没有任何反馈——典型「操作了但结果不符预期」的静默失败。
-                const payload = librarySelection.includes(preset.id) ? librarySelection : [preset.id]
-                ;(event.dataTransfer as { setData?: (type: string, value: string) => void }).setData?.(
-                  LIBRARY_PRESET_DRAG_TYPE,
-                  serializePresetDragPayload(payload),
-                )
-                setDraggingLibraryPresetId(preset.id)
-              }}
-              onDragEnd={() => setDraggingLibraryPresetId('')}
-              className={`group relative rounded-md px-2 py-1.5 transition-colors ${preset.id === store.selectedPreviewPresetId ? 'bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary' : 'hover:bg-ds-subtle dark:hover:bg-ds-subtle'} ${draggingLibraryPresetId === preset.id ? 'opacity-50' : ''}`}
+              className={`group relative rounded-md px-2 py-1.5 transition-colors ${preset.id === store.selectedPreviewPresetId ? 'bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary' : 'hover:bg-ds-subtle dark:hover:bg-ds-subtle'}`}
             >
               {editingPresetId === preset.id ? (
                 <input
@@ -536,13 +528,25 @@ export function PresetManagementTab() {
                 />
               ) : (
                 <div className="flex items-center gap-2">
+                  {/* 勾选 = **当前范围启用这套水印**（2026-09-21 改版后的唯一归属入口）。
+                      原先它兼着「选几个再拖到归属树上」的批量语义，归属树退役后拖拽目标
+                      已不存在，勾选框回归它本来的意思。全局默认下禁用——全局基线是各方向的
+                      兜底值，在前端没有写入点，给一个点了没反应的控件比不给更糟。 */}
                   <Checkbox
-                    checked={librarySelection.includes(preset.id)}
-                    onChange={() => toggleLibrarySelection(preset.id)}
-                    aria-label={`把水印「${preset.name}」加入待绑定`}
-                    className={
-                      librarySelection.includes(preset.id) ? 'shrink-0' : 'shrink-0 opacity-0 group-hover:opacity-100'
+                    checked={isPresetEnabled(preset.id)}
+                    disabled={isGlobal}
+                    onChange={() => togglePresetEnabled(preset.id)}
+                    aria-label={
+                      isGlobal
+                        ? `「${preset.name}」的启用在方向层设置`
+                        : `${isPresetEnabled(preset.id) ? '停用' : '启用'}「${preset.name}」`
                     }
+                    title={
+                      isGlobal
+                        ? '全局默认是各方向的兜底值，先在左侧项目树选一个方向，再逐套开关'
+                        : `当前范围：${scopeName}`
+                    }
+                    className="shrink-0"
                   />
                   <button
                     type="button"
