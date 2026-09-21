@@ -32,6 +32,18 @@ describe('controlConsoleSections', () => {
     expect(normalizeControlConsoleSection(42)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
   })
 
+  it('⭐「分发」不再是分区：它作为小节并进了「输出位置」', () => {
+    expect(CONTROL_CONSOLE_SECTIONS.map((section) => section.id)).toEqual(['watermark', 'output', 'media'])
+  })
+
+  it('⭐ 退役的分区值收敛到它搬去的地方，而不是弹回默认分区', () => {
+    // 分区是**持久化**的：老用户机器上存着 'distribution'。让它掉进「认不出」分支会把人弹回水印，
+    // 等于把「我上次停在哪」这件事默默抹掉 —— 而它其实有明确的新家（输出位置）。
+    expect(normalizeControlConsoleSection('distribution')).toBe('output')
+    // 更早的退役值（'directions'）没有对应新家，照旧退回默认分区
+    expect(normalizeControlConsoleSection('directions')).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
+  })
+
   it('isGlobalScope 只认哨兵值（从已退役的 ConsoleScopePicker 迁来）', () => {
     expect(isGlobalScope(GLOBAL_NODE_ID)).toBe(true)
     expect(isGlobalScope('line-a')).toBe(false)

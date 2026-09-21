@@ -472,7 +472,7 @@ describe('PostprocessSettingsModal — 跳转到中控台（不能在这里改�
 
   it('水印分组头给「去中控台配水印」（只读项必须指出下一步，且真的能到）', () => {
     // 先把分区放在别处：否则「写没写 watermark」和「什么都没写」都是 watermark，测不出区别
-    useStore.setState({ controlConsoleSection: 'distribution' })
+    useStore.setState({ controlConsoleSection: 'media' })
     render()
     act(() => findButton('去中控台配水印').click())
     expect(useStore.getState().controlConsoleSection).toBe('watermark')

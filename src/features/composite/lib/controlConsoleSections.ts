@@ -44,7 +44,7 @@ export function isGlobalScope(scope: ConsoleScope): boolean {
   return scope === GLOBAL_NODE_ID
 }
 
-export type ControlConsoleSectionId = 'watermark' | 'output' | 'media' | 'distribution'
+export type ControlConsoleSectionId = 'watermark' | 'output' | 'media'
 
 export interface ControlConsoleSection {
   id: ControlConsoleSectionId
@@ -64,6 +64,11 @@ export interface ControlConsoleSection {
 /**
  * tab 顺序即右区显示顺序。**第一个是默认 tab**，也是历史行为唯一的入口，
  * 所以它必须是 `watermark` —— 否则老用户点进来会先看到一块空的地方。
+ *
+ * ⚠️ 「分发」曾是与「输出位置」并列的第 4 个分区，2026-09-21 并入后者：
+ * 两者本来就是同一件事的两半（一个管「目录 + 文件名」，一个管「按天怎么分」），
+ * 各占一个 tab 只会让「产出放哪」这件事要看两个地方。内容搬进
+ * `OutputSection` 的滚动区，形态与它隔壁的「文件命名」小节一致。
  */
 export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
   {
@@ -75,7 +80,7 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
   {
     id: 'output',
     label: '输出位置',
-    description: '这个范围的导出目录（按渠道，可双写）与产出文件命名，以及产出预览。',
+    description: '这个范围的导出目录（按渠道，可双写），以及全局一套的文件命名、分发与产出预览。',
     globalOnly: false,
   },
   {
@@ -84,19 +89,26 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
     description: '全局共享规格：每个渠道产出哪些尺寸、体积上限多少。勾选决定渠道是否参与产出。',
     globalOnly: true,
   },
-  {
-    id: 'distribution',
-    label: '分发',
-    description: '全局一套：按天把产出分散到日期目录，以及纯净版原图是否伴随产出。',
-    globalOnly: true,
-  },
 ]
 
 /** 默认 tab。集中一处，测试与「重置回默认」都读它。 */
 export const DEFAULT_CONTROL_CONSOLE_SECTION: ControlConsoleSectionId = CONTROL_CONSOLE_SECTIONS[0]!.id
 
+/**
+ * 已退役的分区 id → 现行分区 id。
+ *
+ * **必须有这张表**：分区 id 是持久化的（`useStore.controlConsoleSection`），
+ * 老用户机器上就存着 `'distribution'`。让它掉进「认不出」分支会把人弹回水印，
+ * 等于把「我上次停在哪」这件事默默抹掉 —— 而它其实有明确的新家。
+ * （同类的历史值还有更早的 `'directions'`，那个没有对应新家，所以照旧退回默认。）
+ */
+const RETIRED_SECTION_ALIASES: Record<string, ControlConsoleSectionId> = {
+  distribution: 'output',
+}
+
 /** 把任意字符串收敛成合法分区 id；认不出时退回默认分区，不抛错。 */
 export function normalizeControlConsoleSection(value: unknown): ControlConsoleSectionId {
+  if (typeof value === 'string' && value in RETIRED_SECTION_ALIASES) return RETIRED_SECTION_ALIASES[value]!
   const found = CONTROL_CONSOLE_SECTIONS.find((section) => section.id === value)
   return found ? found.id : DEFAULT_CONTROL_CONSOLE_SECTION
 }

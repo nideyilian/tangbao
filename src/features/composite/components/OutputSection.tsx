@@ -15,6 +15,15 @@
  * **2026-09-20 追加两块**（后处理弹窗收窄为「只显示方向级参数」后，全局参数在这里落脚）：
  * - 「文件命名」：命名模板 + 创作者（全局一套，原先只在弹窗的全局作用域里能改）；
  * - 「产出预览」：按作用域展开产出文件（原先同理）。
+ *
+ * **2026-09-21 再并入一节**：
+ * - 「分发」：纯净版自动伴随 + 按天分发配置（全局一套）。原先是与「输出位置」并列的
+ *   第 4 个分区，合并的理由是它们本来就是同一件事的三段：**放哪 → 叫什么 → 按天怎么分**；
+ *   各占一个 tab 只会让「产出放哪」这件事要看两个地方。
+ *
+ * ⚠️ 于是本分区是**混合**的：渠道导出目录跟着作用域走，后面三节（命名 / 分发 / 预览）都是
+ * 全局一套 —— 后者各自在小节标题里写明，**不再**由分区顶上的「全局设置」提示条代言
+ * （那句话会连前半段一起误导，见 `CompositeWorkspace` 里 `globalOnly` 的注释）。
  */
 
 import { useMemo } from 'react'
@@ -28,6 +37,7 @@ import { useStore } from '../../../store'
 import { normalizeOutputDirList, type PostprocessNodeOverride } from '../../../lib/postprocessMedia'
 import { resolveCollectionPath } from '../../../lib/postprocessProjectTree'
 import { isGlobalScope, type ConsoleScope } from '../lib/controlConsoleSections'
+import { DistributionSection } from './DistributionSection'
 import PostprocessOutputPreview from './PostprocessOutputPreview'
 
 interface Props {
@@ -141,7 +151,10 @@ export function OutputSection({ scope }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="shrink-0 px-4 pt-3">
-        <SectionHeader title="输出位置" description="留空 = 用默认位置；给两个 = 双写。" />
+        <SectionHeader
+          title="输出位置"
+          description="渠道目录留空 = 用默认位置、给两个 = 双写；下面的命名、分发与产出预览是全局一套。"
+        />
       </div>
 
       <div className="shrink-0 space-y-3 px-4 pt-3">
@@ -194,6 +207,23 @@ export function OutputSection({ scope }: Props) {
           <SectionHeader title="文件命名" description="全局一套：产出文件名由模板拼出，不按方向分。" />
           <div className="mt-3">
             <PostprocessNamingFields />
+          </div>
+        </div>
+
+        {/*
+         * 「分发」2026-09-21 从独立分区并入：它与上面的渠道导出位置、文件命名是同一件事的
+         * 三段（放哪 → 叫什么 → 按天怎么分），拆成两个 tab 只会让「产出放哪」要看两处。
+         * 它和「文件命名」一样是**全局一套** —— `distribution` / `autoCompanionClean` 不在
+         * `PostprocessNodeOverride` 里（ADR-0011 收窄时被提升成只读存档），节点上根本没有这两格，
+         * 所以同样在小节标题里说清，不随上面的作用域切换。
+         */}
+        <div className="mt-5 border-t border-ds-border pt-4">
+          <SectionHeader
+            title="分发"
+            description="全局一套，不随作用域变：按天把产出分散到日期目录，并决定纯净版原图是否跟随产出。"
+          />
+          <div className="mt-3">
+            <DistributionSection />
           </div>
         </div>
 

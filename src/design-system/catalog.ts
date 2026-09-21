@@ -974,7 +974,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/OutputSection.tsx',
     responsibility:
-      '中控台「输出位置」分区：作用域由左树驱动（全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir）；文件命名与产出预览也挂在这一区',
+      '中控台「输出位置」分区：作用域由左树驱动（全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir）；文件命名、分发与产出预览三节也挂在这一区（后三节是全局一套，各自在小节标题里说明）',
     decision: 'compose',
     targets: ['SectionHeader', 'Alert', 'Badge'],
   },
@@ -986,9 +986,10 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/composite/components/DistributionSection.tsx',
-    responsibility: '中控台「分发」分区：纯净版自动伴随开关 + 分发配置（复用 PostprocessDistributionFields）',
+    responsibility:
+      '中控台「输出位置」分区里的**分发小节**：纯净版自动伴随开关 + 分发配置（复用 PostprocessDistributionFields）。2026-09-21 从独立分区并入，只留内容 —— 标题与小节壳由 OutputSection 给',
     decision: 'compose',
-    targets: ['SectionHeader', 'Switch'],
+    targets: ['Switch'],
   },
   {
     module: 'src/features/postprocess/PostprocessDistributionFields.tsx',

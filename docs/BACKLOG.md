@@ -2539,3 +2539,50 @@ BigInt 版才是真正的「与原始引擎逐位一致」。
 - **⚠️ 未经渲染自证**：本机做不了网页渲染验证（环境级限制，见 `~/.workbuddy/MEMORY.md`），
   按产品过滤后的列表、「未分配」区与标题形态**未经真机过目**，请在中控台「水印」分区里核对。
 - **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）
+
+---
+
+### TB-068 「分发」并入「输出位置」分区（取消独立入口）
+
+- **来源**：杰哥原话「将『分发』Tab 合并到『输出位置』Tab 中，移除独立的分发入口，并相应调整合并后
+  Tab 内的布局，确保原有分发相关功能与选项不丢失，整体界面排列合理、层级清晰、不影响其他 Tab 的
+  正常使用」（2026-09-21）
+- **状态**：DONE · 写线：主写线
+- **为什么合**：「分发」只有两块内容（纯净版自动伴随 + 按天分发配置），与「输出位置」是同一件事的
+  两半 —— 一个管「目录 + 文件名」，一个管「按天怎么分」。各占一个 tab 只会让「产出放哪」这件事
+  要看两个地方。
+- **改了什么**
+  1. 分区表从 4 项变 3 项：水印 / 输出位置 / 渠道与尺寸（`controlConsoleSections.ts`）；
+  2. **退役值收敛**：`normalizeControlConsoleSection('distribution') → 'output'`。分区 id 是**持久化**的，
+     老用户机器上就存着它 —— 掉进「认不出」分支会把人弹回水印，等于把「我上次停在哪」默默抹掉；
+  3. 「分发」内容搬进 `OutputSection` 的滚动区，插在「文件命名」之后、「产出预览」之前，
+     与同级小节一样的 `SectionHeader` + 内容形态；
+  4. `DistributionSection` **保留**为纯内容组件（去掉外层 `flex` / 滚动壳与自带标题）：嵌在别人的
+     滚动区里再自带一个会出现两层滚动条与高度塌陷；宽度也不自带上限（原 `max-w-2xl`），交给容器
+     统一 —— 否则它会比同级的渠道表窄一截；
+  5. 「全局设置，所有方向共用」提示条**不再挂在「输出位置」上**：这一区是混合的（渠道导出目录按
+     作用域走，命名 / 分发 / 预览是全局一套），顶上挂一句会连前半段一起说错 —— 改由三个小节各自
+     在标题里说清。
+- **验收标准**（可测）
+  1. `CONTROL_CONSOLE_SECTIONS` 的 id 序列 = `['watermark','output','media']`，tab 上不存在「分发」；
+  2. `normalizeControlConsoleSection('distribution')` = `'output'`；`'directions'`（更早的退役值，
+     没有新家）仍退回默认分区；
+  3. `OutputSection` 渲染出的内容里含「纯净版自动伴随」与「启用分发」—— 分发功能一件没丢；
+  4. 切到「输出位置」时**没有**那句「全局设置，所有方向共用」；切到「渠道与尺寸」时仍有；
+  5. 其余分区（水印 / 渠道与尺寸）行为不变。
+- **改动面**：`lib/controlConsoleSections.ts`（+退役别名表）、`CompositeWorkspace.tsx`（删渲染分支与
+  import、改 `globalOnly` 处注释）、`components/DistributionSection.tsx`（纯内容化）、
+  `components/OutputSection.tsx`（+分发小节）、`design-system/catalog.ts`（两条登记更新）
+- **验收证据**：`npm run verify` 全绿；新增 `OutputSection.test.tsx` **2 例**、
+  `controlConsoleSections.test.ts` **+2 例**（分区序列 / 退役值收敛）、
+  `CompositeWorkspace.test.tsx` 改写 1 例（提示条只挂整块全局的分区）。
+  **反向验证**：临时摘掉 `<DistributionSection />` → `OutputSection.test.tsx` 精确 1 例失败
+  （`expected ... to contain '纯净版自动伴随'`）。
+  **干净树验证**：本轮有两个文件（`OutputSection.tsx` / `PostprocessSettingsModal.test.tsx`）与另一条
+  写线的未提交 WIP 重叠，于是用 `git worktree add --detach` + junction `node_modules` 建了一棵
+  **只含已提交代码**的树，把本轮 9 个文件覆盖进去跑 `tsc -b` 与 4 个测试文件 **37 例** ——
+  我这部分零类型错误、全绿；树上**唯一**的错仍是 R-74 那条既有问题
+  （`PostprocessParamPanel.tsx:56` 引用已删组件）。
+- **⚠️ 未经渲染自证**：本机做不了网页渲染验证，合并后的三段排列与「输出位置」的高度表现
+  **未经真机过目**，请在中控台「输出位置」分区里核对。
+- **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）

@@ -23,9 +23,6 @@ vi.mock('./components/MediaSection', () => ({
 vi.mock('./components/OutputSection', () => ({
   OutputSection: () => <div>output-screen</div>,
 }))
-vi.mock('./components/DistributionSection', () => ({
-  DistributionSection: () => <div>distribution-screen</div>,
-}))
 vi.mock('./components/PresetManagementTab', () => ({
   PresetManagementTab: () => <div>editor-screen</div>,
 }))
@@ -122,11 +119,11 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
+    // 「分发」2026-09-21 起不是分区了：它作为小节并进「输出位置」，所以这里没有它的占位
     const expectations: Record<string, string> = {
       watermark: 'editor-screen',
       media: 'media-screen',
       output: 'output-screen',
-      distribution: 'distribution-screen',
     }
     // 注册表里的每个分区都要真的能切过去 —— 加了分区却忘了接线是这类注册表最常见的失效
     for (const section of CONTROL_CONSOLE_SECTIONS) {
@@ -158,13 +155,13 @@ describe('CompositeWorkspace', () => {
   })
 
   it('⭐ 离开中控台后分区归位默认，所以「从顶栏进来」仍是水印（既有行为不变）', () => {
-    useStore.setState({ controlConsoleSection: 'distribution' })
+    useStore.setState({ controlConsoleSection: 'media' })
 
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
-    expect(renderer.root.findByProps({ children: 'distribution-screen' })).toBeTruthy()
+    expect(renderer.root.findByProps({ children: 'media-screen' })).toBeTruthy()
 
     act(() => renderer.unmount())
     expect(useStore.getState().controlConsoleSection).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
@@ -192,14 +189,20 @@ describe('CompositeWorkspace', () => {
     expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
   })
 
-  it('切到全局 tab 时明说「所有方向共用」（渠道与尺寸 / 分发不按方向分）', () => {
+  it('⭐「全局设置」提示只挂在整块全局的分区上（混合分区不挂）', () => {
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
+    // 「渠道与尺寸」整块是全局规格 → 明说「所有方向共用」
     switchSection(renderer, 'media')
     expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(1)
+
+    // 「输出位置」是**混合**的：渠道导出目录跟着作用域走，命名 / 分发 / 产出预览是全局一套。
+    // 顶上挂这句话会把前半段一起说错 —— 那三节各自在小节标题里说清，这里一句都不该有。
+    switchSection(renderer, 'output')
+    expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(0)
 
     switchSection(renderer, 'watermark')
     expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(0)

@@ -8,7 +8,6 @@ import {
   type ConsoleScope,
 } from './lib/controlConsoleSections'
 import { ConsoleAssetTree } from './components/ConsoleAssetTree'
-import { DistributionSection } from './components/DistributionSection'
 import { MediaSection } from './components/MediaSection'
 import { OutputSection } from './components/OutputSection'
 import { PresetManagementTab } from './components/PresetManagementTab'
@@ -43,7 +42,7 @@ import { usePostprocessGlobalConfig } from '../postprocess/usePostprocessGlobalC
  *
  * ```
  * 左：项目树                            右：一排 tab
- * 业务线 → 产品 → 方向                  水印 / 输出位置 / 渠道与尺寸 / 分发
+ * 业务线 → 产品 → 方向                  水印 / 输出位置 / 渠道与尺寸
  * 管「改谁」，增删改查都在树上           管「改什么」，跟着树上选中哪一层走
  * ```
  *
@@ -69,7 +68,9 @@ import { usePostprocessGlobalConfig } from '../postprocess/usePostprocessGlobalC
  * ⚠️ 准入约束：**有节点级字段的参数才消费作用域**。
  * `PostprocessNodeOverride`（ADR-0011 收窄后）只有 `outputDir` / `byMedia` /
  * `watermarkPresetIds` / `enabled`；`distribution` / `autoCompanionClean` /
- * `selectedMediaIds` 不在其中，所以「渠道与尺寸」「分发」是全局一套（`globalOnly`）。
+ * `selectedMediaIds` 不在其中，所以「渠道与尺寸」整个分区是全局一套（`globalOnly`）；
+ * 「输出位置」则是**混合**的：渠道导出目录跟着作用域走，文件命名 / 分发 / 产出预览是全局一套 ——
+ * 后者各自在小节标题里说清，不在分区顶上挂一句「全局设置」（那会连同前一半一起误导）。
  *
  * ⚠️ 模型教训（2026-09-21 上午）：曾经把配置维度挂到树上当一级（「维度 → 作用域」两级树），
  * 结果是每个能按方向配的维度各挂一棵完整的方向树，展开两个组就是两棵一模一样的树。
@@ -350,9 +351,11 @@ export default function CompositeWorkspace() {
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
             {/*
-             * 「渠道与尺寸」「分发」是全局唯一的，选哪个节点看到的都是同一套。
+             * 「渠道与尺寸」是全局唯一的，选哪个节点看到的都是同一套。
              * 这里只加一句说明，**不隐藏也不置灰** —— 藏起来会让人切来切去找不着，
              * 而它确实是要改的东西，只是不按方向分。
+             * （「输出位置」不适用这条：它是**混合**分区，顶上挂一句「全局设置」会连它的
+             *   渠道导出目录一起误导 —— 那一半是跟着作用域走的。各小节在自己标题里说清。）
              */}
             {active.globalOnly && (
               <p className="mb-2 text-xs text-ds-muted dark:text-ds-muted">
@@ -361,7 +364,6 @@ export default function CompositeWorkspace() {
             )}
             {activeSection === 'media' && <MediaSection />}
             {activeSection === 'output' && <OutputSection scope={scope} />}
-            {activeSection === 'distribution' && <DistributionSection />}
           </div>
         )}
       </div>
