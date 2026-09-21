@@ -73,7 +73,6 @@ function AssetViewerInner() {
   const asset = viewerAssetId ? assetsById[viewerAssetId] : undefined
   const imageId = asset?.imageId
   const [src, setSrc] = useState('')
-  const [infoOpen, setInfoOpen] = useState(true)
   /**
    * 左右布局还是上下布局。
    *
@@ -528,249 +527,230 @@ function AssetViewerInner() {
           )}
         </div>
 
-        {/* 右：参数栏（窄屏折到下方，高度限 45% 并自己滚） */}
-        {infoOpen && (
-          <aside
-            data-testid="asset-viewer-info"
-            className="flex shrink-0 flex-col border-ds-border bg-ds-surface"
-            style={{
-              width: wide ? 384 : '100%',
-              maxHeight: wide ? undefined : '45%',
-              borderLeftWidth: wide ? 1 : 0,
-              borderTopWidth: wide ? 0 : 1,
-            }}
-          >
-            <div className="flex shrink-0 items-center justify-between border-b border-ds-border px-3 py-2">
-              <span className="text-sm font-medium">素材信息</span>
+        {/*
+          右：参数栏（窄屏折到下方，高度限 45% 并自己滚）—— **常驻，不提供收起入口**：
+          收起按钮的样式和顶部「关闭弹窗」的 × 一样，误点后参数栏消失、又很难找回来
+          （2026-09-21 杰哥报障：同一个弹窗里出现两个 ×）。
+        */}
+        <aside
+          data-testid="asset-viewer-info"
+          className="flex shrink-0 flex-col border-ds-border bg-ds-surface"
+          style={{
+            width: wide ? 384 : '100%',
+            maxHeight: wide ? undefined : '45%',
+            borderLeftWidth: wide ? 1 : 0,
+            borderTopWidth: wide ? 0 : 1,
+          }}
+        >
+          <div className="flex shrink-0 items-center border-b border-ds-border px-3 py-2">
+            <span className="text-sm font-medium">素材信息</span>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+            <div className="flex items-center justify-between">
+              <div role="radiogroup" aria-label="评分" className="flex items-center">
+                {[1, 2, 3, 4, 5].map((rating) => (
+                  <button
+                    key={rating}
+                    type="button"
+                    role="radio"
+                    aria-checked={asset.rating === rating}
+                    aria-label={`${rating} 星`}
+                    onClick={() =>
+                      void patchAssets([asset.id], {
+                        rating: (asset.rating === rating ? 0 : rating) as AssetRating,
+                      }).catch(() => useStore.getState().showToast('操作失败', 'error'))
+                    }
+                    className="grid h-ds-control-sm w-ds-control-sm place-items-center text-ds-muted hover:text-ds-warning"
+                  >
+                    <StarIcon
+                      size={15}
+                      fill={rating <= asset.rating ? 'currentColor' : 'none'}
+                      className={rating <= asset.rating ? 'text-ds-warning' : ''}
+                    />
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
-                aria-label="收起信息栏"
-                className="grid h-ds-control-sm w-ds-control-sm place-items-center rounded-ds-md text-ds-muted outline-none hover:bg-ds-subtle hover:text-ds-text"
-                onClick={() => setInfoOpen(false)}
+                aria-pressed={asset.favorite}
+                onClick={() =>
+                  void patchAssets([asset.id], { favorite: !asset.favorite }).catch(() =>
+                    useStore.getState().showToast('操作失败', 'error'),
+                  )
+                }
+                className={`flex h-ds-control-sm items-center gap-1 rounded-ds-md px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.favorite ? 'text-ds-warning' : 'text-ds-muted hover:text-ds-warning'}`}
               >
-                <XIcon size={14} />
+                <StarIcon size={14} fill={asset.favorite ? 'currentColor' : 'none'} />
+                {asset.favorite ? '已收藏' : '收藏'}
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-              <div className="flex items-center justify-between">
-                <div role="radiogroup" aria-label="评分" className="flex items-center">
-                  {[1, 2, 3, 4, 5].map((rating) => (
-                    <button
-                      key={rating}
-                      type="button"
-                      role="radio"
-                      aria-checked={asset.rating === rating}
-                      aria-label={`${rating} 星`}
-                      onClick={() =>
-                        void patchAssets([asset.id], {
-                          rating: (asset.rating === rating ? 0 : rating) as AssetRating,
-                        }).catch(() => useStore.getState().showToast('操作失败', 'error'))
-                      }
-                      className="grid h-ds-control-sm w-ds-control-sm place-items-center text-ds-muted hover:text-ds-warning"
-                    >
-                      <StarIcon
-                        size={15}
-                        fill={rating <= asset.rating ? 'currentColor' : 'none'}
-                        className={rating <= asset.rating ? 'text-ds-warning' : ''}
-                      />
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  aria-pressed={asset.favorite}
-                  onClick={() =>
-                    void patchAssets([asset.id], { favorite: !asset.favorite }).catch(() =>
-                      useStore.getState().showToast('操作失败', 'error'),
-                    )
-                  }
-                  className={`flex h-ds-control-sm items-center gap-1 rounded-ds-md px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.favorite ? 'text-ds-warning' : 'text-ds-muted hover:text-ds-warning'}`}
-                >
-                  <StarIcon size={14} fill={asset.favorite ? 'currentColor' : 'none'} />
-                  {asset.favorite ? '已收藏' : '收藏'}
-                </button>
-              </div>
-
-              {/* 颜色标签 */}
-              <div>
-                <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">颜色标签</h4>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {COLOR_LABELS_WITH_NAMES.map((item) => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      aria-label={item.label}
-                      title={item.label}
-                      onClick={() => setColorLabel(asset.colorLabel === item.value ? null : item.value)}
-                      className={`h-5 w-5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.colorLabel === item.value ? 'ring-2 ring-ds-focus ring-offset-1' : ''}`}
-                      style={{ backgroundColor: item.color }}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <section>
-                <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">文件信息</h4>
-                <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
-                  <dt className="text-ds-muted">尺寸</dt>
-                  <dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : '—'}</dd>
-                  <dt className="text-ds-muted">格式</dt>
-                  <dd>{asset.mimeType ?? '—'}</dd>
-                  <dt className="text-ds-muted">大小</dt>
-                  <dd>{asset.byteSize ? `${(asset.byteSize / 1024 / 1024).toFixed(1)} MB` : '—'}</dd>
-                  <dt className="text-ds-muted">生成时间</dt>
-                  <dd>{new Date(asset.createdAt).toLocaleString()}</dd>
-                  {primaryOrigin && (
-                    <>
-                      <dt className="text-ds-muted">输入图片</dt>
-                      <dd>{primaryOrigin.inputImageIds.length} 张</dd>
-                    </>
-                  )}
-                </dl>
-              </section>
-
-              {/* 参数解耦展示：任务级共享参数 + 本图专属参数（seed / 实际差异 / 文件名） */}
-              <section>
-                <div className="mb-1 flex items-center justify-between">
-                  <h4 className="text-xs font-medium uppercase tracking-wide text-ds-muted">来源与参数</h4>
-                  {/* 「查看来源任务」是右键菜单里没有的操作，所以它留在弹窗里才有入口 */}
+            {/* 颜色标签 */}
+            <div>
+              <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">颜色标签</h4>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {COLOR_LABELS_WITH_NAMES.map((item) => (
                   <button
+                    key={item.value}
                     type="button"
-                    disabled={!sourceTask}
-                    title={sourceTask ? '切到任务卡片视图并定位该任务' : '该素材没有关联任务'}
-                    className="text-xs text-ds-primary outline-none hover:underline disabled:text-ds-muted disabled:no-underline"
-                    onClick={() => {
-                      if (!sourceTask) return
-                      const assetStore = useAssetLibraryStore.getState()
-                      assetStore.setGroupBy('grouped')
-                      assetStore.setBatchFocusTaskId(sourceTask.id)
-                      closeViewer()
-                    }}
-                  >
-                    查看来源任务 →
-                  </button>
-                </div>
-                <AssetParamBreakdown origin={primaryOrigin} />
-                {asset.origins.length > 1 && (
-                  <ul className="mt-2 space-y-1">
-                    {asset.origins.map((origin) => (
-                      <li key={origin.key} className="rounded-ds-md border border-ds-border px-2 py-1.5 text-xs">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate font-medium">{origin.key}</span>
-                          <span className="shrink-0 text-ds-muted">{origin.apiModel ?? origin.sourceMode}</span>
-                        </div>
-                        <div className="mt-0.5 line-clamp-2 text-ds-muted">{origin.prompt}</div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-
-              <section>
-                <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">提示词</h4>
-                <p className="whitespace-pre-wrap break-words text-xs leading-5">{primaryOrigin?.prompt || '—'}</p>
-                {primaryOrigin?.revisedPrompt && (
-                  <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-ds-muted">
-                    修订：{primaryOrigin.revisedPrompt}
-                  </p>
-                )}
-              </section>
-
-              {(sourceSop || sourceTask?.sopBatch) && (
-                <section>
-                  <h4 className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ds-muted">
-                    <BookOpenCheckIcon size={13} /> SOP
-                  </h4>
-                  {sourceSop ? (
-                    <button
-                      type="button"
-                      title="点击应用该 SOP 为当前生图 SOP"
-                      className="flex min-h-ds-control-lg w-full items-center justify-between gap-2 rounded-ds-md border border-ds-border px-2.5 text-xs transition-colors hover:border-ds-primary/40 hover:bg-ds-subtle"
-                      onClick={() => {
-                        void assetCommands.applyAssetSop(asset.id).then((ok) => {
-                          if (!ok) return
-                          useStore.getState().showToast(`已应用 SOP「${sourceSop.name}」`, 'success')
-                          closeViewer()
-                        })
-                      }}
-                    >
-                      <span className="truncate">{sourceSop.name}</span>
-                      <span className="shrink-0 text-ds-muted">点击复用 →</span>
-                    </button>
-                  ) : (
-                    <p className="text-xs text-ds-muted">
-                      {sourceTask?.sopBatch?.sopName || '未知 SOP'}（已从库中删除）
-                    </p>
-                  )}
-                </section>
-              )}
-
-              <NotesEditor assetId={asset.id} value={asset.notes ?? ''} />
-
-              <DerivedChain asset={asset} onNavigate={(id) => setViewerAsset(id)} />
-
-              {/*
-               * 刻意**没有**「项目归属」模块：右键菜单的「添加到项目」就是改归属的入口，
-               * 弹窗里再来一块是同一件事的第二入口（2026-09-21 杰哥定）。
-               */}
+                    aria-label={item.label}
+                    title={item.label}
+                    onClick={() => setColorLabel(asset.colorLabel === item.value ? null : item.value)}
+                    className={`h-5 w-5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${asset.colorLabel === item.value ? 'ring-2 ring-ds-focus ring-offset-1' : ''}`}
+                    style={{ backgroundColor: item.color }}
+                  />
+                ))}
+              </div>
             </div>
 
-            <div className="shrink-0 border-t border-ds-border p-2">
-              {asset.status === 'trashed' ? (
-                <div className="space-y-1">
+            <section>
+              <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">文件信息</h4>
+              <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
+                <dt className="text-ds-muted">尺寸</dt>
+                <dd>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : '—'}</dd>
+                <dt className="text-ds-muted">格式</dt>
+                <dd>{asset.mimeType ?? '—'}</dd>
+                <dt className="text-ds-muted">大小</dt>
+                <dd>{asset.byteSize ? `${(asset.byteSize / 1024 / 1024).toFixed(1)} MB` : '—'}</dd>
+                <dt className="text-ds-muted">生成时间</dt>
+                <dd>{new Date(asset.createdAt).toLocaleString()}</dd>
+                {primaryOrigin && (
+                  <>
+                    <dt className="text-ds-muted">输入图片</dt>
+                    <dd>{primaryOrigin.inputImageIds.length} 张</dd>
+                  </>
+                )}
+              </dl>
+            </section>
+
+            {/* 参数解耦展示：任务级共享参数 + 本图专属参数（seed / 实际差异 / 文件名） */}
+            <section>
+              <div className="mb-1 flex items-center justify-between">
+                <h4 className="text-xs font-medium uppercase tracking-wide text-ds-muted">来源与参数</h4>
+                {/* 「查看来源任务」是右键菜单里没有的操作，所以它留在弹窗里才有入口 */}
+                <button
+                  type="button"
+                  disabled={!sourceTask}
+                  title={sourceTask ? '切到任务卡片视图并定位该任务' : '该素材没有关联任务'}
+                  className="text-xs text-ds-primary outline-none hover:underline disabled:text-ds-muted disabled:no-underline"
+                  onClick={() => {
+                    if (!sourceTask) return
+                    const assetStore = useAssetLibraryStore.getState()
+                    assetStore.setGroupBy('grouped')
+                    assetStore.setBatchFocusTaskId(sourceTask.id)
+                    closeViewer()
+                  }}
+                >
+                  查看来源任务 →
+                </button>
+              </div>
+              <AssetParamBreakdown origin={primaryOrigin} />
+              {asset.origins.length > 1 && (
+                <ul className="mt-2 space-y-1">
+                  {asset.origins.map((origin) => (
+                    <li key={origin.key} className="rounded-ds-md border border-ds-border px-2 py-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-medium">{origin.key}</span>
+                        <span className="shrink-0 text-ds-muted">{origin.apiModel ?? origin.sourceMode}</span>
+                      </div>
+                      <div className="mt-0.5 line-clamp-2 text-ds-muted">{origin.prompt}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section>
+              <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-ds-muted">提示词</h4>
+              <p className="whitespace-pre-wrap break-words text-xs leading-5">{primaryOrigin?.prompt || '—'}</p>
+              {primaryOrigin?.revisedPrompt && (
+                <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-ds-muted">
+                  修订：{primaryOrigin.revisedPrompt}
+                </p>
+              )}
+            </section>
+
+            {(sourceSop || sourceTask?.sopBatch) && (
+              <section>
+                <h4 className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ds-muted">
+                  <BookOpenCheckIcon size={13} /> SOP
+                </h4>
+                {sourceSop ? (
                   <button
                     type="button"
+                    title="点击应用该 SOP 为当前生图 SOP"
+                    className="flex min-h-ds-control-lg w-full items-center justify-between gap-2 rounded-ds-md border border-ds-border px-2.5 text-xs transition-colors hover:border-ds-primary/40 hover:bg-ds-subtle"
                     onClick={() => {
-                      void useAssetLibraryStore
-                        .getState()
-                        .restoreAssets([asset.id])
-                        .then(() => useStore.getState().showToast('已恢复', 'success'))
-                        .catch(() => useStore.getState().showToast('恢复失败', 'error'))
+                      void assetCommands.applyAssetSop(asset.id).then((ok) => {
+                        if (!ok) return
+                        useStore.getState().showToast(`已应用 SOP「${sourceSop.name}」`, 'success')
+                        closeViewer()
+                      })
                     }}
-                    className="flex min-h-ds-control-lg w-full items-center justify-center rounded-ds-md border border-ds-border px-2 text-xs"
                   >
-                    恢复
+                    <span className="truncate">{sourceSop.name}</span>
+                    <span className="shrink-0 text-ds-muted">点击复用 →</span>
                   </button>
-                  {/*
-                   * 「永久删除」刻意不放在这里：它必须先弹引用冲突确认（`AssetPurgeModal`），
-                   * 而那个确认弹窗挂在素材库工作区上（要读它的 `requestPurge`），弹窗拿不到。
-                   * 回收站素材的**右键菜单**里有这个入口，所以不是丢功能。
-                   */}
-                  <p className="text-center text-xs text-ds-muted">永久删除请用右键菜单</p>
-                </div>
-              ) : (
+                ) : (
+                  <p className="text-xs text-ds-muted">{sourceTask?.sopBatch?.sopName || '未知 SOP'}（已从库中删除）</p>
+                )}
+              </section>
+            )}
+
+            <NotesEditor assetId={asset.id} value={asset.notes ?? ''} />
+
+            <DerivedChain asset={asset} onNavigate={(id) => setViewerAsset(id)} />
+
+            {/*
+             * 刻意**没有**「项目归属」模块：右键菜单的「添加到项目」就是改归属的入口，
+             * 弹窗里再来一块是同一件事的第二入口（2026-09-21 杰哥定）。
+             */}
+          </div>
+
+          <div className="shrink-0 border-t border-ds-border p-2">
+            {asset.status === 'trashed' ? (
+              <div className="space-y-1">
                 <button
                   type="button"
                   onClick={() => {
                     void useAssetLibraryStore
                       .getState()
-                      .moveToTrash([asset.id])
-                      .then(() => {
-                        useStore.getState().showToast('已移入回收站', 'success')
-                        closeViewer()
-                      })
-                      .catch(() => useStore.getState().showToast('操作失败', 'error'))
+                      .restoreAssets([asset.id])
+                      .then(() => useStore.getState().showToast('已恢复', 'success'))
+                      .catch(() => useStore.getState().showToast('恢复失败', 'error'))
                   }}
-                  className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-ds-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+                  className="flex min-h-ds-control-lg w-full items-center justify-center rounded-ds-md border border-ds-border px-2 text-xs"
                 >
-                  <TrashIcon size={13} /> 移入回收站
+                  恢复
                 </button>
-              )}
-            </div>
-          </aside>
-        )}
-
-        {/* 参数栏收起后的展开入口 */}
-        {!infoOpen && (
-          <button
-            type="button"
-            onClick={() => setInfoOpen(true)}
-            className="absolute right-3 top-14 z-10 rounded-ds-md border border-ds-border bg-ds-surface/90 px-2 py-1 text-xs text-ds-text outline-none hover:bg-ds-subtle"
-          >
-            素材信息
-          </button>
-        )}
+                {/*
+                 * 「永久删除」刻意不放在这里：它必须先弹引用冲突确认（`AssetPurgeModal`），
+                 * 而那个确认弹窗挂在素材库工作区上（要读它的 `requestPurge`），弹窗拿不到。
+                 * 回收站素材的**右键菜单**里有这个入口，所以不是丢功能。
+                 */}
+                <p className="text-center text-xs text-ds-muted">永久删除请用右键菜单</p>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  void useAssetLibraryStore
+                    .getState()
+                    .moveToTrash([asset.id])
+                    .then(() => {
+                      useStore.getState().showToast('已移入回收站', 'success')
+                      closeViewer()
+                    })
+                    .catch(() => useStore.getState().showToast('操作失败', 'error'))
+                }}
+                className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-ds-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+              >
+                <TrashIcon size={13} /> 移入回收站
+              </button>
+            )}
+          </div>
+        </aside>
 
         {showToast && (
           <div
