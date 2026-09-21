@@ -189,23 +189,24 @@ describe('CompositeWorkspace', () => {
     expect(collectText(renderer.root.findByType('h1').props.children)).toBe('月亮')
   })
 
-  it('⭐「全局设置」提示只挂在整块全局的分区上（混合分区不挂）', () => {
+  it('⭐ 不再有分区级的「全局设置」提示条（2026-09-21 起两个分区都是混合的）', () => {
+    // 曾经按 `ControlConsoleSection.globalOnly` 在分区顶上挂一句「全局设置，所有方向共用」。
+    // 现在「渠道与尺寸」是「规格全局 + 参与产出方向级（ADR-0013）」、
+    // 「输出位置」是「渠道目录跟作用域 + 命名 / 分发 / 产出预览全局」——
+    // 一句**分区级**的话说不清哪一半是全局，只会连不该覆盖的那一半一起误导。
+    // 字段与提示条一起删了，这条用例钉的就是「别再挂回来」。
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    // 「渠道与尺寸」整块是全局规格 → 明说「所有方向共用」
-    switchSection(renderer, 'media')
-    expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(1)
-
-    // 「输出位置」是**混合**的：渠道导出目录跟着作用域走，命名 / 分发 / 产出预览是全局一套。
-    // 顶上挂这句话会把前半段一起说错 —— 那三节各自在小节标题里说清，这里一句都不该有。
-    switchSection(renderer, 'output')
-    expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(0)
-
-    switchSection(renderer, 'watermark')
-    expect(renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' })).toHaveLength(0)
+    for (const section of ['media', 'output', 'watermark'] as const) {
+      switchSection(renderer, section)
+      expect(
+        renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' }),
+        `分区 ${section} 不该再挂分区级的全局提示`,
+      ).toHaveLength(0)
+    }
   })
 
   it('⭐ 水印分区打开就是编辑器，没有「卡片 → 点编辑」的中转', () => {

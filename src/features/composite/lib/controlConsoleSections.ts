@@ -26,9 +26,12 @@
  * 本表的设计约束（2026-09-20 修订）：**中控台是全部参数的统一编辑入口**。
  * 节点级覆盖与全局基线都在分区内改，作用域由左侧树驱动；不设
  * 「中控台只能改全局、节点级要去项目树」的断层。但分区**只在节点层真有
- * 可覆盖字段时才消费作用域** —— `PostprocessNodeOverride` 目前只有 `outputDir` /
- * `byMedia` / `watermarkPresetIds` / `enabled`，所以「渠道与尺寸」「分发」是全局一套。
- * 给了作用域却什么都不变，比不给更糟。详见 `design-system/tangbao/pages/postprocess.md`。
+ * 可覆盖字段时才消费作用域** —— 给了作用域却什么都不变，比不给更糟。
+ * `PostprocessNodeOverride` 现有 `outputDir` / `byMedia` / `watermarkPresetIds` /
+ * `selectedMediaIds`（ADR-0013 加回）/ `enabled`，所以：
+ * - 「渠道与尺寸」消费作用域（**2026-09-21 起**：它的「参与产出」是方向级）；
+ * - 「分发」不消费 —— 它不是分区了，作为小节并进「输出位置」，且那两项已上收全局。
+ * 详见 `design-system/tangbao/pages/postprocess.md`。
  */
 
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
@@ -51,15 +54,15 @@ export interface ControlConsoleSection {
   label: string
   /** 一句话说明这一块管什么，显示在内容区标题下方 */
   description: string
-  /**
-   * 这一块是不是**全局唯一**的（选哪个节点看到的都是同一套，节点上不存在它的覆盖字段）。
-   *
-   * 用途：内容顶部据此加一行「全局设置，所有方向共用」，免得用户以为
-   * 「我选了某个方向、在这儿改的就是这个方向」。**不隐藏、不置灰** —— 藏起来会让人
-   * 切来切去找不着，而它确实是要改的东西，只是不分方向。
-   */
-  globalOnly: boolean
 }
+
+/**
+ * ⚠️ 曾经有一个 `globalOnly` 字段，用来在分区顶上挂一句「全局设置，所有方向共用」。
+ * **2026-09-21 删除**：两个分区现在都是**混合**的 ——
+ * 「渠道与尺寸」是「规格全局 + 参与产出方向级」，「输出位置」是「渠道目录跟作用域 +
+ * 命名 / 分发 / 产出预览全局」。一条**分区级**提示已经说不清，挂着只会连不该覆盖的那一半
+ * 一起误导。改成每个小节在自己的标题里说清属于哪一层。**别再按分区级提示加回来。**
+ */
 
 /**
  * tab 顺序即右区显示顺序。**第一个是默认 tab**，也是历史行为唯一的入口，
@@ -75,19 +78,17 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
     id: 'watermark',
     label: '水印',
     description: '这个范围内用哪几套水印，以及水印库的建与改。',
-    globalOnly: false,
   },
   {
     id: 'output',
     label: '输出位置',
     description: '这个范围的导出目录（按渠道，可双写），以及全局一套的文件命名、分发与产出预览。',
-    globalOnly: false,
   },
   {
     id: 'media',
     label: '渠道与尺寸',
-    description: '全局共享规格：每个渠道产出哪些尺寸、体积上限多少。勾选决定渠道是否参与产出。',
-    globalOnly: true,
+    description:
+      '渠道名与尺寸规格是所有方向共用的一份；「参与产出」跟着左侧作用域走——全局改基线，选某个方向就改它自己那份。',
   },
 ]
 

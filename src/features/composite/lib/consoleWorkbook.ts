@@ -154,12 +154,18 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
   }
 
   // ---- ② node_params：方向级参数（生效值 + 来源） ----
+  //
+  // ⚠️ 导的是**生效值**（含从上级继承来的），`sourcedFrom` 说明它来自谁。于是「导出 → 导入」
+  // 会把继承摊平成每个节点自己的值 —— 这是本表既有的口径（`outputDir` / 水印清单同理），
+  // 改口径要先想清楚「导入后改全局基线不再影响这些节点」是否可接受。
   const nodeParams: ConsoleSheet = {
     name: 'node_params',
     columns: [
       { key: 'collectionId', header: '方向ID' },
       { key: 'path', header: '层级路径' },
-      { key: 'enabled', header: '参与产出' },
+      { key: 'enabled', header: '自动后处理' },
+      // ADR-0013：这个方向投哪几个渠道（逗号分隔的渠道 id；空 = 一个渠道都不投）
+      { key: 'selectedMediaIds', header: '参与渠道' },
       { key: 'outputDir', header: '输出目录' },
       { key: 'watermarkPresetIds', header: '水印清单' },
       { key: 'sourcedFrom', header: '设置来源' },
@@ -171,6 +177,7 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
         collectionId: item.id,
         path: pathOf(collections, item.id),
         enabled: slice.enabled,
+        selectedMediaIds: joinList(slice.config.selectedMediaIds),
         outputDir: slice.config.outputDir,
         watermarkPresetIds: joinList(binding.presetIds),
         sourcedFrom:
@@ -188,7 +195,6 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
       { key: 'name', header: '渠道名' },
       { key: 'applied', header: '参与产出' },
       { key: 'appliedIndex', header: '产出顺序' },
-      { key: 'enabled', header: '启用' },
       { key: 'sizeCount', header: '尺寸数' },
       { key: 'enabledSizeCount', header: '可用尺寸数' },
     ],
@@ -200,7 +206,6 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
         applied: index >= 0,
         // 产出顺序就是 selectedMediaIds 的数组顺序；空 = 不参与
         appliedIndex: index >= 0 ? index : '',
-        enabled: item.enabled,
         sizeCount: item.sizes.length,
         enabledSizeCount: item.sizes.filter((size) => size.enabled).length,
       }

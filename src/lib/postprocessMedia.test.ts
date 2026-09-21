@@ -50,9 +50,11 @@ describe('resolveOutputDirection', () => {
 describe('matchMediaSizes', () => {
   const media = findPostprocessMedia(DEFAULT_POSTPROCESS_MEDIA, 'vendor')
 
-  it('媒体不存在或已停用时返回空数组', () => {
+  it('媒体不存在时返回空数组（不回退到第一个媒体）', () => {
     expect(matchMediaSizes(undefined, 'landscape')).toEqual([])
-    expect(matchMediaSizes({ id: 'off', name: '停用', enabled: false, sizes: [] }, 'landscape')).toEqual([])
+    // 渠道级「投不投」不在这里判（ADR-0013 删掉了渠道启用字段）：
+    // 调用方只对 `selectedMediaIds` 里列出的渠道调本函数
+    expect(matchMediaSizes({ id: 'empty', name: '没有启用尺寸', sizes: [] }, 'landscape')).toEqual([])
   })
 
   it('按方向筛出尺寸，且忽略停用的尺寸', () => {
@@ -189,10 +191,12 @@ describe('buildPostprocessOutputs', () => {
     expect(plan.units.map((unit) => unit.sizeId)).toEqual(['gdt-1280x720'])
   })
 
-  it('停用的媒体不产出也不计入 skipped', () => {
-    const media: PostprocessMedia[] = [{ id: 'off', name: '停用渠道', enabled: false, sizes: [] }]
+  it('渠道在表里、只是没有可用尺寸：不产出，也不算 skipped（渠道本身找到了）', () => {
+    // 渠道级「投不投」由 `mediaIds` 决定（ADR-0013 删掉了渠道启用字段），
+    // 这里钉住的是「找到了但没规格」与「压根找不到」的区别 —— 它们指向两种不同的排查方向
+    const media: PostprocessMedia[] = [{ id: 'empty', name: '没配尺寸', sizes: [] }]
     const plan = buildPostprocessOutputs({
-      mediaIds: ['off'],
+      mediaIds: ['empty'],
       media,
       sourceWidth: 1280,
       sourceHeight: 720,
@@ -200,6 +204,18 @@ describe('buildPostprocessOutputs', () => {
 
     expect(plan.units).toEqual([])
     expect(plan.skippedMediaIds).toEqual([])
+  })
+
+  it('媒体表里没有这个渠道：不产出，并计入 skipped（供界面提示配置写错）', () => {
+    const plan = buildPostprocessOutputs({
+      mediaIds: ['ghost'],
+      media: [{ id: 'gdt', name: '广点通', sizes: [] }],
+      sourceWidth: 1280,
+      sourceHeight: 720,
+    })
+
+    expect(plan.units).toEqual([])
+    expect(plan.skippedMediaIds).toEqual(['ghost'])
   })
 })
 

@@ -5333,7 +5333,6 @@ describe('手动后处理入口', () => {
         {
           id: 'gdt',
           name: '广点通',
-          enabled: true,
           sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
         },
       ],
@@ -5365,7 +5364,6 @@ describe('手动后处理入口', () => {
         {
           id: 'gdt',
           name: '广点通',
-          enabled: true,
           sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
         },
       ],
@@ -5449,7 +5447,6 @@ describe('手动后处理入口', () => {
         {
           id: 'gdt',
           name: '广点通',
-          enabled: true,
           sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
         },
       ],

@@ -2848,3 +2848,96 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
   请在素材库工具栏点开核对。
 - **通用结论已上收**：`docs/architecture-constraints.md` **4.4.1**（触发来源必须传进执行体）
   与 **4.4.2**（后处理提示的分级：skipped 不是错误、状态入口必须可关）。
+
+---
+
+### TB-075 「参与产出」回到方向级 + 合并渠道「启用」开关（ADR-0013）
+
+- **来源**：杰哥 2026-09-21 的四项重构评估（第 1、2 项本轮做；第 3、4 项见 TB-076 / TB-077）。
+  原话：「1）参数为全局通用，但启用状态跟随对应方向；2）评估『参与产品』与『启用』两个选项是否重复，
+  是否可合并为一个」。确认口径：**「对应方向」= 左树上的方向节点**（不是顶上横版/竖版）；
+  方向级勾选取**「默认基线 + 生成前照样能临时改」**（不取代运行时勾选）。
+- **状态**：DOING · 写线：主写线（⚠️ 编号说明：本条原登记为 TB-072，**与另一条写线的 TB-072 撞号**，故改为 TB-075）
+- **改了什么**
+  1. **`selectedMediaIds` 回到节点层**（推翻 ADR-0011 裁决 #3）：`PostprocessNodeOverride` 加该字段，
+     `applyPostprocessOverride` 用 `??` 合并。**产出链本来就读 `slice.config.selectedMediaIds`**
+     （`taskPostprocess.ts` 按渠道拆桶那一段），所以这一步同时让界面与产出生效，没有第二处要改。
+     语义与 `watermarkPresetIds` 同构：`undefined` = 继承、**`[]` = 这个方向一个渠道都不投**、
+     数组顺序 = 产出顺序。`byMedia` 层仍不开放它（递归推理，且「投不投」就是有没有在列表里）。
+  2. **删掉渠道的 `enabled` 字段**：它与「参与产出」对产出的影响完全等价
+     （`matchMediaSizes` 先看渠道启用、`buildPostprocessOutputs` 先按参与列表迭代）。
+     保留「参与产出」（带产出顺序 + Excel「产出顺序」列 + 输入栏计数都认它）。
+  3. **两条迁移**（不做就是静默出错）：`storePostprocessMedia` `version: 2 → 3` + 归一化把旧
+     `enabled: false` 折成「从 `selectedMediaIds` 剔除」（否则被停用过的渠道会**悄悄重新产出**）；
+     Excel 老包的「启用」列仍认，`否` → 不参与 + 导入报告里汇总说明。
+  4. **Excel `node_params` 补 `selectedMediaIds` 列**：不补则「导出 → 导入」把方向级勾选静默丢掉。
+  5. **界面**：「渠道与尺寸」分区不再 `globalOnly`；显示「本级自定义 / 跟随「X」」+「改为跟随上级」
+     （置 `undefined`，不是 `[]`）；**`ControlConsoleSection.globalOnly` 字段与那条分区级提示条一起删**
+     （两个分区现在都是混合的，一句分区级的话说不清哪一半是全局）；文件名预览的示例渠道改按
+     当前作用域生效值取样。
+- **验收标准**（可测）
+  1. 节点作用域下点「参与产出」写进 `params[node].postprocess.selectedMediaIds`，全局基线不变；
+  2. 方向没表态时开关显示的是继承来的值，并写出「跟随「X」」；
+  3. 「改为跟随上级」把该字段置 `undefined`（不是 `[]`）；
+  4. 旧数据 `enabled: false` 的渠道归一化后不在 `selectedMediaIds` 里，且对象上不再有 `enabled` 键；
+  5. 渠道表表头不含「启用」；
+  6. 老包「启用 = 否 + 参与产出 = 是」→ 该渠道不进 `setSelectedMediaIds` 的参数，且报告里出现「启用 = 否」。
+- **改动面**：`lib/postprocessMedia.ts`、`storePostprocessMedia.ts`、`features/projectTree/params.ts`、
+  `features/composite/components/{MediaSection,ConsoleMediaTables,CompositeWorkspace}.tsx`、
+  `features/composite/lib/{controlConsoleSections,consoleWorkbook,consoleImport}.ts`、
+  `features/postprocess/PostprocessNamingFields.tsx`；文档 `docs/adr/0013-*.md`（新）、
+  `docs/adr/0011-*.md`（加取代指针）、`docs/architecture-constraints.md` §4.2.1（新）、`docs/RISK.md` R-63。
+- **验收证据**（四条门禁**逐条**跑，因为 `verify` 串不起来，见下）：
+  `npm run typecheck:electron` 干净；`npm run lint` **全仓**干净；`npm run format:check` **全仓**干净；
+  `npx vitest run` **258 文件 / 2959 例全绿**；受影响 12 个文件 **442 例**全绿。
+  ⚠️ **`npm run verify` 未整体跑**：它第一步是 `tsc -b`，而 HEAD 上有**另一条写线的类型错**
+  （`src/components/Toast.test.tsx:70` `Property 'props' does not exist on type 'string | ReactTestInstance'`，
+  随其 TB-072 提交进来的，与本轮无关）→ 链条在第一步就断。**生产代码 0 类型错**（本轮 18 个文件干净）。
+- **反向验证**（3 个变异，逐个确认精确变红）
+  | 变异                                          | 结果                                                                    |
+  | --------------------------------------------- | ----------------------------------------------------------------------- |
+  | `normalizePostprocessNodeOverride` 不读该字段 | `params.test.ts` **1 failed / 72 passed**（「selectedMediaIds 回到节点层」红） |
+  | 去掉 `enabled: false` 的折算                  | `storePostprocessMedia.test.ts` **1 failed / 45 passed**（「折成不参与」红）  |
+  | 老包的「启用」列不折、照 `applied` 走         | `consoleImport.test.ts` **1 failed / 19 passed**（渠道多进了列表）           |
+- **知情取舍**：输入栏「已勾 N 个渠道」仍读全局基线（它没有方向上下文），核对真实产出用中控台产出预览。
+- **已知坑（本轮实踩三条，都值得记）**
+  1. ⚠️ **动手时工作区里有另一条写线在并行改后处理**（`Toast/ConfirmDialog/PostprocessRunsDialog/
+     taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本轮与它**文件级零重叠**，
+     但它改的 `taskPostprocess.ts` 正是我这条线依赖的产出链 —— R-01「同仓单写线」不是洁癖，
+     是这里真的会撞。
+  2. ⚠️ **任务号撞车**：对方同期也登记了 TB-072（后处理提示分级 / 进度面板），本条因此改为 **TB-075**。
+     **同一轮里两条线各自编号 → 必然撞**，要么开工前在 BACKLOG 留一行占位，要么错开号段。
+  3. ⚠️ **HEAD 目前是红的**（对方的 `Toast.test.tsx` 类型错，见「验收证据」）：推送前得先修，
+     否则 CI 又会连续红（R-74）。
+
+---
+
+### TB-076 尺寸表并进渠道表（每个渠道下方新增一行）—— 待评估
+
+- **来源**：杰哥 2026-09-21 第 3 项：「评估尺寸表格能否合并进渠道表格，在每个渠道下方新增一行来展示」
+- **状态**：TODO · 阻塞：**需要先给 `DataGrid` 加横向合并**
+- **结论（评估已做）**：可行，但「每个渠道下方新增一行」要那一行**占满整表宽度**才排得开复选框组，
+  而 `DataGrid` 现在只有**纵向**合并（`column.spanRows`，TB-066 刚加的）；横向合并（`colSpan`）
+  目前只用在虚拟滚动的补白行上。加它约 20–30 行，但要额外定「横向合并与纵向合并同时用时的顺序」。
+- **次要约束**：`.ds-data-grid__row { height: var(--ds-data-grid-row-height) }` 是**统一行高**，
+  尺寸行会更高（复选框折行）—— 今天尺寸表已经是这样，不算新问题，但合并后同一张表要容忍两种行高。
+- **省事替代**（不动设计系统）：渠道表留「渠道名 / 参与产出 / 详细尺寸」三列，复选框组放进
+  「详细尺寸」列吃满剩余宽度，并砍掉「尺寸数 / 可用尺寸」两个计数列（信息在复选框组里已有）。
+  代价：复选框宽度约 780 → 570px，厂商那 8 个尺寸会折成两行。
+- **建议顺序**：等 TB-075 落地后再做（少一个开关列，横向空间反而宽一点）。
+
+---
+
+### TB-077 整个「渠道与尺寸」tab 并入「输出位置」—— 待评估
+
+- **来源**：杰哥 2026-09-21 第 4 项：「评估能否将整个 tab 合并到『输出位置』tab 中」
+- **状态**：TODO · 阻塞：**等 TB-075 落地后再评估**（当前倾向：不做）
+- **结论（评估已做）**：技术上很轻（分区注册表删一项 + 把 `media` 加进退役分区映射表，
+  与当初「分发」并入输出位置同一个做法），但**现在做不划算**：
+  1. 「输出位置」已经吞过「分发」，再吞就是五段长页；且它的 tab 名会变成谎话（里面一半不是「位置」），
+     改名要连带动弹窗里「去中控台改全局规格」的落点文案；
+  2. 合并的收益要等 TB-075 才成立 —— 现在两者节奏不同（规格偶尔配一次、位置每个方向都要动）；
+     TB-075 落地后「参与产出」与「按渠道导出位置」都是「方向级 × 按渠道」，那时更值得做的是
+     **把这两张表并成一张**（一个渠道行里同时看到勾选 / 尺寸 / 导出位置），而不是并 tab。
+- **注意**：`media` 是**持久化**的分区 id，真要合并必须进 `RETIRED_SECTION_ALIASES`
+  （否则老用户会被弹回水印，等于把「我上次停在哪」默默抹掉）。

@@ -41,10 +41,9 @@ const MEDIA: PostprocessMedia[] = [
   {
     id: 'gdt',
     name: '广点通',
-    enabled: true,
     sizes: [{ id: 'gdt-1280x720', width: 1280, height: 720, maxSizeKb: 0, enabled: true }],
   },
-  { id: PURE_MEDIA_ID, name: '纯净版', enabled: true, sizes: [] },
+  { id: PURE_MEDIA_ID, name: '纯净版', sizes: [] },
 ]
 
 function makeContext(overrides: Partial<ConsoleImportContext> = {}): ConsoleImportContext {
@@ -79,7 +78,6 @@ function makeActions(overrides: Partial<ConsoleImportActions> = {}): ConsoleImpo
   return {
     addMedia: vi.fn(() => 'new-media'),
     renameMedia: vi.fn(),
-    setMediaEnabled: vi.fn(),
     addMediaSize: vi.fn(),
     updateMediaSize: vi.fn(),
     deleteMediaSize: vi.fn(),
@@ -276,6 +274,35 @@ describe('applyConsoleImport', () => {
     const actions = makeActions()
     await applyConsoleImport(plan, actions, makeContext())
     expect(actions.setSelectedMediaIds).toHaveBeenCalledWith([PURE_MEDIA_ID, 'baidu', 'gdt'])
+  })
+
+  it('⭐ 旧包的「启用 = 否」折成「不参与产出」，并在导入报告里说清（ADR-0013）', async () => {
+    // 渠道「启用」字段已并入「参与产出」。老包里那一列写着「否」时**不能当没看见** ——
+    // 忽略它等于把用户停用过的渠道悄悄放回产出（行为反转），用户只会在磁盘上发现多出一批文件。
+    const channels = table(
+      'channels',
+      ['id', 'name', 'applied', 'appliedIndex', 'enabled'],
+      [
+        ['gdt', '广点通', '是', '0', '否'],
+        ['baidu', '百度', '是', '1', '是'],
+      ],
+    )
+    const plan = planConsoleImport(tablesOf(['channels', channels]), makeContext())
+    const actions = makeActions()
+    await applyConsoleImport(plan, actions, makeContext())
+
+    expect(actions.setSelectedMediaIds).toHaveBeenCalledWith([PURE_MEDIA_ID, 'baidu'])
+    // 而且要**说出来**：用户看到的是「这个渠道没被勾上」，不解释就像导入漏了东西
+    const report = formatImportPlan(plan)
+    expect(report).toContain('启用 = 否')
+    expect(report).toContain('广点通')
+  })
+
+  it('没有「启用」列的新包（当前导出口径）照常导入，不产生那条提示', () => {
+    const channels = table('channels', ['id', 'name', 'applied', 'appliedIndex'], [['gdt', '广点通', '是', '0']])
+    const plan = planConsoleImport(tablesOf(['channels', channels]), makeContext())
+    expect(plan.payload.channels?.[0]).toMatchObject({ id: 'gdt', applied: true, legacyDisabled: false })
+    expect(formatImportPlan(plan)).not.toContain('启用 = 否')
   })
 
   it('全局输出位置：空目录 = 清掉覆盖（回到默认位置）', async () => {

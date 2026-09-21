@@ -265,7 +265,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
 
 describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   it('画面方向默认「跟随尺寸」，在这里可以整批强制竖版', () => {
-    render(<MediaSection />)
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
     expect(text()).toContain('画面方向')
     expect(usePostprocessMediaStore.getState().direction).toBeNull()
 
@@ -277,20 +277,20 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('渠道表的「参与产出」开关写进 selectedMediaIds（决定这个渠道参不参与产出）', () => {
-    render(<MediaSection />)
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
     clickByAriaLabel('参与产出：广点通')
     expect(usePostprocessMediaStore.getState().selectedMediaIds).toContain('gdt')
   })
 
   it('渠道表与尺寸表直接可见、就地可编辑：不再需要先展开折叠的规格编辑器', () => {
-    render(<MediaSection />)
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
     expect(container.querySelector('table[aria-label="渠道表"]')).toBeTruthy()
     expect(container.querySelector('table[aria-label="尺寸表"]')).toBeTruthy()
     expect(container.querySelector<HTMLInputElement>('input[placeholder="新渠道名称，如「抖音」"]')).toBeTruthy()
   })
 
   it('渠道名、尺寸数都落在列上（原卡片看板的信息一个没丢）', () => {
-    const body = render(<MediaSection />)
+    const body = render(<MediaSection scope={GLOBAL_NODE_ID} />)
     expect(body).toContain('广点通')
     expect(body).toContain('尺寸数')
     expect(body).toContain('横版')
@@ -299,7 +299,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   it('⭐ 尺寸表一行一个渠道，详细尺寸是一组复选框（勾选 = 参与产出）', () => {
     // 2026-09-21 反馈：「详细尺寸使用复选框，尽可能排一行，放不下的排两行」。
     // 行 = 渠道，格子里横排复选框 —— 扫一眼就知道每个渠道配了哪几套、哪几套是开的。
-    render(<MediaSection />)
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
     const table = container.querySelector<HTMLTableElement>('table[aria-label="尺寸表"]')!
     const channelCount = usePostprocessMediaStore.getState().media.filter((item) => item.id !== PURE_MEDIA_ID).length
     expect(table.querySelectorAll('tbody tr')).toHaveLength(channelCount)
@@ -313,7 +313,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('⭐ 详细尺寸排不下就折行：格子是 flex-wrap 容器，尺寸多的渠道自己折到第二行', () => {
-    render(<MediaSection />)
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
     const vendorCell = container.querySelector<HTMLElement>('[data-testid="size-checks-vendor"]')!
     expect(vendorCell.className).toContain('flex-wrap')
     const vendor = usePostprocessMediaStore.getState().media.find((item) => item.id === 'vendor')!
@@ -321,7 +321,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('⭐ 点尺寸名展开详细编辑：改宽高 = 换一套尺寸，主键跟着换', () => {
-    render(<MediaSection />)
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
     act(() => container.querySelector<HTMLElement>('[data-testid="edit-size-gdt-1280x720"]')!.click())
     expect(text()).toContain('编辑尺寸：广点通 1280×720')
 
@@ -338,10 +338,56 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('尺寸行的「+」是图标按钮：加尺寸就近加在这个渠道上', () => {
-    render(<MediaSection />)
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
     clickByAriaLabel('给「头条」加一个尺寸')
     const toutiao = usePostprocessMediaStore.getState().media.find((item) => item.id === 'toutiao')!
     expect(toutiao.sizes.some((size) => size.width === 1024 && size.height === 1024)).toBe(true)
+  })
+
+  it('⭐ 渠道表只剩一个开关：没有「启用」列（ADR-0013 把它并进了「参与产出」）', () => {
+    // 两个开关对产出完全等价，留着只会让人怀疑它们有什么区别 —— 这条是「别再合出来一个」的守卫
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    const header = container.querySelector('table[aria-label="渠道表"] thead')!
+    expect(header.textContent).toContain('参与产出')
+    expect(header.textContent).not.toContain('启用')
+    expect(container.querySelector('[aria-label="启用：广点通"]')).toBeNull()
+  })
+
+  it('⭐ 节点作用域：「参与产出」写进该方向的 selectedMediaIds，全局基线一个字节不动', () => {
+    // ADR-0013 的核心：渠道**规格**全局一套，但「这个方向投哪几个渠道」是方向级的。
+    // 原先选着某个方向改的却是所有方向共用的那份勾选 —— 这条钉住新行为。
+    render(<MediaSection scope="direction-a" />)
+    clickByAriaLabel('参与产出：广点通')
+
+    const override = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess
+    expect(override?.selectedMediaIds).toContain('gdt')
+    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([PURE_MEDIA_ID])
+  })
+
+  it('⭐ 开关显示的是**生效值**：全局勾了、方向没表态时，方向下看到的也是勾上的', () => {
+    act(() => usePostprocessMediaStore.getState().setSelectedMediaIds([PURE_MEDIA_ID, 'gdt']))
+    render(<MediaSection scope="direction-a" />)
+
+    const sw = container.querySelector<HTMLInputElement>('[aria-label="参与产出：广点通"]')
+    expect(sw?.checked).toBe(true)
+    // 且说清这一格现在是谁说了算 —— 否则用户以为是自己在这个方向上勾的
+    expect(text()).toContain('跟随「全局默认」')
+  })
+
+  it('⭐「改为跟随上级」把本级值置为「没表态」，而不是空数组（空数组 = 一个渠道都不投）', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().setSelectedMediaIds([PURE_MEDIA_ID, 'gdt'])
+      useProjectTreeParamsStore.getState().setPostprocessOverride('direction-a', { selectedMediaIds: ['baidu'] })
+    })
+    render(<MediaSection scope="direction-a" />)
+    expect(text()).toContain('本级自定义')
+
+    clickByText('改为跟随上级')
+
+    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.selectedMediaIds).toBeUndefined()
+    // 退回继承后，看到的应该是被继承的那份（全局勾了广点通）
+    expect(text()).toContain('跟随「全局默认」')
+    expect(container.querySelector<HTMLInputElement>('[aria-label="参与产出：广点通"]')?.checked).toBe(true)
   })
 })
 

@@ -38,7 +38,7 @@ function preset(id: string, name: string, productId = ''): CompositeV2Preset {
 }
 
 function media(id: string, name: string): PostprocessMedia {
-  return { id, name, enabled: true, sizes: [] }
+  return { id, name, sizes: [] }
 }
 
 /** 女鞋 / 凉鞋 / 抖音 三层；另有一条男鞋线下也有个同名「抖音」 */

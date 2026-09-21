@@ -39,10 +39,9 @@ function makeGlobalConfig(overrides: Partial<PostprocessMediaConfig> = {}): Post
       {
         id: 'gdt',
         name: '广点通',
-        enabled: true,
         sizes: [{ id: 'gdt-1280x720', width: 1280, height: 720, maxSizeKb: 399, enabled: true }],
       },
-      { id: PURE_MEDIA_ID, name: '纯净版', enabled: true, sizes: [] },
+      { id: PURE_MEDIA_ID, name: '纯净版', sizes: [] },
     ],
     selectedMediaIds: [PURE_MEDIA_ID, 'gdt'],
     selectedCollectionIds: ['direction-a'],
@@ -165,8 +164,8 @@ describe('buildConsoleSheets', () => {
     const input = makeInput({
       globalConfig: makeGlobalConfig({
         media: [
-          { id: 'gdt', name: '广点通', enabled: true, sizes: [] },
-          { id: 'baidu', name: '百度', enabled: true, sizes: [] },
+          { id: 'gdt', name: '广点通', sizes: [] },
+          { id: 'baidu', name: '百度', sizes: [] },
         ],
       }),
     })

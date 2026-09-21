@@ -39,7 +39,6 @@ export type { PostprocessMediaConfig }
 export interface PostprocessMediaStore extends PostprocessMediaConfig {
   addMedia: (name: string, id?: string) => string | null
   renameMedia: (mediaId: string, name: string) => void
-  setMediaEnabled: (mediaId: string, enabled: boolean) => void
   deleteMedia: (mediaId: string) => void
   addMediaSize: (mediaId: string, size: Omit<PostprocessMediaSize, 'id'> & { id?: string }) => void
   updateMediaSize: (mediaId: string, sizeId: string, patch: Partial<Omit<PostprocessMediaSize, 'id'>>) => void
@@ -151,6 +150,16 @@ function normalizeSize(raw: unknown): PostprocessMediaSize | null {
   return { id, width, height, maxSizeKb, enabled: input.enabled !== false }
 }
 
+/**
+ * 旧数据里这个渠道是不是被「启用」开关关掉的。
+ *
+ * `enabled` 字段已在 ADR-0013 删除（它与「参与产出」对产出的影响完全等价），
+ * 所以归一化时要把旧值读出来折成「不参与」，见 `normalizePostprocessMediaConfig`。
+ */
+function isLegacyDisabledMedia(raw: unknown): boolean {
+  return !!raw && typeof raw === 'object' && (raw as Record<string, unknown>).enabled === false
+}
+
 function normalizeMedia(raw: unknown): PostprocessMedia | null {
   if (!raw || typeof raw !== 'object') return null
   const input = raw as Record<string, unknown>
@@ -165,7 +174,7 @@ function normalizeMedia(raw: unknown): PostprocessMedia | null {
       sizes.push(size)
     }
   }
-  return { id, name, enabled: input.enabled !== false, sizes }
+  return { id, name, sizes }
 }
 
 /**
@@ -181,11 +190,20 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
   const input = raw as Record<string, unknown>
 
   let media = defaults.media
+  /**
+   * 旧数据里被「启用」开关关掉的渠道（ADR-0013 删掉该字段时的一次性迁移）。
+   *
+   * **必须折成「不参与」而不是直接忽略这个字段**：忽略等于把「停用过的渠道」重新放回产出，
+   * 而留着它又会让用户「勾了参与产出却不产出」（一个界面上看不见的杀手开关）。
+   * 两条路都会让人对着结果发懵，所以只有一条是对的 —— 把「停用」翻译成它当时真正表达的意思。
+   */
+  const legacyDisabledMediaIds = new Set<string>()
   if (Array.isArray(input.media)) {
     media = []
     for (const rawMedia of input.media) {
       const normalized = normalizeMedia(rawMedia)
       if (!normalized || media.some((item) => item.id === normalized.id)) continue
+      if (isLegacyDisabledMedia(rawMedia)) legacyDisabledMediaIds.add(normalized.id)
       media.push(normalized)
     }
   }
@@ -200,9 +218,11 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
       ? input.namePattern.trim()
       : DEFAULT_POSTPROCESS_NAME_PATTERN
 
+  const selectedMediaIds = normalizeStringList(input.selectedMediaIds) ?? defaults.selectedMediaIds
+
   return {
     media,
-    selectedMediaIds: normalizeStringList(input.selectedMediaIds) ?? defaults.selectedMediaIds,
+    selectedMediaIds: selectedMediaIds.filter((id) => !legacyDisabledMediaIds.has(id)),
     selectedCollectionIds: normalizeStringList(input.selectedCollectionIds) ?? defaults.selectedCollectionIds,
     direction,
     outputDir: typeof input.outputDir === 'string' ? input.outputDir : defaults.outputDir,
@@ -215,8 +235,13 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
   }
 }
 
-/** 选择列表只保留 `clean` 与当前确实存在的媒体，避免删媒体后留下悬空勾选。 */
-function pruneSelectedMediaIds(media: PostprocessMedia[], selectedMediaIds: string[]): string[] {
+/**
+ * 选择列表只保留 `clean` 与当前确实存在的媒体，避免删媒体后留下悬空勾选。
+ *
+ * 导出给**节点级**参与渠道用：那份列表存在项目树参数里（不在本 store），写入前要跟全局一个口径，
+ * 否则「删掉一个渠道」之后节点上会留着它的 id，产出时只能报「选中的媒体已被删除」。
+ */
+export function pruneSelectedMediaIds(media: PostprocessMedia[], selectedMediaIds: string[]): string[] {
   const existing = new Set(media.map((item) => item.id))
   return selectedMediaIds.filter((id) => id === PURE_MEDIA_ID || existing.has(id))
 }
@@ -254,7 +279,7 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         if (!trimmedName) return null
         const mediaId = (id ?? '').trim() || createCustomMediaId()
         if (get().media.some((item) => item.id === mediaId)) return null
-        set((state) => ({ media: [...state.media, { id: mediaId, name: trimmedName, enabled: true, sizes: [] }] }))
+        set((state) => ({ media: [...state.media, { id: mediaId, name: trimmedName, sizes: [] }] }))
         return mediaId
       },
 
@@ -267,11 +292,6 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
           ),
         }))
       },
-
-      setMediaEnabled: (mediaId, enabled) =>
-        set((state) => ({
-          media: mapMedia(state.media, mediaId, (item) => (item.enabled === enabled ? item : { ...item, enabled })),
-        })),
 
       deleteMedia: (mediaId) =>
         set((state) => {
@@ -434,7 +454,10 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
       // v2：水印预设由单值 `watermarkPresetId` 改为多值 `watermarkPresetIds`。
       // 必须 bump —— 版本号不变时 zustand 不会触发 `migrate`，旧字段会被静默丢弃，
       // 用户上一版配好的水印在升级后凭空消失。
-      version: 2,
+      // v3：渠道「启用」字段删除（ADR-0013），旧的 `enabled: false` 折成「不参与产出」。
+      // 同样必须 bump —— 不跑 `migrate` 的话 `normalize` 里的折算不会发生，
+      // 被停用过的渠道会在升级后**悄悄重新开始产出**（行为反转，且界面上看不出发生过什么）。
+      version: 3,
       storage: createDesktopJsonStorage('postprocessMedia'),
       partialize: (state) => ({
         media: state.media,

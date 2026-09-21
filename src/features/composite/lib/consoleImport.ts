@@ -66,7 +66,20 @@ export interface RawTable {
 
 /** 计划里要落库的内容，按表分组。`undefined` = 这个包没带这张表（那就什么都不做）。 */
 export interface ConsoleImportPayload {
-  channels?: Array<{ id: string; name: string; enabled: boolean; applied: boolean; appliedIndex: number | null }>
+  /**
+   * 渠道表。`legacyDisabled` = 包里的旧「启用」列写着 false。
+   *
+   * 该列已从导出里删除（ADR-0013：它与「参与产出」等价），但**老包还得认** ——
+   * 认出来之后按「不参与产出」处理（`planImport` 里不再把它放进 `applied`），
+   * 并计一条提示，别让用户以为导入漏了什么。
+   */
+  channels?: Array<{
+    id: string
+    name: string
+    legacyDisabled: boolean
+    applied: boolean
+    appliedIndex: number | null
+  }>
   channelSizes?: Array<{
     mediaId: string
     /** 派生出来的主键（= 渠道 + 宽高） */
@@ -81,7 +94,7 @@ export interface ConsoleImportPayload {
   outputDirsGlobal?: Array<{ mediaId: string; dirs: string[] }>
   outputDirsNode?: Array<{ collectionId: string; mediaId: string; dirs: string[] }>
   directions?: Array<{ id: string; name: string; parentId: string | null; order: number }>
-  nodeParams?: Array<{ collectionId: string; enabled?: boolean; outputDir?: string }>
+  nodeParams?: Array<{ collectionId: string; enabled?: boolean; selectedMediaIds?: string[]; outputDir?: string }>
   watermarkBinding?: Array<{ collectionId: string; presetIds: string[] }>
   distribution?: PostprocessDistributionConfig
   naming?: {
@@ -295,14 +308,25 @@ export function planConsoleImport(
         continue
       }
       const existing = mediaById.get(id)
-      const enabled = parseImportBool(valueOf(row, channelsTable, 'enabled')) ?? true
-      const applied = parseImportBool(valueOf(row, channelsTable, 'applied')) ?? false
+      /**
+       * 旧包里的「启用」列（新版导出已不含它，ADR-0013）。
+       *
+       * `false` 当时的含义是「这个渠道不产出」，与「不参与产出」等价 —— 所以折过去，
+       * 而不是当作没看见：忽略它等于把用户停用过的渠道**重新放回产出**（行为反转）。
+       * 报告末尾会汇总说一句（见 `formatImportPlan`），免得用户以为导入没生效。
+       */
+      const legacyDisabled = hasColumn(channelsTable, 'enabled')
+        ? (parseImportBool(valueOf(row, channelsTable, 'enabled')) ?? true) === false
+        : false
+      const declaredApplied = parseImportBool(valueOf(row, channelsTable, 'applied')) ?? false
+      const applied = declaredApplied && !legacyDisabled
       const appliedIndex = hasColumn(channelsTable, 'appliedIndex')
         ? (parseImportNumber(valueOf(row, channelsTable, 'appliedIndex')) ?? null)
         : null
-      rows.push({ id, name, enabled, applied, appliedIndex })
+      rows.push({ id, name, legacyDisabled, applied, appliedIndex })
       if (existing) {
-        if (existing.name !== name || existing.enabled !== enabled) update += 1
+        // 「是否参与产出」不进这个计数：它由整份列表决定（见下面的应用段），逐行比对只会误报
+        if (existing.name !== name) update += 1
         else skip += 1
       } else create += 1
     }
@@ -505,10 +529,25 @@ export function planConsoleImport(
       const enabled = parseImportBool(valueOf(row, nodeParamsTable, 'enabled'))
       const outputDir = valueOf(row, nodeParamsTable, 'outputDir')
       if (outputDir) acc.directoryValues.add(outputDir)
-      rows.push({ collectionId, enabled, outputDir: outputDir || undefined })
+      /**
+       * ADR-0013：这个方向投哪几个渠道。
+       *
+       * **列缺失（旧包）时留 `undefined`（= 不表态），不能折成空数组** —— 空数组是
+       * 「这个方向一个渠道都不投」，那会把「导入一份旧包」变成「所有方向都不产出」。
+       */
+      const declaredSelected = hasColumn(nodeParamsTable, 'selectedMediaIds')
+        ? parseImportList(valueOf(row, nodeParamsTable, 'selectedMediaIds'))
+        : undefined
+      rows.push({ collectionId, enabled, selectedMediaIds: declaredSelected, outputDir: outputDir || undefined })
       const current = context.params[collectionId]?.postprocess
       if (!current) create += 1
-      else if (current.enabled !== enabled || (current.outputDir ?? '') !== outputDir) update += 1
+      else if (
+        current.enabled !== enabled ||
+        (current.outputDir ?? '') !== outputDir ||
+        // 列缺失时不算改动（否则「导入旧包」会把每一行都报成更新）
+        (declaredSelected !== undefined && !sameList(current.selectedMediaIds ?? [], declaredSelected))
+      )
+        update += 1
       else skip += 1
     }
     acc.payload.nodeParams = rows
@@ -663,7 +702,6 @@ function findCycle(rows: Array<{ id: string; parentId: string | null }>): string
 export interface ConsoleImportActions {
   addMedia: (name: string, id?: string) => string | null
   renameMedia: (mediaId: string, name: string) => void
-  setMediaEnabled: (mediaId: string, enabled: boolean) => void
   addMediaSize: (mediaId: string, size: { width: number; height: number; maxSizeKb: number; enabled: boolean }) => void
   updateMediaSize: (
     mediaId: string,
@@ -755,7 +793,6 @@ export async function applyConsoleImport(
       const existing = mediaById.get(row.id)
       if (existing) {
         if (existing.name !== row.name) actions.renameMedia(row.id, row.name)
-        if (existing.enabled !== row.enabled) actions.setMediaEnabled(row.id, row.enabled)
       } else {
         actions.addMedia(row.name, row.id)
       }
@@ -840,10 +877,11 @@ export async function applyConsoleImport(
   if (payload.nodeParams) {
     for (const row of payload.nodeParams) {
       const collectionId = resolveCollectionId(row.collectionId)
-      actions.setPostprocessOverride(collectionId, {
-        enabled: row.enabled,
-        outputDir: row.outputDir,
-      })
+      const patch: PostprocessNodeOverride = { enabled: row.enabled, outputDir: row.outputDir }
+      // 列缺失（旧包）时**不进 patch**：`undefined` 在合并里表示「恢复继承」，
+      // 会把用户在新版里配好的方向级渠道清掉 ——「包里没写这一列」不等于「包里说要继承」
+      if (row.selectedMediaIds !== undefined) patch.selectedMediaIds = row.selectedMediaIds
+      actions.setPostprocessOverride(collectionId, patch)
       written += 1
     }
   }
@@ -924,6 +962,19 @@ export function formatImportPlan(plan: ImportPlan): string {
       lines.push(`· ${issue.sheet} 第 ${issue.line} 行：${issue.reason}`)
     }
     if (plan.rejected.length > 8) lines.push(`· 另有 ${plan.rejected.length - 8} 行未列出`)
+  }
+  // 旧包的「启用 = 否」折成「不参与产出」（ADR-0013）—— 必须说出来：
+  // 用户看到的会是「这个渠道没被勾上」，不说清就像导入漏了东西
+  const legacyDisabledChannels = plan.payload.channels?.filter((row) => row.legacyDisabled) ?? []
+  if (legacyDisabledChannels.length > 0) {
+    lines.push('')
+    lines.push(
+      `· 有 ${legacyDisabledChannels.length} 个渠道在包里标着「启用 = 否」（旧版本导出的列，` +
+        `现已并入「参与产出」）：${legacyDisabledChannels
+          .slice(0, 5)
+          .map((row) => row.name)
+          .join('、')}${legacyDisabledChannels.length > 5 ? ' 等' : ''} —— 按「不参与产出」导入。`,
+    )
   }
   if (plan.unknownColumns.length > 0) {
     lines.push('')

@@ -29,9 +29,18 @@ export interface PostprocessMediaSize {
 export interface PostprocessMedia {
   id: string
   name: string
-  enabled: boolean
   sizes: PostprocessMediaSize[]
 }
+
+/*
+ * ⚠️ 这里曾有一个 `enabled` 字段（「渠道整体停用」），2026-09-21 删除（ADR-0013）。
+ *
+ * 它与「参与产出」（`selectedMediaIds`）**对产出的影响完全等价**：`matchMediaSizes` 先看渠道启用、
+ * `buildPostprocessOutputs` 先按参与列表迭代，任一为关这个渠道就不产出。两个开关说同一件事，
+ * 只会让人怀疑它们有什么区别，还多出一种「勾了参与产出却不产出」的静默失效。
+ * 旧数据里 `enabled: false` 的渠道由 `normalizePostprocessMediaConfig` 折成「不参与」（见那边的迁移）。
+ * **别再把它加回来** —— 「这个渠道暂时不投」就是「不勾参与产出」。
+ */
 
 /** 「纯净版」的保留媒体 id：无水印、不压缩、沿用生成尺寸。 */
 export const PURE_MEDIA_ID = 'clean'
@@ -72,7 +81,6 @@ export const DEFAULT_POSTPROCESS_MEDIA: PostprocessMedia[] = [
   {
     id: 'gdt',
     name: '广点通',
-    enabled: true,
     sizes: [
       { id: 'gdt-1280x720', width: 1280, height: 720, maxSizeKb: 399, enabled: true },
       { id: 'gdt-1080x1920', width: 1080, height: 1920, maxSizeKb: 399, enabled: true },
@@ -81,7 +89,6 @@ export const DEFAULT_POSTPROCESS_MEDIA: PostprocessMedia[] = [
   {
     id: 'baidu',
     name: '百度',
-    enabled: true,
     sizes: [
       { id: 'baidu-1140x640', width: 1140, height: 640, maxSizeKb: 299, enabled: true },
       { id: 'baidu-370x245', width: 370, height: 245, maxSizeKb: 299, enabled: true },
@@ -91,7 +98,6 @@ export const DEFAULT_POSTPROCESS_MEDIA: PostprocessMedia[] = [
   {
     id: 'vendor',
     name: '厂商',
-    enabled: true,
     sizes: [
       { id: 'vendor-1280x720', width: 1280, height: 720, maxSizeKb: 99, enabled: true },
       { id: 'vendor-1080x1920', width: 1080, height: 1920, maxSizeKb: 99, enabled: true },
@@ -106,7 +112,6 @@ export const DEFAULT_POSTPROCESS_MEDIA: PostprocessMedia[] = [
   {
     id: 'toutiao',
     name: '头条',
-    enabled: true,
     sizes: [
       { id: 'toutiao-1080x1920', width: 1080, height: 1920, maxSizeKb: 399, enabled: true },
       { id: 'toutiao-1280x720', width: 1280, height: 720, maxSizeKb: 399, enabled: true },
@@ -160,12 +165,16 @@ export function findPostprocessMedia(
  * - 媒体不存在 → 空数组（**不回退到第一个媒体**）。
  * - `direction` 为 null → 该媒体全部启用尺寸。
  * - 方形源图无天然方向，视作**通配**，返回全部启用尺寸（横竖渠道都会拿到图）。
+ *
+ * ⚠️ 这里只看**尺寸级**的启用。「这个渠道投不投」是**调用方**的事：它只对
+ * `selectedMediaIds` 里列出的渠道调本函数（见 `buildPostprocessOutputs`）——
+ * 渠道级曾经还有一个 `enabled` 开关，2026-09-21 已删（ADR-0013）。
  */
 export function matchMediaSizes(
   media: PostprocessMedia | undefined,
   direction: OutputDirection | null,
 ): PostprocessMediaSize[] {
-  if (!media || !media.enabled) return []
+  if (!media) return []
   const enabledSizes = media.sizes.filter((size) => size.enabled)
   if (!direction || direction === 'square') return enabledSizes
   return enabledSizes.filter((size) => resolveOutputDirection(size.width, size.height) === direction)
@@ -290,6 +299,8 @@ export interface PostprocessMediaConfig {
  *
  * 刻意**不**开放 `namePattern` / `selectedMediaIds` / `distribution` / `direction`：它们要么是
  * 全局规格，要么是「这个节点要不要跑」的开关，按渠道分只会让「到底哪个值生效」需要递归推理。
+ * ⚠️ `selectedMediaIds` 在**节点层**是开放的（ADR-0013），但在本层（渠道再细分）仍然不开放 ——
+ * 「这个渠道在节点层投不投」就是它有没有出现在那份列表里，再套一层布尔只会多出一个推理步骤。
  * 类型上保持窄，比事后靠约定约束可靠。
  */
 export interface PostprocessMediaOverride {
@@ -337,23 +348,36 @@ export function resolvePostprocessOutputDirs(
 /**
  * 某个项目树节点（产品线 / 产品 / 方向）对后处理参数的**局部覆盖**。
  *
- * 只保留「与这个项目 / 这个方向直接相关」的字段（口径见 ADR-0011）：
+ * 只保留「与这个项目 / 这个方向直接相关」的字段（口径见 ADR-0011；`selectedMediaIds`
+ * 由 ADR-0013 重新放回节点层）：
  *
  * | 字段                | 为什么留在节点上                                           |
  * | ------------------- | ---------------------------------------------------------- |
  * | `outputDir`         | 实测 25/61 个方向的交付目录不同（ADR-0003）                |
  * | `watermarkPresetIds`| 实测 56/61 个方向的合规水印不同（ADR-0003）                |
+ * | `selectedMediaIds`  | 「这个方向投哪几个渠道」是方向维度（ADR-0013，见下）       |
  * | `enabled`           | 「这个方向要不要跑」是节点自有语义                         |
  *
- * **刻意收窄掉的字段**（原 10 字段 → 现 3 + `byMedia`）：`selectedMediaIds` / `direction` /
+ * **刻意收窄掉的字段**（原 10 字段 → 现 4 + `byMedia`）：`direction` /
  * `namePattern` / `creator` / `autoCompanionClean` / `distribution`。理由是它们**不是**方向维度：
- * - `selectedMediaIds`：勾哪些渠道是**运行时操作**，不需要落成逐方向配置；
  * - `direction`：画面方向**按源图自动判**（见 `resolveOutputDirection`），不提供手选口子；
  * - `namePattern` / `creator`：命名规则**全局一套**，逐方向配只会让文件名口径分散；
  * - `autoCompanionClean` / `distribution`：属于「全局怎么跑」，无任何逐方向差异证据。
  *
- * 渠道字典（`media`）是全局共享规格表，产出目标（`selectedCollectionIds`）在自动匹配模式下
- * 由图片归属推导，两者都**不该**被节点覆盖。
+ * ### `selectedMediaIds` 为什么回到节点层（ADR-0013，2026-09-21）
+ *
+ * ADR-0011 当初把它收走，理由是「勾哪些渠道是**运行时操作**」。实际用下来这个判断只对了一半：
+ * 渠道**规格**（渠道名、尺寸、体积上限）确实是全局一套，但「**这个方向**投哪几个渠道」是每批图
+ * 都要重新确认的事 —— 它跟 `enabled`（这个方向跑不跑）是同一个层级的决策。放全局之后，
+ * 中控台里选一个方向、改的却是所有方向共用的那份勾选，界面还挂着「全局设置」的提示条，
+ * 用户没法表达「A 方向投头条、B 方向不投」。
+ *
+ * 语义与 `watermarkPresetIds` 完全一致：`undefined` = 没表态、沿继承链向上取；**空数组是有效值**，
+ * 表示「这个方向一个渠道都不投」。渠道规格表是全局的（`media`）、产出目标
+ * （`selectedCollectionIds`）在自动匹配模式下由图片归属推导，两者都**不该**被节点覆盖。
+ *
+ * ⚠️ `byMedia` 层仍**不**开放本字段：渠道再细分一层「投不投」会让「到底哪个值生效」需要递归推理
+ * （见 `PostprocessMediaOverride`）。要在某个渠道上收手，就是把它从本层列表里去掉。
  *
  * 未出现的字段（`undefined`）表示「不表态」，沿继承链向上取值：方向 → 产品 → 产品线 → 全局默认。
  * 要显式表达「这个方向就是不带水印」，用 `watermarkPresetIds: []`——`undefined` 才是继承。
@@ -366,6 +390,14 @@ export interface PostprocessNodeOverride {
   outputDir?: string
   /** 水印预设 id 列表；`[]` = 该方向不加水印（显式覆盖），`undefined` = 继承 */
   watermarkPresetIds?: string[]
+  /**
+   * 该方向投哪几个渠道（媒体 id，含 `clean`）；**`[]` = 这个方向一个渠道都不投**，
+   * `undefined` = 继承。
+   *
+   * 数组顺序即产出顺序（与全局同字段一个口径，`buildPostprocessOutputs` 按它迭代）。
+   * 本层不表态时不会「退回空」，而是继续沿继承链向上取 —— 与 `watermarkPresetIds` 同一套规则。
+   */
+  selectedMediaIds?: string[]
   /** 该方向是否参与自动后处理；false = 归属此方向的图片不产出变体 */
   enabled?: boolean
   /**
@@ -380,8 +412,9 @@ export interface PostprocessNodeOverride {
 /**
  * 把节点覆盖叠加到基线配置上（纯函数，不改写入参）。
  *
- * 节点层只可能改到 `outputDir` / `watermarkPresetIds`（+ `byMedia` 的渠道再细分），
- * 其余字段一律透传基线 —— 它们已经收归全局（ADR-0011），节点上不再有覆盖入口。
+ * 节点层只可能改到 `outputDir` / `watermarkPresetIds` / `selectedMediaIds`
+ * （+ `byMedia` 的渠道再细分目录与水印），其余字段一律透传基线 —— 它们收归全局（ADR-0011），
+ * 节点上不再有覆盖入口。
  *
  * `enabled` 是节点自有概念、不属于 `PostprocessMediaConfig`，故不参与合并，由调用方单独读取。
  *
@@ -414,7 +447,8 @@ export function applyPostprocessOverride(
   }
   return {
     media: base.media,
-    selectedMediaIds: base.selectedMediaIds,
+    // 本节点不表态就沿用基线上的列表（全局或更浅一层）——`[]` 是有效值，别用 `length` 判
+    selectedMediaIds: override.selectedMediaIds ?? base.selectedMediaIds,
     selectedCollectionIds: base.selectedCollectionIds,
     direction: base.direction,
     // 用 `??` 而不是 `||`：空串是「用默认输出位置」、空数组是「这个渠道不加水印」，都是有效值

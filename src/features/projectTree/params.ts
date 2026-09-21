@@ -276,8 +276,8 @@ export function resolveNodeWatermarkBindingsByMedia(
   return result
 }
 
-/** 归一化水印预设 id 列表：去空、去重、保序。空数组有效（= 显式不加水印）。 */
-function normalizePresetIdList(raw: unknown): string[] {
+/** 归一化 id 列表：去空、去重、保序。**空数组有效**（水印 = 显式不加水印 / 参与产出 = 一个渠道都不投）。 */
+function normalizeIdList(raw: unknown): string[] {
   const ids: string[] = []
   if (!Array.isArray(raw)) return ids
   for (const item of raw) {
@@ -307,7 +307,7 @@ function normalizeByMediaOverride(raw: unknown): Record<string, PostprocessMedia
     if (Array.isArray(entry.outputDirs)) override.outputDirs = normalizeOutputDirList(entry.outputDirs)
     if (typeof entry.outputDir === 'string') override.outputDir = entry.outputDir
     if (Array.isArray(entry.watermarkPresetIds)) {
-      override.watermarkPresetIds = normalizePresetIdList(entry.watermarkPresetIds)
+      override.watermarkPresetIds = normalizeIdList(entry.watermarkPresetIds)
     }
     if (Object.keys(override).length > 0) result[mediaId] = override
   }
@@ -320,18 +320,23 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
   const input = raw as Record<string, unknown>
   const result: PostprocessNodeOverride = {}
 
-  // 已收归全局的字段（`selectedMediaIds` / `direction` / `namePattern` / `creator` /
+  // 已收归全局的字段（`direction` / `namePattern` / `creator` /
   // `autoCompanionClean` / `distribution`）在这里**刻意不读**：它们不再是节点可覆盖项（ADR-0011）。
   // 旧数据里的值由 `collectPromotedNodeFieldValues` 在 migrate 阶段先接住，不会丢。
   if (typeof input.outputDir === 'string') result.outputDir = input.outputDir
   // 空数组是**显式**「这个方向不加水印」，必须与「没表态」（undefined）区分，所以数组照收不误。
   // 旧版单值字段（`watermarkPresetId`）一并迁移，否则升级后用户已配的水印会消失。
   if (Array.isArray(input.watermarkPresetIds)) {
-    result.watermarkPresetIds = normalizePresetIdList(input.watermarkPresetIds)
+    result.watermarkPresetIds = normalizeIdList(input.watermarkPresetIds)
   } else if (typeof input.watermarkPresetId === 'string' && input.watermarkPresetId.trim()) {
     result.watermarkPresetIds = [input.watermarkPresetId.trim()]
   } else if (input.watermarkPresetId === null) {
     result.watermarkPresetIds = []
+  }
+  // 同上：`[]` = 这个方向一个渠道都不投，是有效值，不能与「没表态」合并。
+  // （ADR-0013 把它放回节点层；ADR-0011 期间写过的值曾被丢弃，这里重新认它。）
+  if (Array.isArray(input.selectedMediaIds)) {
+    result.selectedMediaIds = normalizeIdList(input.selectedMediaIds)
   }
   if (typeof input.enabled === 'boolean') result.enabled = input.enabled
   const byMedia = normalizeByMediaOverride(input.byMedia)

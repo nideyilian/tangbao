@@ -2,9 +2,20 @@
  * 中控台 · 「渠道与尺寸」分区的表格本体（TB-060）。
  *
  * 替代原来的「渠道分组卡片 + 折叠式规格编辑器」两套视图：
- * 卡片看板的全部信息（渠道名、启用状态、`N / M 已应用` 计数、参与产出勾选）在这里都有
+ * 卡片看板的全部信息（渠道名、`N / M 已应用` 计数、参与产出勾选）在这里都有
  * 对应的一列，而规格增删改从「先展开渠道再逐字段点」变成「一行一个规格、点哪格改哪格」。
  * **信息无损失，只是不再需要两套视图来表达同一份数据。**
+ *
+ * ## ⚠️ 本组件不自己读 store 的勾选状态（ADR-0013）
+ *
+ * 「参与产出」是**方向级**的：全局作用域改基线、节点作用域改这个方向自己那份。
+ * 所以勾选状态与写回回调都由 `MediaSection` 传进来（它在那边按作用域解析过），
+ * 本组件只负责「把值画出来、把点击交回去」。表格自己读全局 store 的话，
+ * 选着某个方向改的却是所有方向共用的那份 —— 正是这一版要修掉的问题。
+ *
+ * 「启用」列**已删除**（2026-09-21）：它与「参与产出」对产出的影响完全等价
+ * （`matchMediaSizes` 先看渠道启用、`buildPostprocessOutputs` 先按参与列表迭代，任一为关就不产出），
+ * 两个开关说同一件事只会让人怀疑它们有什么区别。详见 `postprocessMedia.ts` 的 ADR-0013 注。
  *
  * ## 为什么是两张表而不是一张
  *
@@ -62,12 +73,18 @@ interface SizeRow {
 /** 加尺寸时的默认规格：与原「加尺寸」按钮的行为一致（1024×1024、不做体积压缩）。 */
 const DEFAULT_NEW_SIZE = { width: 1024, height: 1024, maxSizeKb: 0, enabled: true }
 
-export function ConsoleMediaTables() {
+interface Props {
+  /** 当前作用域下生效的「参与产出」渠道 id（含 `clean`）。由 `MediaSection` 按作用域解析后传入 */
+  selectedMediaIds: string[]
+  /** 切换某个渠道的参与状态。写回全局基线还是某个方向，由调用方决定 */
+  onToggleSelected: (mediaId: string, next: boolean) => void
+  /** 当前参与产出的作用域名（「全局基线」或某个方向名），挂在列说明上 */
+  participationScopeLabel: string
+}
+
+export function ConsoleMediaTables({ selectedMediaIds, onToggleSelected, participationScopeLabel }: Props) {
   const media = usePostprocessMediaStore((state) => state.media)
-  const selectedMediaIds = usePostprocessMediaStore((state) => state.selectedMediaIds)
-  const setSelectedMediaIds = usePostprocessMediaStore((state) => state.setSelectedMediaIds)
   const renameMedia = usePostprocessMediaStore((state) => state.renameMedia)
-  const setMediaEnabled = usePostprocessMediaStore((state) => state.setMediaEnabled)
   const deleteMedia = usePostprocessMediaStore((state) => state.deleteMedia)
   const addMedia = usePostprocessMediaStore((state) => state.addMedia)
   const addMediaSize = usePostprocessMediaStore((state) => state.addMediaSize)
@@ -134,17 +151,11 @@ export function ConsoleMediaTables() {
       {
         key: 'applied',
         header: '参与产出',
-        help: '勾上这个渠道才产出变体。纯净版是单独一项，在下面。',
+        // 作用域名写进说明里：同一个开关在全局层和在方向层改的是两份数据，不说清就会改错地方
+        help: `勾上这个渠道才产出变体。当前作用域：${participationScopeLabel}。纯净版是单独一项，在下面。`,
         editor: 'switch',
         width: 88,
         getValue: (row) => selectedMediaIds.includes(row.id),
-      },
-      {
-        key: 'enabled',
-        header: '启用',
-        help: '停用后这个渠道整体不参与产出，即使勾了「参与产出」。',
-        editor: 'switch',
-        width: 72,
       },
       {
         key: 'sizeCount',
@@ -183,7 +194,7 @@ export function ConsoleMediaTables() {
         ),
       },
     ],
-    [confirmDeleteChannel, media, selectedMediaIds],
+    [confirmDeleteChannel, media, participationScopeLabel, selectedMediaIds],
   )
 
   const commitChannel = useCallback(
@@ -192,16 +203,12 @@ export function ConsoleMediaTables() {
         renameMedia(rowId, String(value ?? ''))
         return
       }
-      if (columnKey === 'enabled') {
-        setMediaEnabled(rowId, value === true)
-        return
-      }
       if (columnKey === 'applied') {
-        const next = selectedMediaIds.filter((id) => id !== rowId)
-        setSelectedMediaIds(value === true ? [...next, rowId] : next)
+        // 写回哪一层由 `MediaSection` 决定（全局基线 / 这个方向），表格不掺和继承
+        onToggleSelected(rowId, value === true)
       }
     },
-    [renameMedia, selectedMediaIds, setMediaEnabled, setSelectedMediaIds],
+    [onToggleSelected, renameMedia],
   )
 
   // ---- 尺寸表 ----
@@ -360,7 +367,7 @@ export function ConsoleMediaTables() {
       <section className="space-y-3">
         <SectionHeader
           title="渠道"
-          description="渠道与尺寸是全局共享规格：所有方向按同一张表产出，方向层只能决定参不参与。"
+          description="渠道名与尺寸规格是所有方向共用的一份；「参与产出」决定这个渠道在什么地方投产，跟着左侧作用域走。"
         />
         <DataGrid
           aria-label="渠道表"

@@ -51,7 +51,6 @@ describe('媒体表增删改', () => {
     expect(usePostprocessMediaStore.getState().media.at(-1)).toEqual({
       id: newId,
       name: '小红书',
-      enabled: true,
       sizes: [],
     })
 
@@ -60,16 +59,13 @@ describe('媒体表增删改', () => {
     expect(usePostprocessMediaStore.getState().media).toHaveLength(5)
   })
 
-  it('改名与停用', () => {
+  it('改名（去空白，空名不生效）', () => {
     const store = usePostprocessMediaStore.getState()
     store.renameMedia('gdt', '  广点通广告位  ')
     expect(usePostprocessMediaStore.getState().media[0].name).toBe('广点通广告位')
 
     store.renameMedia('gdt', '   ')
     expect(usePostprocessMediaStore.getState().media[0].name).toBe('广点通广告位')
-
-    store.setMediaEnabled('gdt', false)
-    expect(usePostprocessMediaStore.getState().media[0].enabled).toBe(false)
   })
 
   it('删除媒体会同时清掉它的勾选，删不存在的媒体是 no-op', () => {
@@ -238,7 +234,24 @@ describe('归一化（持久化与备份恢复共用）', () => {
     expect(normalized.media.map((item) => item.id)).toEqual(['ok', 'dup-sizes'])
     expect(normalized.media[0].sizes).toHaveLength(1)
     expect(normalized.media[1].sizes).toHaveLength(1)
-    expect(normalized.media[0].enabled).toBe(true)
+    // 渠道上不再有 `enabled` 字段（ADR-0013）——归一化不会把它带回来
+    expect('enabled' in normalized.media[0]).toBe(false)
+  })
+
+  it('⭐ 旧的渠道「启用 = 否」折成「不参与产出」（ADR-0013 删字段时的一次性迁移）', () => {
+    const normalized = normalizePostprocessMediaConfig({
+      media: [
+        { id: 'on', name: '在用的', enabled: true, sizes: [] },
+        { id: 'off', name: '停用过的', enabled: false, sizes: [] },
+      ],
+      selectedMediaIds: [PURE_MEDIA_ID, 'on', 'off'],
+    })
+
+    // 字段本身消失：留着它就是一个界面上看不见、却能把渠道整个杀掉的开关
+    expect(normalized.media[1]).toEqual({ id: 'off', name: '停用过的', sizes: [] })
+    expect('enabled' in normalized.media[1]).toBe(false)
+    // 但它当时表达的「不产出」必须保住 —— 直接从勾选里去掉，而不是让渠道悄悄复活
+    expect(normalized.selectedMediaIds).toEqual([PURE_MEDIA_ID, 'on'])
   })
 
   it('非法方向归 null，非法选择列表走默认值', () => {

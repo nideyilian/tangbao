@@ -24,11 +24,16 @@ import {
 } from '../../lib/postprocessNaming'
 import { PURE_MEDIA_ID, resolveOutputDirection } from '../../lib/postprocessMedia'
 import { POSTPROCESS_OUTPUT_EXTENSION } from '../../lib/postprocessRunner'
-import { resolveNodeWatermarkBinding, resolveProjectNodePathNames } from '../projectTree/params'
+import {
+  resolveNodeWatermarkBinding,
+  resolveProjectNodePathNames,
+  resolveProjectPostprocessSlice,
+} from '../projectTree/params'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useCompositeV2Store } from '../composite/storeV2'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
+import { usePostprocessGlobalConfig } from './usePostprocessGlobalConfig'
 import NamePatternField from './NamePatternField'
 
 /** 一个渠道一个尺寸都没有时的兜底尺寸，只为让预览永远有值 */
@@ -47,6 +52,7 @@ export default function PostprocessNamingFields() {
   const libraryScope = useAssetLibraryStore((state) => state.scope)
   const params = useProjectTreeParamsStore((state) => state.params)
   const presets = useCompositeV2Store((state) => state.presets)
+  const globalConfig = usePostprocessGlobalConfig()
 
   const issues = useMemo(
     () =>
@@ -69,11 +75,25 @@ export default function PostprocessNamingFields() {
     [collections, scopeId],
   )
 
-  /** 示例渠道：优先已在产出的（勾选里第一个非纯净版），退而取渠道表里第一个启用的 */
+  /**
+   * 示例渠道要按**当前作用域的生效值**取（ADR-0013 之后「参与产出」是方向级的）。
+   * 读全局那份的话，选中某个方向时预览会拿一个它根本不产出的渠道名来算，名字看着对、实际错。
+   * 全局默认作用域下它就是全局基线。
+   */
+  const effectiveSelectedMediaIds = useMemo(
+    () =>
+      scopeId
+        ? resolveProjectPostprocessSlice(collections, params, scopeId, globalConfig).config.selectedMediaIds
+        : selectedMediaIds,
+    [collections, globalConfig, params, scopeId, selectedMediaIds],
+  )
+
+  /** 示例渠道：优先已在产出的（勾选里第一个非纯净版） */
   const sampleMedia = useMemo(() => {
-    const selected = media.filter((item) => selectedMediaIds.includes(item.id) && item.id !== PURE_MEDIA_ID)
-    return selected[0] ?? media.find((item) => item.enabled) ?? media[0]
-  }, [media, selectedMediaIds])
+    const selected = media.filter((item) => effectiveSelectedMediaIds.includes(item.id) && item.id !== PURE_MEDIA_ID)
+    // 没有勾选的渠道时退回渠道表第一个：预览必须永远有值，否则模板看着像坏了
+    return selected[0] ?? media[0]
+  }, [effectiveSelectedMediaIds, media])
 
   const sampleSize = sampleMedia?.sizes.find((size) => size.enabled) ?? sampleMedia?.sizes[0]
 

@@ -145,6 +145,28 @@ describe('resolveProjectPostprocessSlice —— 逐级继承', () => {
     expect(inherit.config.watermarkPresetIds).toEqual(['preset-line'])
   })
 
+  it('⭐ selectedMediaIds 同样沿链继承（ADR-0013）：本级优先，空数组是「一个渠道都不投」', () => {
+    // ① 谁都没表态 → 用全局基线
+    const base = baseConfig()
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, {}, DIRECTION, base).config.selectedMediaIds).toEqual(['clean'])
+
+    // ② 产品线写了 → 方向继承它
+    const line = { [LINE]: { postprocess: { selectedMediaIds: ['baidu'] } } }
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, line, DIRECTION, base).config.selectedMediaIds).toEqual([
+      'baidu',
+    ])
+
+    // ③ 方向自己写了 → 方向优先
+    const both = { ...line, [DIRECTION]: { postprocess: { selectedMediaIds: ['toutiao'] } } }
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, both, DIRECTION, base).config.selectedMediaIds).toEqual([
+      'toutiao',
+    ])
+
+    // ④ 空数组是**有效值**（这个方向一个渠道都不投），要能压掉上层 —— 当成「没表态」就错了
+    const empty = { ...line, [DIRECTION]: { postprocess: { selectedMediaIds: [] } } }
+    expect(resolveProjectPostprocessSlice(COLLECTIONS, empty, DIRECTION, base).config.selectedMediaIds).toEqual([])
+  })
+
   it('enabled 取链上最深一次显式声明，而不是「任一父级关掉就全关」', () => {
     const params: ProjectNodeParamsMap = {
       [LINE]: { postprocess: { enabled: false } },
@@ -232,9 +254,20 @@ describe('normalizeProjectNodeParamsMap', () => {
     expect(result.node).toBeUndefined()
   })
 
-  it('⭐ 收窄后：节点上的 direction / selectedMediaIds 同样被丢弃', () => {
+  it('收窄后：节点上的 direction 仍被丢弃（画面方向不给手选口子）', () => {
     expect(normalizeProjectNodeParamsMap({ node: { postprocess: { direction: 'landscape' } } }).node).toBeUndefined()
-    expect(normalizeProjectNodeParamsMap({ node: { postprocess: { selectedMediaIds: ['gdt'] } } }).node).toBeUndefined()
+  })
+
+  it('⭐ selectedMediaIds 回到节点层（ADR-0013）：照读，且空数组是有效值', () => {
+    // 反过来钉住：ADR-0011 期间它被丢弃，ADR-0013 之后「这个方向投哪几个渠道」是方向级参数。
+    // 这条用例原先断言的是「被丢弃」—— 谁改回去谁就会看到它变红。
+    expect(
+      normalizeProjectNodeParamsMap({ node: { postprocess: { selectedMediaIds: ['gdt'] } } }).node.postprocess,
+    ).toEqual({ selectedMediaIds: ['gdt'] })
+    // 空数组 = 显式「这个方向一个渠道都不投」，不能与「没表态」合并成同一个值
+    expect(normalizeProjectNodeParamsMap({ node: { postprocess: { selectedMediaIds: [] } } }).node.postprocess).toEqual(
+      { selectedMediaIds: [] },
+    )
   })
 
   it('保留 null 语义（不带水印）与 enabled=false 语义', () => {
