@@ -3366,6 +3366,21 @@ taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本�
 - 「产出 N 个文件」在正常路径用的是**变体数**（`result.outputs.length`，双写只记一份），
   而进度里滚动的是**文件数**。两个口径并存，本轮不动（统一会牵到 toast 与任务卡文案）。
 
+**验收证据**（2026-09-21 22:42）
+
+- 定向用例 `src/features/postprocess/` + `stores/runtimeStore.test.ts` + `store.test.ts`
+  → **12 文件 / 207 例全绿**。
+- **反向验证（A）**：把判定改回旧行为（`return input.issues.length > 0 ? 'failed' : 'succeeded'`）
+  → **3 failed / 12 passed**，全部是 `AssertionError`，且恰好是钉住这条契约的那三例
+  （判定表 / 一行结论 / 面板渲染「已跳过」），其余照过 → 探针精确命中。恢复后重跑回到 207 全绿。
+- `npx tsc -b`、`npx eslint`（5 个改动文件）、`npx prettier --write` 均零错、零 diff。
+- ⚠️ **B 没有自动化测试，也没有反向验证**：要构造「执行体在写出若干文件**之后**抛异常」，
+  必须让渲染链在 jsdom 里跑通，而它依赖 canvas（`taskPostprocess.test.ts` 顶部已注明
+  「未覆盖：渲染链、写盘、分发」）。B 只在异常路径生效、实质是换一个取值来源（不新增逻辑），
+  按代码审查交付。**将来若有人把 `producedFiles` 改回写死 0，现有测试不会红。**
+- 顺带（发布前顺手修）：`docs/BACKLOG.md` 的 `format:check` 一度红 —— TB-085 段里有一行以
+  `+ Esc…` 开头（prettier 要规范化成 `- Esc…`），发布轮已改为 `-`（只动这一个字符）。
+
 ---
 
 ### TB-085 统一浮层关闭：一级弹窗「点空白 + Esc」、下拉浮层「点外 + Esc」
@@ -3396,7 +3411,7 @@ taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本�
      API 配置下拉、`ImageContextMenu` 右键菜单。
   4. 一级浮层：`SopManagementCenter` 补 Esc（此前只有遮罩 + 关闭按钮）；`AgentWorkspace` 窄屏会话抽屉
      补 Esc + 显式关闭按钮（`lg:hidden`）；`AgentBatchPlannerModal`「执行方式确认」补「点空白返回上一步」
-     + Esc 返回上一步（此前 Esc 会直接把整个工作台关掉，只剩「返回修改」一条退路）。
+     - Esc 返回上一步（此前 Esc 会直接把整个工作台关掉，只剩「返回修改」一条退路）。
   5. `Popover` / `Menu` 增加 `ref` 透传（React 19 ref-as-prop），调用方才能判定"指针是否落在面板内"。
   6. `useCloseOnEscape` / `useDismissableLayer` 补非浏览器环境守卫 —— node 环境的组件测试没有
      `window` / `document`，此前会把无关用例整片带红（本轮实际踩到）。
