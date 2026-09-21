@@ -9,8 +9,10 @@ import {
 import {
   buildAssetBatchGroups,
   buildAssetBatchOverview,
+  collectTaskCardAssets,
   getPrimaryOrigin,
   hasTaskFailure,
+  resolveTaskCardScopeKey,
   truncatePrompt,
 } from './assetBatchGrouping'
 
@@ -410,5 +412,58 @@ describe('truncatePrompt', () => {
     expect(truncatePrompt('  高  清   猫  ')).toBe('高 清 猫')
     const long = 'x'.repeat(120)
     expect(truncatePrompt(long)).toBe(`${'x'.repeat(80)}…`)
+  })
+})
+
+/** 素材详情弹窗底部「同一任务」缩略图条的口径：与任务卡片视图里那张卡一致。 */
+describe('resolveTaskCardScopeKey / collectTaskCardAssets', () => {
+  const sopMeta = (batchId: string, snapshotId: string, promptIndex: number) => ({
+    batchId,
+    snapshotId,
+    sopId: 'sop-1',
+    sopName: '夏季主图 SOP',
+    promptIndex,
+    promptCount: 2,
+  })
+
+  it('普通任务卡片 = 该次生成的输出图（同一 taskId）', () => {
+    const tasks = [makeTask('t1'), makeTask('t2')]
+    expect(resolveTaskCardScopeKey(tasks, 't1')).toBe('t1')
+    expect(resolveTaskCardScopeKey(tasks, undefined)).toBe('')
+  })
+
+  it('SOP 批次卡片 = 同一批次（snapshotId / batchId）的全部任务', () => {
+    const tasks = [
+      makeTask('t2', { sopBatch: sopMeta('b1', 's1', 1) }),
+      makeTask('t1', { sopBatch: sopMeta('b1', 's1', 0) }),
+      makeTask('t3', { sopBatch: sopMeta('b2', 's2', 0) }),
+      makeTask('t4'),
+    ]
+    expect(resolveTaskCardScopeKey(tasks, 't1')).toBe('t1|t2')
+    // 非 SOP 任务不受批次扩展影响
+    expect(resolveTaskCardScopeKey(tasks, 't4')).toBe('t4')
+  })
+
+  it('snapshotId 不同的两个批次不合并（仅 batchId 相同也不算同一张卡）', () => {
+    const tasks = [
+      makeTask('t1', { sopBatch: sopMeta('b1', 's1', 0) }),
+      makeTask('t2', { sopBatch: sopMeta('b1', 's2', 0) }),
+    ]
+    expect(resolveTaskCardScopeKey(tasks, 't1')).toBe('t1')
+  })
+
+  it('任务记录已被清理时仍按来源快照的 taskId 匹配，不扩批', () => {
+    expect(resolveTaskCardScopeKey([], 'gone')).toBe('gone')
+  })
+
+  it('只取该卡片内的在库素材，并按输出槽位排序', () => {
+    const assets = [
+      makeAsset('c', makeOrigin('t2', 0)),
+      makeAsset('b', makeOrigin('t1', 1)),
+      makeAsset('a', makeOrigin('t1', 0)),
+      { ...makeAsset('trashed', makeOrigin('t1', 2)), status: 'trashed' as const },
+    ]
+    expect(collectTaskCardAssets(assets, 't1').map((asset) => asset.id)).toEqual(['a', 'b'])
+    expect(collectTaskCardAssets(assets, '')).toEqual([])
   })
 })

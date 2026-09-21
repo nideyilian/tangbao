@@ -20,6 +20,15 @@
  * - **操作按钮只放右键菜单没有的**：其余（查看大图 / 找相似 / 复制 / 收藏 / 添加到项目 /
  *   用作水印预览底图 / 复用提示词与参数 / 导出原图 / 打开文件位置 / 移入回收站）右键都能点到，
  *   弹窗里不再各放一份。这里的「查看来源任务」正是右键没有的那个。
+ *
+ * ## 底部缩略图条（2026-09-21 改）
+ *
+ * 原来是跨任务的「类似图片」推荐（`assetCommands.recommend`，按内容相似度/文本向量排序），
+ * 结果常常是**别的任务**里长得像的图，与用户心里「这张卡还出了哪几张」不是一回事。
+ * 现在改为**同一张任务卡片**生成的图片：同 `taskId`；SOP 批次卡片为该批次（同
+ * `snapshotId || batchId`）的全部任务输出图 —— 与该素材在素材库「任务卡片」视图里所属的
+ * 那张卡口径一致。列表含当前这张（描边高亮），点击即切换；卡片只有一张图时整条不渲染。
+ * 跨任务的「找相似图片」仍有右键菜单入口，没有丢功能。
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -45,6 +54,7 @@ import AssetParamBreakdown from './AssetParamBreakdown'
 import { DerivedChain, NotesEditor } from './AssetDetailSections'
 import { COLOR_LABELS_WITH_NAMES } from './colorLabels'
 import { clamp } from '../../lib/clamp'
+import { collectTaskCardAssets, getPrimaryOrigin, resolveTaskCardScopeKey } from '../../lib/assetBatchGrouping'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { useRequirementPrototype } from '../requirementPrototype/store'
 
@@ -61,10 +71,8 @@ function AssetViewerInner() {
   const setViewerAsset = useAssetLibraryStore((state) => state.setViewerAsset)
 
   const asset = viewerAssetId ? assetsById[viewerAssetId] : undefined
-  const assetId = asset?.id
   const imageId = asset?.imageId
   const [src, setSrc] = useState('')
-  const [similarAssets, setSimilarAssets] = useState<GeneratedAsset[]>([])
   const [infoOpen, setInfoOpen] = useState(true)
   /**
    * 左右布局还是上下布局。
@@ -127,25 +135,6 @@ function AssetViewerInner() {
       cancelled = true
     }
   }, [imageId])
-
-  // 类似图 strip
-  useEffect(() => {
-    if (!assetId) {
-      setSimilarAssets([])
-      return
-    }
-    let active = true
-    setSimilarAssets([])
-    void assetCommands
-      .recommend({ similarToAssetId: assetId, limit: 12 })
-      .then((items) => {
-        if (active) setSimilarAssets(items.map((item) => item.asset))
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [assetId])
 
   const currentIndex = viewerAssetId ? viewerAssetIds.indexOf(viewerAssetId) : -1
   const total = viewerAssetIds.length
@@ -302,6 +291,21 @@ function AssetViewerInner() {
     return sopItems.find((item) => item.id === sopId)
   }, [sourceTask?.sopBatch?.sopId, sopItems])
 
+  /**
+   * 底部缩略图条：**同一张任务卡片**生成的图片（口径见 `resolveTaskCardScopeKey`）。
+   *
+   * 刻意拆成两步：范围键只随任务列表变，素材扫描只随范围键 / 素材变 ——
+   * 否则生图过程中每次任务进度更新，都会把已加载素材全量重扫一遍。
+   */
+  const taskScopeKey = useMemo(
+    () => resolveTaskCardScopeKey(tasks, primaryOrigin?.taskId),
+    [primaryOrigin?.taskId, tasks],
+  )
+  const taskImageAssets = useMemo(
+    () => collectTaskCardAssets(Object.values(assetsById), taskScopeKey),
+    [assetsById, taskScopeKey],
+  )
+
   if (!viewerAssetId || !asset) return null
 
   const s = scaleRef.current
@@ -361,7 +365,9 @@ function AssetViewerInner() {
           <div className="flex h-ds-12 shrink-0 items-center justify-between gap-3 px-3">
             <div className="min-w-0 flex-1 truncate text-sm text-ds-text">
               {primaryOrigin?.prompt || `素材 ${asset.id}`}
-              {total > 1 && (
+              {/* 位置只在当前图属于打开时的浏览列表时才显示：从底部同任务缩略图切进来的图不在该列表里，
+                  否则会显示成「0 / n」。 */}
+              {total > 1 && currentIndex >= 0 && (
                 <span className="ml-2 shrink-0 text-xs text-ds-muted">
                   {currentIndex + 1} / {total}
                 </span>
@@ -504,13 +510,18 @@ function AssetViewerInner() {
             )}
           </div>
 
-          {/* 底部类似图 */}
-          {similarAssets.length > 0 && (
+          {/* 底部：同一任务卡片生成的图片（含当前这张，卡片只有一张时整条不渲染） */}
+          {taskImageAssets.length > 1 && (
             <div className="shrink-0 border-t border-ds-border px-3 py-2">
-              <p className="mb-1.5 text-xs text-ds-muted">类似图片</p>
+              <p className="mb-1.5 text-xs text-ds-muted">同一任务</p>
               <div className="flex gap-2 overflow-x-auto pb-1">
-                {similarAssets.map((item) => (
-                  <SimilarThumbnail key={item.id} asset={item} onClick={() => setViewerAsset(item.id)} />
+                {taskImageAssets.map((item) => (
+                  <TaskImageThumbnail
+                    key={item.id}
+                    asset={item}
+                    selected={item.id === asset.id}
+                    onClick={() => setViewerAsset(item.id)}
+                  />
                 ))}
               </div>
             </div>
@@ -775,7 +786,16 @@ function AssetViewerInner() {
   )
 }
 
-function SimilarThumbnail({ asset, onClick }: { asset: GeneratedAsset; onClick: () => void }) {
+/** 底部「同一任务」缩略图：`selected` 为当前正在看的那张（描边高亮，仍可点击）。 */
+function TaskImageThumbnail({
+  asset,
+  selected,
+  onClick,
+}: {
+  asset: GeneratedAsset
+  selected: boolean
+  onClick: () => void
+}) {
   const [src, setSrc] = useState('')
   useEffect(() => {
     let active = true
@@ -795,8 +815,11 @@ function SimilarThumbnail({ asset, onClick }: { asset: GeneratedAsset; onClick: 
     <button
       type="button"
       onClick={onClick}
-      title={asset.origins[0]?.prompt || asset.id}
-      className="h-ds-16 w-ds-16 shrink-0 overflow-hidden rounded-ds-md border border-ds-border outline-none hover:border-ds-primary focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+      aria-current={selected}
+      title={getPrimaryOrigin(asset)?.prompt || asset.id}
+      className={`h-ds-16 w-ds-16 shrink-0 overflow-hidden rounded-ds-md border outline-none focus-visible:ring-2 focus-visible:ring-ds-focus/70 ${
+        selected ? 'border-ds-primary ring-2 ring-ds-primary/60' : 'border-ds-border hover:border-ds-primary'
+      }`}
     >
       {src ? (
         <img src={src} alt="" className="h-full w-full object-cover" />

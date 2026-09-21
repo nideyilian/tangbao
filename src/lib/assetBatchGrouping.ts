@@ -63,6 +63,43 @@ export function truncatePrompt(prompt: string, max = 80): string {
   return `${singleLine.slice(0, max)}…`
 }
 
+/**
+ * 「同一张任务卡片」的素材范围键 —— 与该素材在素材库任务卡片视图里所属的卡片口径一致：
+ * - 普通任务卡片 → 该次生成的全部输出图（同一 `taskId`）；
+ * - SOP 批次卡片 → 整批（同一 `snapshotId || batchId`）全部任务的输出图；
+ * - 任务记录已被清理（孤儿卡片）→ 只按来源快照里的 `taskId` 匹配，不再扩批。
+ *
+ * 返回排序后以 `|` 连接的任务 id（可直接当 `useMemo` 依赖比较用）；没有来源任务时返回 `''`。
+ */
+export function resolveTaskCardScopeKey(tasks: readonly TaskRecord[], taskId: string | undefined): string {
+  if (!taskId) return ''
+  const taskIds = new Set<string>([taskId])
+  const anchor = tasks.find((task) => task.id === taskId)
+  const batchKey = anchor?.sopBatch ? anchor.sopBatch.snapshotId || anchor.sopBatch.batchId : null
+  if (batchKey) {
+    for (const task of tasks) {
+      if (!task.sopBatch) continue
+      if ((task.sopBatch.snapshotId || task.sopBatch.batchId) === batchKey) taskIds.add(task.id)
+    }
+  }
+  return [...taskIds].sort().join('|')
+}
+
+/**
+ * 按范围键取出该任务卡片内的素材（只含在库素材），排序与卡片一致：输出槽位 → 生成时间。
+ * 范围键来自 `resolveTaskCardScopeKey`。
+ */
+export function collectTaskCardAssets(assets: GeneratedAsset[], scopeKey: string): GeneratedAsset[] {
+  if (!scopeKey) return []
+  const taskIds = new Set(scopeKey.split('|'))
+  return assets
+    .filter((asset) => asset.status === 'active' && asset.origins.some((origin) => taskIds.has(origin.taskId)))
+    .sort((a, b) => {
+      const slotDelta = (getPrimaryOrigin(a)?.outputSlot ?? 0) - (getPrimaryOrigin(b)?.outputSlot ?? 0)
+      return slotDelta || a.createdAt - b.createdAt
+    })
+}
+
 function summarizeTasks(tasks: TaskRecord[]): AssetBatchGroupSummary {
   return tasks.reduce<AssetBatchGroupSummary>(
     (summary, task) => {

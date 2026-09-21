@@ -857,7 +857,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/assetLibrary/AssetViewer.tsx',
-    responsibility: 'Eagle 式全屏查看器（缩放平移、左右浏览、类似图片、信息面板）',
+    responsibility: '素材详情弹窗（缩放平移、左右浏览、同一任务图片、信息面板）',
     decision: 'compose',
     targets: ['IconButton', 'Tooltip', 'Badge', 'Thumbnail'],
   },
