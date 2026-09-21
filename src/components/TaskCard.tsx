@@ -285,6 +285,12 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
     setCoverRatio('')
     setCoverSize('')
     setThumbSrc('')
+    // 「图片已丢失」是**上一轮加载**的结论，必须跟着一起重置（2026-09-21 报障「素材不定时丢失」）：
+    // 漏掉它时，一旦某轮在缩略图还没就绪、图片记录又查不到的瞬间点亮了 lost，
+    // 这个标记就永久粘住 —— 之后每次 thumbSrc 为空（切封面、重新生成、加载中）
+    // 都会闪出「图片已丢失」，图其实一直都在。
+    // 正确写法见 `src/hooks/useCoverThumbnail.ts` 的同名 effect（那里是重置的）。
+    setThumbLost(false)
 
     let cancelled = false
     const imageId = task.outputImages?.[0]

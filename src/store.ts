@@ -93,6 +93,7 @@ import {
 } from './lib/migrations/legacyFavoritesToAssets'
 import { runLegacyImageFoldersToCollectionsMigration } from './lib/migrations/legacyImageFoldersToCollections'
 import { createAssetSyncQueue } from './lib/assetSyncQueue'
+import { createToastReplayGuard } from './lib/toastReplayGuard'
 import {
   executeAssetPurge,
   patchTaskForPurgedSlots,
@@ -403,6 +404,13 @@ export function getErrorToastMessage(message: string): string {
 function getToastMessage(message: string, type: ToastType): string {
   return type === 'error' ? getErrorToastMessage(message) : message
 }
+
+/**
+ * 「用户亲手关掉的提示不再重播」闸门（逻辑与约定见 `src/lib/toastReplayGuard.ts`）。
+ * 修的是 2026-09-21 报障「失败提示突然弹出且无法关闭」：批量生成每个任务结算播一次同款文案，
+ * 点掉后立刻被下一条顶回来。
+ */
+const toastReplayGuard = createToastReplayGuard()
 
 function isErrorToastTitle(title: string): boolean {
   return /(?:失败|错误|异常|报错|无法|不能|超时|中断|断开|请先|请输入|已达上限|不存在|已丢失)$/.test(title)
@@ -4178,6 +4186,8 @@ export const useStore = create<AppState>()(
       toast: null,
       showToast: (message, type = 'info', action) => {
         const toastMessage = getToastMessage(message, type)
+        // 用户刚亲手关掉过同一句话 ⇒ 不再重播，否则「关掉」的下一秒就被下一条同款顶回来
+        if (toastReplayGuard.isSuppressed(toastMessage)) return
         const toast = { message: toastMessage, type, action: action ?? undefined }
         set({ toast })
         // 带操作按钮的 toast 停留更久，给用户点击时间
@@ -4189,7 +4199,13 @@ export const useStore = create<AppState>()(
         )
       },
       // 清空时不必取消上面那个定时器：它到点会比对 `s.toast === toast`，引用已变就什么都不做
-      clearToast: () => set((s) => (s.toast ? { toast: null } : s)),
+      clearToast: () => {
+        const current = get().toast
+        if (!current) return
+        // 记下「用户亲手关掉了什么」——同文案在窗口内不再重播（见 toastReplayGuard）
+        toastReplayGuard.rememberDismissed(current.message)
+        set({ toast: null })
+      },
 
       // SOP 管理中心跳转请求
       sopCenterJump: null,
@@ -4583,7 +4599,16 @@ const assetSyncQueue = createAssetSyncQueue({
     }
   },
   onError: (taskId, error) => {
-    console.error(`素材同步失败（task=${taskId}）:`, error)
+    // 这是「任务卡上有图、素材库里没有」的唯一线索（此前只有一行裸 console.error，
+    // 事后无法判断失败发生在哪一步、哪个任务）——带上足以定位任务的上下文。
+    const task = useStore.getState().tasks.find((item) => item.id === taskId)
+    console.error('[asset-sync] 素材同步失败', {
+      taskId,
+      taskStatus: task?.status ?? '(任务已被删除)',
+      outputCount: task?.outputImages?.length ?? 0,
+      taskCreatedAt: task?.createdAt,
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    })
   },
 })
 
@@ -4624,7 +4649,17 @@ async function persistTaskWithRetry(task: TaskRecord): Promise<void> {
     try {
       await putTask(task)
     } catch (retryError) {
-      console.error(`任务落盘失败（task=${task.id}）`, retryError, error)
+      // 两次都失败 = 这条任务在磁盘上永久缺失：重启后任务卡片会少一张，
+      // 而它的素材仍会入库（素材是逐条 upsert 的）——即「素材在、任务卡不在」。
+      // 光看界面无从判断，日志必须把这条因果写明。
+      console.error('[task-persist] 任务落盘失败（已重试 1 次，内存与磁盘从此不一致）', {
+        taskId: task.id,
+        taskStatus: task.status,
+        outputCount: task.outputImages?.length ?? 0,
+        createdAt: task.createdAt,
+        firstError: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        retryError: retryError instanceof Error ? `${retryError.name}: ${retryError.message}` : String(retryError),
+      })
     }
   }
 }
@@ -5182,7 +5217,12 @@ export async function retryGeneratedAssetLibraryMigration(
       pendingTaskIds,
       onProgress: (done, total) => useAssetLibraryStore.setState({ migrationProgress: { done, total } }),
     })
-    if (result.failedTasks > 0) throw new Error(`${result.failedTasks} 个任务索引失败`)
+    if (result.failedTasks > 0) {
+      // 红条文案必须能直接拿去定位：只说「N 个任务索引失败」时用户与事后排查都无从下手。
+      // 带上前几个任务 id（完整清单在 [asset-reconcile] 日志里）。
+      const sample = result.failedTaskIds.slice(0, 3).join('、')
+      throw new Error(`${result.failedTasks} 个任务索引失败${sample ? `（如 ${sample}）` : ''}`)
+    }
     // 持久化：游标（成功后推进）+ 未终结任务 id（下次强制重扫）
     if (result.nextCursor) {
       await putMigrationJournal({
@@ -6993,6 +7033,14 @@ export interface PurgeGeneratedAssetsOptions {
    * （任务输入、工作区、Agent 会话、SOP、策略/排单等）。默认 false：被引用素材保留。
    */
   force?: boolean
+  /**
+   * 本次删除的发起者标签（如 `local-file-removed` / `user-purge` / `trash-empty`）。
+   *
+   * 「素材莫名消失」是事后最贵的一类问题：库里只剩 tombstones 的时间戳，
+   * 谁删的、为什么删全是空白（2026-09-21 实测：132 张素材被永久删除，
+   * 只有 16:36/16:45/16:47 三批时间戳，无法判断来源）。带上来源即可一眼定位。
+   */
+  reason?: string
   onProgress?: (progress: PurgeGeneratedAssetsProgress) => void
 }
 
@@ -7017,7 +7065,13 @@ export async function removeDeletedLocalImage(file: RemovedManagedImageFile): Pr
       if (imageId) imageIds.add(imageId)
     }
   }
-  if (imageIds.size === 0) return 0
+  if (imageIds.size === 0) {
+    // 文件消失但没有任何任务引用它 ⇒ 多为缓存/中间图的正常清理。
+    // 记一行是为了与「素材被删」区分开：排查「素材莫名消失」时，
+    // 「没有这行」本身就是证据（说明被删的确实是任务产出图）。
+    console.info('[library-image-sync] 托管图片文件消失，未命中任何任务产出', { filePath: file.path })
+    return 0
+  }
 
   const loadedAssets = Object.values(useAssetLibraryStore.getState().assetsById).filter((asset) =>
     imageIds.has(asset.imageId),
@@ -7043,7 +7097,16 @@ export async function removeDeletedLocalImage(file: RemovedManagedImageFile): Pr
     { assetIds, assets: mergedSnapshot.assets, tasks: useStore.getState().tasks, graph },
     { force: true },
   )
-  const result = await purgeGeneratedAssets(assetIds, { plan })
+  const result = await purgeGeneratedAssets(assetIds, { plan, reason: 'local-file-removed' })
+  if (result.purged.length > 0) {
+    // 这是唯一会**自动**永久删除素材的路径（file watcher 报告原图文件消失）。
+    // 「素材莫名消失」排查时先看这行：命中说明是文件先没了，未命中则另有来源。
+    console.warn('[library-image-sync] 原图文件消失 ⇒ 素材被永久删除', {
+      filePath: file.path,
+      imageIds: [...imageIds],
+      purged: result.purged.length,
+    })
+  }
   return result.purged.length
 }
 
@@ -7122,6 +7185,18 @@ export async function purgeGeneratedAssets(
     const { deleteLocalImageFiles } = await import('./lib/localSave')
     await deleteLocalImageFiles(purgeLocalSavedPaths)
   }
+
+  // 永久删除是**不可逆**的，且界面上事后只剩「素材莫名消失」——必须留下可回溯的一行：
+  // 谁发起的（reason）、请求几条、实际删了几条、被引用拦下几条。
+  console.info('[asset-purge] 永久删除素材', {
+    reason: options.reason ?? '(未标注来源)',
+    requested: assetIds.length,
+    purged: plan.allowedAssetIds.length,
+    blocked: plan.blocked.length,
+    force,
+    detachedRefCount,
+    sampleAssetIds: plan.allowedAssetIds.slice(0, 3),
+  })
 
   return {
     purged: plan.allowedAssetIds,

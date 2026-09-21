@@ -371,6 +371,10 @@ import {
   useStore,
 } from './store'
 import { usePostprocessMediaStore } from './storePostprocessMedia'
+
+// 有用例会把 `state.showToast` 换成 `vi.fn()`（store 是单例，换完就回不去了）。
+// 「提示关掉后不再重播」那组用例测的是**真实实现**，所以在这里先留一份引用。
+const realShowToast = useStore.getState().showToast
 import type { TaskPostprocessResult } from './features/postprocess/taskPostprocess'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
@@ -5518,5 +5522,37 @@ describe('手动后处理入口', () => {
     reportPostprocessResult(failed, { source: 'auto' })
     expect(showToast).toHaveBeenCalledTimes(1)
     expect(showToast.mock.calls[0]?.[1]).toBe('error')
+  })
+})
+
+/**
+ * 提示「关掉就不再重播」的契约（2026-09-21 报障：批量生成时失败提示「关不掉」）。
+ *
+ * 批量生成是**每个任务结算播一次**同款文案，而 toast 只有一个槽位 ——
+ * 用户点 × 关掉后，下一个任务结算立刻把同一条顶回来，主观感受就是「这提示无法关闭」。
+ * 所以：用户亲手关掉的那一句，短窗口内不再重播；其它文案不受影响。
+ */
+describe('提示关掉后不再重播', () => {
+  beforeEach(() => {
+    // 恢复真实 showToast：前面的用例把 state 上的字段换成了 vi.fn()
+    useStore.setState({ toast: null, showToast: realShowToast })
+  })
+
+  it('用户亲手关掉的那句，短窗口内不再弹（批量生成会反复播同一条）', () => {
+    useStore.getState().showToast('生成失败：请求超时', 'error')
+    // error 级文案会被归一成标题（见 getErrorToastMessage）
+    expect(useStore.getState().toast?.message).toBe('生成失败')
+
+    useStore.getState().clearToast()
+    expect(useStore.getState().toast).toBeNull()
+
+    // 下一个任务结算又播同一条：不该再冒出来
+    useStore.getState().showToast('生成失败：连接被重置', 'error')
+    expect(useStore.getState().toast).toBeNull()
+  })
+
+  it('换个文案照常播报（抑制只针对被关掉的那一句）', () => {
+    useStore.getState().showToast('生成完成，共 4 张图片', 'success')
+    expect(useStore.getState().toast?.message).toBe('生成完成，共 4 张图片')
   })
 })

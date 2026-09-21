@@ -24,6 +24,12 @@ export interface AssetReconciliationResult {
   updatedAssets: number
   failedTasks: number
   /**
+   * 本次索引失败的任务 id（与 `failedTasks` 同序、等长）。
+   * 调用方把它带进错误文案，红条上就能直接看到是哪几个任务 —— 只说「N 个任务索引失败」
+   * 时用户与事后排查都无从下手（2026-09-21 报障「素材丢失」）。
+   */
+  failedTaskIds: string[]
+  /**
    * 本次应写回的下一次游标：
    * - 全部成功且本次有新任务时：最后一个已处理任务的 `createdAt:id`；
    * - 有失败任务时：null（下次启动全量重扫兜底，避免失败任务被游标跳过）；
@@ -98,6 +104,7 @@ export async function reconcileGeneratedAssets(
   let processed = 0
   let updatedAssets = 0
   let failedTasks = 0
+  const failedTaskIds: string[] = []
   const stillPending: string[] = []
 
   // 必须串行：同内容任务并发 upsert 会读到旧值互相覆盖，丢失来源合并。
@@ -117,7 +124,16 @@ export async function reconcileGeneratedAssets(
         if (task.finishedAt == null) stillPending.push(task.id)
       } catch (error) {
         failedTasks++
-        console.error(`素材启动补齐失败（task=${task.id}）:`, error)
+        failedTaskIds.push(task.id)
+        // 结构化日志：这条失败的后果是「该任务的产出没进素材库」（red 提示条 + 素材缺失），
+        // 必须能定位到具体任务与它当时的产出张数。
+        console.error('[asset-reconcile] 素材启动补齐失败', {
+          taskId: task.id,
+          taskStatus: task.status,
+          outputCount: task.outputImages?.length ?? 0,
+          taskCreatedAt: task.createdAt,
+          error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        })
       } finally {
         processed++
       }
@@ -135,5 +151,5 @@ export async function reconcileGeneratedAssets(
     nextCursor = cursorForTask(candidates[candidates.length - 1]!)
   }
 
-  return { processed, updatedAssets, failedTasks, nextCursor, pendingTaskIds: stillPending }
+  return { processed, updatedAssets, failedTasks, failedTaskIds, nextCursor, pendingTaskIds: stillPending }
 }

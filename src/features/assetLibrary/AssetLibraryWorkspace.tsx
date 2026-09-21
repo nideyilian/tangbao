@@ -138,6 +138,14 @@ function AssetLibraryWorkspaceInner() {
     counts: AssetSidebarCounts
   } | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  // 「素材索引补齐失败」提示条可关闭（2026-09-21 报障「提示关不掉」）：
+  // 它由启动后台对账失败写入，一旦失败就常驻，而这条 JSX 原先**没有任何关闭入口**，
+  // 只剩「重试」一条路——重试再失败就只能一直看着它。
+  // 关闭只影响显示、不改数据；下次再失败（离开 error 再回来）会重新出现。
+  const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false)
+  useEffect(() => {
+    if (migrationStatus !== 'error') setMigrationNoticeDismissed(false)
+  }, [migrationStatus])
   const assets = useMemo(() => {
     const result: GeneratedAsset[] = []
     for (const id of assetOrder) {
@@ -675,23 +683,33 @@ function AssetLibraryWorkspaceInner() {
                 : '正在补齐素材索引，已生成的素材会自动出现…'}
             </div>
           )}
-          {migrationStatus === 'error' && (
+          {migrationStatus === 'error' && !migrationNoticeDismissed && (
             <div
               role="alert"
-              className="flex items-center justify-between gap-3 border-b border-ds-danger/35 bg-ds-danger-subtle px-4 py-2 text-xs text-ds-danger dark:border-ds-danger/20 dark:bg-ds-danger/10 dark:text-ds-danger"
+              className="flex items-center gap-3 border-b border-ds-danger/35 bg-ds-danger-subtle px-4 py-2 text-xs text-ds-danger dark:border-ds-danger/20 dark:bg-ds-danger/10 dark:text-ds-danger"
             >
-              <span className="truncate">素材索引补齐失败：{migrationError ?? '未知错误'}</span>
+              <span className="min-w-0 flex-1 truncate">素材索引补齐失败：{migrationError ?? '未知错误'}</span>
               <button
                 type="button"
                 className="min-h-ds-control-lg shrink-0 rounded-md px-3 font-medium hover:bg-ds-danger-subtle dark:hover:bg-ds-danger/15"
-                onClick={() =>
+                onClick={() => {
+                  // 重试要有下文：先把提示条放回可见状态，否则「关掉 → 点重试 → 无任何变化」
+                  // 会让人以为按钮坏了。
+                  setMigrationNoticeDismissed(false)
                   void import('../../store')
                     .then(({ retryGeneratedAssetLibraryMigration }) => retryGeneratedAssetLibraryMigration())
                     .catch(() => {})
-                }
+                }}
               >
                 重试
               </button>
+              <IconButton
+                className="min-h-ds-control-lg min-w-11 shrink-0"
+                size="sm"
+                aria-label="关闭提示"
+                icon={<XIcon size={16} />}
+                onClick={() => setMigrationNoticeDismissed(true)}
+              />
             </div>
           )}
           {isNarrow && (

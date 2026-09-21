@@ -88,6 +88,8 @@ describe('reconcileGeneratedAssets', () => {
     })
 
     expect(result.failedTasks).toBe(1)
+    // 失败任务 id 要能被调用方带进错误文案：红条上只写「N 个任务索引失败」时无从定位
+    expect(result.failedTaskIds).toEqual(['a'])
     expect(result.updatedAssets).toBe(1)
     expect(result.processed).toBe(2)
     // 有失败：游标必须清空（下次全量重扫兜底）
