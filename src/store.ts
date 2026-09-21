@@ -4707,6 +4707,25 @@ function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasI
 export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Date.now()) {
   const interruptedTasks: TaskRecord[] = []
   const updatedTasks = tasks.map((task) => {
+    // 「卡先建、词后填」的预留卡：写提示词期间应用退出/崩溃，它既没有提示词、也没发出任何请求。
+    // 不能按「生图请求中断」报（那会让人去查接口）—— 实际只是词没写出来。
+    if (task.status === 'running' && task.promptPending) {
+      const updated: TaskRecord = {
+        ...task,
+        status: 'error',
+        promptPending: false,
+        promptFailed: true,
+        error: '提示词生成失败：应用在编写提示词时退出了',
+        progressStage: 'stopped',
+        progressUpdatedAt: now,
+        falRecoverable: false,
+        customRecoverable: false,
+        finishedAt: now,
+        elapsed: Math.max(0, now - task.createdAt),
+      }
+      interruptedTasks.push(updated)
+      return updated
+    }
     const hasPersistedRemoteRequest = task.remoteGenerationRequests?.some(
       (request) =>
         (request.provider === 'fal' || request.provider === 'custom') &&
@@ -6006,6 +6025,13 @@ export async function submitTaskWithData(
     silentSuccess?: boolean
     /** 跳过「按当前项目文件夹自动归档」捕获；日程等自带输出目标的任务使用 */
     skipFolderCapture?: boolean
+    /**
+     * 只建卡、先不执行：用于「AI 先写提示词、写完再生图」的链路（SOP 批量 / 一键衍生）。
+     * 这样用户点完「生成」立刻就能在画廊看到卡片（写着「编写提示词中」），
+     * 而不是对着空画廊干等提示词。提示词由调用方拿到 taskId 后经
+     * `fulfillPendingTaskPrompt` 写入并触发执行。
+     */
+    deferExecution?: boolean
   } = {},
 ) {
   const {
@@ -6076,7 +6102,8 @@ export async function submitTaskWithData(
     return
   }
 
-  if (!prompt.trim()) {
+  // deferExecution（卡先建、词后填）时提示词本来就要等一下才写出来，此刻为空是正常的。
+  if (!prompt.trim() && !options.deferExecution) {
     showToast('请输入提示词', 'error')
     return
   }
@@ -6159,6 +6186,9 @@ export async function submitTaskWithData(
   const task: TaskRecord = {
     id: taskId,
     prompt: prompt.trim(),
+    // 卡先建、词后填：置位期间 `executeTask` 会直接返回（见其开头的守卫），
+    // 避免拿着占位文案去生图；提示词写好由 `fulfillPendingTaskPrompt` 清掉它并开跑。
+    ...(options.deferExecution ? { promptPending: true } : {}),
     sopBatch,
     params: normalizedParams,
     adNegativeRuleSnapshot: createAdNegativeRuleSnapshot(normalizedSettings, normalizedParams.adNegativeRuleId),
@@ -6175,7 +6205,7 @@ export async function submitTaskWithData(
     filenameBatch,
     status: 'running',
     error: null,
-    progressStage: 'queued',
+    progressStage: options.deferExecution ? 'prompting' : 'queued',
     progressUpdatedAt: Date.now(),
     createdAt,
     finishedAt: null,
@@ -6207,14 +6237,113 @@ export async function submitTaskWithData(
   await putTask(task)
   if (!options.silentSuccess) useStore.getState().showToast('任务已提交', 'success')
 
-  // 异步调用 API
-  executeTask(taskId)
+  // 异步调用 API（「卡先建、词后填」的链路不在这里启动：提示词还没写出来，
+  // 由调用方在 `fulfillPendingTaskPrompt` 里写入提示词之后再触发）
+  if (!options.deferExecution) executeTask(taskId)
   return taskId
+}
+
+/**
+ * 「卡先建、词后填」的建卡入口（显式数据版，SOP 批量用）。
+ *
+ * 就是 `submitTaskWithData` 的语义化包装：把 `deferExecution` 收在这里 ——
+ * 每个调用点各传一次的话，漏一个就退回「等提示词生成完才建卡」，而那正是这次要修的病。
+ */
+export async function createPendingPromptTask(data: Parameters<typeof submitTaskWithData>[0]): Promise<string | null> {
+  const taskId = await submitTaskWithData(data, { silentSuccess: true, deferExecution: true })
+  return taskId ?? null
+}
+
+/**
+ * 提示词就绪：写进已建好的卡并开始生图（「先建卡、后写词」链路的第二步）。
+ *
+ * 幂等 + 防迟到：卡已被删除、或提示词已被别的路径填过（`promptPending` 已清），一律直接返回。
+ * 取消 / 删除之后姗姗来迟的提示词，不能把任务重新拉起来。
+ *
+ * @returns 是否真的接着开了生图（调用方据此统计「成功提交几条」）
+ */
+export async function fulfillPendingTaskPrompt(taskId: string, promptText: string): Promise<boolean> {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task || !task.promptPending) return false
+
+  const text = promptText.trim()
+  if (!text) {
+    await failPendingTaskPrompt(taskId, '这一条没有写出可用的提示词')
+    return false
+  }
+
+  await updateTaskInStore(taskId, {
+    prompt: text,
+    promptPending: false,
+    promptFailed: false,
+    progressStage: 'queued',
+    progressUpdatedAt: Date.now(),
+  })
+  executeTask(taskId)
+  return true
+}
+
+/**
+ * 提示词环节失败：**就地标红、卡片保留**（不删卡、不静默 —— 2026-09-22 杰哥定的交互）。
+ * `promptFailed` 把「写词失败」与「生图失败」分开，卡片才好说清是哪一段坏的。
+ */
+export async function failPendingTaskPrompt(taskId: string, reason: string): Promise<void> {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task || !task.promptPending) return
+
+  const detail = reason.trim() || '服务商没有返回具体原因'
+  await updateTaskInStore(taskId, {
+    status: 'error',
+    promptPending: false,
+    promptFailed: true,
+    progressStage: 'failed',
+    error: `提示词生成失败：${detail}`,
+    finishedAt: Date.now(),
+    elapsed: Date.now() - task.createdAt,
+    falRecoverable: false,
+    customRecoverable: false,
+  })
+}
+
+/**
+ * 取消收尾：还没写词的预留卡标成「已停止」，**保留在画廊**。
+ *
+ * 要求是「不删卡」—— 删掉会让用户以为这事没发生过；留着才对得上「点过开始」这件事。
+ * 已经填了词、正在生图的卡不归这里管（由任务自身的停止逻辑处理）。
+ */
+export async function cancelPendingTaskPrompt(taskId: string): Promise<void> {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task || !task.promptPending) return
+
+  await updateTaskInStore(taskId, {
+    status: 'error',
+    promptPending: false,
+    promptFailed: false,
+    progressStage: 'stopped',
+    error: '提示词生成已取消',
+    finishedAt: Date.now(),
+    elapsed: Date.now() - task.createdAt,
+    falRecoverable: false,
+    customRecoverable: false,
+  })
+}
+
+/**
+ * 更新「编写提示词中」那张卡上的说明文字（如「正在逐张分析参考图…」）。
+ * 只写运行时进度：这类文案变化频繁，没必要每次重建任务数组、写一遍库。
+ */
+export function setPendingTaskPromptMessage(taskId: string, message: string) {
+  updateTaskProgress(taskId, 'prompting', message)
 }
 
 /** 提交新任务 */
 export async function submitTask(
-  options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {},
+  options: {
+    allowFullMask?: boolean
+    useCurrentApiProfileWhenReusedMissing?: boolean
+    /** 只建卡不执行；调用方拿到 taskId 后写提示词再触发（见 `submitTaskWithData`）。 */
+    deferExecution?: boolean
+  } = {},
 ) {
   const state = useStore.getState()
   const { prompt, inputImages, inputImageFolder, params, maskDraft, customOutputPath } = state
@@ -6226,7 +6355,8 @@ export async function submitTask(
   const scheduledOutputPath = customOutputPath.trim() ? customOutputPath : undefined
   const scheduledOutputSubFolder = activeTab ? activeTab.name : undefined
 
-  await submitTaskWithData(
+  // 返回 taskId：一键衍生等「卡先建、词后填」的调用方要拿它去回写提示词
+  return submitTaskWithData(
     {
       prompt,
       inputImages,
@@ -9404,6 +9534,9 @@ async function executeTask(taskId: string) {
   const { settings } = useStore.getState()
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return
+  // 提示词还没写出来（「卡先建、后写词」的链路）：此刻开跑只会拿着占位文案去生图。
+  // 提示词就绪后由 `fulfillPendingTaskPrompt` 清掉标记再进来。
+  if (task.promptPending) return
   // 新一次执行开始：上一次执行留下的「超时终结」标记作废，否则收尾会把迟到的旧结果误判成属于本次执行。
   if (task.watchdogTimedOutAt !== undefined) updateTaskInStore(taskId, { watchdogTimedOutAt: undefined })
   // 任务级取消：注册 AbortController，停止时中止在途请求/轮询
@@ -10779,6 +10912,18 @@ export async function retryTask(
   task: TaskRecord,
   options: { sopBatch?: TaskRecord['sopBatch'] } = {},
 ): Promise<string | null> {
+  // 「写提示词」环节的失败不能直接重试：这种卡身上没有可用提示词（存的是来源标签占位），
+  // 硬重试等于拿着占位文案去生图。重试要回发起它的地方（SOP 弹窗 / 输入栏），
+  // 那里才有参考图、SOP 预设和 brief。
+  if (task.promptPending || task.promptFailed) {
+    useStore
+      .getState()
+      .showToast(
+        task.promptPending ? '这条任务还在写提示词，请稍候' : '这条失败在「编写提示词」环节，请回到发起它的地方重试',
+        'error',
+      )
+    return null
+  }
   let createdTaskId: string | null = null
   try {
     const { settings, workspaceTabs, activeWorkspaceTabId } = useStore.getState()

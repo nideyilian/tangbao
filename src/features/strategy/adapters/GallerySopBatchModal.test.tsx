@@ -19,10 +19,19 @@ const generateMocks = vi.hoisted(() => ({
   getSopPromptGenerationModelFromStore: vi.fn(() => 'gpt-test'),
 }))
 const storeMocks = vi.hoisted(() => ({
+  // 「卡先建、词后填」的一组入口。默认 createPendingPromptTask 返回 undefined（= 没建起卡），
+  // 生成链路就会回落到「AI 写完第一条再建卡」的老路径 —— 存量用例的断言因此不受影响；
+  // 专门验证新交互的用例会显式 mockResolvedValueOnce 一个卡 id。
+  cancelPendingTaskPrompt: vi.fn(async (_taskId: string) => {}),
+  createPendingPromptTask: vi.fn(),
   ensureImageCached: vi.fn(),
   ensureImageThumbnailCached: vi.fn(),
+  failPendingTaskPrompt: vi.fn(async (_taskId: string, _reason: string) => {}),
+  fulfillPendingTaskPrompt: vi.fn(async (_taskId: string, _prompt: string) => true),
+  setPendingTaskPromptMessage: vi.fn((_taskId: string, _message: string) => {}),
   submitTaskWithData: vi.fn(),
   subscribeImageThumbnail: vi.fn(() => () => {}),
+  updateTaskInStore: vi.fn(async (_taskId: string, _patch: Partial<TaskRecord>) => {}),
 }))
 const dbMocks = vi.hoisted(() => ({
   deleteSopBatchSnapshot: vi.fn(),
@@ -137,10 +146,16 @@ const storeState = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../store', () => ({
+  cancelPendingTaskPrompt: storeMocks.cancelPendingTaskPrompt,
+  createPendingPromptTask: storeMocks.createPendingPromptTask,
   ensureImageCached: storeMocks.ensureImageCached,
   ensureImageThumbnailCached: storeMocks.ensureImageThumbnailCached,
+  failPendingTaskPrompt: storeMocks.failPendingTaskPrompt,
+  fulfillPendingTaskPrompt: storeMocks.fulfillPendingTaskPrompt,
+  setPendingTaskPromptMessage: storeMocks.setPendingTaskPromptMessage,
   submitTaskWithData: storeMocks.submitTaskWithData,
   subscribeImageThumbnail: storeMocks.subscribeImageThumbnail,
+  updateTaskInStore: storeMocks.updateTaskInStore,
   useStore: Object.assign((selector: (state: typeof storeState) => unknown) => selector(storeState), {
     getState: () => storeState,
   }),
@@ -1986,6 +2001,81 @@ describe('GallerySopBatchModal background generation', () => {
       selectedSopId: 'sop-1',
       availablePrompts: 0,
     })
+  })
+
+  it('建卡先于提示词：开跑就先占一张卡，第一条提示词填进这张卡而不是再新建（TB-087）', async () => {
+    const events: string[] = []
+    storeState.inputImages = [{ id: 'image-1', dataUrl: 'data:image/png;base64,one' }]
+    storeMocks.createPendingPromptTask.mockImplementationOnce(async () => {
+      events.push('建预留卡')
+      return 'pending-card-1'
+    })
+    storeMocks.fulfillPendingTaskPrompt.mockImplementationOnce(async (taskId: string) => {
+      events.push(`填提示词-${taskId}`)
+      return true
+    })
+    generateMocks.generatePromptsFromSopStore.mockImplementation(async (_sop, _quantity, _brief, options) => {
+      events.push('写第 1 条')
+      await options.onBatch?.(['第一条提示词'], 1, 2)
+      events.push('写第 2 条')
+      await options.onBatch?.(['第二条提示词'], 2, 2)
+      return ['第一条提示词', '第二条提示词']
+    })
+    storeMocks.submitTaskWithData.mockImplementationOnce(async ({ prompt }) => {
+      events.push(`新建卡-${prompt}`)
+      return 'task-2'
+    })
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-1"
+          initialPromptCount={2}
+          initialAutoGenerate
+          autoStart
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    // 卡排在提示词请求之前 —— 这就是本轮要的「发起即建卡」（原来要等第一条写完才有卡）
+    expect(events).toEqual(['建预留卡', '写第 1 条', '填提示词-pending-card-1', '写第 2 条', '新建卡-第二条提示词'])
+    expect(storeMocks.createPendingPromptTask).toHaveBeenCalledTimes(1)
+    // 第一条复用预留卡，所以只有第二条真正走了「新建卡提交」
+    expect(storeMocks.submitTaskWithData).toHaveBeenCalledTimes(1)
+    expect(storeMocks.submitTaskWithData.mock.calls[0][0].prompt).toBe('第二条提示词')
+  })
+
+  it('提示词写不出来时，原因标在预留卡上而不是只剩弹窗一行字（TB-087）', async () => {
+    storeState.inputImages = [{ id: 'image-1', dataUrl: 'data:image/png;base64,one' }]
+    storeMocks.createPendingPromptTask.mockResolvedValueOnce('pending-card-1')
+    generateMocks.generatePromptsFromSopStore.mockRejectedValue(new Error('分组 A 下模型 m 的可用渠道不存在'))
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-1"
+          initialPromptCount={2}
+          initialAutoGenerate
+          autoStart
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    // 不删卡、不静默：模型的原话原样写到那张卡上
+    expect(storeMocks.failPendingTaskPrompt).toHaveBeenCalledWith('pending-card-1', '分组 A 下模型 m 的可用渠道不存在')
+    expect(storeMocks.submitTaskWithData).not.toHaveBeenCalled()
   })
 
   it('continues the progressive run when one image task fails to dispatch', async () => {

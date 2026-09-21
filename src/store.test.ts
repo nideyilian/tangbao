@@ -360,6 +360,9 @@ import {
   reuseConfig,
   submitAgentMessage,
   submitTask,
+  cancelPendingTaskPrompt,
+  failPendingTaskPrompt,
+  fulfillPendingTaskPrompt,
   submitTaskWithData,
   updateTaskInStore,
   updateTasksFavoriteCollections,
@@ -2437,6 +2440,171 @@ describe('interrupted OpenAI running tasks', () => {
     expect(result.tasks.find((item) => item.id === 'custom-running')).toEqual(customAsyncRunning)
     expect(result.tasks.find((item) => item.id === 'custom-batch-running')).toEqual(customBatchRunning)
     expect(result.tasks.find((item) => item.id === 'done-task')).toEqual(doneTask)
+  })
+
+  it('把「还在写提示词」的预留卡标成提示词生成失败，而不是「请求中断」（TB-087）', () => {
+    const now = 20_000
+    const pendingPrompt = task({
+      id: 'pending-prompt',
+      apiProvider: 'openai',
+      status: 'running',
+      promptPending: true,
+      progressStage: 'prompting',
+      createdAt: 12_000,
+      finishedAt: null,
+      elapsed: null,
+    })
+
+    const result = markInterruptedOpenAIRunningTasks([pendingPrompt], now)
+    const marked = result.tasks[0]
+
+    expect(marked).toMatchObject({
+      status: 'error',
+      promptPending: false,
+      promptFailed: true,
+      progressStage: 'stopped',
+      error: expect.stringContaining('提示词生成失败'),
+      finishedAt: now,
+      elapsed: 8_000,
+    })
+    // 它一个请求都没发出去 —— 说「请求中断」会把排查带偏到接口上
+    expect(marked.error).not.toContain('请求中断')
+    expect(result.interruptedTasks.map((item) => item.id)).toEqual(['pending-prompt'])
+  })
+})
+
+describe('生图发起即建卡：先建卡、后写词（TB-087）', () => {
+  /** store 是单例：用例用完把 tasks 放回去，别把卡片留给后面的用例。 */
+  const withCleanTasks = async (fn: () => Promise<void>) => {
+    const previousTasks = useStore.getState().tasks
+    useStore.setState({ tasks: [] })
+    try {
+      await fn()
+    } finally {
+      useStore.setState({ tasks: previousTasks })
+    }
+  }
+
+  const buildPendingTask = async () => {
+    const taskId = await submitTaskWithData(
+      {
+        // deferExecution 下提示词可以是占位的：写词失败时卡片上还能看出它对应哪张参考图
+        prompt: '参考图 1',
+        inputImages: [],
+        inputImageFolder: null,
+        params: { ...DEFAULT_PARAMS },
+        maskDraft: null,
+      },
+      { deferExecution: true, silentSuccess: true },
+    )
+    return taskId
+  }
+
+  it('deferExecution 只建卡不执行，卡上标着「提示词还没写出来」', async () => {
+    await withCleanTasks(async () => {
+      const taskId = await buildPendingTask()
+
+      expect(taskId).toBeTruthy()
+      // 卡已经在画廊里了 —— 这就是「发起即建卡」的验收点
+      expect(useStore.getState().tasks.some((item) => item.id === taskId)).toBe(true)
+      expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+        status: 'running',
+        promptPending: true,
+        progressStage: 'prompting',
+        prompt: '参考图 1',
+        error: null,
+      })
+    })
+  })
+
+  it('提示词写好后就地填进那张卡并开跑，不新建卡', async () => {
+    await withCleanTasks(async () => {
+      const taskId = await buildPendingTask()
+
+      const fulfilled = await fulfillPendingTaskPrompt(taskId!, '一条写好的提示词')
+
+      expect(fulfilled).toBe(true)
+      expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+        prompt: '一条写好的提示词',
+        promptPending: false,
+        promptFailed: false,
+      })
+      // 还是那一张卡，没有多出第二张
+      expect(useStore.getState().tasks).toHaveLength(1)
+    })
+  })
+
+  it('提示词写不出来：卡保留、就地标红，原因写在卡上', async () => {
+    await withCleanTasks(async () => {
+      const taskId = await buildPendingTask()
+
+      await failPendingTaskPrompt(taskId!, '分组 A 下模型 m 的可用渠道不存在')
+
+      const failed = useStore.getState().tasks.find((item) => item.id === taskId)
+      expect(failed).toMatchObject({
+        status: 'error',
+        promptPending: false,
+        promptFailed: true,
+        progressStage: 'failed',
+      })
+      expect(String(failed?.error)).toContain('提示词生成失败')
+      expect(String(failed?.error)).toContain('可用渠道不存在')
+      // 不删卡
+      expect(useStore.getState().tasks).toHaveLength(1)
+    })
+  })
+
+  it('取消：预留卡标成已停止并保留，不删卡', async () => {
+    await withCleanTasks(async () => {
+      const taskId = await buildPendingTask()
+
+      await cancelPendingTaskPrompt(taskId!)
+
+      const cancelled = useStore.getState().tasks.find((item) => item.id === taskId)
+      expect(cancelled).toMatchObject({
+        status: 'error',
+        promptPending: false,
+        promptFailed: false,
+        progressStage: 'stopped',
+      })
+      expect(String(cancelled?.error)).toContain('已取消')
+      expect(useStore.getState().tasks).toHaveLength(1)
+    })
+  })
+
+  it('已经取消/填过词的卡，迟到的提示词不会再把它拉起来', async () => {
+    await withCleanTasks(async () => {
+      const taskId = await buildPendingTask()
+      await cancelPendingTaskPrompt(taskId!)
+
+      const revived = await fulfillPendingTaskPrompt(taskId!, '姗姗来迟的提示词')
+
+      expect(revived).toBe(false)
+      expect(useStore.getState().tasks.find((item) => item.id === taskId)).toMatchObject({
+        progressStage: 'stopped',
+      })
+    })
+  })
+
+  it('提示词环节失败的卡不能直接重试（卡上没有可用提示词，重试等于拿占位文案去生图）', async () => {
+    await withCleanTasks(async () => {
+      const taskId = await buildPendingTask()
+      await failPendingTaskPrompt(taskId!, '模型没返回')
+
+      const failed = useStore.getState().tasks.find((item) => item.id === taskId)!
+      const previousShowToast = useStore.getState().showToast
+      const showToast = vi.fn()
+      useStore.setState({ showToast })
+
+      try {
+        const newTaskId = await retryTask(failed)
+
+        expect(newTaskId).toBeNull()
+        expect(showToast).toHaveBeenCalledWith(expect.stringContaining('编写提示词'), 'error')
+      } finally {
+        useStore.setState({ showToast: previousShowToast })
+      }
+    })
   })
 })
 

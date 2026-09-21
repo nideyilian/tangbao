@@ -45,7 +45,7 @@ function getTaskSourceLabel(task: TaskRecord): string {
 
 function isStoppedTask(task: TaskRecord, liveProgress?: LiveTaskProgress): boolean {
   const text = `${task.error ?? ''} ${liveProgress?.progressMessage ?? task.progressMessage ?? ''}`
-  return /已停止|请求中断|任务已中止|停止生成/.test(text)
+  return /已停止|已取消|请求中断|任务已中止|停止生成/.test(text)
 }
 
 function getFailureReason(task: TaskRecord, liveProgress?: LiveTaskProgress): string {
@@ -89,6 +89,14 @@ function getRunningStage(task: TaskRecord, liveProgress?: LiveTaskProgress): Tas
 function getRunningDescription(task: TaskRecord, stage: TaskProgressStage, liveProgress?: LiveTaskProgress): string {
   const requested = getRequestedCount(task)
   const success = getSuccessCount(task)
+  if (stage === 'prompting') {
+    // 卡片先建、提示词后写：这里要交代清楚「还没开始生图」，否则用户会以为卡住不动。
+    return (
+      liveProgress?.progressMessage?.trim() ||
+      task.progressMessage?.trim() ||
+      '正在编写这次的生图提示词，写好会自动开始生图。'
+    )
+  }
   if (stage === 'relay-received') {
     return (
       liveProgress?.progressMessage?.trim() || task.progressMessage?.trim() || '服务商已接收任务，正在等待生成结果。'
@@ -110,11 +118,13 @@ function getRunningDescription(task: TaskRecord, stage: TaskProgressStage, liveP
 function runningDisplay(task: TaskRecord, liveProgress?: LiveTaskProgress): TaskProgressDisplay {
   const stage = getRunningStage(task, liveProgress)
   const cardLabel =
-    stage === 'relay-received'
-      ? '中转站接收中'
-      : stage === 'previewing' || stage === 'generating' || stage === 'saving'
-        ? '生成中'
-        : '发送请求中'
+    stage === 'prompting'
+      ? '编写提示词中'
+      : stage === 'relay-received'
+        ? '中转站接收中'
+        : stage === 'previewing' || stage === 'generating' || stage === 'saving'
+          ? '生成中'
+          : '发送请求中'
 
   return {
     cardLabel,
@@ -166,6 +176,17 @@ function errorDisplay(task: TaskRecord, liveProgress?: LiveTaskProgress): TaskPr
   }
 
   const reason = getFailureReason(task, liveProgress)
+  // 失败在「写提示词」环节：卡片要说清是哪一段坏的 —— 提示词没写出来时生图根本没开始，
+  // 跟「生图失败」要用户做的事不一样（前者重试写词、后者重试出图）。
+  if (task.promptFailed) {
+    return {
+      cardLabel: '提示词失败',
+      detailTitle: '提示词生成失败',
+      detailDescription: reason,
+      tone: 'error',
+      reasons: [reason],
+    }
+  }
   return {
     cardLabel: '生成失败',
     detailTitle: '生成失败',

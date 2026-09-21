@@ -133,7 +133,21 @@ function SopBatchTaskCard({
   ).length
   const isFailed = tasks.length > 0 && failedCount === tasks.length
   const cardStatus: TaskStatus = isRunning ? 'running' : isFailed ? 'error' : 'done'
-  const status = isRunning ? '生成中' : isFailed ? '生成失败' : failedCount > 0 ? '部分完成' : '已完成'
+  // 整批都还没开跑（全在写提示词）、或整批都倒在写提示词上时，卡上得说清是哪一段：
+  // 一律说「生成中 / 生成失败」，前者会让人以为图已经在出，后者会让人去查生图接口。
+  const isPrompting = tasks.length > 0 && tasks.every((task) => task.promptPending)
+  const isPromptFailed = tasks.length > 0 && tasks.every((task) => task.promptFailed)
+  const status = isPrompting
+    ? '编写提示词中'
+    : isPromptFailed
+      ? '提示词失败'
+      : isRunning
+        ? '生成中'
+        : isFailed
+          ? '生成失败'
+          : failedCount > 0
+            ? '部分完成'
+            : '已完成'
   const representativeTask = tasks[0]
   const elapsed = formatSopBatchElapsed(getSopBatchElapsedMs(tasks, now))
 

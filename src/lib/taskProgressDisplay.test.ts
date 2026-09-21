@@ -19,6 +19,46 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
 }
 
 describe('getTaskProgressDisplay', () => {
+  it('写提示词阶段：卡上写「编写提示词中」，并明说还没开始生图（TB-087）', () => {
+    const display = getTaskProgressDisplay(
+      task({
+        promptPending: true,
+        progressStage: 'prompting',
+      }),
+    )
+
+    expect(display.cardLabel).toBe('编写提示词中')
+    // 必须交代「还没开始生图」，否则用户会以为卡住了
+    expect(display.detailDescription).toContain('写好会自动开始生图')
+  })
+
+  it('写提示词期间卡上的说明跟着当前步骤走', () => {
+    const display = getTaskProgressDisplay(
+      task({
+        promptPending: true,
+        progressStage: 'prompting',
+        progressMessage: '正在逐张分析参考图…',
+      }),
+    )
+
+    expect(display.detailDescription).toBe('正在逐张分析参考图…')
+  })
+
+  it('提示词环节失败：说「提示词失败」，跟生图失败区分开（TB-087）', () => {
+    const display = getTaskProgressDisplay(
+      task({
+        status: 'error',
+        promptFailed: true,
+        progressStage: 'failed',
+        error: '提示词生成失败：分组 A 下模型 m 的可用渠道不存在',
+      }),
+    )
+
+    expect(display.cardLabel).toBe('提示词失败')
+    expect(display.detailTitle).toBe('提示词生成失败')
+    expect(display.detailDescription).toContain('可用渠道不存在')
+  })
+
   it('shows request progress for a running task before provider acknowledgment', () => {
     const display = getTaskProgressDisplay(
       task({

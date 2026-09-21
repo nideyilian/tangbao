@@ -30,10 +30,16 @@ import {
   XCircleIcon as XCircle,
 } from '../../../design-system/icons'
 import {
+  cancelPendingTaskPrompt,
+  createPendingPromptTask,
   ensureImageCached,
   ensureImageThumbnailCached,
+  failPendingTaskPrompt,
+  fulfillPendingTaskPrompt,
+  setPendingTaskPromptMessage,
   submitTaskWithData,
   subscribeImageThumbnail,
+  updateTaskInStore,
   useStore,
 } from '../../../store'
 import type { InputImage, SopBatchSnapshot } from '../../../types'
@@ -2090,15 +2096,62 @@ export default function GallerySopBatchModal({
     const submitTimings: number[] = []
     let lastOnBatchEnd = 0
 
-    /** 渐进派发下提交一条生图任务；返回 taskId，失败返回 null（计数已在内部完成）。 */
+    /**
+     * 渐进派发下提交一条生图任务；返回 taskId，失败返回 null（计数已在内部完成）。
+     *
+     * `existingTaskId` 非空表示「这张卡已经躺在画廊里了」（来源开跑时先建的那张占位卡）：
+     * 这时不新建卡，只把提示词写进去就开跑 —— 用户点完「开始」看到的那张卡会从
+     * 「编写提示词中」直接翻成「生成中」，中途不会又冒出一张新卡。
+     */
     const dispatchProgressivePrompt = async (
       item: PromptDraft,
       promptIndex: number,
       seriesAnchorImage: InputImage | null,
       fallbackInputImages: InputImage[],
+      existingTaskId?: string | null,
     ): Promise<string | null> => {
       const submitStartedAt = Date.now()
       try {
+        if (existingTaskId) {
+          // 系列分组信息要跟同组其他成员一致（组内串行、首图锚定都按它走）；
+          // 占位卡建的时候还不知道自己属于哪一组，这里补上。
+          if (item.series) {
+            await updateTaskInStore(existingTaskId, {
+              sopBatch: {
+                batchId: progressiveBatchId,
+                snapshotId: progressiveSnapshotId,
+                sopId: selectedSop.id,
+                sopName: selectedSop.name,
+                promptId: item.id,
+                promptIndex,
+                promptCount: targetCount,
+                imagesPerPrompt: targetImagesPerPrompt,
+                series: {
+                  seriesId: `${progressiveSnapshotId}-${item.series.groupIndex}`,
+                  groupIndex: item.series.groupIndex + 1,
+                  groupCount: Math.ceil(targetCount / item.series.seriesCount),
+                  seriesIndex: item.series.seriesIndex + 1,
+                  seriesCount: item.series.seriesCount,
+                },
+              },
+            })
+          }
+          const fulfilled = await raceWithCancellation(
+            fulfillPendingTaskPrompt(
+              existingTaskId,
+              seriesAnchorImage ? buildSopSeriesAnchoredPrompt(item.promptText) : item.promptText.trim(),
+            ),
+            generationController.signal,
+          )
+          submitTimings.push(Date.now() - submitStartedAt)
+          if (fulfilled) {
+            progressiveTaskIds.push(existingTaskId)
+            progressiveSuccessCount += 1
+            return existingTaskId
+          }
+          progressiveFailureCount += 1
+          return null
+        }
         const taskId = await raceWithCancellation(
           submitTaskWithData(
             {
@@ -2180,6 +2233,9 @@ export default function GallerySopBatchModal({
         nextSources[sourceIndex] = { ...nextSources[sourceIndex], status: 'completed', error: undefined }
         continue
       }
+      // 该来源「点开始就出卡」的那张预留卡 id。声明放在 try 之外：catch 分支要用它
+      // 把失败/取消标回卡上（不删卡、不静默），try 里声明的话 catch 看不见。
+      let pendingPromptTaskId: string | null = null
       try {
         diag(
           `ⓐ[${sourceRun.source.label || sourceRun.source.id}] loadSourceInputImage 前`,
@@ -2200,6 +2256,34 @@ export default function GallerySopBatchModal({
         const isCampaignRecipe = isCampaignRecipeSop(selectedSop)
         // 配方卡与变量提示词都是本地一次算完全部结果，不能走 AI 渐进式「逐单位请求」的批量方式。
         const useLocalGeneration = isLocalGenerationSop(selectedSop)
+        // 「点开始就出卡」：先把这一来源的任务卡建出来（卡上写「编写提示词中」），
+        // 提示词写好后再由 `dispatchProgressivePrompt` 填进这张卡接着生图。
+        // 不这么做的话，用户点完「开始」只能对着空画廊干等 AI 写字；AI 写失败时更是
+        // 连一张卡都没有，只剩弹窗里一行红字（2026-09-22 定的交互：失败也要留在卡上）。
+        if (progressiveDispatch) {
+          pendingPromptTaskId = await createPendingPromptTask({
+            // 占位文案先写来源名：万一提示词没写出来，卡片上还能看出它本来对应哪张参考图。
+            prompt: sourceRun.source.label || '待编写提示词',
+            inputImages: generationInputImages.length ? generationInputImages : sourceImage ? [sourceImage] : [],
+            inputImageFolder: null,
+            params: { ...params, n: targetImagesPerPrompt, reference_mode: 'cycle' },
+            maskDraft: null,
+            targetTabId: targetWorkspaceTabId,
+            scheduledOutputPath: customOutputPath.trim() || undefined,
+            scheduledOutputSubFolder: activeTab?.name,
+            defaultCollectionId: batchDefaultCollectionIdRef.current,
+            sopBatch: {
+              batchId: progressiveBatchId,
+              snapshotId: progressiveSnapshotId,
+              sopId: selectedSop.id,
+              sopName: selectedSop.name,
+              promptId: promptItemId(sourceRun.source.id),
+              promptIndex: 1,
+              promptCount: targetCount,
+              imagesPerPrompt: targetImagesPerPrompt,
+            },
+          })
+        }
         const generationOptions: NonNullable<Parameters<typeof generatePromptsFromSopStore>[3]> & {
           outputUnitSize?: number
           builtinValues?: Record<string, string>
@@ -2263,6 +2347,10 @@ export default function GallerySopBatchModal({
               nextPrompts.push(item)
               setPrompts([...nextPrompts])
               const promptIndex = nextPrompts.filter((entry) => !entry.deleted && entry.promptText.trim()).length
+              // 该来源的第一条提示词由「开跑时先建的那张卡」承载，用完即弃；
+              // 后续条照旧新建卡 —— 一张卡对应一条提示词，这是糖包既有的粒度。
+              const reusablePendingTaskId = pendingPromptTaskId
+              pendingPromptTaskId = null
               if (progressiveDispatch) {
                 setStatusMessage(
                   `已生成系列成员 ${promptIndex}/${effectivePromptTarget}，正在发送第 ${promptIndex} 条生图任务`,
@@ -2289,7 +2377,13 @@ export default function GallerySopBatchModal({
                 let dispatched: boolean
                 let deferredDispatch = false
                 if (firstImageGroupIndex !== null) {
-                  const taskId = await dispatchProgressivePrompt(item, promptIndex, null, generationInputImages)
+                  const taskId = await dispatchProgressivePrompt(
+                    item,
+                    promptIndex,
+                    null,
+                    generationInputImages,
+                    reusablePendingTaskId,
+                  )
                   dispatched = Boolean(taskId)
                   if (taskId) {
                     const anchorStartedAt = Date.now()
@@ -2322,7 +2416,13 @@ export default function GallerySopBatchModal({
                         if (!seriesAnchorImage && componentActiveRef.current && !generationController.signal.aborted) {
                           setStatusMessage('首图未就绪，同组其余画面按无参考图发送')
                         }
-                        await dispatchProgressivePrompt(item, promptIndex, seriesAnchorImage, generationInputImages)
+                        await dispatchProgressivePrompt(
+                          item,
+                          promptIndex,
+                          seriesAnchorImage,
+                          generationInputImages,
+                          reusablePendingTaskId,
+                        )
                         if (componentActiveRef.current && !generationController.signal.aborted) {
                           await saveProgressiveSnapshot('generating')
                         }
@@ -2335,7 +2435,13 @@ export default function GallerySopBatchModal({
                   // 无锚定等待（非系列 / 锚定关闭 / 锚定已就绪 / 首图任务发送失败）：立即提交
                   const seriesAnchorImage = existingAnchorId ? await loadAnchorInputImage(existingAnchorId) : null
                   dispatched = Boolean(
-                    await dispatchProgressivePrompt(item, promptIndex, seriesAnchorImage, generationInputImages),
+                    await dispatchProgressivePrompt(
+                      item,
+                      promptIndex,
+                      seriesAnchorImage,
+                      generationInputImages,
+                      reusablePendingTaskId,
+                    ),
                   )
                 }
                 if (!componentActiveRef.current || generationController.signal.aborted) {
@@ -2366,6 +2472,10 @@ export default function GallerySopBatchModal({
             lastOnBatchEnd = Date.now()
           },
           onProgress: (completed, total) => {
+            // 进度同时写进画廊那张卡：用户不一定盯着这个弹窗看
+            if (pendingPromptTaskId) {
+              setPendingTaskPromptMessage(pendingPromptTaskId, `正在编写提示词 ${completed}/${total}`)
+            }
             if (!progressiveDispatch) {
               const completedCount = Math.min(
                 nextPrompts.filter((item) => !item.deleted && item.promptText.trim()).length,
@@ -2447,7 +2557,14 @@ export default function GallerySopBatchModal({
           status: generatedCount >= deficit ? 'completed' : 'partial',
           error: generatedCount >= deficit ? undefined : `缺少 ${deficit - generatedCount} 条`,
         }
+        // 模型一条都没写出来（不抛错、直接返回空）：预留卡不能永远停在「编写提示词中」，
+        // 就地标红把原因说清楚 —— 这种「不报错但也没产出」最容易被当成界面卡住。
+        if (pendingPromptTaskId) {
+          await failPendingTaskPrompt(pendingPromptTaskId, '模型没有返回可用的提示词')
+          pendingPromptTaskId = null
+        }
       } catch (cause) {
+        const promptFailureReason = cause instanceof Error ? cause.message : '提示词生成失败'
         if (generationController.signal.aborted || isAbortError(cause)) {
           generationCancelled = true
           const generatedCount =
@@ -2459,13 +2576,17 @@ export default function GallerySopBatchModal({
             status: generatedCount > 0 ? 'partial' : 'pending',
             error: undefined,
           }
+          // 取消也要留卡：标成「已停止」，用户才知道这张牌发生过、只是被自己停了（不删卡）。
+          if (pendingPromptTaskId) await cancelPendingTaskPrompt(pendingPromptTaskId)
           break
         } else {
           nextSources[sourceIndex] = {
             ...nextSources[sourceIndex],
             status: 'failed',
-            error: cause instanceof Error ? cause.message : '提示词生成失败',
+            error: promptFailureReason,
           }
+          // 提示词没写出来：就地标红在那张卡上，别只留弹窗里一行字。
+          if (pendingPromptTaskId) await failPendingTaskPrompt(pendingPromptTaskId, promptFailureReason)
         }
       }
     }

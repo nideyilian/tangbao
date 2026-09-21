@@ -1032,7 +1032,13 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                 onTouchEnd={(e) => e.stopPropagation()}
                 onTouchCancel={(e) => e.stopPropagation()}
               >
-                {((displayTaskStatus === 'error' && !isFalReconnecting) || alwaysShowRetryButton) && (
+                {/*
+                  提示词环节失败的卡不给重试按钮：这种卡身上没有可用提示词（存的是来源标签），
+                  点重试只会拿着占位文案去生图。重试必须回发起它的地方（SOP 弹窗 / 输入栏），
+                  那里才有参考图、SOP 预设和 brief。
+                */}
+                {((displayTaskStatus === 'error' && !isFalReconnecting && !task.promptFailed) ||
+                  alwaysShowRetryButton) && (
                   <TaskActionButton
                     tooltip="重试任务"
                     onClick={() => retryTask(task)}

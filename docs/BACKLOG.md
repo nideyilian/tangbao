@@ -3547,3 +3547,52 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 
 **验收**：AssetQuickPreview 4 例 + useAssetLibraryShortcuts 2 例 + compliance 10 例全绿；prettier 零改。
 **注意**：定位修复未做渲染验证（另一写线占用运行中应用，未再注入按键），请杰哥在应用里按住空格过目。
+
+---
+
+## TB-088 生图发起即建卡：三条入口统一「先建卡、后写词」（2026-09-22 阿伟）
+
+**背景**（杰哥原话）：「当用户发起生图时，无论处于哪种模式（普通生图、SOP 还是配方卡），都应默认立即创建
+任务卡片，而非等待提示词生成完毕后再创建……若提示词生成失败或生图失败，直接在卡片中清晰标注失败原因即可，
+不要删除卡片或静默失败。」
+
+**实查的现状：三条入口只有一条本来就合规**
+
+| 入口 | 改前 | 改后 |
+| --- | --- | --- |
+| 普通生图 / 变量提示词 | 点发送即建卡，词在执行时展开（`submitTaskWithData` 建卡 → `executeTask` 内 `renderVariablePromptBatch`） | 不动（本来就是对的，也是本轮抄的先例） |
+| SOP 批量 / 配方卡 | 先 `await` AI 写词、成功才建卡；写词失败 → 弹窗一行红字，**画廊零卡** | 来源开跑先建预留卡（「编写提示词中」），词写好就地填进这张卡开跑；失败/取消都标回卡上 |
+| 一键衍生 | 先 AI 两阶段反推再建卡，失败只有 toast | 先建卡，卡里走「分析参考图 → 生成模板 → 展开生图」，失败标在卡上 |
+
+**实现**
+- `TaskProgressStage` 加 `'prompting'`；`TaskRecord` 加 `promptPending`（词未就绪、**禁止生图**）、
+  `promptFailed`（失败在写词环节，卡片文案与生图失败区分开）。
+- store 新增：`createPendingPromptTask`（只建卡不执行）/ `fulfillPendingTaskPrompt`（写词并开跑）/
+  `failPendingTaskPrompt`（就地标红）/ `cancelPendingTaskPrompt`（标已停止）+ `setPendingTaskPromptMessage`
+  （把「正在逐张分析参考图…」这类阶段写进卡）。
+- `submitTaskWithData` 加 `deferExecution`（只建卡、跳过 prompt 必填校验、不调 `executeTask`）；
+  `executeTask` 开头加 `promptPending` 守卫（防拿占位文案去生图）。
+- 失败/取消的卡**一律不删**；`retryTask` 拒绝 `promptPending`/`promptFailed` 的卡（卡上没有可用词，
+  硬重试等于拿占位文案生图），`TaskCard` 也不给这种卡显示重试按钮。
+- 崩溃收尾：`markInterruptedOpenAIRunningTasks` 优先处理 `promptPending` 的卡，标成
+  「提示词生成失败：应用在编写提示词时退出了」，而不是含糊的「请求中断」—— 后者会把排查带偏到接口上。
+- **不改**：关掉「自动生图」时先在弹窗里列提示词、等用户点「提交生图」再建卡（那时还没发起生图，提前建卡是乱的）。
+
+**验收标准（可测）**
+1. SOP 点开始后，`createPendingPromptTask` 发生在提示词引擎调用**之前** → 卡先于提示词存在。
+2. 第一条提示词写进预留卡（`fulfillPendingTaskPrompt`），**不产生第二张卡**。
+3. 写词失败 → 该卡 `status:'error'` + `promptFailed` + `error` 含模型原话，**卡仍在 tasks 里**。
+4. 取消 → 预留卡 `progressStage:'stopped'`，卡仍在。
+5. 一键衍生失败 → 同样留在卡上，不再只有 toast。
+6. 卡面文案：写词中「编写提示词中」、写词失败「提示词失败」、生图失败仍是「生成失败」。
+
+**验收证据（2026-09-22）**
+- 新增用例 12 条全绿：`store.test.ts` 7（deferExecution 建卡 / fulfill 填词不新建 / fail 标红保留 /
+  cancel 保留 / 迟到词不复活 / retry 拒绝 / 崩溃收尾文案）、`GallerySopBatchModal.test.tsx` 2
+  （建卡先于写词、失败标在卡上）、`taskProgressDisplay.test.ts` 3（文案三态）。
+- `tsc -b` 改动文件零错误；全量 `vitest run` **261 文件全绿**；改动文件 eslint 零告警；prettier 已跑。
+- ⚠️ **未做渲染验证**（本机离屏渲染限制 + 运行中应用被另一写线占用）：卡面文案的实际观感请杰哥在应用里过目。
+
+**开工时的环境风险（记一笔）**：落地期间同仓有另一条写线在活跃改 `SettingsModal.tsx` / `localSave.ts` /
+`electron/ipc-handlers.ts`（配置目录相关），`tsc` 全量会因为它的半成品红在 `selectDirectory` 未导出上。
+本轮按隔离方式做：只跑定向用例 + 过滤后的 `tsc`，提交只 add 自己的文件。

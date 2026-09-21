@@ -26,7 +26,10 @@ import {
   removeMultipleTasks,
   getCachedImage,
   ensureImageCached,
+  failPendingTaskPrompt,
+  fulfillPendingTaskPrompt,
   getActiveAgentRounds,
+  setPendingTaskPromptMessage,
 } from '../store'
 import { DEFAULT_PARAMS, type TaskParams, type TaskRecord } from '../types'
 import { getActiveApiProfile, getAgentApiProfile } from '../lib/apiProfiles'
@@ -1700,6 +1703,15 @@ export default function InputBar() {
     }
     oneClickDeriveRunningRef.current = true
     setOneClickDerivePhase('正在分析参考图…')
+    // 先建卡：用户点完立刻能在画廊看到这张牌（写着「编写提示词中」），而不是盯着输入栏
+    // 干等 AI 把参考图逐张分析完。中途失败也留在卡上标红 —— 不再只剩一个 toast。
+    const pendingTaskId = await submitTask({ deferExecution: true })
+    if (!pendingTaskId) {
+      // 建卡就被拦下了（API 配置不全等），原因已由提交链路 toast 说过
+      oneClickDeriveRunningRef.current = false
+      setOneClickDerivePhase('')
+      return
+    }
     try {
       // 两阶段衍生：先分析参考图生成视觉档案，再基于档案生成变量模板（带质量校验）
       const generated = await generateVariablePromptTwoPhase(
@@ -1718,7 +1730,10 @@ export default function InputBar() {
               generate: '正在基于视觉档案生成变量提示词模板…',
               validate: '正在校验模板质量…',
             }
-            setOneClickDerivePhase(stageLabel[stage] ?? message ?? '正在生成模板…')
+            const label = stageLabel[stage] ?? message ?? '正在生成模板…'
+            setOneClickDerivePhase(label)
+            // 同一句话写进画廊那张卡：用户不一定盯着输入栏的胶囊条
+            setPendingTaskPromptMessage(pendingTaskId, label)
           },
         },
       )
@@ -1729,13 +1744,17 @@ export default function InputBar() {
       setPrompt(template)
       if (textareaRef.current) textareaRef.current.innerHTML = ''
       if (textareaRef.current) textareaRef.current.textContent = template
-      // 自动发送：submitTask 读取 store 中的模板，并按数量 n 自动展开组合出图
+      // 提示词写进卡并开始生图：卡在上面已经建好了，这里只是补提示词。
+      // 变量提示词的真实展开发生在任务执行内（按 n 个槽位组合），卡上显示的就是这份模板。
       setOneClickDerivePhase('正在按数量展开并发送生图…')
-      await submitTask()
+      setPendingTaskPromptMessage(pendingTaskId, '正在按数量展开并发送生图…')
+      await fulfillPendingTaskPrompt(pendingTaskId, template)
       showToast('变量提示词已填入并自动发送，正在按数量展开组合出图', 'success')
     } catch (error) {
       console.error('[一键衍生] 失败：', error)
       const message = error instanceof Error ? error.message : String(error)
+      // 失败就地标在卡上（提示词环节失败），不再只有一个 toast 就没了
+      await failPendingTaskPrompt(pendingTaskId, message || '自动衍生失败，请查看控制台或重试')
       showToast(message ? `自动衍生失败：${message}` : '自动衍生失败，请查看控制台或重试', 'error')
     } finally {
       oneClickDeriveRunningRef.current = false
