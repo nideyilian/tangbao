@@ -54,7 +54,12 @@ function AssetQuickPreviewInner() {
       role="dialog"
       aria-modal="true"
       aria-label="快速预览"
-      className="asset-quick-preview ds-fade-in fixed inset-0 z-modal flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-8"
+      /*
+       * ⚠️ 定位走内联样式：`fixed` 类挂在这个壳层里实际不生效（同 AssetViewer，
+       * 2026-09-22 实测）——遮罩被 `--app-docked-left-width` 推着偏右，预览卡片会溢出窗口右缘。
+       */
+      className="asset-quick-preview ds-fade-in z-modal flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-8"
+      style={{ position: 'fixed', inset: 0 }}
       onMouseDown={(event) => {
         // 点击遮罩关闭（图片区域不关闭）
         if (event.target === event.currentTarget) closeRef.current()

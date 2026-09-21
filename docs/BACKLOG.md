@@ -3530,3 +3530,20 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 
 - 本地独有节点的"彻底替换"开关（见上面的取舍，等杰哥定）。
 - 跨外网场景（把配置目录换成 HTTP 地址）—— 应用侧逻辑不用改，只换那个地址。
+
+---
+
+## TB-087 素材库空格快速预览：确认未被弹窗重构破坏 + 修预览层定位偏移（2026-09-22 阿伟）
+
+**背景**：杰哥报「空格按住预览被弹窗重构误改」。排查结论：**没有被改**——
+`useAssetLibraryShortcuts`（按住开/松开关 + 悬停素材优先）、`AssetTile`（pointerenter 记录悬停 + 卡片空格）、
+`AssetQuickPreview`、store 链路自 fork 起仅 865bbe4 改过样式；定向测试 16 例全绿；
+运行中的应用实测（键鼠注入 + 截图）：悬停 A 按住空格预览 A、松开即关、换悬停 B 预览 B，均正常。
+「被误改」的体感来自坏 HMR 会话：dev server 昨晚起一直带病运行
+（`localSave.ts does not provide an export named 'selectDirectory'` 错误屏，弹窗重构写线残留），整页不可用。
+
+**顺手修**：AssetQuickPreview 预览层 `fixed inset-0` 类在这个壳层不生效（同 AssetViewer / TB-079 实测），
+遮罩被 `--app-docked-left-width` 推偏、预览卡片溢出窗口右缘 → 改内联 `style={{ position: 'fixed', inset: 0 }}`。
+
+**验收**：AssetQuickPreview 4 例 + useAssetLibraryShortcuts 2 例 + compliance 10 例全绿；prettier 零改。
+**注意**：定位修复未做渲染验证（另一写线占用运行中应用，未再注入按键），请杰哥在应用里按住空格过目。
