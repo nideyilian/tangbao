@@ -14,6 +14,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PostprocessRun, PostprocessRunStatus } from './postprocessRun'
+import { resolvePostprocessRunStatus } from './postprocessRun'
 import PostprocessRunsDialog from './PostprocessRunsDialog'
 
 const fixtures = vi.hoisted(() => ({ runs: [] as unknown[] }))
@@ -94,26 +95,35 @@ describe('后处理进度面板', () => {
   })
 
   it('历次运行给出状态、来源与结论，问题入口按「跳过 / 出错」分别给名', () => {
+    /**
+     * 状态**由真判定函数算出来**，不在 fixture 里手写 —— 否则这条用例只测了「标签映射表」，
+     * 测不到「跳过型问题 → 界面显示已跳过」这条真链路（2026-09-21 报障：
+     * 零产出 + 只有跳过曾被判成「失败」，同一方向手动跑一次却产出成功）。
+     */
+    const skippedOnly: PostprocessRun['issues'] = [
+      {
+        code: 'PP-SCOPE-002',
+        message: '所属方向关闭了自动后处理',
+        hint: '线索',
+        severity: 'skipped',
+        stage: 'prepare',
+      },
+    ]
     fixtures.runs = [
       run({ id: 'run-a', status: 'succeeded', producedFiles: 6, source: 'manual' }),
       run({
         id: 'run-b',
-        status: 'failed',
-        issues: [
-          {
-            code: 'PP-SCOPE-002',
-            message: '所属方向关闭了自动后处理',
-            hint: '线索',
-            severity: 'skipped',
-            stage: 'prepare',
-          },
-        ],
+        status: resolvePostprocessRunStatus({ producedFiles: 0, issues: skippedOnly }),
+        issues: skippedOnly,
       }),
     ]
     const text = render()
 
     expect(text).toContain('成功')
     expect(text).toContain('后处理完成：产出 6 个文件')
+    expect(text).toContain('已跳过')
+    // 回归护栏：面板里「失败」二字只该属于真出错的那一档，这条记录一个错都没有
+    expect(text).not.toContain('失败')
     expect(text).toContain('查看跳过 (1)')
 
     const skipButton = Array.from(document.querySelectorAll('button')).find(

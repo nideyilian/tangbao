@@ -18,13 +18,15 @@ import { isErrorIssue, type PostprocessIssue, type PostprocessStage } from './po
 
 export type PostprocessRunSource = 'auto' | 'manual'
 
-export type PostprocessRunStatus = 'running' | 'succeeded' | 'partial' | 'failed'
+export type PostprocessRunStatus = 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
 
 export const POSTPROCESS_RUN_STATUS_LABELS: Record<PostprocessRunStatus, string> = {
   running: '进行中',
   succeeded: '成功',
   partial: '部分完成',
   failed: '失败',
+  /** 零产出、但一条真错都没有：只是这次全被跳过了（方向没启用 / 关了自动产出 / 源图已清理） */
+  skipped: '已跳过',
 }
 
 export interface PostprocessRun {
@@ -126,14 +128,23 @@ export function finishPostprocessRun(run: PostprocessRun, input: FinishPostproce
  *
  * 有产出 + 有真错 = `partial`（产物在，但有东西没做完，要让人知道）；
  * 有产出 + 只有跳过 = `succeeded`（跳过是配置使然，不是故障）；
- * 零产出但有记录 = `failed`；零产出且无记录 = 本次没有可做的事（不算失败）。
+ * 零产出 + 有真错 = `failed`；零产出 + 只有跳过 = `skipped`；
+ * 零产出且无记录 = 本次没有可做的事（不算失败）。
+ *
+ * ⭐ **零产出那一档必须看 severity，不能只看条数**（2026-09-21 报障「记录里一堆失败、
+ * 可实际最后是成功的」）：原来写的是 `issues.length > 0 ? 'failed'`，于是
+ * `PP-SCOPE-002`（该方向关掉了自动后处理）、`PP-SCOPE-001`（方向没在启用范围内）这类
+ * **跳过型**原因，会把整条记录染成红色「失败」；而同一个方向**手动**跑一次就产出了
+ * （手动刻意不受那个开关限制，见 `taskPostprocess.ts`），用户看到的就是
+ * 「一堆失败 + 一个成功」—— 其实是同一件事的两种触发方式。
  */
 export function resolvePostprocessRunStatus(input: {
   producedFiles: number
   issues: PostprocessIssue[]
 }): PostprocessRunStatus {
   if (input.producedFiles > 0) return input.issues.some(isErrorIssue) ? 'partial' : 'succeeded'
-  return input.issues.length > 0 ? 'failed' : 'succeeded'
+  if (input.issues.some(isErrorIssue)) return 'failed'
+  return input.issues.length > 0 ? 'skipped' : 'succeeded'
 }
 
 /**
@@ -182,9 +193,12 @@ export function summarizePostprocessRun(run: PostprocessRun): string {
         : `后处理完成：产出 ${run.producedFiles} 个文件`
     case 'partial':
       return `后处理完成：产出 ${run.producedFiles} 个文件，${errors + skipped} 项未完成（错误 ${errors}）`
+    // 「没有产出」但一条真错都没有：说清是「被跳过」，不然用户以为软件坏了
+    case 'skipped':
+      return `后处理没有产出：${skipped} 项被跳过`
     case 'failed':
     default:
-      return errors > 0 ? `后处理失败：没有产出文件（错误 ${errors}）` : '后处理结束：没有产出文件'
+      return errors > 0 ? `后处理失败：没有产出文件（错误 ${errors}）` : '后处理失败：没有产出文件'
   }
 }
 

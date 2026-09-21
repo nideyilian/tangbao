@@ -4,7 +4,7 @@ import { createDesktopJsonStorage } from './lib/desktopJsonStorage'
 import { applyApiSecrets, extractApiSecrets, stripApiSecrets, type ApiSecretBundle } from './lib/apiSecrets'
 import { calculateImageSize, inferSizeTier } from './lib/size'
 import { parseVariablePrompt, renderVariablePromptBatch } from './lib/variablePrompt'
-import { useRuntimeStore } from './stores/runtimeStore'
+import { getPostprocessRun, useRuntimeStore } from './stores/runtimeStore'
 import {
   getPostprocessMediaConfigSnapshot,
   restorePostprocessMediaConfig,
@@ -1039,7 +1039,15 @@ async function executePostprocessImageIds(
     // 抛出去只会变成一条没人看见的未处理 rejection —— 这正是「点了没反应」的来源之一。
     console.error('后处理产出失败', error)
     const issues = [createPostprocessIssue({ code: 'PP-CRASH-001', stage: 'prepare', cause: messageOfError(error) })]
-    useRuntimeStore.getState().finishPostprocessRun(runId, { issues, producedFiles: 0 })
+    // 产出数**沿用进度里已经写下的值**，不写 0：异常可能发生在已经写出若干文件之后
+    // （某次 IPC 掉链子、目录授权被拒），磁盘上产物是齐的，写 0 会让记录谎报
+    // 「失败：没有产出文件」—— 又是一条「显示失败、实际成功」（2026-09-21 排查）。
+    // 取记录里的值还顺带保证口径单一：进度面板上显示的就是它。
+    const interrupted = getPostprocessRun(runId)
+    useRuntimeStore.getState().finishPostprocessRun(runId, {
+      issues,
+      producedFiles: interrupted?.producedFiles ?? 0,
+    })
     return { outputs: [], skippedMediaIds: [], issues, warnings: issuesToWarnings(issues) }
   } finally {
     runtime.endPostprocess()

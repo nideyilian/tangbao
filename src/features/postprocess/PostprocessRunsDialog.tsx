@@ -36,12 +36,19 @@ import {
   type PostprocessRunStatus,
 } from './postprocessRun'
 
-/** 状态 → 指示灯色调。「跳过/部分完成」是警告不是错误，别一律红。 */
+/**
+ * 状态 → 指示灯色调。「跳过/部分完成」是警告不是错误，别一律红。
+ *
+ * `skipped` 用中性灰、不走警告黄：它的含义是「这次一张都没产，但原因是配置 / 参与范围」，
+ * 与 `partial`（产出不全，可能真要去修）不是一回事。黄色会把人往「出故障了」带，
+ * 而这类记录的正确反应是「看一眼跳过的原因，决定要不要手动跑」。
+ */
 const STATUS_TONE: Record<PostprocessRunStatus, 'neutral' | 'info' | 'success' | 'warning' | 'danger'> = {
   running: 'info',
   succeeded: 'success',
   partial: 'warning',
   failed: 'danger',
+  skipped: 'neutral',
 }
 
 const SOURCE_LABELS = { auto: '自动触发', manual: '手动触发' } as const

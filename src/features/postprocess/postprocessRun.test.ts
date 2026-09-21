@@ -64,13 +64,19 @@ describe('后处理运行记录', () => {
     expect(getPostprocessRunPercent(finished)).toBe(100)
   })
 
-  it('状态判定：有产出 + 只有跳过 = 成功；有产出 + 有真错 = 部分完成；零产出 = 失败', () => {
+  /**
+   * 判定表（2026-09-21 报障：零产出 + 只有跳过曾被判成 `failed`，于是「这个方向关了自动后处理」
+   * 这类**配置使然**的跳过被渲染成红色故障，而同一批图手动跑一次就产出了）。
+   * 契约：**零产出那一档必须看 severity，不能只看条数。**
+   */
+  it('状态判定：跳过不是故障 —— 零产出也一样', () => {
     const skipped = createPostprocessIssue({ code: 'PP-SCOPE-001', stage: 'prepare' })
     const error = createPostprocessIssue({ code: 'PP-DIR-004', stage: 'write' })
     expect(resolvePostprocessRunStatus({ producedFiles: 3, issues: [skipped] })).toBe('succeeded')
     expect(resolvePostprocessRunStatus({ producedFiles: 3, issues: [skipped, error] })).toBe('partial')
-    expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [skipped] })).toBe('failed')
-    // 零产出且无记录 = 本次没有可做的事，不算失败
+    // 零产出：只有跳过 = 已跳过（不是失败）；有真错 = 失败；无记录 = 本次没有可做的事
+    expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [skipped] })).toBe('skipped')
+    expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [skipped, error] })).toBe('failed')
     expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [] })).toBe('succeeded')
   })
 
@@ -127,6 +133,13 @@ describe('后处理运行记录', () => {
       producedFiles: 0,
     })
     expect(summarizePostprocessRun(failed)).toBe('后处理失败：没有产出文件（错误 1）')
+
+    // 零产出但只有跳过：文案要说「被跳过」，不能说成失败（否则用户以为软件坏了）
+    const skippedOnly = finishPostprocessRun(run(2), {
+      issues: [createPostprocessIssue({ code: 'PP-SCOPE-002', stage: 'prepare' })],
+      producedFiles: 0,
+    })
+    expect(summarizePostprocessRun(skippedOnly)).toBe('后处理没有产出：1 项被跳过')
 
     expect(summarizePostprocessRun(applyPostprocessProgress(run(4), { completedImages: 1 }))).toBe('后处理进行中：1/4')
   })
