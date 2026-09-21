@@ -464,6 +464,16 @@ const fs = require('fs'),
 
 残留 `deps_temp_*` 会让 dev 报 `EPERM: open ...\react-dom.js` —— 删掉即可，不是代码问题。
 
+**2026-09-21 新症状（同一根因的另一种死法：dev 自己退出）**：预构建到新依赖时（日志里先出现
+`✨ new dependencies optimized: xlsx`），`optimizeDeps` 收尾会在 `runOptimizer → commit` 里
+`rm` 掉 `node_modules/.vite/deps_temp_<hash>`（实测 107 个文件 > 阈值 50）→ 被护栏拦住 →
+异常逃出 → **Node 进程直接退出，dev server 死掉**（不是 EPERM；用户侧只表现为「窗口突然没了」或
+刷新成白屏）。判据：stderr 末尾有 `checkBulkDeleteGuard ... node-safe-delete-shim.cjs` +
+`at async runOptimizer`。
+
+处理顺序**不能反**：先删残留在 `node_modules/.vite/` 下的 `deps_temp_*`，**再**起 dev，
+否则 vite 启动时还会再撞一次同一处护栏。
+
 ## 十一、UI 细节一致性改动的五条纪律（2026-09-19 实测定稿）
 
 做「统一间距 / 组件样式 / 排版层级」这类收口时，**先分类再动手**，否则会把设计意图当缺陷改掉。

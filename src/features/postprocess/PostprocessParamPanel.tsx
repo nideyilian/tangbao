@@ -15,28 +15,35 @@
  *
  * ## 布局依据（`design-system/tangbao/MASTER.md`，不是自创）
  *
- * - **栅格**（§4.4）：字段行走 `FormGrid` 的**12 列固定列模板**（标签 5 列 / 控件 7 列，
- *   列间距 20px、行间距 16px）。对齐由列模板决定 —— 原先 flex 的「14rem + 20rem」是
- *   两个最小宽度，宽屏时控件被拉长、窄屏时折行，控件左边界根本不成基线。
- * - **层级**（§5.9 复杂弹窗）：`DialogPane → Fieldset（分组）→ 字段行 / 状态`。
- *   分组用系统的 `Fieldset`，不手搓卡片（§5.9 禁止在 `DialogPane` 里再套大卡片）。
- *   状态用**分隔线**而不是第二个框 —— 框架层级相同就分不出主次。
+ * **2026-09-21 去掉分组卡片与标题**（用户实测反馈「一个开关占了两行」「卡片标题一点用都没有」）：
+ * 原先三个分组各是一个带 `legend` 的 `Fieldset`，标题自己占一行；现在分组只用一条
+ * 1px `Divider` 分隔，标题不渲染 —— 组内的字段名（「自动后处理」「输出目录」「水印归属」）
+ * 本来就说清了这一段是什么。于是：
+ *
+ * - **参与方式 / 输出位置**各只占一行（标签、继承状态、说明、控件同行）；
+ * - **水印**是「顶部一行：文案 + 按渠道 tab + 跳转入口」+「下方 16:9 预览区」。
+ *
+ * - **栅格**（§4.4）：字段行走 `FormGrid` 的 **12 列固定列模板**（标签 4 列 / 控件 8 列，
+ *   跨度写在 `.ds-form-grid__*` 里）。对齐由列模板决定 —— 原先 flex 的「14rem + 20rem」
+ *   是两个最小宽度，宽屏时控件被拉长、窄屏时折行，控件左边界根本不成基线。
+ * - **层级**（§5.9 复杂弹窗）：`DialogPane → 分隔线分区 → 字段行`。
+ *   组不再用带边框的框：三组框彼此同级，与状态行也分不出主次（§5.9 禁止 DialogPane 里再套大卡片）。
  * - **字号**（§4.3「常用字号 12/13/14/16」「标签 500、标题 600」）：
- *   分组标题 14/600（`Fieldset` 自带）→ 字段名 14/500 → 帮助文本 12/400 → 徽章 12/500。
- *   层级靠字号与字重，不靠压暗文字。
- * - **间距**（§4.4 标尺）：组间 24px（`Stack gap={6}`）、组内 16px（`Fieldset` 自带）、
+ *   字段名 14/500 → 帮助文本 12/400 → 状态徽章 12/500。层级靠字号与字重，不靠压暗文字。
+ * - **间距**（§4.4 标尺）：组间 20px（`Stack gap={5}`）、组内 16px（`FormGrid rowGap`）、
  *   标签列↔控件列 20px（栅格列间距）、控件内 8px（`Inline gap={2}`）。
  *   全部取自 `--ds-space-*`，不出现 14px / 6px 这类标尺外的值。
  * - **表单**（§5.3）：标签可见；placeholder 只放示例；继承路径这类「会变化的信息」放持续可见的帮助文本。
  */
 
-import { useMemo } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
+  AspectRatio,
   Badge,
   Button,
+  Divider,
   EmptyState,
-  Fieldset,
   FormGrid,
   FormGridControl,
   FormGridFull,
@@ -44,6 +51,7 @@ import {
   Inline,
   Stack,
   Switch,
+  Tabs,
   TextField,
 } from '../../design-system'
 import ChannelOutputDirs from './ChannelOutputDirs'
@@ -53,7 +61,7 @@ import { isCollectionWithinSelection, resolveCollectionPath } from '../../lib/po
 import { useStore } from '../../store'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useCompositeV2Store } from '../composite/storeV2'
-import { PresetCover } from '../composite/components/ConsolePresetCard'
+import { renderCompositeV2ToCanvas } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useJumpToControlConsole } from '../composite/lib/useJumpToControlConsole'
 import { useJumpToProjectTree } from '../projectTree/useJumpToProjectTree'
@@ -90,7 +98,7 @@ interface Props {
  * 字段行：栅格里的「标签槽 + 控件槽」。
  *
  * **对齐靠列模板，不靠内容碰运气**：这一对槽由 `FormGrid` 的 12 列模板决定
- * （标签 5 列 / 控件 7 列），于是同一张表单里所有字段的控件左边界落在同一条栅格线上，
+ * （标签 4 列 / 控件 8 列），于是同一张表单里所有字段的控件左边界落在同一条栅格线上，
  * 与标签文字长短无关。原先的 flex「basis-56 + basis-80」做不到这点 ——
  * 两列都是最小宽度，宽屏时控件列被拉长、窄屏时整块折行。
  *
@@ -123,23 +131,56 @@ function FieldRow({
   children: React.ReactNode
 }) {
   const helpText = help ?? field.help
+  const labelNode = (
+    <>
+      <span className="text-sm font-medium text-ds-text">{field.label}</span>
+      {onReset &&
+        (overridden ? (
+          <>
+            <Badge tone="info">本级自定义</Badge>
+            <Button variant="ghost" size="sm" onClick={onReset}>
+              恢复继承
+            </Button>
+          </>
+        ) : (
+          <span className="text-xs text-ds-muted">{sourceHint}</span>
+        ))}
+    </>
+  )
+
+  /*
+   * 整块式（`layout: 'full'`）：字段自带全部内容（水印归属的 tab 行 + 预览），
+   * 面板只给它一个跨行槽。标签由字段自己渲染 —— 它要跟 tab 挤在同一行里，
+   * 不能另起一列（那样 tab 就掉到第二行了，正是 2026-09-21 被报障的形态）。
+   */
+  if (field.layout === 'full') {
+    return <FormGridFull>{children}</FormGridFull>
+  }
+
+  /*
+   * 单行式（`layout: 'inline'`）：标签、徽章、说明、控件**全在一行**。
+   *
+   * 只给开关这类「一个控件就说完了」的字段用 —— 常规两槽布局会把它拆成
+   * 「左边标签 + 说明两行、右边一个开关」，一个开关吃掉两行高度（2026-09-20 反馈）。
+   * 控件自己决定怎么占位：开关用 `ml-auto` 靠右，输入框用 `flex-1` 撑开。
+   */
+  if (field.layout === 'inline') {
+    return (
+      <FormGridFull>
+        <Inline gap={3}>
+          {labelNode}
+          {helpText && <span className="text-xs text-ds-muted">{helpText}</span>}
+          {children}
+        </Inline>
+        {full}
+      </FormGridFull>
+    )
+  }
+
   return (
     <>
       <FormGridLabel>
-        <Inline gap={2}>
-          <span className="text-sm font-medium text-ds-text">{field.label}</span>
-          {onReset &&
-            (overridden ? (
-              <>
-                <Badge tone="info">本级自定义</Badge>
-                <Button variant="ghost" size="sm" onClick={onReset}>
-                  恢复继承
-                </Button>
-              </>
-            ) : (
-              <span className="text-xs text-ds-muted">{sourceHint}</span>
-            ))}
-        </Inline>
+        <Inline gap={2}>{labelNode}</Inline>
         {helpText && <p className="mt-1 text-xs leading-normal text-ds-muted">{helpText}</p>}
       </FormGridLabel>
       <FormGridControl>{children}</FormGridControl>
@@ -159,7 +200,6 @@ export default function PostprocessParamPanel({
   const setPostprocessOverride = useProjectTreeParamsStore((state) => state.setPostprocessOverride)
   const clearNodeParams = useProjectTreeParamsStore((state) => state.clearNodeParams)
   const showToast = useStore((state) => state.showToast)
-  const jumpToConsole = useJumpToControlConsole()
   const jumpToProjectTree = useJumpToProjectTree()
 
   const media = globalConfig.media
@@ -220,8 +260,15 @@ export default function PostprocessParamPanel({
     apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
   }
 
-  const clearDirs = (mediaId: string) => {
-    apply({ byMedia: { [mediaId]: { outputDirs: undefined, outputDir: undefined } } })
+  /**
+   * 删掉某渠道的第 `index` 个位置，其余位置上移（删到一个不剩 = 该渠道回到「留空」= 继续向上继承）。
+   *
+   * 整份重写而不是逐槽位改：`writeDirs` 读的是本轮 props 里的旧值，
+   * 一次事件里连写两笔的话，第二笔会基于过期数据（`byMedia` 只认最后一次 `apply`）。
+   */
+  const removeDirs = (mediaId: string, index: number) => {
+    const next = resolveDirs(mediaId).filter((_, slot) => slot !== index)
+    apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
   }
 
   /** 本渠道去掉本级覆盖后会落到哪：拿父节点那条链单独解析一次，当占位提示 */
@@ -290,14 +337,15 @@ export default function PostprocessParamPanel({
         return (
           // `w-fit` 必须：`.ds-switch` 是 `justify-content: space-between` 的 flex，
           // 放进撑满宽度的控件列会把开关甩到最右、中间留一大片空。
-          // `aria-label` 给无障碍名称（可见的字段名在左侧标签列里，不在 `<label>` 内）。
+          // `ml-auto` 把它推到行尾（整行式布局里没有 spacer，靠它占剩余空间）。
+          // `aria-label` 给无障碍名称（可见的字段名在左侧标签位里，不在 `<label>` 内）。
           // 文案走 formatParticipationLabel：不在启用范围时必须能读出「未生效」，
           // 否则它会与上方那句「不会产出渠道变体」的警告互相打脸。
           // 同时**刻意不置灰**：范围外仍然允许改这个值（先把参数配好，等方向进了范围即生效），
           // 既有契约也是「开关随时可写」，把交互拿掉等于单方面改契约。
           // `title` 负责解释它当前为什么不影响产出。
           <div
-            className="w-fit"
+            className="ml-auto w-fit"
             title={
               inEnabledScope ? undefined : '这个方向不在后处理的启用范围内，开关值当前不影响产出；请先到项目树启用'
             }
@@ -338,7 +386,7 @@ export default function PostprocessParamPanel({
         )
 
       case 'watermarkBinding':
-        return <WatermarkBindingSummary selectedNodeId={selectedNodeId} />
+        return <WatermarkBindingSummary selectedNodeId={selectedNodeId} label={field.label} hint={field.help} />
     }
   }
 
@@ -346,7 +394,7 @@ export default function PostprocessParamPanel({
    * 字段的**跨行内容**：只有「输出目录」有 —— 按渠道的目录表格。
    *
    * 为什么必须跨整行：它是一张「渠道 × 位置」的表，每一行自身还要
-   * 「渠道名 + 输入框 + 图标按钮 + 操作」，挤在控件槽（8 列）里会把中文共享盘路径
+   * 「渠道名 + 输入框 + 图标按钮 + 操作」，挤在控件槽里会把中文共享盘路径
    * 截成 `\192.168.202.:`（2026-09-20 实测踩过）—— 用户核对不了路径，这屏就白给了。
    */
   const renderFieldFull = (field: PostprocessParamField) => {
@@ -357,24 +405,22 @@ export default function PostprocessParamPanel({
         resolveDirs={resolveDirs}
         resolveInheritedHint={(mediaId) => inheritedDirsByMedia[mediaId] ?? ''}
         onChangeDir={writeDirs}
-        onClearDirs={clearDirs}
+        onRemoveDir={removeDirs}
         onPickError={() => showToast('选择导出位置失败，请重试', 'error')}
-        clearLabel="恢复继承"
       />
     )
   }
 
   return (
-    <Stack gap={6}>
+    <Stack gap={5}>
       {/*
        * 状态行（MASTER §5.9 的 Status 层）：当前改的是谁、值从哪来。
        *
-       * 刻意**不再用卡片**：原来它是一个 `Surface` 框，与下面三个 `Fieldset` 同为「带边框的框」，
-       * 层级分不出来 —— 而它其实是**元信息**，不是可编辑模块。改成 1px 下边界分隔后，
-       * 「框」只属于分组；它与下方内容的间距也收在组内档（16px < 组间 24px），视觉自动退后一层。
+       * 刻意**不再用卡片**：原来它是一个 `Surface` 框，与下面三个分组同为「带边框的框」，
+       * 层级分不出来 —— 而它其实是**元信息**，不是可编辑模块。
        */}
       <Stack gap={4}>
-        <Inline gap={3} className="border-b border-ds-border pb-4">
+        <Inline gap={3}>
           <Badge tone="neutral">{PROJECT_NODE_KIND_LABELS[resolveProjectNodeKind(depth)]}</Badge>
           <span className="min-w-0 flex-1 truncate text-sm text-ds-text" title={fullPath}>
             {fullPath || '（无路径）'}
@@ -413,24 +459,15 @@ export default function PostprocessParamPanel({
       </Stack>
 
       {/*
-       * 分组卡片 → `Fieldset`（§5.9：DialogPane 里不套大卡片；Fieldset 自带边框、12px 圆角、
-       * 16px 内边距与 `legend` 语义标题）。顺序即操作顺序：参不参与 → 产出放哪 → 叠什么水印。
+       * 分组之间只用一条 1px 分隔线（MASTER §5.9 的层级手法）。
+       *
+       * 原先每组是一个带 `legend` 的 `Fieldset`——标题自己占一行，一个开关就吃掉两行
+       * （2026-09-21 反馈：「我已经明确说了用一行」「卡片标题一点用都没有」）。
+       * 组内的字段名本来就说清了这段是什么，标题纯属重复。
        */}
-      {groups.map(({ group, fields }) => (
-        <Fieldset
-          key={group.id}
-          legend={group.title}
-          description={group.description}
-          // 水印归属在别处编辑，分组头上直接给跳转入口（§5.6：只读项必须指出下一步）
-          actions={
-            group.id === 'watermark' ? (
-              <Button variant="ghost" size="sm" onClick={() => jumpToConsole('watermark')}>
-                去中控台配水印
-              </Button>
-            ) : undefined
-          }
-        >
-          {/* 字段行成对放进 12 列栅格（标签槽 + 控件槽），对齐由列模板保证、与内容长度无关 */}
+      {groups.map(({ group, fields }, index) => (
+        <Fragment key={group.id}>
+          {index > 0 && <Divider />}
           <FormGrid>
             {fields.map((field) => (
               <FieldRow
@@ -446,47 +483,69 @@ export default function PostprocessParamPanel({
               </FieldRow>
             ))}
           </FormGrid>
-        </Fieldset>
+        </Fragment>
       ))}
     </Stack>
   )
 }
 
-/** 缩略图上限：水印库可能十几套，全铺开会把这一屏撑成一堵墙。 */
-const MAX_WATERMARK_THUMBS = 6
+/** 水印预览舞台的渲染尺寸：16:9。水印的缩放由渲染器按目标尺寸算，与产出链路同一套。 */
+const STAGE_SIZE = { width: 640, height: 360 }
 
-/** 水印缩略：封面 + 名称。封面复用中控台卡片的 `PresetCover`，别处不重复实现画布绘制。 */
-function PresetThumb({ preset }: { preset: CompositeV2Preset }) {
-  return (
-    <Inline gap={2} className="min-w-0 rounded-ds-md border border-ds-border bg-ds-surface px-2 py-1">
-      <span className="block h-8 w-8 shrink-0 overflow-hidden rounded-ds-md bg-ds-surface-subtle">
-        <PresetCover preset={preset} />
-      </span>
-      <span className="max-w-40 truncate text-xs text-ds-text" title={preset.name}>
-        {preset.name}
-      </span>
-    </Inline>
-  )
+/**
+ * 预览里的一层水印：把预设**真实渲染**到 16:9 画布上（与产出用同一个渲染器）。
+ *
+ * 为什么不画示意块：这一块的全部意义是**核对** —— 用户要确认这个渠道叠的到底是哪几套、
+ * 长什么样。用占位块等于让他去中控台再看一遍。
+ */
+function WatermarkStageLayer({ preset }: { preset: CompositeV2Preset }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    let stale = false
+    void renderCompositeV2ToCanvas({ preset, targetSize: STAGE_SIZE, fitMode: 'crop-fill' }, canvas, {
+      isStale: () => stale,
+    }).catch(() => {
+      // 无 canvas 的环境（jsdom）或单层渲染失败：这一层透明，不影响其余层与任何写入
+    })
+    return () => {
+      stale = true
+    }
+    // 预设内容变化（改图层/改画布）要重绘，所以依赖整个 preset 引用
+  }, [preset])
+
+  return <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />
 }
 
 /**
- * 水印归属摘要：**按渠道列全，并给出封面缩略图**。
+ * 水印归属：**顶部一行是参数文案 + 按渠道的 tab，下方是 16:9 预览区**。
  *
- * - 有配置：逐渠道列出**实际生效**的水印（继承链已解析），带封面 —— 只给名字认不出是哪一套；
- * - 一套都没有：只报「不叠水印」，并列出水印库里有哪些可选（杰哥 2026-09-20「水印要显示」），
- *   而不是留一片空白让人猜。
+ * 布局来由（2026-09-21 反馈「参数文案、tab 位于顶部，下方展示 16:9 的预览区」）：
+ * 上一版把文案放在左边的标签列里，tab 挤在控件列 —— 左边空、右边挤，预览还是竖版缩略图。
+ * 现在整块跨满 12 列：一行说清「这是什么 + 看哪个渠道 + 去哪改」，下面给够宽度的画面。
  *
- * **文案一律短句**（杰哥 2026-09-20「又说不明白，简短一点」）：状态是什么就说一句，
- * 不在界面上解释推理过程。
+ * tab 上的圆点是状态提示，但**预览区同时有文字状态**（「叠 N 套水印」/「不叠水印」）——
+ * 规范要求状态不能只靠颜色表达。
  *
- * 仍然**只读**：编辑入口在中控台的水印分区（那边才有画布编辑器），这里再放一个会是第二个编辑面。
+ * 仍然**只读**：编辑入口在中控台的水印分区（那边才有画布编辑器），这里放第二个编辑面只会打架。
  */
-function WatermarkBindingSummary({ selectedNodeId }: { selectedNodeId: string }) {
+function WatermarkBindingSummary({
+  selectedNodeId,
+  label,
+  hint,
+}: {
+  selectedNodeId: string
+  label: string
+  hint?: string
+}) {
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
   const globalWatermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
   const media = usePostprocessMediaStore((state) => state.media)
   const presets = useCompositeV2Store((state) => state.presets)
+  const jumpToConsole = useJumpToControlConsole()
 
   const presetById = useMemo(() => new Map(presets.map((preset) => [preset.id, preset])), [presets])
 
@@ -494,54 +553,72 @@ function WatermarkBindingSummary({ selectedNodeId }: { selectedNodeId: string })
     const binding = resolveNodeWatermarkBinding(collections, params, selectedNodeId, globalWatermarkPresetIds, item.id)
     return { mediaId: item.id, name: item.name, presetIds: binding.presetIds }
   })
-  // 只列真有水印的渠道：四个渠道各写一行「不叠水印」是纯噪音
-  const bound = rows.filter((row) => row.presetIds.length > 0)
 
-  if (bound.length === 0) {
-    return (
-      <Stack gap={3}>
-        <p className="text-xs text-ds-muted">不叠水印。</p>
-        {presets.length > 0 && (
-          <Stack gap={2}>
-            <span className="text-xs text-ds-muted">可选水印：</span>
-            <Inline gap={2}>
-              {presets.slice(0, MAX_WATERMARK_THUMBS).map((preset) => (
-                <PresetThumb key={preset.id} preset={preset} />
-              ))}
-              {presets.length > MAX_WATERMARK_THUMBS && (
-                <span className="text-xs text-ds-muted">…还有 {presets.length - MAX_WATERMARK_THUMBS} 套</span>
-              )}
-            </Inline>
-          </Stack>
-        )}
-      </Stack>
-    )
-  }
+  /** 当前查看的渠道。默认第一个；切换方向或渠道被删时回落到第一个，不留空白 */
+  const [activeMediaId, setActiveMediaId] = useState<string | null>(null)
+  const activeRow = rows.find((row) => row.mediaId === activeMediaId) ?? rows[0]
+
+  if (!activeRow) return <p className="text-xs text-ds-muted">媒体表为空。</p>
+
+  // 预设可能已被删除：悬空 id 不能静默咽掉，否则用户以为还叠着那套水印
+  const activePresets = activeRow.presetIds
+    .map((presetId) => presetById.get(presetId))
+    .filter((preset): preset is CompositeV2Preset => Boolean(preset))
+  const missingCount = activeRow.presetIds.length - activePresets.length
 
   return (
-    <Stack gap={2}>
-      {bound.map((row) => (
-        <Inline
-          key={row.mediaId}
-          gap={2}
-          className="rounded-ds-md border border-ds-border bg-ds-surface-subtle px-3 py-2"
-        >
-          <span className="w-16 shrink-0 text-xs font-medium text-ds-text">{row.name}</span>
-          <Inline gap={2} className="min-w-0 flex-1">
-            {row.presetIds.map((presetId) => {
-              const preset = presetById.get(presetId)
-              // 预设可能已被删除：悬空 id 不能静默咽掉，否则用户以为还叠着那套水印
-              return preset ? (
-                <PresetThumb key={presetId} preset={preset} />
-              ) : (
-                <span key={presetId} className="text-xs text-ds-warning">
-                  已删除的预设
-                </span>
-              )
-            })}
-          </Inline>
-        </Inline>
-      ))}
+    <Stack gap={3}>
+      {/* 顶部一行：参数文案（这是什么）+ tab（看哪个渠道）+ 跳转入口（要改去哪） */}
+      <Inline gap={3}>
+        <span className="text-sm font-medium text-ds-text">{label}</span>
+        {hint && <span className="text-xs text-ds-muted">{hint}</span>}
+        <Tabs
+          aria-label="按渠道查看水印"
+          size="sm"
+          value={activeRow.mediaId}
+          items={rows.map((row) => ({
+            value: row.mediaId,
+            label: row.name,
+            badge: (
+              <span
+                aria-hidden="true"
+                className={`block h-1.5 w-1.5 rounded-full ${
+                  row.presetIds.length > 0 ? 'bg-ds-success' : 'bg-ds-muted/40'
+                }`}
+              />
+            ),
+          }))}
+          onValueChange={(value) => setActiveMediaId(value)}
+        />
+        <span className="min-w-4 flex-1" />
+        <Button variant="ghost" size="sm" onClick={() => jumpToConsole('watermark')}>
+          去中控台配水印
+        </Button>
+      </Inline>
+
+      {/* 下方：16:9 预览区。水印是叠在画面上的，横版比例最能看出压边与占位 */}
+      <AspectRatio
+        ratio={16 / 9}
+        data-testid="watermark-stage"
+        className="relative w-full max-w-xl rounded-ds-lg border border-ds-border bg-ds-surface-subtle"
+      >
+        {activePresets.map((preset) => (
+          <WatermarkStageLayer key={preset.id} preset={preset} />
+        ))}
+        {activePresets.length === 0 && (
+          <span className="absolute inset-0 flex items-center justify-center text-xs text-ds-muted">不叠水印</span>
+        )}
+        {activePresets.length > 0 && (
+          <span className="absolute left-2 top-2 rounded-ds-md bg-ds-scrim px-2 py-0.5 text-xs text-ds-text">
+            叠 {activePresets.length} 套水印
+          </span>
+        )}
+        {missingCount > 0 && (
+          <span className="absolute bottom-2 right-2 rounded-ds-md bg-ds-scrim px-2 py-0.5 text-xs text-ds-warning">
+            {missingCount} 套预设已删除
+          </span>
+        )}
+      </AspectRatio>
     </Stack>
   )
 }

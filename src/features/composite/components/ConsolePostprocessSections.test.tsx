@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from '../../../lib/postprocessNaming'
+import { PURE_MEDIA_ID } from '../../../lib/postprocessMedia'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import type { AssetCollection } from '../../../types'
@@ -71,6 +72,25 @@ function clickByAriaLabel(label: string) {
   const node = container.querySelector<HTMLElement>(`[aria-label="${label}"]`)
   if (!node) throw new Error(`未找到元素：${label}`)
   act(() => node.click())
+}
+
+/**
+ * 写「按渠道」表格的某个单元格并**提交**。
+ *
+ * 表格走 `DataGrid`（TB-060），单元格是**草稿态**：输入期间只改本地 draft，失焦或回车才提交。
+ * 所以写完必须 blur —— 而且要**先 focus**（jsdom 里未聚焦的元素 `blur()` 不派发事件）。
+ * 单元格的无障碍名称形如「导出位置：百度」。
+ */
+function commitGridCell(cellLabel: string, value: string) {
+  const input = container.querySelector<HTMLInputElement>(`input[aria-label="${cellLabel}"]`)
+  if (!input) throw new Error(`未找到表格单元格：${cellLabel}`)
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  act(() => input.focus())
+  act(() => {
+    setter?.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  act(() => input.blur())
 }
 
 function render(node: React.ReactElement) {
@@ -179,17 +199,64 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
 
   it('全局渠道目录在全局作用域写全局渠道表，并支持双写', () => {
     render(<OutputSection scope={GLOBAL_NODE_ID} />)
-    typeInto('[data-testid="channel-output-dir-baidu-0"]', 'D:/百度一')
+    commitGridCell('导出位置：百度', 'D:/百度一')
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一'])
 
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="channel-output-add-baidu"]')!.click())
-    typeInto('[data-testid="channel-output-dir-baidu-1"]', 'D:/百度二')
+    // 第二个位置加在**下一行**（不是右边加一列），所以它的单元格名带位置号
+    clickByAriaLabel('百度：在下面再加一个位置')
+    commitGridCell('导出位置：百度（位置2）', 'D:/百度二')
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一', 'D:/百度二'])
+  })
+
+  it('⭐ 每个位置单独删：删一格不影响另一格，删到一个不剩才退回留空', () => {
+    // 这是移除「清空」按钮换来的能力：旧按钮一次抹掉整个渠道的两个位置，没有确认也撤不回
+    act(() => {
+      usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度一')
+      usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 1, 'D:/百度二')
+    })
+    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+
+    clickByAriaLabel('百度（位置2）：删除这个位置')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一'])
+
+    clickByAriaLabel('百度：删除这个位置')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toBeUndefined()
+  })
+
+  it('⭐ 节点作用域删到一个不剩 = 摘掉本级覆盖（写 undefined，而不是留一条空数组）', () => {
+    // 空数组在协议里是**显式**「用默认输出位置」，会把上级的配置一起挡掉；
+    // 「删干净」必须是 `undefined`（没表态，继续继承）。这两个含义差在类型上看不出来，
+    // 只能靠断言钉住。
+    act(() => {
+      useProjectTreeParamsStore.getState().setPostprocessOverride('direction-a', {
+        byMedia: { baidu: { outputDirs: ['D:/节点一', 'D:/节点二'] } },
+      })
+    })
+    render(<OutputSection scope="direction-a" />)
+
+    clickByAriaLabel('百度（位置2）：删除这个位置')
+    expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.byMedia?.baidu?.outputDirs).toEqual(
+      ['D:/节点一'],
+    )
+
+    clickByAriaLabel('百度：删除这个位置')
+    expect(
+      useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.byMedia?.baidu?.outputDirs,
+    ).toBeUndefined()
+  })
+
+  it('⭐ 没有「一键清空整个渠道」的按钮（误点即丢，2026-09-21 移除）', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度一')
+    })
+    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    expect(container.querySelector('[aria-label="百度：用默认"]')).toBeNull()
+    expect(container.querySelector('[aria-label="百度：恢复继承"]')).toBeNull()
   })
 
   it('节点作用域下同一条目录写进该节点的 byMedia，而不是全局渠道表', () => {
     render(<OutputSection scope="direction-a" />)
-    typeInto('[data-testid="channel-output-dir-baidu-0"]', 'D:/节点百度')
+    commitGridCell('导出位置：百度', 'D:/节点百度')
     const override = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess
     expect(override?.byMedia?.baidu?.outputDirs).toEqual(['D:/节点百度'])
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toBeUndefined()
@@ -222,11 +289,59 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
     expect(container.querySelector<HTMLInputElement>('input[placeholder="新渠道名称，如「抖音」"]')).toBeTruthy()
   })
 
-  it('渠道名、尺寸数与横竖标签都落在列上（原卡片看板的信息一个没丢）', () => {
+  it('渠道名、尺寸数都落在列上（原卡片看板的信息一个没丢）', () => {
     const body = render(<MediaSection />)
     expect(body).toContain('广点通')
     expect(body).toContain('尺寸数')
     expect(body).toContain('横版')
+  })
+
+  it('⭐ 尺寸表一行一个渠道，详细尺寸是一组复选框（勾选 = 参与产出）', () => {
+    // 2026-09-21 反馈：「详细尺寸使用复选框，尽可能排一行，放不下的排两行」。
+    // 行 = 渠道，格子里横排复选框 —— 扫一眼就知道每个渠道配了哪几套、哪几套是开的。
+    render(<MediaSection />)
+    const table = container.querySelector<HTMLTableElement>('table[aria-label="尺寸表"]')!
+    const channelCount = usePostprocessMediaStore.getState().media.filter((item) => item.id !== PURE_MEDIA_ID).length
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(channelCount)
+
+    // 勾选按**可访问名称**定位（「渠道 宽×高 参与产出」），不受渲染顺序影响
+    const box = container.querySelector<HTMLInputElement>('input[aria-label="广点通 1280×720 参与产出"]')
+    expect(box?.checked).toBe(true)
+    act(() => box!.click())
+    const gdt = usePostprocessMediaStore.getState().media.find((item) => item.id === 'gdt')!
+    expect(gdt.sizes.find((size) => size.id === 'gdt-1280x720')?.enabled).toBe(false)
+  })
+
+  it('⭐ 详细尺寸排不下就折行：格子是 flex-wrap 容器，尺寸多的渠道自己折到第二行', () => {
+    render(<MediaSection />)
+    const vendorCell = container.querySelector<HTMLElement>('[data-testid="size-checks-vendor"]')!
+    expect(vendorCell.className).toContain('flex-wrap')
+    const vendor = usePostprocessMediaStore.getState().media.find((item) => item.id === 'vendor')!
+    expect(vendorCell.querySelectorAll('input[type="checkbox"]')).toHaveLength(vendor.sizes.length)
+  })
+
+  it('⭐ 点尺寸名展开详细编辑：改宽高 = 换一套尺寸，主键跟着换', () => {
+    render(<MediaSection />)
+    act(() => container.querySelector<HTMLElement>('[data-testid="edit-size-gdt-1280x720"]')!.click())
+    expect(text()).toContain('编辑尺寸：广点通 1280×720')
+
+    typeInto('input[aria-label="尺寸宽"]', '1920')
+    clickByText('应用')
+
+    // 主键由「渠道-宽x高」派生：改了宽高就是新主键，旧规格不再存在
+    const ids = usePostprocessMediaStore
+      .getState()
+      .media.find((item) => item.id === 'gdt')!
+      .sizes.map((size) => size.id)
+    expect(ids).toContain('gdt-1920x720')
+    expect(ids).not.toContain('gdt-1280x720')
+  })
+
+  it('尺寸行的「+」是图标按钮：加尺寸就近加在这个渠道上', () => {
+    render(<MediaSection />)
+    clickByAriaLabel('给「头条」加一个尺寸')
+    const toutiao = usePostprocessMediaStore.getState().media.find((item) => item.id === 'toutiao')!
+    expect(toutiao.sizes.some((size) => size.width === 1024 && size.height === 1024)).toBe(true)
   })
 })
 

@@ -48,6 +48,17 @@ export interface PostprocessParamField {
    * 给它一个「恢复继承」按钮只会让人以为这里能改。
    */
   resettable: boolean
+  /**
+   * 行的形态。不给就是默认的**两槽布局**（标签列 + 控件列）。
+   *
+   * - `'inline'`：标签、状态徽章、说明、控件**挤在同一行**（跨满 12 列栅格）。
+   *   只给「一个控件就能说完」的字段用（开关最典型）。默认布局会把「标签 + 说明」
+   *   摞成两行、控件另占一列，一个开关就吃掉两行高度（2026-09-20 反馈）。
+   * - `'full'`：字段**自带整块内容**（跨满 12 列），标签由渲染方自己排 ——
+   *   水印归属就是这样：它要「标签 + 按渠道 tab + 跳转入口」挤同一行，
+   *   再在下面铺一整块 16:9 预览，两槽布局装不下（2026-09-21 反馈）。
+   */
+  layout?: 'inline' | 'full'
 }
 
 /**
@@ -58,8 +69,13 @@ export interface PostprocessParamField {
  * 字段的 `help` 上；组只有在自己表达了「这组是干什么的、字段之间如何配合」这类
  * 字段级说明覆盖不到的信息时才写 description。
  *
- * **数组顺序即面板里的卡片顺序**，按用户的实际操作顺序排：
+ * **数组顺序即面板里的分组顺序**，按用户的实际操作顺序排：
  * 先决定这个方向参不参与 → 再决定产出放哪 → 最后决定叠什么水印。
+ *
+ * ⚠️ `title` **不再渲染**（2026-09-21）：面板里分组只隔一条分隔线，组标题被用户判定为
+ * 「一点用都没有」并去掉（组内字段名「自动后处理 / 输出目录 / 水印归属」本就说明了一切）。
+ * 保留它是因为「这一组是什么」仍是分组本身的定义，测试与将来的列表/导入导出仍按它分组。
+ * 新加分组时别指望它出现在界面上。
  */
 export const PARAM_GROUPS: Array<{ id: PostprocessParamField['group']; title: string; description?: string }> = [
   { id: 'participation', title: '参与方式' },
@@ -77,6 +93,8 @@ export const POSTPROCESS_PARAM_FIELDS: PostprocessParamField[] = [
     control: 'enabled',
     group: 'participation',
     resettable: true,
+    // 一个开关，整行摆得下 —— 不要为了它占两行
+    layout: 'inline',
   },
   {
     key: 'outputDir',
@@ -89,11 +107,13 @@ export const POSTPROCESS_PARAM_FIELDS: PostprocessParamField[] = [
   {
     key: 'watermarkPresetIds',
     label: '水印归属',
-    // 跳转入口就在分组头（「去中控台配水印」），这里只说明「这里不能改」
+    // 跳转入口就在同一行右侧（「去中控台配水印」），这里只说明「这里不能改」
     help: '只读。',
     control: 'watermarkBinding',
     group: 'watermark',
     resettable: false,
+    // 自带整块内容：文案 + tab 一行、下面 16:9 预览（见组件里的布局说明）
+    layout: 'full',
   },
 ]
 

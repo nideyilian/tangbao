@@ -100,7 +100,7 @@ export interface FormGridProps extends HTMLAttributes<HTMLDivElement> {
  * </FormGrid>
  * ```
  *
- * 两列的具体跨度写在样式里（`.ds-form-grid__label` = 5 列、`__control` = 7 列），
+ * 两列的具体跨度写在样式里（`.ds-form-grid__label` = 4 列、`__control` = 8 列），
  * 窄容器自动堆叠（容器查询，不看窗口宽度）。**对齐由列模板保证**，不由内容的宽度碰运气。
  */
 export const FormGrid = forwardRef<HTMLDivElement, FormGridProps>(function FormGrid(

@@ -77,6 +77,49 @@ function edit(input: ReturnType<typeof inputFor>, text: string, finish: 'blur' |
 }
 
 describe('DataGrid', () => {
+  it('⭐ spanRows 合并单元格：跨行格带 rowSpan，被盖住的行不出这一格', () => {
+    // 「一个渠道占多行、渠道名只出现一次」靠它实现。**0 的行必须不出 <td>** ——
+    // 出一个空格子的话后面的列会整体右移一格：表格看着没错位，其实是每列都错位了。
+    const columns: Array<DataGridColumn<Row>> = [
+      {
+        key: 'group',
+        header: '渠道',
+        editor: 'readonly',
+        spanRows: (index) => (index === 0 ? 2 : index === 1 ? 0 : 1),
+      },
+      { key: 'name', header: '位置', editor: 'text' },
+    ]
+    const rows: Row[] = [
+      { id: 'g1', name: 'D:/一', width: 0, enabled: true, dirs: [] },
+      { id: 'g2', name: 'D:/二', width: 0, enabled: true, dirs: [] },
+      { id: 'h1', name: 'D:/三', width: 0, enabled: true, dirs: [] },
+    ]
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(
+        <DataGrid
+          aria-label="合并表"
+          columns={columns}
+          rows={rows}
+          getRowId={(row) => row.id}
+          onCellCommit={vi.fn()}
+        />,
+      )
+    })
+
+    // 第 1 个 tr 是表头
+    const bodyRows = renderer.root.findAllByType('tr').slice(1)
+    expect(bodyRows).toHaveLength(3)
+
+    const firstCells = bodyRows[0].findAllByType('td')
+    expect(firstCells).toHaveLength(2)
+    expect(firstCells[0].props.rowSpan).toBe(2)
+    // 第 2 行只剩「位置」那一格（渠道格被上面那格盖住）
+    expect(bodyRows[1].findAllByType('td')).toHaveLength(1)
+    // 不合并的格子不写 rowSpan —— 默认就是跨 1 行
+    expect(bodyRows[2].findAllByType('td')[0].props.rowSpan).toBeUndefined()
+  })
+
   it('每个编辑列都渲染出带行列名的输入框（表头与行都进了无障碍树）', () => {
     const { renderer } = renderGrid()
     const labels = renderer.root.findAllByType('input').map((node) => String(node.props['aria-label'] ?? ''))

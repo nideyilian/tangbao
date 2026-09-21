@@ -88,24 +88,36 @@ function pointScopeAt(collectionId: string | null) {
 /**
  * 「按渠道的导出位置」**默认就是展开的**（杰哥 2026-09-20「输出位置不要折叠」）。
  *
- * 断言本身就是回归：折叠态下 `channel-output-dir-*` 只有点开之后才存在，
+ * 断言本身就是回归：折叠态下这张表只有点开之后才存在，
  * 用户得先点一次才能核对各渠道到底存到哪 —— 那正是被报障的形态。
  */
 function expectChannelDirsVisible() {
-  if (!document.querySelector('[data-testid="channel-output-dir-baidu-0"]')) {
+  if (!document.querySelector('table[aria-label="按渠道设置导出位置"]')) {
     throw new Error('按渠道的导出位置默认没有展开（输出位置应当是展开态）')
   }
 }
 
-/** 受控 input 的写入要过原生 setter，否则 React 的 value 追踪器认为没变、不触发 onChange */
-function typeInto(selector: string, value: string) {
-  const input = document.querySelector<HTMLInputElement>(selector)
-  if (!input) throw new Error(`未找到输入框：${selector}`)
+/**
+ * 写「按渠道」表格的某个单元格并**提交**。
+ *
+ * 表格走 `DataGrid`，单元格是**草稿态**：输入期间只改本地 draft，失焦或回车才提交
+ * （直接受控会在用户删空输入框的瞬间回填成原值，数字根本改不了）。
+ * 所以测试写完必须 blur，否则库里什么都不会变 —— 这不是 bug，是刻意的。
+ *
+ * 无障碍名称形如「导出位置：百度」（`DataGrid` 用「列名：行标签」拼）。
+ */
+function commitGridCell(cellLabel: string, value: string) {
+  const input = document.querySelector<HTMLInputElement>(`input[aria-label="${cellLabel}"]`)
+  if (!input) throw new Error(`未找到表格单元格：${cellLabel}`)
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  // 必须先 focus：jsdom 里 `blur()` 只在元素是激活元素时才派发 blur 事件，
+  // 不先聚焦的话「失焦提交」永远不会发生。
+  act(() => input.focus())
   act(() => {
     setter?.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
+  act(() => input.blur())
 }
 
 function render(sourceSize = '1280x720', onClose: () => void = () => {}) {
@@ -221,9 +233,10 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
 
   it('只有方向级的三个分组，全局独有参数一律不出现', () => {
     const body = render()
-    expect(body).toContain('参与方式')
-    expect(body).toContain('输出位置')
-    expect(body).toContain('水印')
+    // 三段各由它的字段名自报家门（分组标题 2026-09-21 起不再渲染）
+    expect(body).toContain('自动后处理')
+    expect(body).toContain('输出目录')
+    expect(body).toContain('水印归属')
     const panel = panelText()
     for (const globalOnly of ['媒体表', '命名模板', '创作者', '画面方向', '分发', '纯净版自动伴随', '产出预览']) {
       expect(panel, `全局独有参数「${globalOnly}」不该出现在方向面板里`).not.toContain(globalOnly)
@@ -250,15 +263,30 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     for (const grid of grids) {
       expect(grid.style.columnGap).toBe('var(--ds-space-5)') // 标签列↔控件列 20px
       expect(grid.style.rowGap).toBe('var(--ds-space-4)') // 字段行之间 16px
-    }
 
-    // 每个分组里的字段都成对：标签槽数 === 控件槽数（漏一个就会出现半行空洞）
-    for (const fieldset of Array.from(document.querySelectorAll('fieldset.ds-fieldset'))) {
-      const labels = fieldset.querySelectorAll('.ds-form-grid__label')
-      const controls = fieldset.querySelectorAll('.ds-form-grid__control')
-      expect(labels.length).toBeGreaterThan(0)
+      // 每个分组的布局只有两种合法形态：
+      // ① 两槽成对（标签槽数 === 控件槽数，漏一个就会出现半行空洞）；
+      // ② 整行式（`layout: 'inline' | 'full'` 的字段，跨满 12 列，不产生两槽）。
+      const labels = grid.querySelectorAll('.ds-form-grid__label')
+      const controls = grid.querySelectorAll('.ds-form-grid__control')
+      const fulls = grid.querySelectorAll('.ds-form-grid__full')
+      expect(labels.length + fulls.length).toBeGreaterThan(0)
       expect(labels.length).toBe(controls.length)
     }
+  })
+
+  it('⭐ 参与方式是整行式：标签、说明、开关同一行（一个开关不该占两行）', () => {
+    render()
+    const row = Array.from(document.querySelectorAll<HTMLElement>('.ds-form-grid__full')).find((node) =>
+      node.textContent?.includes('自动后处理'),
+    )
+    expect(row).toBeTruthy()
+    // 同一行里同时有标签、说明与控件
+    expect(row!.textContent).toContain('关闭后不产出变体')
+    expect(row!.querySelector('input[role="switch"]')).toBeTruthy()
+    // 这一组不产生「标签槽 / 控件槽」，所以字段行的高度就是一行
+    const grid = row!.closest('.ds-form-grid')!
+    expect(grid.querySelectorAll('.ds-form-grid__label')).toHaveLength(0)
   })
 
   it('⭐ 视觉层级：字段名 14/500、帮助文本 12，且状态行不再是第二个「框」', () => {
@@ -276,10 +304,17 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     expect(workspace.querySelector('.ds-surface')).toBeNull()
   })
 
-  it('⭐ 分组用系统的 Fieldset，legend 即分组标题（MASTER §5.9：DialogPane 里不套大卡片）', () => {
+  it('⭐ 分组不再有卡片与标题：三段之间只用 1px 分隔线（卡片标题「一点用都没有」）', () => {
+    // 2026-09-21 反馈：「我已经明确说了用一行」「每个卡片的标题全部去掉」。
+    // 原先三个 `Fieldset` 的 legend 各占一行，一个开关就吃掉两行高度，
+    // 而且三组框彼此同级、与顶部的状态行也分不出主次（MASTER §5.9 禁止 DialogPane 里套大卡片）。
     render()
-    const groups = Array.from(document.querySelectorAll('fieldset.ds-fieldset'))
-    expect(groups.map((group) => group.querySelector('legend')?.textContent)).toEqual(['参与方式', '输出位置', '水印'])
+    expect(document.querySelectorAll('fieldset.ds-fieldset')).toHaveLength(0)
+    expect(document.querySelectorAll('legend')).toHaveLength(0)
+
+    // 三组分段 → 两条分隔线。字段名（自动后处理 / 输出目录 / 水印归属）自己说清这一段是什么。
+    const workspace = document.body.querySelector('.ds-dialog-workspace')!
+    expect(workspace.querySelectorAll('hr.ds-divider')).toHaveLength(2)
   })
 
   it('⭐ 状态行只说一次（原先 footer 与面板各写一句同样的话）', () => {
@@ -310,12 +345,9 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     // 它正好是那个真实 bug：`flex-1` 写到了 `className`（落到内层 <input>）而不是
     // `containerClassName`（外层 `display:grid` 的 `.ds-field`），输入框就按内容宽度定死，
     // 右边空出 700px。`Switch` 则是 `justify-content: space-between`，容器一撑开就被甩到最右。
+    //
+    // 渠道目录那一列不在此列：它走 `DataGrid`，列宽由表格自己管（不靠 flex 撑）。
     render()
-    expectChannelDirsVisible()
-    const dirInput = document.querySelector<HTMLInputElement>('[data-testid="channel-output-dir-baidu-0"]')!
-    expect(dirInput.className).not.toContain('flex-1')
-    expect(dirInput.closest('.ds-field')!.className).toContain('flex-1')
-
     const outputDirField = document
       .querySelector<HTMLInputElement>('input[aria-label="输出目录"]')
       ?.closest('.ds-field')
@@ -328,7 +360,7 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
   it('渠道位置写进本级的 byMedia，而不是全局渠道表', () => {
     render()
     expectChannelDirsVisible()
-    typeInto('[data-testid="channel-output-dir-baidu-0"]', 'D:/节点百度')
+    commitGridCell('导出位置：百度', 'D:/节点百度')
     const override = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess
     expect(override?.byMedia?.baidu?.outputDirs).toEqual(['D:/节点百度'])
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toBeUndefined()
@@ -343,35 +375,29 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     expect(panelText()).toContain('广点通')
   })
 
-  it('⭐ 渠道目录是表格：表头与所有数据行共用同一个列模板（列边界才对得齐）', () => {
-    // 「渠道 × 位置」是行列数据，用表格排 —— 列边界由整表同一个
-    // `grid-template-columns` 决定。若每行各算各的，同一列在不同行宽度不一样，
-    // 就退化成「一行一个 flex」那种参差。
+  it('⭐ 渠道目录是 DataGrid：表头说清每列，一行一个渠道', () => {
+    // 「渠道 × 位置」是行列数据，交给设计系统的 `DataGrid`（TB-060）——
+    // 列定义同时驱动界面编辑与将来的导入导出，路径列还自带「选择目录」按钮。
     render()
-    const table = document.querySelector('[role="table"][aria-label="按渠道设置导出位置"]')!
+    const table = document.querySelector<HTMLTableElement>('table[aria-label="按渠道设置导出位置"]')!
     expect(table).toBeTruthy()
 
-    const rows = Array.from(table.querySelectorAll<HTMLElement>('[role="row"]'))
-    const mediaCount = usePostprocessMediaStore.getState().media.length
-    expect(rows.length).toBe(1 + mediaCount) // 表头 + 每个渠道一行
-
-    const templates = new Set(rows.map((row) => row.style.gridTemplateColumns))
-    expect(templates.size).toBe(1)
-    expect(Array.from(templates)[0]).toBeTruthy()
-
-    // 表头一次说清每列是什么
-    const headers = Array.from(table.querySelectorAll('[role="columnheader"]')).map((node) => node.textContent)
+    const headers = Array.from(table.querySelectorAll('th')).map((node) => node.textContent?.trim())
     expect(headers).toEqual(['渠道', '导出位置', '操作'])
+
+    const mediaCount = usePostprocessMediaStore.getState().media.length
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(mediaCount)
   })
 
   it('⭐ 渠道表跨整行（8 列的控件槽放不下它，会把路径截断）', () => {
     render()
-    const full = document.querySelector('.ds-form-grid__full')
-    expect(full).toBeTruthy()
-    expect(full!.querySelector('[role="table"]')).toBeTruthy()
+    const table = document.querySelector<HTMLTableElement>('table[aria-label="按渠道设置导出位置"]')!
+    // 它必须落在跨行槽里 —— 控件槽窄到读不了中文路径（实测截成 `\192.168.202.:`）
+    expect(table.closest('.ds-form-grid__full')).toBeTruthy()
+    expect(table.closest('.ds-form-grid__control')).toBeNull()
   })
 
-  it('出现双写时整表多一列，且仍是同一个模板（含表头）', () => {
+  it('⭐ 出现第二个位置时该渠道多一行、渠道格跨两行，而不是右边多一列', () => {
     act(() => {
       useProjectTreeParamsStore.setState({
         params: {
@@ -382,13 +408,18 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
       })
     })
     render()
-    const table = document.querySelector('[role="table"][aria-label="按渠道设置导出位置"]')!
-    const headers = Array.from(table.querySelectorAll('[role="columnheader"]')).map((node) => node.textContent)
-    expect(headers).toEqual(['渠道', '导出位置', '双写位置', '操作'])
+    const table = document.querySelector<HTMLTableElement>('table[aria-label="按渠道设置导出位置"]')!
 
-    const rows = Array.from(table.querySelectorAll<HTMLElement>('[role="row"]'))
-    const templates = new Set(rows.map((row) => row.style.gridTemplateColumns))
-    expect(templates.size).toBe(1) // 表头也跟着换模板，否则表头与内容列会错位
+    // 列数不随位置数增长 —— 往右加列会把「导出位置」这一列挤窄，而中文共享盘路径
+    // 正是这一屏唯一要看清的东西（2026-09-21 改版的原因）
+    const headers = Array.from(table.querySelectorAll('th')).map((node) => node.textContent?.trim())
+    expect(headers).toEqual(['渠道', '导出位置', '操作'])
+
+    // 百度那一组占两行：渠道名只在第一行出现，且跨两行（Excel 的合并单元格）
+    const mediaCount = usePostprocessMediaStore.getState().media.length
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(mediaCount + 1)
+    const merged = table.querySelector<HTMLTableCellElement>('td[rowspan="2"]')
+    expect(merged?.textContent?.trim()).toBe('百度')
   })
 
   it('没填位置的渠道不进配置（留空 = 继承上级）', () => {
@@ -396,7 +427,7 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     expect(useProjectTreeParamsStore.getState().params['direction-a']).toBeUndefined()
   })
 
-  it('水印归属按渠道展示，并标出已删除的预设', () => {
+  it('⭐ 水印顶部一行：参数文案 + 按渠道 tab + 跳转入口，全在同一行里', () => {
     act(() => {
       useProjectTreeParamsStore.setState({
         params: { 'direction-a': { postprocess: { watermarkPresetIds: ['preset-a', 'preset-ghost'] } } },
@@ -404,18 +435,46 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     })
     const body = render()
     expect(body).toContain('水印归属')
-    // 生效的水印要给名字（封面缩略图由 `PresetCover` 渲染，jsdom 里量不到，只断名字）
-    expect(body).toContain('糖包水印')
+    expect(body).toContain('只读。')
+    expect(body).toContain('去中控台配水印')
+
+    const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    const mediaCount = usePostprocessMediaStore.getState().media.length
+    expect(tabs).toHaveLength(mediaCount)
+    expect(tabs[0].textContent).toContain('广点通')
+
+    // 文案与 tab 必须在**同一个容器**里（上一版把文案留在左侧标签列、tab 挤在控件列，
+    // 于是文案一行、tab 又一行 —— 正是被报障的「两行」形态）
+    const row = tabs[0].closest('.ds-inline')
+    expect(row?.textContent).toContain('水印归属')
+    expect(row?.textContent).toContain('只读。')
+
+    // 默认看第一个渠道：预览区给状态文字（画面由渲染器画，jsdom 量不到像素）
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
+    expect(body).toContain('叠 1 套水印')
     // 悬空 id 不能静默咽掉，否则用户以为还叠着那套水印
-    expect(body).toContain('已删除的预设')
+    expect(body).toContain('1 套预设已删除')
+
+    // 切换 tab → 选中态跟着走，预览换到那个渠道
+    act(() => tabs[tabs.length - 1].click())
+    expect(tabs[tabs.length - 1].getAttribute('aria-selected')).toBe('true')
+    expect(tabs[0].getAttribute('aria-selected')).toBe('false')
   })
 
-  it('没有水印归属时只报状态，并列出库里有哪些可选', () => {
+  it('⭐ 水印下方是 16:9 的横版预览区（水印叠在画面上，横版才看得出压边与占位）', () => {
+    render()
+    const stage = document.querySelector<HTMLElement>('[data-testid="watermark-stage"]')!
+    expect(stage).toBeTruthy()
+    // 浏览器会把 `aspect-ratio: 1.777…` 规范化成 `1.777… / 1`，所以按前缀比而不是全等
+    expect(stage.style.aspectRatio).toMatch(/^16\s*\/\s*9|^1\.777/)
+  })
+
+  it('没有水印归属时：tab 照旧列出所有渠道，预览区明说不叠', () => {
     const body = render()
     expect(body).toContain('不叠水印')
-    // 只是「没说」不够 —— 要能回答「那我该去哪加、有哪些可选」
-    expect(body).toContain('可选水印')
-    // 指路只在分组头的按钮上（「去中控台配水印」），字段说明不再复述一遍
+    // tab 不因为「没水印」就消失 —— 用户要能看到每个渠道的状态
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(usePostprocessMediaStore.getState().media.length)
+    // 指路只在同一行右侧的按钮上（「去中控台配水印」），字段说明不再复述一遍
     expect(body.match(/水印归属」树/g)?.length ?? 0).toBe(0)
   })
 

@@ -2473,6 +2473,51 @@ BigInt 版才是真正的「与原始引擎逐位一致」。
 
 ---
 
+### TB-066 渠道导出位置改成「一行一个位置 + 逐行删除」（TB-060 的子项）
+
+- **来源**：杰哥原话「导出位置改为在该渠道原本表格行的下方新增一行来添加多一个导出位置，而不是在
+  右侧新增列；添加之后，左侧的渠道格子应该对于多行导出位置，参考 Excel 表格。每个导出位置需配对应
+  的删除按钮，可单独删除；移除当前的清空按钮，避免误删已填写的资料」（2026-09-21，附报障截图）
+- **状态**：DONE · 写线：主写线（挂在 TB-060「中控台数据表格化」下）
+- **改了什么**
+  1. **位置加在下一行**：表格回到「渠道 / 导出位置 / 操作」三列，一个渠道有几个位置就占几行。
+     第二个位置不再占一整列（旧表头「双写位置」）—— 列数不随位置数增长，路径列拿满剩余宽度。
+  2. **渠道格跨行合并**（Excel 合并单元格）：渠道名只在该组第一行出现、垂直居中。
+     新增 `DataGridColumn.spanRows`（`1` 不合并 / `n>1` 跨 n 行 / `0` 本行不出这一格，**默认关**）。
+  3. **逐行删**：每行 `✕` 删掉这一个位置，其余位置上移；删到一个不剩 = 该渠道回到「留空」
+     （全局层落到默认输出位置、节点层继续向上继承）。`+` 只出现在该组最后一行，到上限（2）即收。
+  4. **「清空」按钮移除**（`onClearDirs` / `clearLabel` 两个 prop 一起删，调用方 `OutputSection` /
+     `PostprocessParamPanel` 的对应函数换成 `onRemoveDir`）。
+- **验收标准**（可测）
+  1. 表头恒为 `['渠道','导出位置','操作']`，配 2 个位置时**列数不变**、总行数 +1；
+  2. 配 2 个位置的那一组，渠道名只出现一次且带 `rowspan="2"`；
+  3. 删第 2 个位置后第 1 个位置**原样保留**；再删第 1 个 = 该渠道整条退回留空（全局层
+     `mediaOutputDirs[mediaId]` 变 `undefined`）；
+  4. 不存在「一键清空整个渠道」的按钮（`aria-label` 里没有 `用默认` / `恢复继承`）。
+- **改动面**：`design-system/data-grid.tsx`（+`spanRows`）、`features/postprocess/ChannelOutputDirs.tsx`
+  （行模型 + 合并 + 逐行删）、`features/composite/components/OutputSection.tsx`、
+  `features/postprocess/PostprocessParamPanel.tsx`（`handleRemoveDir` / `removeDirs` 整份重写）、
+  `design-system/catalog.ts`（登记 targets）、`design-system/styles.css`（弹窗宽度依据的注释）、
+  `docs/architecture-constraints.md` 七章。
+- **验收证据**：`npm run verify` 全绿（250 文件 / **2876 例**，改动前基线 2872）；相关 3 个文件
+  **73 例**（`data-grid.test.tsx` · `PostprocessSettingsModal.test.tsx` ·
+  `ConsolePostprocessSections.test.tsx`），新增 4 例（跨行格行为 / 多一行且列数不变 /
+  逐行删留存另一格 + 节点层删干净写 `undefined` / 清空按钮不存在）、改写 2 例（标签与断言口径）。
+- **反向验证**（3 个变异，全部精确命中，其余用例照过）
+  | 变异                               | 结果                                                                                   |
+  | ---------------------------------- | -------------------------------------------------------------------------------------- |
+  | 关掉 `DataGrid.rowSpanAt` 的行合并 | `data-grid.test.tsx` **1 failed / 15 passed**（AssertionError）；Modal 那条恰好 1 例红 |
+  | `removeRow` 不调 `onRemoveDir`     | `ConsolePostprocessSections.test.tsx` **1 failed / 20 passed**                         |
+  | 把「清空」按钮放回去               | 「没有一键清空」守卫用例 **1 failed**                                                  |
+- **未做**：本机无法做界面渲染验证（环境级限制，见 `~/.workbuddy/MEMORY.md`），
+  布局与合并单元格效果**未经真机过目**，请在中控台「输出位置」分区 / 后处理弹窗里核对。
+- **刻意保留的边界**：上限仍是 **2 个**（杰哥拍板）。放开要先改 Excel 导入导出的
+  `outputDir1` / `outputDir2` 表头与校验（`consoleWorkbook` / `consoleImport`），不在本轮范围。
+- **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）；
+  `spanRows` 与虚拟滚动互斥（见 `docs/architecture-constraints.md` 七章）。
+
+---
+
 ### TB-067 水印库改为按产品隔离（每个产品一个独立水印库）
 
 - **来源**：杰哥原话「水印库应改为按产品隔离，即每个产品各自维护独立的水印库，而不再使用全局通用的

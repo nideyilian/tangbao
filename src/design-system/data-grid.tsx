@@ -72,6 +72,20 @@ export interface DataGridColumn<Row> {
   getValue?: (row: Row) => unknown
   /** 校验器：返回文案则拒绝本次提交。 */
   validate?: (value: unknown, row: Row) => string | null
+  /**
+   * 行合并（Excel 的合并单元格）：本列第 `index` 行向下跨几行。
+   *
+   * - `1`（默认）= 不合并；
+   * - `n > 1` = 这一格向下跨 n 行；
+   * - `0` = 被上面的跨行格盖住 —— 本行**不出这一格**（多出一个 `<td>` 会让后面的列整体右移）。
+   *
+   * 只给「同一个实体占多行」的表用（如按渠道的导出位置：一个渠道 1~2 行，渠道名合并显示）。
+   * 别的表别开：合并之后每一行不再自解释，读的人要靠左边的跨行格才知道自己在改谁。
+   *
+   * 与虚拟滚动**互斥**：窗口从半截合并组开始渲染时，跨行格会缺一块，
+   * 所以虚拟滚动启用时一律按 `1` 处理（用得着合并的表行数都很少，不会虚拟）。
+   */
+  spanRows?: (index: number) => number
 }
 
 export interface DataGridProps<Row extends object> {
@@ -350,6 +364,19 @@ export function DataGrid<Row extends object>({
   const columnWidthStyle = (column: DataGridColumn<Row>) =>
     column.width ? { width: `${column.width}px`, minWidth: `${column.width}px` } : undefined
 
+  /**
+   * 这一格向下跨几行（见 `DataGridColumn.spanRows`）。
+   *
+   * 虚拟滚动启用时一律按 1：窗口可能从半截合并组开始，那格里会缺一块。
+   * 这不是静默失效 —— 合并只给行数少到不虚拟的表用（`spanRows` 的注释里写明了这条边界）。
+   */
+  const rowSpanAt = (column: DataGridColumn<Row>, rowIndex: number): number => {
+    if (virtualize) return 1
+    const span = column.spanRows?.(rowIndex)
+    if (typeof span !== 'number' || !Number.isFinite(span)) return 1
+    return Math.max(0, Math.floor(span))
+  }
+
   if (rows.length === 0) {
     return (
       <div className={cx('ds-data-grid__viewport ds-data-grid__viewport--empty', className)}>
@@ -406,8 +433,9 @@ export function DataGrid<Row extends object>({
               />
             </tr>
           )}
-          {visibleRows.map((row) => {
+          {visibleRows.map((row, visibleIndex) => {
             const rowId = getRowId(row)
+            const rowIndex = window_.start + visibleIndex
             const selected = selectable && selectedSet.has(rowId)
             return (
               <tr key={rowId} className="ds-data-grid__row" data-selected={selected ? '' : undefined}>
@@ -422,19 +450,25 @@ export function DataGrid<Row extends object>({
                     />
                   </td>
                 )}
-                {columns.map((column, index) => (
-                  <td
-                    key={column.key}
-                    className={cx(
-                      'ds-data-grid__cell',
-                      index === 0 && stickyFirstColumn && 'ds-data-grid__cell--sticky',
-                      column.align === 'end' && 'ds-data-grid__cell--end',
-                    )}
-                    style={columnWidthStyle(column)}
-                  >
-                    <GridCell column={column} row={row} rowId={rowId} onCommit={onCellCommit} />
-                  </td>
-                ))}
+                {columns.map((column, index) => {
+                  const rowSpan = rowSpanAt(column, rowIndex)
+                  // 被上面的跨行格盖住：本行不出这一格（出一个空格子会把后面的列整体右移）
+                  if (rowSpan === 0) return null
+                  return (
+                    <td
+                      key={column.key}
+                      rowSpan={rowSpan > 1 ? rowSpan : undefined}
+                      className={cx(
+                        'ds-data-grid__cell',
+                        index === 0 && stickyFirstColumn && 'ds-data-grid__cell--sticky',
+                        column.align === 'end' && 'ds-data-grid__cell--end',
+                      )}
+                      style={columnWidthStyle(column)}
+                    >
+                      <GridCell column={column} row={row} rowId={rowId} onCommit={onCellCommit} />
+                    </td>
+                  )
+                })}
               </tr>
             )
           })}

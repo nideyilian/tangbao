@@ -121,12 +121,21 @@ export function OutputSection({ scope }: Props) {
     apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
   }
 
-  const handleClearDirs = (mediaId: string) => {
+  /**
+   * 删掉某渠道的第 `index` 个位置，其余位置上移（删到一个不剩 = 该渠道回到「留空」）。
+   *
+   * 两个作用域都**整份重写**而不是逐槽位改：`setMediaOutputDir` 只能按槽位写，
+   * 「删中间一格、后面的往前顶」要写多次才表达得出来，而节点层的 `apply` 读的是本轮 props
+   * 里的旧值 —— 连着写两次，第二笔会基于过期数据。一次写，两条链路才等价。
+   */
+  const handleRemoveDir = (mediaId: string, index: number) => {
+    const next = resolveDirs(mediaId).filter((_, slot) => slot !== index)
     if (isGlobal) {
       clearMediaOutputDirs(mediaId)
+      next.forEach((dir, slot) => setMediaOutputDir(mediaId, slot, dir))
       return
     }
-    apply({ byMedia: { [mediaId]: { outputDirs: undefined, outputDir: undefined } } })
+    apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
   }
 
   /**
@@ -192,9 +201,8 @@ export function OutputSection({ scope }: Props) {
           resolveDirs={resolveDirs}
           resolveInheritedHint={inheritedHint ?? (() => outputDir.trim() || '本地保存目录下的 postprocess')}
           onChangeDir={handleChangeDir}
-          onClearDirs={handleClearDirs}
+          onRemoveDir={handleRemoveDir}
           onPickError={() => showToast('选择目录失败，请重试', 'error')}
-          clearLabel={isGlobal ? '用默认' : '恢复继承'}
           description="留空 = 用默认位置；给两个 = 双写。"
         />
 
