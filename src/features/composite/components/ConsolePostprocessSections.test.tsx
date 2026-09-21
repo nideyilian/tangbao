@@ -118,7 +118,8 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
       usePostprocessMediaStore.getState().setNamePattern('{seq}')
     })
     render(<OutputSection scope={GLOBAL_NODE_ID} />)
-    expect(container.querySelector<HTMLInputElement>('[data-testid="name-pattern-input"]')!.value).toBe('{seq}')
+    // 输入框里显示的是**中文占位符**，存进 store 的仍是 `{seq}`（显示层与存储层分家）
+    expect(container.querySelector<HTMLInputElement>('[data-testid="name-pattern-input"]')!.value).toBe('{序号}')
 
     typeInto('[data-testid="name-pattern-input"]', '')
     const next = usePostprocessMediaStore.getState().namePattern

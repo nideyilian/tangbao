@@ -998,19 +998,22 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   },
   {
     module: 'src/features/postprocess/ChannelOutputDirs.tsx',
-    responsibility: '按渠道设置导出位置（全局渠道表与项目节点参数共用，单渠道支持 1~2 个位置/双写）',
+    responsibility:
+      '按渠道设置导出位置（全局渠道表与项目节点参数共用；一个渠道 1~2 行、渠道名跨行合并，位置加在下一行，每行可单独删除）',
     decision: 'compose',
-    targets: ['TextField', 'Button', 'IconButton'],
+    targets: ['DataGrid', 'Button', 'IconButton'],
   },
   {
     module: 'src/features/postprocess/NamePatternField.tsx',
-    responsibility: '命名模板输入 + 变量按钮（中文名显示、按光标位置插入 token）',
+    responsibility:
+      '命名模板输入 + 变量按钮：框里显示中文占位符（`{日期}`）、存的是底层英文（`{date}`），按光标位置插入 token（两套光标坐标系随时互转）',
     decision: 'compose',
     targets: ['TextField', 'Button'],
   },
   {
     module: 'src/features/postprocess/PostprocessNamingFields.tsx',
-    responsibility: '后处理文件命名设置（命名模板 + 创作者；全局一套，挂在中控台「输出位置」分区）',
+    responsibility:
+      '后处理文件命名设置（命名模板 + **文件名预览** + 创作者；全局一套，挂在中控台「输出位置」分区）。预览回答「一个名字长得对不对」，与分区底部「产出预览」的「这批出多少个」分工',
     decision: 'compose',
     targets: ['TextField', 'Button', 'Alert'],
   },

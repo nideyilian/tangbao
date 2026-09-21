@@ -1,7 +1,7 @@
 /**
  * 后处理产出编排（纯逻辑，无副作用）。
  *
- * 把「源图 × 产出单元」展开成可直接执行的写盘清单：文件名、项目子目录、扩展名、是否压体积。
+ * 把「源图 × 产出单元」展开成可直接执行的写盘清单：文件名、目标文件夹名、扩展名、是否压体积。
  * 渲染与 IO 由 `src/store.ts` 的 `runTaskPostprocess` 完成（那里才拿得到 `electronAPI` 与渲染器）。
  *
  * 两条刻意的口径（见 `docs/hanling-postprocess-replica-plan.md` 阶段四）：
@@ -11,7 +11,7 @@
  *   磁盘级同名兜底仍由调用方处理。
  */
 
-import { buildPostprocessOutputName } from './postprocessNaming'
+import { buildPostprocessFolderName, buildPostprocessOutputName } from './postprocessNaming'
 import type { PostprocessMediaConfig, PostprocessOutputUnit } from './postprocessMedia'
 
 /** 后处理产出文件的扩展名（不含点）。渲染链固定输出 JPEG，故不随源图格式变化。 */
@@ -33,7 +33,7 @@ export interface PostprocessVariantPlan {
   unit: PostprocessOutputUnit
   /** 含扩展名的文件名 */
   fileName: string
-  /** 项目层级子目录；无项目维度时为空数组（平铺到输出根） */
+  /** 写入的子目录链。现在是**一层**：以该单元自己的名字命名（= 文件名模板去掉 `{seq}`） */
   subFolders: string[]
   /** 是否需要压到 `unit.maxSizeKb` 以内；false 时单次高质量渲染，不做体积二分 */
   compress: boolean
@@ -47,29 +47,6 @@ export interface PostprocessVariantPlan {
  */
 export function shouldCompressPostprocessUnit(unit: Pick<PostprocessOutputUnit, 'maxSizeKb'>): boolean {
   return Number.isFinite(unit.maxSizeKb) && unit.maxSizeKb > 0
-}
-
-/**
- * 单元 → 输出子目录（项目三级树逐级建目录）。
- *
- * 让同一项目的各渠道变体聚合在一个文件夹里；空段直接跳过，用户只勾到二级时不会留下空目录。
- *
- * `includePresetFolder`：同一方向配了多套水印时，产物按预设名再分一层。不加这一层的话，
- * 同尺寸同渠道的两份产物只能靠 `-2`/`-3` 后缀兜底，用户无法从文件名看出哪份是哪套水印。
- */
-export function resolvePostprocessSubFolders(
-  unit: PostprocessOutputUnit,
-  options?: { includePresetFolder?: boolean },
-): string[] {
-  const project = unit.project
-  const folders = project
-    ? [project.line, project.product, project.direction].map((part) => (part ?? '').trim()).filter(Boolean)
-    : []
-  if (options?.includePresetFolder && unit.watermark) {
-    const presetName = unit.watermark.name.trim()
-    if (presetName) folders.push(presetName)
-  }
-  return folders
 }
 
 export interface BuildSourceVariantPlansInput {
@@ -92,33 +69,23 @@ export interface BuildSourceVariantPlansResult {
  * 构建单张源图的全部产出清单。
  *
  * 序号只在**成功入清单**的单元上递增，保证同批次内 `{seq}` 连续且不重号。
- * 同一方向配了多套水印（预设 > 1）时，产物按预设名分子目录；单预设不额外分层，保持既有目录结构。
+ * 每个单元写进**以它自己的名字命名的文件夹**（= 文件名的模板去掉 `{seq}`，杰哥 2026-09-21 定）：
+ * 序号不同的同批产物因此聚在同一个文件夹里，而文件夹名本身就带全了方向 / 渠道 / 尺寸。
  */
 export function buildSourceVariantPlans(input: BuildSourceVariantPlansInput): BuildSourceVariantPlansResult {
   const plans: PostprocessVariantPlan[] = []
   let sequence = Number.isFinite(input.startSequence) ? Math.max(1, Math.trunc(input.startSequence)) : 1
 
-  const presetIds = new Set<string>()
-  for (const unit of input.units) {
-    if (unit.watermark) presetIds.add(unit.watermark.id)
-  }
-  const includePresetFolder = presetIds.size > 1
-
   for (const unit of input.units) {
     const project = unit.project
-    const baseName = buildPostprocessOutputName(
-      input.config,
-      unit,
-      { line: project?.line, product: project?.product, direction: project?.direction },
-      sequence,
-      input.createdAt,
-    )
+    const names = { line: project?.line, product: project?.product, direction: project?.direction }
+    const baseName = buildPostprocessOutputName(input.config, unit, names, sequence, input.createdAt)
     plans.push({
       sourceImageId: input.source.imageId,
       sourceIndex: input.source.index,
       unit,
       fileName: `${baseName}.${POSTPROCESS_OUTPUT_EXTENSION}`,
-      subFolders: resolvePostprocessSubFolders(unit, { includePresetFolder }),
+      subFolders: [buildPostprocessFolderName(input.config, unit, names, input.createdAt)],
       compress: shouldCompressPostprocessUnit(unit),
     })
     sequence += 1

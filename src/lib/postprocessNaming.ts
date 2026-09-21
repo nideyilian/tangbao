@@ -68,6 +68,42 @@ export const POSTPROCESS_NAME_TOKEN_SHORT_LABELS: Record<PostprocessNameToken, s
   preset: '水印预设',
 }
 
+/**
+ * 中文显示 ↔ 底层模板的双向转换。
+ *
+ * 底层模板是**落盘格式**（`{date}-{product}-…`）—— 它会被写进产出文件名、被导出/导入的配置
+ * 引用、被别人分享的预设文件带走。把它改成中文会让所有已配好的模板与已导出的配置一起失效，
+ * 所以中文只是**显示层**：输入框里给用户看 `{日期}`，存进 store、落盘、参与渲染的仍是 `{date}`。
+ *
+ * 两处都**只认已知 token**：`{foo}` 这种写错的原样保留 —— 用户得能在输入框里看见自己写错了，
+ * 被静默换掉反而查不出来（未知 token 在渲染器里也是原样保留，口径一致）。
+ *
+ * 已知 token 的中文名取 `POSTPROCESS_NAME_TOKEN_SHORT_LABELS`：变量按钮上写的也是这一份，
+ * 所以「按钮上叫日期、框里叫 date」这种不一致不会出现。
+ */
+const DISPLAY_TOKEN_RE = new RegExp(`\\{(${POSTPROCESS_NAME_TOKENS.join('|')})\\}`, 'g')
+const DISPLAY_LABEL_TO_TOKEN = new Map<string, PostprocessNameToken>(
+  POSTPROCESS_NAME_TOKENS.map((token) => [POSTPROCESS_NAME_TOKEN_SHORT_LABELS[token], token]),
+)
+
+/** 底层模板 → 中文显示（`{date}` → `{日期}`）。手打的英文 token 也会被统一成中文。 */
+export function toDisplayNamePattern(pattern: string): string {
+  if (typeof pattern !== 'string' || !pattern) return pattern
+  return pattern.replace(DISPLAY_TOKEN_RE, (_raw, token: string) => {
+    const label = POSTPROCESS_NAME_TOKEN_SHORT_LABELS[token as PostprocessNameToken]
+    return label ? `{${label}}` : `{${token}}`
+  })
+}
+
+/** 中文显示 → 底层模板（`{日期}` → `{date}`）。认不出的花括号内容原样保留。 */
+export function fromDisplayNamePattern(display: string): string {
+  if (typeof display !== 'string' || !display) return display
+  return display.replace(/\{([^{}]*)\}/g, (raw, name: string) => {
+    const token = DISPLAY_LABEL_TO_TOKEN.get(name.trim())
+    return token ? `{${token}}` : raw
+  })
+}
+
 /** 在模板里插入一个 token 的结果：新模板 + 插入后光标应落的位置。 */
 export interface PostprocessNameInsertResult {
   pattern: string
@@ -266,6 +302,32 @@ export interface PostprocessNameTarget {
 }
 
 /**
+ * 文件名与文件夹名**共用同一份上下文**（两者只差一个 `{seq}`）。
+ *
+ * 抽成一处而不是各写一遍：将来加 token 时漏改一处，就会出现「文件名里有、文件夹名里没有」
+ * 这种肉眼很难发现的不一致。
+ */
+function resolveNameContext(
+  config: { creator: string },
+  unit: PostprocessNameTarget,
+  names: { line?: string; product?: string; direction?: string },
+  createdAt?: number,
+  sequence?: number,
+): PostprocessNameContext {
+  return {
+    createdAt,
+    line: names.line,
+    product: names.product,
+    direction: names.direction ?? getOutputDirectionLabel(unit.direction),
+    creator: config.creator,
+    media: unit.mediaName,
+    preset: unit.watermark?.name,
+    size: { width: unit.width, height: unit.height },
+    seq: sequence,
+  }
+}
+
+/**
  * 取某个产出单元的文件名主干（不含扩展名）。
  *
  * 项目树里的方向名（`names.direction`，用户自己的叫法）优先；
@@ -278,15 +340,40 @@ export function buildPostprocessOutputName(
   sequence = 1,
   createdAt?: number,
 ): string {
-  return renderPostprocessNamePattern(config.namePattern, {
-    createdAt,
-    line: names.line,
-    product: names.product,
-    direction: names.direction ?? getOutputDirectionLabel(unit.direction),
-    creator: config.creator,
-    media: unit.mediaName,
-    preset: unit.watermark?.name,
-    size: { width: unit.width, height: unit.height },
-    seq: sequence,
-  })
+  return renderPostprocessNamePattern(config.namePattern, resolveNameContext(config, unit, names, createdAt, sequence))
+}
+
+/**
+ * 去掉模板里的 `{seq}`。
+ *
+ * 用「删掉这个 token 再渲染」而不是「渲染时给 seq 传空值」：`renderPostprocessNamePattern`
+ * 对取值为空的已知 token 会整段删除，但 `{seq}` 有兜底值 `'1'`（拿不到数字时返回 `'1'`），
+ * 传空值根本得不到「没有序号」的结果。
+ * 删掉 token 后留下的连续 `-` 与首尾 `-` 由渲染器统一折叠，正好得到干净的名字。
+ */
+export function stripPostprocessNameSequence(pattern: string): string {
+  const base = typeof pattern === 'string' && pattern.trim() ? pattern : DEFAULT_POSTPROCESS_NAME_PATTERN
+  return base.replace(/\{seq\}/g, '')
+}
+
+/**
+ * 取某个产出单元的**文件夹名**：与文件名同一套上下文，只是不含序号（杰哥 2026-09-21 定的）。
+ *
+ * 这么定是因为文件夹要能自己说清「这是哪个方向、哪个渠道、哪个尺寸的一批」——
+ * 原先靠外层 `产品线/产品/方向` 三级目录继承这些信息，把文件夹单独发给别人就丢了；
+ * 现在文件夹名与文件名同源，模板里有什么它就有什么（要按水印预设分开放，模板里放 `{preset}` 即可，
+ * 不再需要另开一层预设子目录）。
+ *
+ * 同一批里序号不同的文件因此**落进同一个文件夹**，正是「去掉 -序号」的含义。
+ */
+export function buildPostprocessFolderName(
+  config: { namePattern: string; creator: string },
+  unit: PostprocessNameTarget,
+  names: { line?: string; product?: string; direction?: string } = {},
+  createdAt?: number,
+): string {
+  return renderPostprocessNamePattern(
+    stripPostprocessNameSequence(config.namePattern),
+    resolveNameContext(config, unit, names, createdAt),
+  )
 }

@@ -4,14 +4,18 @@ import {
   POSTPROCESS_NAME_TOKENS,
   POSTPROCESS_NAME_TOKEN_LABELS,
   POSTPROCESS_NAME_TOKEN_SHORT_LABELS,
+  buildPostprocessFolderName,
+  buildPostprocessOutputName,
   findDuplicatedPostprocessNameTokens,
   findMissingPostprocessNameTokens,
   findUnknownPostprocessNameTokens,
-  buildPostprocessOutputName,
   formatPostprocessSizeToken,
+  fromDisplayNamePattern,
   insertPostprocessNameToken,
   listPostprocessNameTokens,
   renderPostprocessNamePattern,
+  stripPostprocessNameSequence,
+  toDisplayNamePattern,
   validateNamePattern,
 } from './postprocessNaming'
 
@@ -229,5 +233,70 @@ describe('validateNamePattern（模板校验）', () => {
   it('多个问题同时报出，不互相盖掉', () => {
     const issues = validateNamePattern('{oops}', { unknown: ['oops'], missing: ['seq'], duplicated: ['size'] })
     expect(issues).toHaveLength(3)
+  })
+})
+
+describe('中文显示 ↔ 底层模板（框里给中文，落盘仍是英文）', () => {
+  it('已知 token 显示成中文，存进去的还是英文', () => {
+    expect(toDisplayNamePattern('{date}-{product}-{seq}')).toBe('{日期}-{产品}-{序号}')
+    expect(fromDisplayNamePattern('{日期}-{产品}-{序号}')).toBe('{date}-{product}-{seq}')
+  })
+
+  it('⭐ 往返无损：默认模板转一圈回到原样', () => {
+    // 显示层每一次渲染都要走一遍「底层 → 显示」，无损是它成立的前提
+    const display = toDisplayNamePattern(DEFAULT_POSTPROCESS_NAME_PATTERN)
+    expect(fromDisplayNamePattern(display)).toBe(DEFAULT_POSTPROCESS_NAME_PATTERN)
+    expect(toDisplayNamePattern(fromDisplayNamePattern(display))).toBe(display)
+  })
+
+  it('手打的英文占位符也会被统一成中文（显示层归一化）', () => {
+    expect(toDisplayNamePattern('{date}-{seq}')).toBe('{日期}-{序号}')
+  })
+
+  it('认不出的花括号原样保留 —— 用户得能在框里看见自己写错了', () => {
+    expect(toDisplayNamePattern('{oops}-{date}')).toBe('{oops}-{日期}')
+    expect(fromDisplayNamePattern('{写错了}-{日期}')).toBe('{写错了}-{date}')
+  })
+
+  it('{产品线} 与 {产品} 不互相吃掉（精确匹配，不是前缀匹配）', () => {
+    expect(toDisplayNamePattern('{line}{product}')).toBe('{产品线}{产品}')
+    expect(fromDisplayNamePattern('{产品线}{产品}')).toBe('{line}{product}')
+  })
+
+  it('空值原样返回，不抛错', () => {
+    expect(toDisplayNamePattern('')).toBe('')
+    expect(fromDisplayNamePattern('')).toBe('')
+  })
+})
+
+describe('stripPostprocessNameSequence（文件夹名 = 文件名去掉序号）', () => {
+  it('删掉 {seq}（留下的连字符交给渲染器折叠）', () => {
+    expect(stripPostprocessNameSequence('{date}-{product}-{seq}')).toBe('{date}-{product}-')
+  })
+
+  it('空模板按默认模板处理，否则会渲染出一个带序号的文件夹名', () => {
+    expect(stripPostprocessNameSequence('')).toBe(DEFAULT_POSTPROCESS_NAME_PATTERN.replace('{seq}', ''))
+  })
+})
+
+describe('buildPostprocessFolderName', () => {
+  const unit = { mediaName: '百度', width: 1140, height: 640, direction: 'landscape' as const }
+  const names = { product: '百万医疗险' }
+
+  it('⭐ 与文件名同源，只少末尾的序号', () => {
+    const config = { namePattern: '{product}-{media}-{size}-{seq}', creator: '' }
+    expect(buildPostprocessOutputName(config, unit, names, 3, SEPT_17_2026)).toBe('百万医疗险-百度-1140x640-3')
+    expect(buildPostprocessFolderName(config, unit, names, SEPT_17_2026)).toBe('百万医疗险-百度-1140x640')
+  })
+
+  it('模板里本来就没有 {seq} 时两者相同', () => {
+    const config = { namePattern: '{media}-{size}', creator: '' }
+    expect(buildPostprocessFolderName(config, unit, {}, SEPT_17_2026)).toBe('百度-1140x640')
+  })
+
+  it('模板里的 {preset} 照样进文件夹名（要按水印分开就写进模板）', () => {
+    const config = { namePattern: '{media}-{preset}-{seq}', creator: '' }
+    const withPreset = { ...unit, watermark: { name: '客户甲' } }
+    expect(buildPostprocessFolderName(config, withPreset, {}, SEPT_17_2026)).toBe('百度-客户甲')
   })
 })

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   POSTPROCESS_OUTPUT_EXTENSION,
   buildSourceVariantPlans,
-  resolvePostprocessSubFolders,
   shouldCompressPostprocessUnit,
   type PostprocessSourceImage,
 } from './postprocessRunner'
@@ -37,26 +36,6 @@ describe('shouldCompressPostprocessUnit', () => {
 
   it('非法值按不压缩处理，避免把 NaN 带进体积二分搜索', () => {
     expect(shouldCompressPostprocessUnit({ maxSizeKb: Number.NaN })).toBe(false)
-  })
-})
-
-describe('resolvePostprocessSubFolders', () => {
-  it('项目三级逐级建目录', () => {
-    const folders = resolvePostprocessSubFolders(
-      makeUnit({ project: { collectionId: 'd', line: '线A', product: '产品1', direction: '横构图' } }),
-    )
-    expect(folders).toEqual(['线A', '产品1', '横构图'])
-  })
-
-  it('只勾到二级时不留下空目录', () => {
-    const folders = resolvePostprocessSubFolders(
-      makeUnit({ project: { collectionId: 'p', line: '线A', product: '产品1', direction: '' } }),
-    )
-    expect(folders).toEqual(['线A', '产品1'])
-  })
-
-  it('无项目维度时平铺到输出根', () => {
-    expect(resolvePostprocessSubFolders(makeUnit())).toEqual([])
   })
 })
 
@@ -139,7 +118,7 @@ describe('buildSourceVariantPlans', () => {
     expect(plans[0].fileName).toBe(`竖版.${POSTPROCESS_OUTPUT_EXTENSION}`)
   })
 
-  it('项目路径随单元带出到子目录', () => {
+  it('⭐ 文件夹名 = 文件名去掉序号（同一批的多个序号因此落进同一个文件夹）', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: shortPattern,
@@ -150,8 +129,13 @@ describe('buildSourceVariantPlans', () => {
       ],
     })
 
-    expect(plans[0].subFolders).toEqual(['线A', '产品1', '横构图'])
-    expect(plans[1].subFolders).toEqual([])
+    expect(plans.map((plan) => plan.fileName)).toEqual(['产品1-百度-1140x640-1.jpg', '百度-1280x720-2.jpg'])
+    expect(plans.map((plan) => plan.subFolders)).toEqual([['产品1-百度-1140x640'], ['百度-1280x720']])
+    // 两者必须同源：文件夹名就是文件名去掉末尾 `-序号`，模板里没有的段两边都不会有
+    for (const plan of plans) {
+      const base = plan.fileName.replace(`.${POSTPROCESS_OUTPUT_EXTENSION}`, '')
+      expect(plan.subFolders[0]).toBe(base.replace(/-\d+$/, ''))
+    }
   })
 
   it('起始序号非法时兜底为 1', () => {
@@ -191,33 +175,13 @@ describe('buildSourceVariantPlans', () => {
   })
 })
 
-describe('多水印预设的子目录分层', () => {
+describe('多水印预设时的文件夹归属', () => {
   const watermarks = [
     { id: 'wm-a', name: '客户甲' },
     { id: 'wm-b', name: '客户乙' },
   ]
 
-  it('resolvePostprocessSubFolders 只在要求时追加预设层，无预设的单元不受影响', () => {
-    const project = { collectionId: 'c1', line: 'L', product: 'P', direction: 'D' }
-    expect(resolvePostprocessSubFolders(makeUnit({ project }))).toEqual(['L', 'P', 'D'])
-    expect(resolvePostprocessSubFolders(makeUnit({ project, watermark: watermarks[0] }))).toEqual(['L', 'P', 'D'])
-    expect(
-      resolvePostprocessSubFolders(makeUnit({ project, watermark: watermarks[0] }), { includePresetFolder: true }),
-    ).toEqual(['L', 'P', 'D', '客户甲'])
-  })
-
-  it('单预设不额外分层，保持既有目录结构', () => {
-    const { plans } = buildSourceVariantPlans({
-      source,
-      config: shortPattern,
-      startSequence: 1,
-      units: [makeUnit({ watermark: watermarks[0] })],
-    })
-
-    expect(plans[0].subFolders).toEqual([])
-  })
-
-  it('多预设时按预设名分子目录，不再靠后缀兜底区分', () => {
+  it('模板里没写 {preset} 时分到同一个文件夹，靠文件名末尾的序号区分', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: shortPattern,
@@ -225,21 +189,31 @@ describe('多水印预设的子目录分层', () => {
       units: [makeUnit({ watermark: watermarks[0] }), makeUnit({ watermark: watermarks[1] })],
     })
 
-    expect(plans.map((plan) => plan.subFolders)).toEqual([['客户甲'], ['客户乙']])
+    // 2026-09-21 起文件夹名与文件名同源：模板没写 {preset}，两套水印就不分层
+    // （原先只要同一批里有 >1 套水印，就会自动追加一层预设名子目录）
+    expect(plans.map((plan) => plan.subFolders)).toEqual([['百度-1140x640'], ['百度-1140x640']])
+    expect(plans.map((plan) => plan.fileName)).toEqual(['百度-1140x640-1.jpg', '百度-1140x640-2.jpg'])
   })
 
-  it('纯净版混在多预设里时仍不进预设子目录', () => {
+  it('模板里写了 {preset} 时文件名与文件夹名都带预设名（要分开就写进模板）', () => {
+    const { plans } = buildSourceVariantPlans({
+      source,
+      config: { namePattern: '{media}-{size}-{preset}-{seq}', creator: '' },
+      startSequence: 1,
+      units: [makeUnit({ watermark: watermarks[0] }), makeUnit({ watermark: watermarks[1] })],
+    })
+
+    expect(plans.map((plan) => plan.subFolders)).toEqual([['百度-1140x640-客户甲'], ['百度-1140x640-客户乙']])
+  })
+
+  it('纯净版（不叠水印）的文件夹名照旧不含预设名', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: shortPattern,
       startSequence: 1,
-      units: [
-        makeUnit({ clean: true, maxSizeKb: 0 }),
-        makeUnit({ watermark: watermarks[0] }),
-        makeUnit({ watermark: watermarks[1] }),
-      ],
+      units: [makeUnit({ clean: true, maxSizeKb: 0 }), makeUnit({ watermark: watermarks[0] })],
     })
 
-    expect(plans.map((plan) => plan.subFolders)).toEqual([[], ['客户甲'], ['客户乙']])
+    expect(plans.map((plan) => plan.subFolders)).toEqual([['百度-1140x640'], ['百度-1140x640']])
   })
 })
