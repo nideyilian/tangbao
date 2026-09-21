@@ -20,12 +20,26 @@ import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 import { resolveNodeWatermarkBinding } from '../projectTree/params'
 import { resolveCollectionPath } from '../../lib/postprocessProjectTree'
-import { usePostprocessMediaStore } from '../../storePostprocessMedia'
+import {
+  getPostprocessMediaConfigSnapshot,
+  restorePostprocessMediaConfig,
+  usePostprocessMediaStore,
+} from '../../storePostprocessMedia'
 import { useAppDialog } from '../../hooks/useAppDialog'
 import { useStore } from '../../store'
 import { GLOBAL_NODE_ID } from '../postprocess/paramSchema'
 import { useCompositeV2Store } from './storeV2'
 import { exportConsoleWorkbook } from './lib/consoleWorkbook'
+import {
+  applyConsoleImport,
+  formatImportPlan,
+  pickConsoleWorkbook,
+  planConsoleImport,
+  type ConsoleImportActions,
+  type ConsoleImportContext,
+  type ImportMode,
+  type ImportPlan,
+} from './lib/consoleImport'
 import { usePostprocessGlobalConfig } from '../postprocess/usePostprocessGlobalConfig'
 
 /**
@@ -71,6 +85,8 @@ export default function CompositeWorkspace() {
   const globalConfig = usePostprocessGlobalConfig()
   const identifier = useCompositeV2Store((state) => state.identifier)
   const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const setConfirmDialog = useStore((state) => state.setConfirmDialog)
 
   /**
    * 当前分区来自应用 store，而不是本工作区的局部 state。
@@ -260,6 +276,103 @@ export default function CompositeWorkspace() {
     }
   }
 
+  /** 导入用的当前状态快照（lib 层不认识 store，这里把它拼好传进去）。 */
+  const buildImportContext = (): ConsoleImportContext => ({
+    collections: useAssetLibraryStore.getState().collections,
+    media: usePostprocessMediaStore.getState().media,
+    params: useProjectTreeParamsStore.getState().params,
+    mediaOutputDirs: usePostprocessMediaStore.getState().mediaOutputDirs,
+    presetIds: useCompositeV2Store.getState().presets.map((preset) => preset.id),
+  })
+
+  /** 写库用的 action 集合。用 `getState()` 现取，省得把十几个 action 都挂成 hook 依赖。 */
+  const buildImportActions = (): ConsoleImportActions => {
+    const media = usePostprocessMediaStore.getState()
+    const tree = useProjectTreeParamsStore.getState()
+    const library = useAssetLibraryStore.getState()
+    const composite = useCompositeV2Store.getState()
+    return {
+      addMedia: media.addMedia,
+      renameMedia: media.renameMedia,
+      setMediaEnabled: media.setMediaEnabled,
+      addMediaSize: media.addMediaSize,
+      updateMediaSize: media.updateMediaSize,
+      deleteMediaSize: media.deleteMediaSize,
+      setSelectedMediaIds: media.setSelectedMediaIds,
+      setMediaOutputDir: media.setMediaOutputDir,
+      clearMediaOutputDirs: media.clearMediaOutputDirs,
+      patchDistribution: media.patchDistribution,
+      setNamePattern: media.setNamePattern,
+      setCreator: media.setCreator,
+      setAutoCompanionClean: media.setAutoCompanionClean,
+      setPostprocessOverride: tree.setPostprocessOverride,
+      setIdentifier: composite.setIdentifier,
+      createCollection: library.createCollection,
+      renameCollection: library.renameCollection,
+      moveCollection: library.moveCollection,
+    }
+  }
+
+  /**
+   * 按计划写库。
+   *
+   * **导入前抓快照、失败就整体回滚** —— 半吊子状态比「没导入」更糟：用户会以为导入成功了，
+   * 而数据其实是两边的混合（TB-042 那次踩过的教训，见 `data-portability-redesign.md` §2.3）。
+   */
+  const runImportPlan = async (plan: ImportPlan, mode: ImportMode) => {
+    const before = {
+      postprocess: getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
+      params: JSON.parse(JSON.stringify(useProjectTreeParamsStore.getState().params)) as typeof params,
+      collections: [...useAssetLibraryStore.getState().collections],
+      identifier: useCompositeV2Store.getState().identifier,
+    }
+    setImporting(true)
+    try {
+      const result = await applyConsoleImport({ ...plan, mode }, buildImportActions(), buildImportContext())
+      showToast(`已导入 ${result.written} 项`, 'success')
+    } catch (error) {
+      restorePostprocessMediaConfig(before.postprocess)
+      useProjectTreeParamsStore.setState({ params: before.params })
+      useAssetLibraryStore.setState({ collections: before.collections })
+      useCompositeV2Store.setState({ identifier: before.identifier })
+      showToast(`导入失败，已回滚到导入前：${error instanceof Error ? error.message : String(error)}`, 'error')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  /**
+   * 选文件 → 解析 → 算计划 → dry-run 弹窗。
+   *
+   * 预览用 `confirmDialog` 的 `buttons`（它支持任意多按钮），三种选择各自是一颗显式按钮：
+   * **合并**（安全，默认）、**整体覆盖**（先清空尺寸再写）、**取消**。
+   * 不用「confirm 位 + cancel 位」那种两按钮妥协 —— 那会逼着不想覆盖的人去点危险按钮旁边的「取消」。
+   */
+  const handleImport = async () => {
+    setImporting(true)
+    try {
+      const tables = await pickConsoleWorkbook()
+      if (!tables) return // 用户取消选文件，安静收场
+      if ([...tables.values()].every((table) => table.rows.length === 0)) {
+        showToast('这份文件里没有可导入的数据行', 'error')
+        return
+      }
+      const plan = planConsoleImport(tables, buildImportContext(), 'merge')
+      setConfirmDialog({
+        title: '导入中控台数据',
+        message: formatImportPlan(plan),
+        messageAlign: 'left',
+        buttons: [
+          { label: '合并导入', tone: 'primary', action: () => void runImportPlan(plan, 'merge') },
+          { label: '整体覆盖', tone: 'danger', action: () => void runImportPlan(plan, 'replace') },
+          { label: '取消', tone: 'secondary', action: () => undefined },
+        ],
+      })
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     // 高度对齐另外两个工作区：顶栏在自己的 return 里放了一块等高的 `invisible` 占位，
     // 所以这里按「视口 - 顶栏高度」算即可。窄屏顶栏多一行工作区切换，与素材库同口径取 7rem。
@@ -307,6 +420,9 @@ export default function CompositeWorkspace() {
              * 导出放在工作区标题栏而不是某个分区里：它导的是**整个中控台**的数据面，
              * 不属于任何单一分区（放进分区会让人以为只导那一块）。
              */}
+            <Button variant="ghost" size="sm" disabled={importing} onClick={() => void handleImport()}>
+              {importing ? '处理中…' : '导入 Excel'}
+            </Button>
             <Button variant="secondary" size="sm" disabled={exporting} onClick={() => void handleExport()}>
               {exporting ? '导出中…' : '导出 Excel'}
             </Button>
