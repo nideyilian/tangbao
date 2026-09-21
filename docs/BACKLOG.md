@@ -2135,13 +2135,13 @@ POST https://junbo-cy.jetmobo.com/login → {"msg":"用户不存在/密码错误
   | P1   | `DataGrid` 通用可编辑表格                     | `src/design-system/data-grid.tsx` + 15 个用例；7 种编辑器、草稿态提交、主键制、校验留行内、吸顶表头、冻结首列、>200 行虚拟滚动；`catalog.ts` 已登记                                                                                                                             |
   | P2-① | 「渠道与尺寸」分区表格化                      | `ConsoleMediaTables.tsx`（渠道表 + 尺寸表）；卡片看板的信息全部并入渠道表的列（尺寸数 / 可用尺寸 / 参与产出），**信息无损失**；旧卡片式编辑器 `MediaTableManager.tsx` 已删除                                                                                                    |
   | P2-② | 新增「方向」分区：方向结构 + 方向级参数两张表 | `ConsoleDirectionTables.tsx` + 8 个用例（含成环保护、生效值口径、留空 = 恢复继承）；`CONTROL_CONSOLE_SECTIONS` 新增 `directions`                                                                                                                                                |
+  | P3   | Excel 导入（解析 / 计划 / 执行三层）          | `consoleImport.ts` + 18 个用例（含往返：导出的文件读回来能正确生成计划）；dry-run 用 `confirmDialog` 的 `buttons` 做三选一；导入前快照、失败整体回滚；新建方向的 id 走映射表（否则后续表整片落空）；预设与图层只导出不导入                                                      |
   | P3   | 导出 Excel 工作簿 + 修保存对话框授权缺失      | `consoleWorkbook.ts` + 13 个用例（含往返验证：写出的工作簿读回来首行仍是字段键）；11 张 Sheet；xlsx 走 SheetJS CDN 的 0.20.3（npm 上的 0.18.5 带 2 个 high 漏洞）；顺带修 `fs:select-save-path` / `fs:select-zip-save-path` 未 `addAllowedRoot` 导致的静默保存失败（R-62 同类） |
   | P2-③ | 方向 × 水印归属表                             | `ConsoleWatermarkBindings.tsx` + 4 个用例；行主键 `collectionId:presetId`，区分「移除」（空数组 = 显式不加水印）与「改为继承」（`undefined`）                                                                                                                                   |
 
 - **剩余（按依赖顺序）**
   1. P2 剩余区域：全局输出位置表 + 方向 × 渠道覆盖表（与另一条写线的 `ChannelOutputDirs` 重叠，
      等它先落）、命名与署名、产出清单（只读表）、水印预设主子表（B 档）
-  2. P3 导入：三模式 + dry-run + 回滚 + §4.3 六条一致性校验（设计已写进方案 §10.10，照做即可）
 
 - **不做（附理由）**
   - 分发配置（区域 ⑩）保持表单：单例配置不是数据集，做成「一行一个字段」是伪表格，
