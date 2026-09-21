@@ -2499,10 +2499,14 @@ BigInt 版才是真正的「与原始引擎逐位一致」。
   `features/postprocess/PostprocessParamPanel.tsx`（`handleRemoveDir` / `removeDirs` 整份重写）、
   `design-system/catalog.ts`（登记 targets）、`design-system/styles.css`（弹窗宽度依据的注释）、
   `docs/architecture-constraints.md` 七章。
-- **验收证据**：`npm run verify` 全绿（250 文件 / **2876 例**，改动前基线 2872）；相关 3 个文件
-  **73 例**（`data-grid.test.tsx` · `PostprocessSettingsModal.test.tsx` ·
+- **验收证据**：提交 **`54e98a9`**（未推送）；提交前 `npm run verify` 全绿
+  （**254 文件 / 2935 例**，比本条目登记时多了同一批 WIP 里另外两条线的用例）；
+  相关 3 个文件 **73 例**（`data-grid.test.tsx` · `PostprocessSettingsModal.test.tsx` ·
   `ConsolePostprocessSections.test.tsx`），新增 4 例（跨行格行为 / 多一行且列数不变 /
   逐行删留存另一格 + 节点层删干净写 `undefined` / 清空按钮不存在）、改写 2 例（标签与断言口径）。
+  ⚠️ 本条目的改动与「尺寸表改一行一个渠道（TB-060）」「后处理面板字段行三形态」落在同一个提交里
+  —— `PostprocessParamPanel.tsx` 同时含三者改动（`onRemoveDir` + `layout` + 预览换渲染器），
+  按文件切不干净，详见该提交的正文。
 - **反向验证**（3 个变异，全部精确命中，其余用例照过）
   | 变异                               | 结果                                                                                   |
   | ---------------------------------- | -------------------------------------------------------------------------------------- |
@@ -2754,3 +2758,22 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
 - **⚠️ 未经渲染自证**：本机做不了网页渲染验证，弹窗的产品分组列表、`复制到…` 文字链与库头图标按钮的
   排版**未经真机过目**，请在中控台「水印」分区里核对。
 - **已知坑**：R-59（本机 `node` 默认 v22，跑 vitest / vite 必须显式用 Node 24）
+
+---
+
+### TB-071 配方卡面板底部空白（根因：grid 隐式 auto 行被 stretch 均分）
+
+- **来源**：杰哥报障「页面底部仍有这么大的空白」（2026-09-21，同一处第二次报）
+- **状态**：DONE · 写线：主写线
+- **改了什么**：`.sop-recipe-panel__body` 显式写 `grid-template-rows: minmax(0, 1fr) auto`
+  —— 剩余高度只给录入区（textarea 随窗口长高），概览区按内容高度。
+  **面板那层的 `flex: 1 1 auto` 本身没错**（上一轮改的就是那里，报障依旧），
+  空白是在面板**内部**被行拉伸出来的：不写 `grid-template-rows` 时子块全落进隐式
+  auto 行，而 `align-content` 初始值 `normal` 对 auto 轨道表现为 `stretch` ⇒ 剩余高度**均分**。
+- **验收证据**：提交 **`8039251`**（未推送）；新增
+  `features/strategy/sopCampaignRecipeLayout.test.ts` **3 例**（面板撑满 / 内部只给录入区 /
+  录入区内部 textarea 吃掉剩余高度），读 CSS 文本断言声明（jsdom 无排版引擎，
+  与 `design-system/dialogSizing.test.ts` 同手法）；`npm run verify` 全绿（254 文件 / 2935 例）。
+- **通用结论已上收**：`docs/architecture-constraints.md` 七章新增
+  「grid 容器只要某一块该吃剩余高度，就必须写出 `grid-template-rows`」。
+- **未做**：本机无渲染验证能力，空白是否真消失**未经真机过目**。
