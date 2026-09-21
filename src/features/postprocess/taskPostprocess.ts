@@ -49,14 +49,6 @@ import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRender
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
 
-/**
- * 变体的画面适配模式。
- *
- * `crop-fill`（等比放大填满 + 裁掉溢出）：渠道尺寸与生成尺寸比例不一致时，
- * 留白（`contain-blur`）会产出带模糊边的素材、拉伸（`stretch`）会变形，都不适合投放。
- */
-export const POSTPROCESS_FIT_MODE: CompositeV2FitMode = 'crop-fill'
-
 /** 单次高质量编码的质量；纯净版不限体积时使用。 */
 const UNLIMITED_QUALITY = 0.92
 
@@ -357,10 +349,20 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         const plan = plans[planIndex]
         // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
         const planPreset = plan.unit.watermark ? (bucketPresets.get(plan.unit.watermark.id) ?? null) : null
-        const written = await writeVariant(api, outputRoots, plan, source.dataUrl, planPreset, result, {
-          sourceImageId: imageId,
-          sourceIndex: index,
-        })
+        const written = await writeVariant(
+          api,
+          outputRoots,
+          plan,
+          source.dataUrl,
+          planPreset,
+          // 画面适配是全局一套（不随方向覆盖），整批图取同一个值
+          baseConfig.fitMode,
+          result,
+          {
+            sourceImageId: imageId,
+            sourceIndex: index,
+          },
+        )
         producedFiles += written.length
         reportProgress({
           imageUnits: plans.length,
@@ -492,6 +494,8 @@ async function writeVariant(
   plan: PostprocessVariantPlan,
   sourceDataUrl: string,
   preset: CompositeV2Preset | null,
+  /** 源图适配目标尺寸的方式（全局配置，见 `PostprocessMediaConfig.fitMode`） */
+  fitMode: CompositeV2FitMode,
   result: PostprocessAccumulator,
   /** 定位线索：出问题时用户要靠「哪张源图的哪个文件」去查 */
   context: { sourceImageId: string; sourceIndex: number },
@@ -507,7 +511,7 @@ async function writeVariant(
 
   let rendered: { dataUrl: string; warning?: string }
   try {
-    rendered = await renderVariant(sourceDataUrl, plan, preset)
+    rendered = await renderVariant(sourceDataUrl, plan, preset, fitMode)
   } catch (error) {
     // 渲染抛异常：以前这里只留一条「全部导出位置写入失败」，真因（异常本身）只在 console 里。
     reportIssue(result, { code: 'PP-RENDER-001', stage: 'render', ...locator, cause: messageOf(error) })
@@ -555,12 +559,13 @@ async function renderVariant(
   sourceDataUrl: string,
   plan: PostprocessVariantPlan,
   preset: CompositeV2Preset | null,
+  fitMode: CompositeV2FitMode,
 ): Promise<{ dataUrl: string; warning?: string }> {
   const renderInput = {
     backgroundDataUrl: sourceDataUrl,
     preset: preset ?? PLAIN_PRESET,
     targetSize: { width: plan.unit.width, height: plan.unit.height },
-    fitMode: POSTPROCESS_FIT_MODE,
+    fitMode,
   }
   if (!plan.compress) {
     return { dataUrl: await renderCompositeV2ToJpegDataUrl({ ...renderInput, quality: UNLIMITED_QUALITY }) }

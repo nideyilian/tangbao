@@ -46,6 +46,7 @@ function makeGlobalConfig(overrides: Partial<PostprocessMediaConfig> = {}): Post
     selectedMediaIds: [PURE_MEDIA_ID, 'gdt'],
     selectedCollectionIds: ['direction-a'],
     direction: null,
+    fitMode: 'crop-fill',
     outputDir: 'D:/默认位置',
     mediaOutputDirs: { gdt: ['D:/投放A', 'D:/投放B'] },
     namePattern: '{date}-{index}',
@@ -219,6 +220,8 @@ describe('buildConsoleSheets', () => {
     expect(byKey.identifierText).toBe('@小王')
     expect(byKey.identifierPlacement).toBe('suffix')
     expect(byKey.autoCompanionClean).toBe(true)
+    // 画面适配也在这张表里：它与命名、分发同属「全局一套」的产出规格
+    expect(byKey.fitMode).toBe('crop-fill')
   })
 
   it('分发表 9 个字段一个不少', () => {

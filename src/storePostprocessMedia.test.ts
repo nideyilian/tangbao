@@ -11,7 +11,12 @@ import {
   selectPostprocessOutputPlan,
   usePostprocessMediaStore,
 } from './storePostprocessMedia'
-import { DEFAULT_POSTPROCESS_MEDIA, PURE_MEDIA_ID, resolvePostprocessOutputDirs } from './lib/postprocessMedia'
+import {
+  DEFAULT_POSTPROCESS_FIT_MODE,
+  DEFAULT_POSTPROCESS_MEDIA,
+  PURE_MEDIA_ID,
+  resolvePostprocessOutputDirs,
+} from './lib/postprocessMedia'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from './lib/postprocessNaming'
 
 beforeEach(() => {
@@ -24,6 +29,8 @@ describe('默认配置', () => {
     expect(state.selectedMediaIds).toEqual([PURE_MEDIA_ID])
     expect(state.selectedCollectionIds).toEqual([])
     expect(state.direction).toBeNull()
+    // 画面适配默认「裁剪填满」：与改动前写死在产出链路里的行为一致（默认改了就是改了所有人的产出）
+    expect(state.fitMode).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
     expect(state.namePattern).toBe(DEFAULT_POSTPROCESS_NAME_PATTERN)
     expect(state.watermarkPresetIds).toEqual([])
     expect(state.autoCompanionClean).toBe(true)
@@ -39,6 +46,32 @@ describe('默认配置', () => {
 
     usePostprocessMediaStore.getState().renameMedia('gdt', '改过的')
     expect(DEFAULT_POSTPROCESS_MEDIA[0].name).toBe('广点通')
+  })
+})
+
+describe('画面适配模式（fitMode，全局一套）', () => {
+  it('setFitMode 写进 store，落盘快照与归一化往返都带得走', () => {
+    usePostprocessMediaStore.getState().setFitMode('contain-blur')
+    expect(usePostprocessMediaStore.getState().fitMode).toBe('contain-blur')
+
+    const snapshot = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
+    expect(snapshot.fitMode).toBe('contain-blur')
+    expect(normalizePostprocessMediaConfig(snapshot).fitMode).toBe('contain-blur')
+  })
+
+  it('旧数据没有这个字段 → 归一化补默认值，升级后产出观感不变', () => {
+    expect(normalizePostprocessMediaConfig({}).fitMode).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+  })
+
+  it('坏值在归一化时回落默认值（中文标签是 Excel 里的写法，不是配置层的合法值）', () => {
+    expect(normalizePostprocessMediaConfig({ fitMode: '模糊填充' }).fitMode).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+    expect(normalizePostprocessMediaConfig({ fitMode: 42 }).fitMode).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+    expect(normalizePostprocessMediaConfig({ fitMode: 'stretch' }).fitMode).toBe('stretch')
+  })
+
+  it('运行期传非法值时也落回默认值，不把坏值原样存进去', () => {
+    usePostprocessMediaStore.getState().setFitMode('blur' as never)
+    expect(usePostprocessMediaStore.getState().fitMode).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
   })
 })
 

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_POSTPROCESS_DISTRIBUTION } from './postprocessDistribution'
 import {
+  DEFAULT_POSTPROCESS_FIT_MODE,
   DEFAULT_POSTPROCESS_MEDIA,
   DIRECTION_OPTIONS,
+  FIT_MODE_OPTIONS,
   MAX_POSTPROCESS_OUTPUT_DIRS,
   PURE_MEDIA_ID,
   applyPostprocessOverride,
@@ -11,6 +13,7 @@ import {
   getOutputDirectionLabel,
   matchMediaSizes,
   normalizeOutputDirList,
+  normalizePostprocessFitMode,
   resolveOutputDirection,
   resolvePostprocessOutputDirs,
   type PostprocessMedia,
@@ -371,6 +374,32 @@ describe('多水印预设展开', () => {
   })
 })
 
+describe('画面适配模式（fitMode）', () => {
+  it('默认值是「裁剪填满」：与这次改动之前写死在产出链路里的行为一致', () => {
+    expect(DEFAULT_POSTPROCESS_FIT_MODE).toBe('crop-fill')
+  })
+
+  it('归一化：三个合法值原样保留，其余一律回落默认值', () => {
+    expect(normalizePostprocessFitMode('crop-fill')).toBe('crop-fill')
+    expect(normalizePostprocessFitMode('contain-blur')).toBe('contain-blur')
+    expect(normalizePostprocessFitMode('stretch')).toBe('stretch')
+
+    // 坏值必须挡在配置层：渲染器遇到不认识的模式会抛「未知的背景适应模式」，
+    // 那是渲染中途报错 —— 整张产出作废，而坏值还留着，每次跑都废一张
+    expect(normalizePostprocessFitMode(undefined)).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+    expect(normalizePostprocessFitMode(null)).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+    expect(normalizePostprocessFitMode('')).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+    expect(normalizePostprocessFitMode(1)).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+    // 中文标签是 Excel 表里给人看的写法，**不是**配置层的合法值
+    expect(normalizePostprocessFitMode('模糊填充')).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+  })
+
+  it('选项表与模式一一对应：界面控件、Excel 取值域都读这一份', () => {
+    expect(FIT_MODE_OPTIONS.map((option) => option.value)).toEqual(['crop-fill', 'contain-blur', 'stretch'])
+    expect(new Set(FIT_MODE_OPTIONS.map((option) => option.label)).size).toBe(3)
+  })
+})
+
 describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
   function baseConfig(): PostprocessMediaConfig {
     return {
@@ -378,6 +407,7 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
       selectedMediaIds: ['clean'],
       selectedCollectionIds: [],
       direction: null,
+      fitMode: 'crop-fill',
       outputDir: '基线目录',
       mediaOutputDirs: {},
       namePattern: '{seq}',
@@ -455,6 +485,32 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
     const config = baseConfig()
     expect(applyPostprocessOverride(config, undefined, 'baidu')).toBe(config)
   })
+
+  it('⭐ 画面适配从基线透传：这个函数返回的是白名单对象，漏一个字段下游就是 undefined', () => {
+    // 节点层没有画面适配的覆盖入口（全局规格），但只要节点写了**别的**字段，
+    // 返回值就会走白名单重建那条路 —— 漏掉 fitMode 的话产出链拿到 undefined，
+    // 渲染器抛「未知的背景适应模式」，整批产出作废（2026-09-21 加字段时实测过这条路）
+    const config: PostprocessMediaConfig = { ...baseConfig(), fitMode: 'contain-blur' }
+    const merged = applyPostprocessOverride(
+      config,
+      { outputDir: '节点目录', watermarkPresetIds: ['节点水印'] },
+      'baidu',
+    )
+    expect(merged.outputDir).toBe('节点目录')
+    expect(merged.watermarkPresetIds).toEqual(['节点水印'])
+    expect(merged.fitMode).toBe('contain-blur')
+  })
+
+  it('按渠道覆盖也改不动画面适配（byMedia 只开放目录与水印）', () => {
+    const config: PostprocessMediaConfig = { ...baseConfig(), fitMode: 'stretch' }
+    const merged = applyPostprocessOverride(
+      config,
+      { byMedia: { baidu: { outputDir: '百度目录', watermarkPresetIds: [] } } },
+      'baidu',
+    )
+    expect(merged.outputDir).toBe('百度目录')
+    expect(merged.fitMode).toBe('stretch')
+  })
 })
 
 describe('导出位置：全局渠道表 + 双写', () => {
@@ -464,6 +520,7 @@ describe('导出位置：全局渠道表 + 双写', () => {
       selectedMediaIds: ['clean'],
       selectedCollectionIds: [],
       direction: null,
+      fitMode: 'crop-fill',
       outputDir: '全局默认目录',
       mediaOutputDirs: {},
       namePattern: '{seq}',

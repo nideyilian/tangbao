@@ -22,13 +22,19 @@
  */
 
 import { buildPostprocessMediaSizeId } from '../../../storePostprocessMedia'
-import { PURE_MEDIA_ID, normalizeOutputDirList, type PostprocessMedia } from '../../../lib/postprocessMedia'
+import {
+  DEFAULT_POSTPROCESS_FIT_MODE,
+  FIT_MODE_OPTIONS,
+  PURE_MEDIA_ID,
+  normalizeOutputDirList,
+  type PostprocessMedia,
+} from '../../../lib/postprocessMedia'
 import type { PostprocessDistributionConfig } from '../../../lib/postprocessDistribution'
 import type { ProjectNodeParamsMap } from '../../projectTree/types'
 import type { AssetCollection } from '../../../types'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import type { PostprocessNodeOverride } from '../../../lib/postprocessMedia'
-import type { CompositeV2IdentifierConfig } from './compositeV2Types'
+import type { CompositeV2FitMode, CompositeV2IdentifierConfig } from './compositeV2Types'
 import { CONSOLE_SHEET_NAMES, type ConsoleSheetName } from './consoleWorkbook'
 
 /** 导入模式：合并按主键新增/更新；覆盖先清空所选表再写。 */
@@ -103,6 +109,8 @@ export interface ConsoleImportPayload {
     identifierText?: string
     identifierPlacement?: 'prefix' | 'suffix' | 'both'
     autoCompanionClean?: boolean
+    /** 画面适配模式；表里填英文枚举或导出的中文标签都认 */
+    fitMode?: CompositeV2FitMode
   }
 }
 
@@ -633,6 +641,18 @@ export function planConsoleImport(
       return row ? valueOf(row, namingTable, 'value') : ''
     }
     const placement = read('identifierPlacement')
+    /**
+     * 画面适配：**英文枚举与中文标签都认** —— 这张表就是给人手改的，
+     * 中文标签（「模糊填充」）比 `contain-blur` 更可能被填进来。
+     *
+     * 填了不认识的值时**刻意报一条而不是静默回落**：静默回落成默认值会让用户
+     * 以为改生效了，实际产出还是老样子。留空则视为「这轮不动这个字段」。
+     */
+    const fitModeRaw = read('fitMode').trim()
+    const fitModeOption = FIT_MODE_OPTIONS.find((option) => option.value === fitModeRaw || option.label === fitModeRaw)
+    if (fitModeRaw && !fitModeOption) {
+      reject(acc, 'naming', 0, `画面适配「${fitModeRaw}」不认识，已按「裁剪填满」处理`)
+    }
     acc.payload.naming = {
       namePattern: read('namePattern') || undefined,
       creator: read('creator') || undefined,
@@ -640,6 +660,7 @@ export function planConsoleImport(
       identifierPlacement:
         placement === 'prefix' || placement === 'suffix' || placement === 'both' ? placement : undefined,
       autoCompanionClean: parseImportBool(read('autoCompanionClean')),
+      fitMode: fitModeOption?.value ?? (fitModeRaw ? DEFAULT_POSTPROCESS_FIT_MODE : undefined),
     }
     summarize(acc, 'naming', { create: 0, update: 1, skip: 0, reject: countRejected(acc, 'naming') })
   }
@@ -715,6 +736,7 @@ export interface ConsoleImportActions {
   setPostprocessOverride: (collectionId: string, patch: PostprocessNodeOverride) => void
   patchDistribution: (patch: Partial<PostprocessDistributionConfig>) => void
   setNamePattern: (pattern: string) => void
+  setFitMode: (fitMode: CompositeV2FitMode) => void
   setCreator: (creator: string) => void
   setAutoCompanionClean: (enabled: boolean) => void
   setIdentifier: (patch: Partial<CompositeV2IdentifierConfig>) => void
@@ -902,10 +924,11 @@ export async function applyConsoleImport(
   }
 
   if (payload.naming) {
-    const { namePattern, creator, identifierText, identifierPlacement, autoCompanionClean } = payload.naming
+    const { namePattern, creator, identifierText, identifierPlacement, autoCompanionClean, fitMode } = payload.naming
     if (namePattern) actions.setNamePattern(namePattern)
     if (creator !== undefined) actions.setCreator(creator)
     if (autoCompanionClean !== undefined) actions.setAutoCompanionClean(autoCompanionClean)
+    if (fitMode !== undefined) actions.setFitMode(fitMode)
     const identifierPatch: Partial<CompositeV2IdentifierConfig> = {}
     if (identifierText !== undefined) identifierPatch.text = identifierText
     if (identifierPlacement !== undefined) identifierPatch.placement = identifierPlacement

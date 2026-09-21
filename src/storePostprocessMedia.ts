@@ -15,11 +15,13 @@ import { persist } from 'zustand/middleware'
 import { createDesktopJsonStorage } from './lib/desktopJsonStorage'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from './lib/postprocessNaming'
 import {
+  DEFAULT_POSTPROCESS_FIT_MODE,
   DEFAULT_POSTPROCESS_MEDIA,
   MAX_POSTPROCESS_OUTPUT_DIRS,
   PURE_MEDIA_ID,
   buildPostprocessOutputs,
   normalizeOutputDirList,
+  normalizePostprocessFitMode,
   resolveOutputDirection,
   type OutputDirection,
   type PostprocessMedia,
@@ -28,6 +30,7 @@ import {
   type PostprocessOutputPlan,
   type PostprocessProjectTarget,
 } from './lib/postprocessMedia'
+import type { CompositeV2FitMode } from './features/composite/lib/compositeV2Types'
 import {
   DEFAULT_POSTPROCESS_DISTRIBUTION,
   normalizePostprocessDistributionConfig,
@@ -51,6 +54,13 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   setSelectedCollectionIds: (ids: string[]) => void
   toggleSelectedCollection: (collectionId: string) => void
   setDirection: (direction: OutputDirection | null) => void
+  /**
+   * 设置源图适配目标尺寸的方式（全局一套）。
+   *
+   * 收窄到联合类型而不是 `string`：这个值是直接喂给渲染器的，拼错了不会在编译期暴露，
+   * 而是等到出图时才抛「未知的背景适应模式」。
+   */
+  setFitMode: (fitMode: CompositeV2FitMode) => void
   setOutputDir: (outputDir: string) => void
   /**
    * 写某个渠道第 `index` 个导出位置（0 起）。传空串 = 清掉该位置，后面的位置前移。
@@ -82,6 +92,8 @@ export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
     selectedMediaIds: [PURE_MEDIA_ID],
     selectedCollectionIds: [],
     direction: null,
+    // 默认「裁剪填满」：与历史行为一致，升级不改观感
+    fitMode: DEFAULT_POSTPROCESS_FIT_MODE,
     outputDir: '',
     // 默认一个渠道都不单独指定：全部走 `outputDir`（空串 = 本地保存目录下的 postprocess）
     mediaOutputDirs: {},
@@ -225,6 +237,8 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
     selectedMediaIds: selectedMediaIds.filter((id) => !legacyDisabledMediaIds.has(id)),
     selectedCollectionIds: normalizeStringList(input.selectedCollectionIds) ?? defaults.selectedCollectionIds,
     direction,
+    // 旧数据没有这个字段 → 回落默认值，恰好等于它原来的行为（产出链路里写死的也是 crop-fill）
+    fitMode: normalizePostprocessFitMode(input.fitMode),
     outputDir: typeof input.outputDir === 'string' ? input.outputDir : defaults.outputDir,
     mediaOutputDirs: normalizeMediaOutputDirs(input.mediaOutputDirs),
     namePattern,
@@ -406,6 +420,8 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
           direction: direction === 'landscape' || direction === 'portrait' || direction === 'square' ? direction : null,
         }),
 
+      setFitMode: (fitMode) => set({ fitMode: normalizePostprocessFitMode(fitMode) }),
+
       setOutputDir: (outputDir) => set({ outputDir: typeof outputDir === 'string' ? outputDir : '' }),
 
       setMediaOutputDir: (mediaId, index, outputDir) =>
@@ -457,6 +473,10 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
       // v3：渠道「启用」字段删除（ADR-0013），旧的 `enabled: false` 折成「不参与产出」。
       // 同样必须 bump —— 不跑 `migrate` 的话 `normalize` 里的折算不会发生，
       // 被停用过的渠道会在升级后**悄悄重新开始产出**（行为反转，且界面上看不出发生过什么）。
+      //
+      // 新增 `fitMode`（画面适配模式）**刻意不 bump**：纯新增字段，且默认值 `crop-fill`
+      // 恰好就是旧行为（当时写死在产出链路里），旧数据缺这个字段时浅合并直接拿到默认值。
+      // 没有需要折算的旧语义，无谓 bump 只会让所有用户的数据白过一遍 `migrate`。
       version: 3,
       storage: createDesktopJsonStorage('postprocessMedia'),
       partialize: (state) => ({
@@ -464,6 +484,7 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         selectedMediaIds: state.selectedMediaIds,
         selectedCollectionIds: state.selectedCollectionIds,
         direction: state.direction,
+        fitMode: state.fitMode,
         outputDir: state.outputDir,
         mediaOutputDirs: state.mediaOutputDirs,
         namePattern: state.namePattern,
@@ -484,6 +505,7 @@ export function getPostprocessMediaConfigSnapshot(state: PostprocessMediaStore):
     selectedMediaIds: [...state.selectedMediaIds],
     selectedCollectionIds: [...state.selectedCollectionIds],
     direction: state.direction,
+    fitMode: state.fitMode,
     outputDir: state.outputDir,
     mediaOutputDirs: Object.fromEntries(
       Object.entries(state.mediaOutputDirs).map(([mediaId, dirs]) => [mediaId, [...dirs]]),

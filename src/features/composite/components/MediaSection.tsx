@@ -41,12 +41,13 @@
 
 import { useMemo } from 'react'
 import { Badge, Button, Checkbox, Inline, SectionHeader, SegmentedControl } from '../../../design-system'
-import { DIRECTION_OPTIONS, PURE_MEDIA_ID } from '../../../lib/postprocessMedia'
+import { DIRECTION_OPTIONS, FIT_MODE_OPTIONS, PURE_MEDIA_ID } from '../../../lib/postprocessMedia'
 import { pruneSelectedMediaIds, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { resolveProjectOverrideChain, resolveProjectPostprocessSlice } from '../../projectTree/params'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { usePostprocessGlobalConfig } from '../../postprocess/usePostprocessGlobalConfig'
+import type { CompositeV2FitMode } from '../lib/compositeV2Types'
 import { isGlobalScope, type ConsoleScope } from '../lib/controlConsoleSections'
 import { ConsoleMediaTables } from './ConsoleMediaTables'
 
@@ -55,12 +56,26 @@ interface Props {
   scope: ConsoleScope
 }
 
+/**
+ * 每种适配模式的代价，只显示**当前选中**的那一条。
+ *
+ * 必须逐条说清代价：三个选项都能「把图放进画布」，差别全在代价上（丢边缘 / 带模糊边 / 变形）。
+ * 只给三个名字让人选，往往是产出跑完才发现不对，得整批重跑。
+ */
+const FIT_MODE_HINT: Record<CompositeV2FitMode, string> = {
+  'crop-fill': '等比放大填满、超出的边裁掉：画面不变形，代价是丢边缘内容。',
+  'contain-blur': '完整画面居中、四周补原图模糊底：画面不丢不变形，代价是带模糊边，对留白敏感的渠道可能不收。',
+  stretch: '直接铺满：画面不丢，代价是比例被改变（会变形）。',
+}
+
 export function MediaSection({ scope }: Props) {
   const media = usePostprocessMediaStore((state) => state.media)
   const globalSelectedMediaIds = usePostprocessMediaStore((state) => state.selectedMediaIds)
   const setSelectedMediaIds = usePostprocessMediaStore((state) => state.setSelectedMediaIds)
   const direction = usePostprocessMediaStore((state) => state.direction)
   const setDirection = usePostprocessMediaStore((state) => state.setDirection)
+  const fitMode = usePostprocessMediaStore((state) => state.fitMode)
+  const setFitMode = usePostprocessMediaStore((state) => state.setFitMode)
   const params = useProjectTreeParamsStore((state) => state.params)
   const setPostprocessOverride = useProjectTreeParamsStore((state) => state.setPostprocessOverride)
   const collections = useAssetLibraryStore((state) => state.collections)
@@ -199,6 +214,43 @@ export function MediaSection({ scope }: Props) {
                 value={direction ?? 'auto'}
                 options={DIRECTION_OPTIONS}
                 onValueChange={(value) => setDirection(value === 'auto' ? null : value)}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/*
+         * 「画面适配」：与「画面方向」并排的另一个**整批规格** ——
+         * 方向决定每个渠道取用哪一组尺寸，适配决定源图怎么放进那组尺寸，两者配合才是一张成品。
+         *
+         * 同样是**全局一套**（不做方向级继承，理由见 `PostprocessMediaConfig.fitMode`）：
+         * 产出链读的就是这里写下的值，所以这里不需要「跟随上级 / 本级自定义」那套提示。
+         *
+         * ⚠️ 它**不动默认值**：默认仍是「裁剪填满」，与这次改动之前的行为一致。
+         * 换成模糊填充会产出带模糊边的素材，对留白敏感的渠道可能不收 —— 那是用户的选择，不是默认。
+         */}
+        <section
+          data-layout="console-fit-mode"
+          className="mb-3 rounded-ds-lg border border-ds-border bg-ds-surface px-3 py-2 dark:border-ds-border dark:bg-ds-scrim"
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-sm font-medium text-ds-text dark:text-ds-text">
+                画面适配
+                <span className="ml-2 text-xs font-normal text-ds-muted dark:text-ds-muted">全局一套</span>
+              </p>
+              {/*
+               * 只显示**当前选中**那条的代价：三条一起铺开会把这一区撑成一段说明文字，
+               * 而用户做决定时真正要看的只有「我选的这个有什么坑」。
+               */}
+              <p className="text-xs text-ds-muted dark:text-ds-muted">{FIT_MODE_HINT[fitMode]}</p>
+            </div>
+            <div className="ml-auto shrink-0">
+              <SegmentedControl
+                aria-label="画面适配"
+                value={fitMode}
+                options={FIT_MODE_OPTIONS}
+                onValueChange={setFitMode}
               />
             </div>
           </div>

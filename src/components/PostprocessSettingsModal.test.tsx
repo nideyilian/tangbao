@@ -194,7 +194,7 @@ describe('PostprocessSettingsModal — 作用范围跟随全局上下文指针',
     expect(body).toContain('还没有选中方向')
     // 全局独有参数一个都不能出现（这正是「不要全局设置」的验收口径）
     const panel = panelText()
-    for (const globalOnly of ['媒体表', '命名模板', '创作者', '画面方向', '全局编排', '产出预览']) {
+    for (const globalOnly of ['媒体表', '命名模板', '创作者', '画面方向', '画面适配', '全局编排', '产出预览']) {
       expect(panel, `引导态里不该出现全局参数「${globalOnly}」`).not.toContain(globalOnly)
     }
   })

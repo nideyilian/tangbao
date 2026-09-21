@@ -423,6 +423,8 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
       { key: 'identifierText', label: '署名文本', value: identifier?.text ?? '' },
       { key: 'identifierPlacement', label: '署名位置', value: identifier?.placement ?? 'suffix' },
       { key: 'autoCompanionClean', label: '纯净版自动伴随', value: globalConfig.autoCompanionClean },
+      // 取值域写进 label：这张表是要被人手改的，三个模式名不给出来，填错就只能靠猜
+      { key: 'fitMode', label: '画面适配（裁剪填满/模糊填充/拉伸铺满）', value: globalConfig.fitMode },
     ],
   }
 

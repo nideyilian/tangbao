@@ -87,6 +87,7 @@ function makeActions(overrides: Partial<ConsoleImportActions> = {}): ConsoleImpo
     setPostprocessOverride: vi.fn(),
     patchDistribution: vi.fn(),
     setNamePattern: vi.fn(),
+    setFitMode: vi.fn(),
     setCreator: vi.fn(),
     setAutoCompanionClean: vi.fn(),
     setIdentifier: vi.fn(),
@@ -326,6 +327,7 @@ describe('往返：导出的工作簿能被导入解析回同样的数据', () =
         selectedMediaIds: [PURE_MEDIA_ID, 'gdt'],
         selectedCollectionIds: ['direction-a'],
         direction: null,
+        fitMode: 'crop-fill' as const,
         outputDir: 'D:/默认',
         mediaOutputDirs: { gdt: ['D:/投放'] },
         namePattern: '{date}',
@@ -369,5 +371,31 @@ describe('往返：导出的工作簿能被导入解析回同样的数据', () =
     expect(plan.payload.watermarkBinding).toEqual([])
     expect(plan.payload.distribution?.enabled).toBe(false)
     expect(plan.payload.naming?.namePattern).toBe('{date}')
+    // 画面适配也走 naming 表往返（导出英文枚举，导入原样认）
+    expect(plan.payload.naming?.fitMode).toBe('crop-fill')
+  })
+})
+
+describe('画面适配（naming 表往返）', () => {
+  const namingTable = (value: string) =>
+    tablesOf(['naming', table('naming', ['key', 'label', 'value'], [['fitMode', '画面适配', value]])])
+
+  it('英文枚举与中文标签都认：这张表是给人手改的', () => {
+    expect(planConsoleImport(namingTable('contain-blur'), makeContext()).payload.naming?.fitMode).toBe('contain-blur')
+    expect(planConsoleImport(namingTable('模糊填充'), makeContext()).payload.naming?.fitMode).toBe('contain-blur')
+    expect(planConsoleImport(namingTable('拉伸铺满'), makeContext()).payload.naming?.fitMode).toBe('stretch')
+  })
+
+  it('⭐ 填了不认识的值要报出来，而不是静默回落', () => {
+    // 静默回落成默认值会让用户以为改生效了，实际产出还是老样子 —— 这个项目明确不要这种降级
+    const plan = planConsoleImport(namingTable('blur'), makeContext())
+    expect(plan.payload.naming?.fitMode).toBe('crop-fill')
+    expect(plan.rejected.some((issue) => issue.reason.includes('画面适配'))).toBe(true)
+  })
+
+  it('留空 = 这轮不动这个字段（既不覆盖配置，也不报错）', () => {
+    const plan = planConsoleImport(namingTable(''), makeContext())
+    expect(plan.payload.naming?.fitMode).toBeUndefined()
+    expect(plan.rejected).toHaveLength(0)
   })
 })

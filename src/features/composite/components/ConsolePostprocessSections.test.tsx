@@ -10,6 +10,7 @@
  * | ------------------------ | --------------------------------- |
  * | 命名模板 / 创作者 / 产出预览 | 「输出位置」分区                   |
  * | 画面方向                 | 「渠道与尺寸」分区                 |
+ * | 画面适配                 | 「渠道与尺寸」分区（与画面方向并排） |
  * | 分发 / 纯净版自动伴随     | 「分发」分区（本来就在这里）        |
  *
  * 断言口径不是「组件渲染出来了」，而是**改得动、写得进 store**：参数换了家但入口断了，
@@ -274,6 +275,33 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
 
     clickByText('跟随尺寸')
     expect(usePostprocessMediaStore.getState().direction).toBeNull()
+  })
+
+  it('⭐ 画面适配默认「裁剪填满」，可整批切成模糊填充 / 拉伸铺满，并写进产出链读的那份配置', () => {
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    expect(text()).toContain('画面适配')
+    // 默认值必须与这次改动之前的行为一致（当时写死在产出链路里）——改了默认就是改了所有人的产出
+    expect(usePostprocessMediaStore.getState().fitMode).toBe('crop-fill')
+
+    clickByText('模糊填充')
+    expect(usePostprocessMediaStore.getState().fitMode).toBe('contain-blur')
+
+    clickByText('拉伸铺满')
+    expect(usePostprocessMediaStore.getState().fitMode).toBe('stretch')
+
+    clickByText('裁剪填满')
+    expect(usePostprocessMediaStore.getState().fitMode).toBe('crop-fill')
+  })
+
+  it('画面适配只显示**当前选中**那条的代价：三个模式都能填满画布，差别全在代价上', () => {
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    expect(text()).toContain('代价是丢边缘内容')
+    // 没选的那两条不铺开，否则这一区会被撑成一段说明文字
+    expect(text()).not.toContain('对留白敏感的渠道可能不收')
+
+    clickByText('模糊填充')
+    expect(text()).toContain('对留白敏感的渠道可能不收')
+    expect(text()).not.toContain('代价是丢边缘内容')
   })
 
   it('渠道表的「参与产出」开关写进 selectedMediaIds（决定这个渠道参不参与产出）', () => {

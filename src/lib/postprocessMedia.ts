@@ -14,6 +14,9 @@
  */
 
 import type { PostprocessDistributionConfig } from './postprocessDistribution'
+// 只借类型：适配模式的**唯一真相源**在渲染器那边（`planBackgroundFit` 的入参），
+// 这里再立一套同义字面量，将来加第四种模式就会漏改一处。
+import type { CompositeV2FitMode } from '../features/composite/lib/compositeV2Types'
 
 /** 后处理媒体下的单个尺寸规格。 */
 export interface PostprocessMediaSize {
@@ -56,6 +59,20 @@ export const PURE_MEDIA_NAME = '纯净版'
  * 放开后一次误配就能把磁盘写满。
  */
 export const MAX_POSTPROCESS_OUTPUT_DIRS = 2
+
+/** 默认的画面适配模式：与历史行为一致（曾经是产出链路里写死的常量）。 */
+export const DEFAULT_POSTPROCESS_FIT_MODE: CompositeV2FitMode = 'crop-fill'
+
+/**
+ * 归一化画面适配模式：未知值一律回落默认值。
+ *
+ * 必须挡住非法值，不能「原样传给渲染器再看结果」：`planBackgroundFit` 遇到不认识的模式
+ * 会抛「未知的背景适应模式」，那是**渲染中途**报错 —— 整张产出当场作废，
+ * 而配置里那个坏值还会一直留着，每次跑都废一张。在这里回落是唯一的低成本出口。
+ */
+export function normalizePostprocessFitMode(value: unknown): CompositeV2FitMode {
+  return value === 'contain-blur' || value === 'stretch' || value === 'crop-fill' ? value : DEFAULT_POSTPROCESS_FIT_MODE
+}
 
 /**
  * 归一化导出位置列表：去首尾空白、丢空串、去重、保序，最多 `MAX_POSTPROCESS_OUTPUT_DIRS` 个。
@@ -149,6 +166,17 @@ export const DIRECTION_OPTIONS: Array<{ value: DirectionValue; label: string }> 
   { value: 'landscape', label: '横版' },
   { value: 'portrait', label: '竖版' },
   { value: 'square', label: '方形' },
+]
+
+/**
+ * 画面适配选项。**只有这一份**：中控台的选择控件、Excel 往返的取值域、产出链的兜底判定
+ * 都从这里取，别在界面里另写一份 `[{value: 'crop-fill', label: '裁剪'}, …]`——
+ * 那样改一处文案就会出现「表里写裁剪、界面写裁切」。
+ */
+export const FIT_MODE_OPTIONS: Array<{ value: CompositeV2FitMode; label: string }> = [
+  { value: 'crop-fill', label: '裁剪填满' },
+  { value: 'contain-blur', label: '模糊填充' },
+  { value: 'stretch', label: '拉伸铺满' },
 ]
 
 /** 按 id 查媒体；不存在返回 undefined（调用方需自行决定如何提示）。 */
@@ -259,6 +287,19 @@ export interface PostprocessMediaConfig {
   selectedCollectionIds: string[]
   /** 手选方向；null = 按源图尺寸自动判定 */
   direction: OutputDirection | null
+  /**
+   * 源图适配到目标尺寸的方式（**全局一套**，不参与方向级继承）。
+   *
+   * 三选一，代价各不同：
+   * - `crop-fill`（**默认**）：等比放大填满画布 + 裁掉溢出的边。画面填满、不变形，代价是丢边缘内容。
+   * - `contain-blur`：完整画面不变形居中，四周补一圈「原图模糊放大」做底。
+   *   代价是带模糊边 —— 电商主图这类对留白敏感的渠道通常不收，用之前先确认渠道规则。
+   * - `stretch`：填满且画面完整，但比例被改变（人像/产品会变形）。
+   *
+   * 默认值与历史行为一致（`taskPostprocess` 曾把 `crop-fill` 写死成常量）——
+   * 升级不会让已有产出的画面观感发生变化。
+   */
+  fitMode: CompositeV2FitMode
   /** 输出目录（绝对路径）；空串 = 沿用既有默认输出位置 */
   outputDir: string
   /**
@@ -453,6 +494,10 @@ export function applyPostprocessOverride(
     direction: base.direction,
     // 用 `??` 而不是 `||`：空串是「用默认输出位置」、空数组是「这个渠道不加水印」，都是有效值
     outputDir: perMedia?.outputDir ?? override.outputDir ?? base.outputDir,
+    // 画面适配是全局规格，节点层没有覆盖入口 → 一律透传基线。
+    // ⚠️ 这里**必须显式列出**：函数返回的是白名单对象，漏掉的字段在下游就是 `undefined`，
+    // 而渲染器拿到 `undefined` 会抛「未知的背景适应模式」—— 整批产出当场废掉。
+    fitMode: base.fitMode,
     mediaOutputDirs,
     namePattern: base.namePattern,
     creator: base.creator,

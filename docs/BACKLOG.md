@@ -2969,3 +2969,76 @@ taskPostprocess` + `store.ts`/`runtimeStore.ts`/`postprocessIssue.ts`）。本�
      **把这两张表并成一张**（一个渠道行里同时看到勾选 / 尺寸 / 导出位置），而不是并 tab。
 - **注意**：`media` 是**持久化**的分区 id，真要合并必须进 `RETIRED_SECTION_ALIASES`
   （否则老用户会被弹回水印，等于把「我上次停在哪」默默抹掉）。
+
+---
+
+### TB-078 后处理画面适配开放为三选一（全局一套）
+
+- **来源**：杰哥 2026-09-21：「后处理导出在处理不同尺寸或宽高比的图片时，默认对图片进行拉伸填充。
+  请将模糊填充和裁剪作为备选方案，并说明如何配置或切换这些选项。」
+  确认口径：**全局一套**（不按方向分别设）—— 原话「这个改尺寸模式是全局设置一个的就可以全部生效的」。
+- **状态**：DONE · 写线：主写线
+- **⚠️ 前提纠正（查证结论）**：**原先不是「拉伸」，是「裁剪填满」**。
+  `taskPostprocess.ts:58` 曾写死 `POSTPROCESS_FIT_MODE = 'crop-fill'` —— 等比放大铺满 + 从中心裁掉溢出，
+  比例不变、丢边缘内容。会被感知成「拉伸」，是因为画面被硬撑满 + 边缘内容整个消失。
+  真正的 `stretch`（变形）引擎里一直有实现（`compositeRenderPlan.ts:62`），只是后处理链路没用它。
+  **三种模式引擎侧本来就齐**（含 `contain-blur` 的糊底，`compositeRendererV2.ts:339`），
+  所以这条不是「新做三种适配」，是「把已有能力接到配置上 + 给入口」。
+- **改了什么**
+  1. `PostprocessMediaConfig` 加 `fitMode: CompositeV2FitMode`（**默认 `crop-fill` = 旧行为不变**）；
+     类型复用渲染器那一份（`compositeV2Types`），不另立同义字面量。
+  2. `DEFAULT_POSTPROCESS_FIT_MODE` + `normalizePostprocessFitMode` + `FIT_MODE_OPTIONS`
+     （`lib/postprocessMedia.ts`；界面控件与 Excel 取值域共用这一份）。
+     **`persist.version` 刻意不 bump**：纯新增字段、默认值等于旧行为，没有旧语义要折算。
+  3. 产出链删掉写死的常量，改读配置（`taskPostprocess.ts` 的 `writeVariant` / `renderVariant` 加参数）。
+  4. `applyPostprocessOverride` **显式透传** `fitMode` —— 这个函数返回**白名单对象**，
+     漏一个字段下游就是 `undefined`，渲染器会抛「未知的背景适应模式」把整批产出废掉
+     （`architecture-constraints.md` 4.2.1 第 ② 条那条链）。
+  5. 界面：中控台「渠道与尺寸」分区、「画面方向」下面并排一行三选一（标注「全局一套」），
+     **只显示当前选中那条的代价**（三条一起铺开会把这一区撑成一段说明文字）。
+  6. Excel `naming` 表加 `fitMode` 行（导出）＋ 导入**英文枚举与中文标签都认**；
+     填了不认识的值**报一条 reject 而不是静默回落**（静默回落会让人以为改生效了）。
+- **怎么切换**（需求里问的「如何配置」）
+  中控台（顶栏 tab）→ 左树选作用域 → 「渠道与尺寸」分区 → 「画面适配」三选一。
+  **它是全局一套**：在哪个作用域选都一样，改一次所有渠道所有方向生效。
+  等价路径是 Excel：导出中控台数据 → 改 `naming` 表的 `fitMode` 行 → 导入。
+  选项与代价：**裁剪填满**（默认，填满不变形、丢边缘）/ **模糊填充**（画面完整、带模糊边）/
+  **拉伸铺满**（画面完整、比例被改变）。
+- **验收标准**（可测）
+  1. 中控台点「模糊填充」→ `usePostprocessMediaStore.fitMode === 'contain-blur'`；
+  2. 默认值是 `crop-fill`（升级不改观感）；
+  3. 旧数据（无该字段）归一化后 = `crop-fill`；坏值（中文标签 / 数字）也回落 `crop-fill`；
+  4. `applyPostprocessOverride` 后 `fitMode` 与基线一致（节点写了别的字段也不丢）；
+  5. Excel 往返：导出含 `fitMode` 行；导入认 `contain-blur` 与「模糊填充」；
+     填 `blur` 时 payload 回落 `crop-fill` **且** `rejected` 里出现「画面适配」；
+  6. 方向级参数弹窗里不出现「画面适配」（全局参数不在方向级面板里）。
+- **改动面**：`lib/postprocessMedia.ts`、`storePostprocessMedia.ts`、
+  `features/postprocess/{taskPostprocess,usePostprocessGlobalConfig}.ts`、
+  `features/composite/components/MediaSection.tsx`、
+  `features/composite/lib/{consoleWorkbook,consoleImport}.ts`、`features/composite/CompositeWorkspace.tsx`
+  ＋ 对应测试 5 个文件。
+- **验收证据**：`npm run verify` **全绿** —— **258 文件 / 2974 例**
+  （tsc 双端 + lint + format:check + test 四环在同一份代码上齐过）。
+  > **跑 verify 的时机**：本轮动手时工作区压着另一条写线的未提交改动（见「已知坑」1），
+  > 那时跑全量绿红都不可信（R-74）；等对方 `b50ff28` 提交、工作区只剩本轮改动之后才补跑。
+  > 随后只追加了 `BACKLOG.md` / `runbook` 的文档段，**不涉及任何被 verify 覆盖的文件**。
+- **反向验证**（1 个变异，确认精确变红）
+
+  | 变异                                        | 结果                                                                  |
+  | ------------------------------------------- | --------------------------------------------------------------------- |
+  | `applyPostprocessOverride` 不返回 `fitMode` | `postprocessMedia.test.ts` **2 failed / 49 passed**（两条透传用例红） |
+
+- **未验证（如实说明）**：**渲染入参这一段没有端到端测试** —— `taskPostprocess.test.ts` 明确定位为
+  「未覆盖渲染链、写盘」，本机也无法做像素级验证。该段由类型系统（`writeVariant` / `renderVariant`
+  的 `CompositeV2FitMode` 参数）+ `applyPostprocessOverride` 测试 + 界面写 store 三项共同保障。
+  **三种模式的画面差异请在运行中的应用里过目。**
+- **已知坑**
+  1. ⚠️ **动手时工作区有另一条写线在并行**（`PostprocessRunsDialog` / `postprocessRun(.test)` /
+     `AssetLibraryToolbar` / `BACKLOG.md` / `architecture-constraints.md`，其 `BACKLOG.md` 的 mtime
+     就在开工前 2 分钟）。本轮与它**文件级零重叠**（只共享 `BACKLOG.md`，用精确插入避让）；
+     它于 `b50ff28` 提交后工作区只剩本轮改动，全量 `verify` 才补上（R-01 / R-74）。
+  2. ⚠️ **渲染器另一处入参是死参数，别去「修」它**：`PostprocessParamPanel.tsx:508` 的水印归属预览
+     也传 `fitMode: 'crop-fill'`，但它**不传 `backgroundDataUrl`** → `renderCompositeV2ToCanvas` 里
+     `if (background)` 分支根本不进，这个参数不生效。改了也没有任何视觉差异（查证结论）。
+  3. ⚠️ 水印预设编辑器（`PresetCanvasEditor.tsx:258`）的预览仍是 `crop-fill`，**这是对的**：
+     适配模式只影响背景，水印叠在最终画布上按 `targetSize` 定位，两者互不影响。
