@@ -281,24 +281,40 @@ export function sanitizeCampaignRecipeConfig(config: CampaignRecipeConfig): {
 // 最远点采样（移植自 farthestPointSampling.ts）
 // ---------------------------------------------------------------------------
 
-const MASK = 0xffffffff
+/** 64 位掩码（splitmix64 的模运算用）。必须用 BigInt —— 原因见 `mix64` 的说明。 */
+const MASK64 = (1n << 64n) - 1n
 
 /**
- * splitmix64 的 32 位截断等价物：无周期散列。
+ * splitmix64 散列 —— **必须用 BigInt 保证 64 位精度，不能用 float64 直接算**。
  *
- * 三个常量是 64 位字面量，超出 Number.MAX_SAFE_INTEGER，直接写会触发 no-loss-of-precision。
- * **不能改写成截断后的短常量** —— 实测会改变散列结果、进而改变采样输出
- * （拆分/截断常量后与原始引擎的 selections 不再一致）。
- * 这里用 eslint-disable 保留原始字面量，维持与 farthestPointSampling.ts 逐位一致。
+ * ## 为什么（2026-09-21 实测，勿回退）
+ *
+ * 三个常量都是 64 位字面量，其中 `0x9e3779b97f4a7c15` ≈ 1.14e19 —— **超出 float64 的
+ * 整数精度**（该量级的精度间隔是 2048）。于是第一步 `(x + BIG) & 0xffffffff` 里
+ * **x 的贡献被整个吞掉**：实测 `x = 0` 与 `x = 1000` 得到**完全相同**的结果。
+ * 后果是散列退化、低差异基座只剩极少数取值 —— 用真实资产（14 维 / 8 选项 / 30 条）实测，
+ * **`S1人物风格`、`S4点缀元素`、`S5背景氛围`、`S7服装`、`S10道具`、`S13副标题`
+ * 各只有 2 个取值**（`S13副标题` 甚至是 15:15 完美对半，`M` 有 27/30 挤在前两个值上）。
+ * 这就是用户观感里「提示词相似度高」的**基座层根因** —— 约束再怎么修，
+ * 每个槽只有两个值可用时，相似是必然的。
+ *
+ * 换成 BigInt 精确 64 位后，同样条件下所有被正文引用的槽都接近用满选项，
+ * 「任意两条差异 < 6」的组合对 1.8% → **0**，重掷次数 98 → 31。
+ *
+ * **与 R-45 的告诫不冲突**：R-45 反对的是把常量**截断成短常量**（`0x9e3779b9` 之类，
+ * 会静默改变散列结果）；这里做的是恢复 Python 原版的任意精度整数语义 ——
+ * BigInt 版才是真正的「与原始引擎逐位一致」，float64 版反而是走样的那个。
+ *
+ * 入参归一化为 32 位无符号：调用点传入的 `k * 104729 + salt` 与 seed 派生值都在 32 位范围内。
+ * 性能：只在「每槽盐值」与「每条的 base_cand」处调用（约 count + 维度数次）；
+ * 重掷走 `nextValue` 的 xorshift，不经过这里。
  */
-/* eslint-disable no-loss-of-precision */
 function mix64(x: number): number {
-  x = (x + 0x9e3779b97f4a7c15) & MASK
-  x = Math.imul(x ^ (x >>> 30), 0xbf58476d1ce4e5b9)
-  x = Math.imul(x ^ (x >>> 27), 0x94d049bb133111eb)
-  return (x ^ (x >>> 31)) >>> 0
+  let value = (BigInt(x >>> 0) + 0x9e3779b97f4a7c15n) & MASK64
+  value = ((value ^ (value >> 30n)) * 0xbf58476d1ce4e5b9n) & MASK64
+  value = ((value ^ (value >> 27n)) * 0x94d049bb133111ebn) & MASK64
+  return Number((value ^ (value >> 31n)) & 0xffffffffn)
 }
-/* eslint-enable no-loss-of-precision */
 
 /** 字符串 → 32 位散列（FNV-1a），用于把 seed/变量名转成初值 */
 function hashString(value: string): number {

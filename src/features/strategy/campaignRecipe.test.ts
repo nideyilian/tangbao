@@ -506,6 +506,30 @@ describe('campaignRecipe 最远点采样（双层硬约束）', () => {
     }
   })
 
+  /**
+   * 回归：**低差异基座（`base_cand`）不能退化** —— 这是「相似度高」的基座层根因。
+   *
+   * `mix64` 曾用 float64 直接算 64 位常量，而 `0x9e3779b97f4a7c15` ≈ 1.14e19 已超出
+   * float64 的整数精度（该量级的间隔是 2048）⇒ 第一步 `(x + BIG) & 0xffffffff` 把 x 的贡献
+   * **整个吞掉**（实测 `x = 0` 与 `x = 1000` 得到同值）⇒ 散列退化 ⇒ **8 个选项的维度实际只用 2 个值**。
+   * 后果：真实资产 30 条里，`S13副标题` 只有 15:15 两个值、`M` 有 27/30 挤在前两个值上。
+   *
+   * ⚠️ 必须用 `maxAttempt: 0` **关掉重掷**再观测：重掷会从其它选项取值，把退化的基座盖住
+   * （看起来"分布还行"），只有直连基座才能测到。
+   */
+  it('低差异基座不能退化：8 选项的槽在 30 条里应覆盖大部分取值', () => {
+    const dimensions = Array.from({ length: 3 }, (_, index) => ({
+      name: `D${index}`,
+      options: Array.from({ length: 8 }, (_, k) => `D${index}V${k}`),
+    }))
+    const { selections } = farthestPointSample(dimensions, 30, { seed: 'spread', maxAttempt: 0 })
+    for (let slot = 0; slot < dimensions.length; slot += 1) {
+      const unique = new Set(selections.map((item) => item[slot])).size
+      // 30 条取 8 个选项：基座正常时应接近 8，退化时只有 2（float64 版的实测值）
+      expect(unique).toBeGreaterThanOrEqual(6)
+    }
+  })
+
   it('同种子结果可复现，换种子结果不同', () => {
     const a = renderCampaignRecipePrompts(recipe, { count: 6, seed: 'same' })
     const b = renderCampaignRecipePrompts(recipe, { count: 6, seed: 'same' })
