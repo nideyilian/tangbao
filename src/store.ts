@@ -20,6 +20,7 @@ import {
   describePostprocessIssueCode,
   formatPostprocessIssue,
   formatPostprocessIssueList,
+  isErrorIssue,
   issuesToWarnings,
   type PostprocessIssue,
 } from './features/postprocess/postprocessIssue'
@@ -851,31 +852,49 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
       rawImageId: latest?.rawImageId ?? result.outputs[0].rawImageId,
     })
   }
-  reportPostprocessResult(result)
+  reportPostprocessResult(result, { source: 'auto' })
 }
 
 /**
  * 把执行结果翻成用户提示：产出数、没产出时的原因。
  *
- * **只发一条**：`showToast` 是单槽（`set({ toast })` + 3s 自动清），连发多条会互相顶掉——
+ * **只发一条**：`showToast` 是单槽（`set({ toast })` + 3s 自动清），连发多条会互相顶掉 ——
  * 之前「产出 3 个文件」后面紧跟一条 warning，用户只看到 warning，成功那次反而像什么都没发生。
  * 所以产出数与首条原因合并进同一条。
  *
- * 没产出时**也必须**给结论。曾经的写法是「三项皆空就不提示」，而「媒体尺寸全被禁用」这类情况
- * 恰好三项皆空 → 点了按钮界面毫无变化，与「按钮坏了」无法区分。
+ * **自动触发只报真错**（2026-09-21 报障「并非错误的提示反复弹出」）：自动后处理是**每个生成任务
+ * 完成就跑一次**的后台行为，而配置使然的跳过（方向没参与 / 该方向的自动开关关着 / 渠道没勾）
+ * 每批都会照原样再发生一次 —— 逐批弹红条等于拿配置事实刷屏，且用户点掉它也没有任何可做的。
+ * 这类结果改由素材库工具栏的状态入口与进度面板承接（常驻、可查询、可关闭）。
+ * **手动触发照旧逐次回应**：那是用户明确点的一次，必须有下文，哪怕结论是「什么都没产出」。
+ *
+ * 没产出时**也必须**给结论（手动路径）。曾经的写法是「三项皆空就不提示」，而
+ * 「媒体尺寸全被禁用」这类情况恰好三项皆空 → 点了按钮界面毫无变化，与「按钮坏了」无法区分。
  *
  * 现在每条提示都带**错误码**，并在有问题时挂一个「查看问题」动作：toast 3 秒后就没了，
  * 而排查要的是完整清单（码 + 上下文 + 线索），靠 toast 装不下。
+ *
+ * 导出是为了让「自动不打扰、手动必有下文」这两条能被测试直接守住 —— 它们只体现在
+ * 这一层（走 `scheduleTaskPostprocess` 需要跑完整条生成链，测不到这条分支）。
  */
-function reportPostprocessResult(result: TaskPostprocessResult, successPrefix = '后处理完成'): void {
+export function reportPostprocessResult(
+  result: TaskPostprocessResult,
+  options: { successPrefix?: string; source: PostprocessRunSource },
+): void {
+  const successPrefix = options.successPrefix ?? '后处理完成'
   const showToast = useStore.getState().showToast
   const produced = result.outputs.length
   const first = result.issues[0]
   const reason = first ? formatPostprocessIssue(first) : undefined
+  // 「跳过」不是错误：只有出现 error 级问题才用红色提示（码表里每个码自己声明严重度）
+  const hasError = result.issues.some(isErrorIssue)
   const action =
     result.issues.length > 0
       ? { label: '查看问题', onClick: () => showPostprocessIssuesDialog(result.issues) }
       : undefined
+
+  // 后台自动产出：没有真错就闭嘴。成果在素材库/输出目录里看得见，跳过项在工具栏入口里查得到。
+  if (options.source === 'auto' && !hasError) return
 
   if (produced > 0) {
     // 有原因时降级成 info：结果本身是成功的，但要让用户知道有东西被跳过
@@ -888,7 +907,7 @@ function reportPostprocessResult(result: TaskPostprocessResult, successPrefix = 
 
   // 原因放最前：error 型 toast 超过 80 字会被截成「操作失败，请查看详情」，原因就丢了
   if (reason) {
-    showToast(`没有产出文件：${reason}`, 'error', action)
+    showToast(`没有产出文件：${reason}`, hasError ? 'error' : 'info', action)
     return
   }
   if (result.skippedMediaIds.length > 0) {
@@ -905,11 +924,17 @@ function reportPostprocessResult(result: TaskPostprocessResult, successPrefix = 
  * 用既有确认弹窗而不是新做一个：`message` 支持多行与反引号，列表形态刚好够，
  * 而每多一个模态窗就多一份焦点陷阱 / Esc 关闭 / 滚动锁的维护面。
  *
+ * **标题按内容说真话**：19 个码里大多数是「配置使然、不是故障」的跳过（方向没参与、
+ * 该方向的自动开关关着、渠道没勾），一个真错都没有时它叫「跳过」而不是「问题」——
+ * 一律叫「问题」会让用户以为软件坏了（2026-09-21 报障）。
+ *
  * 导出是给素材库工具栏的「查看问题」入口用：toast 3 秒后消失，问题清单得留得住。
  */
 export function showPostprocessIssuesDialog(issues: PostprocessIssue[]): void {
+  const errors = issues.filter(isErrorIssue).length
+  const skipped = issues.length - errors
   useStore.getState().setConfirmDialog({
-    title: `后处理问题（${issues.length}）`,
+    title: errors > 0 ? `后处理出错（${errors}）` : `后处理跳过（${skipped}）`,
     message: formatPostprocessIssueList(issues),
     icon: 'info',
     showCancel: false,
@@ -991,6 +1016,8 @@ async function executePostprocessImageIds(
       resolveImageCollectionId: (imageId) => ownership.get(imageId) ?? null,
       alreadyProducedImageIds: options.alreadyProducedImageIds ?? [],
       createdAt: options.createdAt,
+      // 来源决定方向级「自动后处理」开关是否生效（手动跑不该被它拦）——见执行体的 `source` 注释
+      source: options.source,
       readSource,
       // 进度上报：绝对值补丁，直接落到运行记录上（界面订阅它显示「3/12」）
       onProgress: (patch) => useRuntimeStore.getState().updatePostprocessRun(runId, patch),
@@ -1054,7 +1081,7 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
       useStore.getState().showToast('后处理未启用：请先在项目树里勾选启用范围', 'error')
       return
     }
-    reportPostprocessResult(result, '手动后处理完成')
+    reportPostprocessResult(result, { successPrefix: '手动后处理完成', source: 'manual' })
   } catch (error) {
     // 兜底：任何逃出执行体的异常都要变成用户能看见的提示（调用方是 `void`，抛出去等于没发生）
     console.error('手动后处理失败', error)
@@ -2731,6 +2758,8 @@ interface AppState {
   // Toast
   toast: { message: string; type: ToastType; action?: { label: string; onClick: () => void } } | null
   showToast: (message: string, type?: ToastType, action?: { label: string; onClick: () => void }) => void
+  /** 手动关掉当前提示（toast 上的关闭按钮）。等它自己消失是另一条路，两条都要有。 */
+  clearToast: () => void
 
   // SOP 管理中心跳转请求（后台生成完成后的「查看结果」按钮触发）
   sopCenterJump: { itemId: string; nonce: number } | null
@@ -4159,6 +4188,8 @@ export const useStore = create<AppState>()(
           action ? 6000 : 3000,
         )
       },
+      // 清空时不必取消上面那个定时器：它到点会比对 `s.toast === toast`，引用已变就什么都不做
+      clearToast: () => set((s) => (s.toast ? { toast: null } : s)),
 
       // SOP 管理中心跳转请求
       sopCenterJump: null,

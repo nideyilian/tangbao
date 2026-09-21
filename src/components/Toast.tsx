@@ -13,6 +13,7 @@ const FALLBACK_BOTTOM_OFFSET = 24
 
 export default function Toast() {
   const toast = useStore((s) => s.toast)
+  const clearToast = useStore((s) => s.clearToast)
   // 跟随输入栏高度：toast 始终悬浮在输入栏正上方，不遮挡底部参数/操作区
   const [bottomOffset, setBottomOffset] = useState(FALLBACK_BOTTOM_OFFSET)
 
@@ -36,17 +37,17 @@ export default function Toast() {
   if (!toast) return null
 
   const tone = TOAST_TONE[toast.type] ?? 'info'
-  const hasAction = Boolean(toast.action)
 
   return (
+    // 提示本体始终可点：容器 `pointer-events-none` 时连"点掉它"都做不到，只能干等自动消失。
+    // 现在关闭按钮是必备出口（2026-09-21 报障「关不掉」）。
     <div
-      className={`fixed left-1/2 z-[var(--ds-z-toast)] -translate-x-1/2 toast-enter ${
-        hasAction ? 'pointer-events-auto' : 'pointer-events-none'
-      }`}
+      className="fixed left-1/2 z-[var(--ds-z-toast)] -translate-x-1/2 toast-enter pointer-events-auto"
       style={{ bottom: bottomOffset }}
     >
       <ToastMessage
         tone={tone}
+        onDismiss={clearToast}
         action={
           toast.action ? (
             <Button size="sm" onClick={toast.action.onClick}>

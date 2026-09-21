@@ -350,6 +350,7 @@ import {
   removeMultipleTasks,
   removeDeletedLocalImage,
   removeTask,
+  reportPostprocessResult,
   rerunSopBatchTasks,
   retryTask,
   reuseConfig,
@@ -370,6 +371,7 @@ import {
   useStore,
 } from './store'
 import { usePostprocessMediaStore } from './storePostprocessMedia'
+import type { TaskPostprocessResult } from './features/postprocess/taskPostprocess'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -5420,7 +5422,8 @@ describe('手动后处理入口', () => {
     ])
 
     const dialog = setConfirmDialog.mock.calls[0]?.[0]
-    expect(dialog).toMatchObject({ title: '后处理问题（2）', icon: 'info', showCancel: false })
+    // 标题说实话：这两条都是 error 级，所以叫「出错」而不是笼统的「问题」
+    expect(dialog).toMatchObject({ title: '后处理出错（2）', icon: 'info', showCancel: false })
     expect(dialog.message).toContain('[PP-DIR-004] 输出子目录创建失败')
     expect(dialog.message).toContain('文件 a.jpg')
     expect(dialog.message).toContain('目录 D:/投放')
@@ -5477,5 +5480,46 @@ describe('手动后处理入口', () => {
     await expect(runManualPostprocess(['image-a'])).resolves.toBeUndefined()
     expect(showToast).toHaveBeenCalled()
     spy.mockRestore()
+  })
+
+  /**
+   * 提示播报的契约（2026-09-21 报障「并非错误的提示反复弹出打扰用户」）。
+   *
+   * 自动后处理是**每个生成任务完成就跑一次**的后台行为，而配置使然的跳过（方向没参与、
+   * 该方向的自动开关关着、渠道没勾）每批都会照原样再发生一次 —— 逐批弹红条等于拿配置事实刷屏，
+   * 用户点掉也没有任何可做的。所以：自动触发只在**真出错**时出声，用户手动点的那次必有下文。
+   */
+  it('自动触发只在真出错时播报，纯「跳过」不打扰；手动触发必有下文', () => {
+    const showToast = vi.fn()
+    useStore.setState({ showToast })
+
+    const skippedOnly: TaskPostprocessResult = {
+      outputs: [],
+      skippedMediaIds: [],
+      issues: [createPostprocessIssue({ code: 'PP-SCOPE-002', stage: 'prepare' })],
+      warnings: [],
+    }
+
+    // 后台自动跑：这只是「这个方向关了自动后处理」，不是故障 → 一声不吭
+    reportPostprocessResult(skippedOnly, { source: 'auto' })
+    expect(showToast).not.toHaveBeenCalled()
+
+    // 用户手动点的那次：即使结论是「什么都没产出」也必须回应；「跳过」用 info 而不是 error
+    reportPostprocessResult(skippedOnly, { source: 'manual' })
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(String(showToast.mock.calls[0]?.[0])).toContain('没有产出文件')
+    expect(showToast.mock.calls[0]?.[1]).toBe('info')
+
+    // 真出错（写盘失败）：自动触发也照弹，且是 error 级
+    showToast.mockClear()
+    const failed: TaskPostprocessResult = {
+      outputs: [],
+      skippedMediaIds: [],
+      issues: [createPostprocessIssue({ code: 'PP-WRITE-001', stage: 'write', file: 'a.jpg' })],
+      warnings: [],
+    }
+    reportPostprocessResult(failed, { source: 'auto' })
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(showToast.mock.calls[0]?.[1]).toBe('error')
   })
 })

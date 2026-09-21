@@ -44,7 +44,7 @@ import {
   type PostprocessIssue,
   type PostprocessIssueInput,
 } from './postprocessIssue'
-import type { PostprocessProgressPatch } from './postprocessRun'
+import type { PostprocessProgressPatch, PostprocessRunSource } from './postprocessRun'
 import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
@@ -100,6 +100,15 @@ export interface RunTaskPostprocessInput {
   alreadyProducedImageIds?: string[]
   /** 生成时间（ms），供 `{date}` 取值 */
   createdAt?: number
+  /**
+   * 谁触发的这次产出：`auto` = 任务完成后自动跑，`manual` = 用户在素材库点了「跑后处理」。
+   *
+   * 只影响一处判定：**方向级的「自动后处理」开关（`PP-SCOPE-002`）只拦自动触发**。
+   * 那个开关的语义是「这个方向参不参与自动产出」（见 `participationLabel.ts`），
+   * 拿它否决用户手动点的那一次会变成死循环 —— 提示让他「选中素材单独跑一次」，
+   * 而手动跑走同一条判定，照做还是被跳过（2026-09-21 报障）。
+   */
+  source?: PostprocessRunSource
   /** 取源图像素数据；返回 null 表示这张图不可用（跳过并记 warning） */
   readSource: (imageId: string, index: number) => Promise<TaskPostprocessSource | null>
   /**
@@ -250,7 +259,9 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     }
 
     const slice = resolveProjectPostprocessSlice(input.collections, params, collectionId, baseConfig)
-    if (!slice.enabled) {
+    // 方向级「自动后处理」开关只拦自动触发（理由见 `RunTaskPostprocessInput.source`）：
+    // 手动是用户明确要求跑这一次，不能被一个管「自动产出」的开关否决。
+    if (!slice.enabled && input.source !== 'manual') {
       reportIssue(result, { code: 'PP-SCOPE-002', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
       continue
     }

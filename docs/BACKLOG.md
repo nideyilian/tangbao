@@ -2777,3 +2777,74 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
 - **通用结论已上收**：`docs/architecture-constraints.md` 七章新增
   「grid 容器只要某一块该吃剩余高度，就必须写出 `grid-template-rows`」。
 - **未做**：本机无渲染验证能力，空白是否真消失**未经真机过目**。
+
+---
+
+### TB-072 后处理提示的「反复弹 / 关不掉」+ 进度面板 + 手动跑被自动开关拦住
+
+- **来源**：杰哥 2026-09-21 一次报了三件（附 `[PP-SCOPE-002]` 弹窗截图）：
+  ① 「请修改提示的弹出逻辑：不要对并非错误的提示反复弹出打扰用户；针对工具栏上的提示，
+  确保用户可以正常关闭…不要出现关不掉的情况，并说明是什么原因」；
+  ② 「真正的处理进度弹窗为什么没有实现，我要从哪里查看进度」；
+  ③ 「为什么我无法手动后处理，一直提示这个又是什么意思」。
+- **状态**：DONE · 写线：主写线（与同时在途的另一条线——渠道 `enabled` 删除重构——无文件重叠）
+- **背景（三条各自独立，都不是观感问题）**
+  1. **反复弹**：`reportPostprocessResult` 只看「有没有 issues」，不看 `severity` ——
+     零产出时一律 `showToast(..., 'error')`。而自动后处理**每个生成任务完成就跑一次**，
+     配置使然的跳过（`PP-SCOPE-001/002`、`PP-TARGET-001` 等）每批都会照原样重播一次。
+  2. **关不掉（两层，第二层会真卡住）**：
+     - 提示（toast）**没有关闭按钮**；且没挂 action 时容器是 `pointer-events-none`，
+       连「点掉它」都做不到，只能干等 3s（带按钮 6s）。
+     - `ConfirmDialog` 的卡片**不设高度上限、内容也不滚动** —— 这是全仓唯一的例外
+       （其余 20 处 `ds-modal-surface` 都写了 `max-h-* + flex flex-col overflow-hidden`，
+       见 `sizePicker` / `favoriteCollections` / `helpModal` 等）。问题清单条数一多，卡片超出视口、
+       底部按钮被顶到屏幕外，而背景滚动是锁着的 ⇒ 只剩 Esc 一条路。
+     - 素材库工具栏那个「后处理跳过 (N)」是**状态**不是通知：关掉清单后按钮还在，
+       主观感受同样是「关不掉」。
+  3. **手动跑被拦**：执行体 `RunTaskPostprocessInput` **没有来源字段**，自动与手动共用
+     `if (!slice.enabled)` 判定 ⇒ 用户手动点「跑后处理」也被方向级「自动后处理」开关拦下；
+     而 `PP-SCOPE-002` 的线索正写着「或选中素材单独跑一次」，照做还是被跳过 —— 死循环，
+     提示本身是错的。
+  4. **进度没有查询界面**：TB-069 的进度落点只有「素材库工具栏一行文本 + 任务卡徽章」，
+     在画廊 / 中控台里生成图时看不到任何进度；运行记录（`postprocessRuns`）本来就有数据，
+     缺的只是一个打开的界面。
+- **改了什么**
+  1. 执行体加 `source: 'auto' | 'manual'`（store 两个触发点分别传）；
+     方向级开关判定改为 `!slice.enabled && input.source !== 'manual'`。
+     **「启用范围」（`selectedCollectionIds`）两层触发都仍然要过** —— 手动不能绕过它。
+  2. `reportPostprocessResult(result, { successPrefix, source })`：自动触发且无 error 级问题 → 不播报；
+     手动触发必有下文，`skipped` 用 `info`。函数改为导出（这条分支走不到完整生成链，只能直接测）。
+  3. `showPostprocessIssuesDialog` 标题按内容说真话：有 error → 「后处理出错（N）」，
+     否则「后处理跳过（N）」。
+  4. `Toast` 传 `onDismiss`（design-system 的 `ToastMessage` 本就带 ×，只是没传），
+     容器改 `pointer-events-auto`；store 加 `clearToast`。
+  5. `ConfirmDialog`：卡片 `max-h-[calc(100dvh-2rem)]` + `flex-col`，内容区 `flex-auto` 独立滚动，
+     右上角加 `IconButton`（`aria-label="关闭"`），按钮组移出滚动区并 `mt-6`。
+     （用 `flex-auto` 而不是 `flex-1`：basis 0 会让自适应高度的弹窗内容区塌成 0，
+     同一个坑 `dialogSizing.test.ts` 已为 `.ds-dialog--postprocess` 守过一次。）
+  6. 新增 `PostprocessRunsDialog`（进度面板）：进行中给 `Progress` + 计数 + 阶段 + 产出数 +
+     当前产出；下面列最近记录（状态 / 来源 / 时间 / 结论 / 问题入口），可一键清掉已结束的。
+  7. `runtimeStore.dismissPostprocessRun`：清一条已结束记录（**进行中的拒绝** —— 进度还要往它写）；
+     新增 `usePostprocessRuns`（分两步取引用，避免 selector 每次返回新数组）。
+  8. 工具栏状态入口改为「点开面板」+ 旁边一个 × 清除；文案区分「出错 / 跳过」。
+  9. `PP-SCOPE-002` 的线索改成实话（手动跑不受该开关限制）。
+- **验收证据**
+  - 新增 `features/postprocess/taskPostprocess.test.ts` **2 例**（自动记 PP-SCOPE-002 / 手动不记）
+  - 新增 `features/postprocess/PostprocessRunsDialog.test.tsx` **4 例**（进行中给计数与阶段 /
+    历次记录与问题入口 / 清空只清已结束 / 空态）
+  - 新增 `components/ConfirmDialog.test.tsx` **3 例**（× 点了真关 / 限高 + 内容区滚动 /
+    既有 checkbox 与自定义按钮组未被吃掉）
+  - 新增 `components/Toast.test.tsx` **3 例**（× 调 clearToast / 容器可点 / 无提示不渲染）
+  - `stores/runtimeStore.test.ts` **+1 例**（清已结束、拒清进行中）
+  - `store.test.ts` **+1 例**（自动不打扰 / 手动必有下文 / 真出错照弹）+ 改写 1 例（弹窗标题）
+  - 涉及文件全绿：`store.test.ts`(146) / `AssetLibraryToolbar.test.tsx`(7) /
+    `TaskCard.test.tsx`(7) / `postprocessIssue`(8) / `postprocessRun`(10) / `runtimeStore`(3) /
+    `catalog`(6) / `compliance`(10) / `dialogSizing`(2) / `page-coverage`(15)
+  - `tsc -b --force`：本轮改动文件**零错误**
+- **⚠️ 无法跑完整 `npm run verify`**：工作区里另一条在途线正在做「删 `PostprocessMedia.enabled`」
+  的重构（类型已改、调用点未改完），全仓 tsc 有 **26 条错全属那条线**，与本轮文件无关
+  （与 `RISK.md` R-74 同类情形）。本轮提交只 add 自己的文件。
+- **未做**：本机无渲染验证能力 —— 面板排版、× 的位置与进度条观感**未经真机过目**，
+  请在素材库工具栏点开核对。
+- **通用结论已上收**：`docs/architecture-constraints.md` **4.4.1**（触发来源必须传进执行体）
+  与 **4.4.2**（后处理提示的分级：skipped 不是错误、状态入口必须可关）。

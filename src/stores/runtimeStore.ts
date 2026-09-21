@@ -47,6 +47,15 @@ type RuntimeStore = {
   startPostprocessRun(input: { id: string; source: PostprocessRunSource; taskId?: string; totalImages: number }): void
   updatePostprocessRun(id: string, patch: PostprocessProgressPatch): void
   finishPostprocessRun(id: string, input: { issues: PostprocessRun['issues']; producedFiles: number }): void
+  /**
+   * 用户手动清掉一条运行记录（工具栏入口的 ×）。
+   *
+   * 存在的理由：状态入口与提示不同，它**不自动消失**（这正是不靠 toast 的原因）。
+   * 但"不会自动消失"如果没有出口，用户就只能眼睁睁看着一条再也无意义的状态挂在那里 ——
+   * 2026-09-21 报障「关不掉」说的就是它。**进行中的记录不允许清**：进度还在往它上面写，
+   * 清掉会让后续上报全部落到空处（`updatePostprocessRun` 丢弃不存在的记录）。
+   */
+  dismissPostprocessRun(id: string): void
 }
 
 /** 保留的运行记录条数（够看「最近几次」，又不至于长会话里无限堆积）。 */
@@ -157,6 +166,15 @@ export const useRuntimeStore = create<RuntimeStore>()((set) => ({
       if (!current) return state
       return { postprocessRuns: { ...state.postprocessRuns, [id]: finishPostprocessRun(current, input) } }
     }),
+  dismissPostprocessRun: (id) =>
+    set((state) => {
+      const run = state.postprocessRuns[id]
+      // 不存在 / 还在跑 → 不动：进行中的进度上报必须还有地方落
+      if (!run || run.status === 'running') return state
+      const postprocessRuns = { ...state.postprocessRuns }
+      delete postprocessRuns[id]
+      return { postprocessRuns, postprocessRunIds: state.postprocessRunIds.filter((item) => item !== id) }
+    }),
 }))
 
 /** 按 id 查一次后处理运行（进行中与已结束都能查到）。 */
@@ -199,6 +217,18 @@ export function useLatestPostprocessRun(): PostprocessRun | undefined {
     const id = state.postprocessRunIds[0]
     return id ? state.postprocessRuns[id] : undefined
   })
+}
+
+/**
+ * 组件里订阅**全部**运行记录（最近在前）。
+ *
+ * 分两步取（先拿不变的两个引用，再在渲染里 map）：直接把 map+filter 写进 selector 会
+ * 每次返回新数组，让订阅者在**任何** store 变化时都重渲染一遍（进度每次上报都是 store 变化）。
+ */
+export function usePostprocessRuns(): PostprocessRun[] {
+  const runIds = useRuntimeStore((state) => state.postprocessRunIds)
+  const runs = useRuntimeStore((state) => state.postprocessRuns)
+  return runIds.map((id) => runs[id]).filter((run): run is PostprocessRun => Boolean(run))
 }
 
 /** 组件里订阅某个任务的最近一次运行。 */

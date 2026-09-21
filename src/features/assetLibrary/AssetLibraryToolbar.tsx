@@ -3,6 +3,7 @@ import type { AssetLibraryFilters, AssetSortKey, AssetSourceMode, PinnedFilter }
 import {
   Badge,
   Button,
+  IconButton,
   Menu,
   MenuItem,
   MenuSeparator,
@@ -32,10 +33,11 @@ import { COLOR_LABEL_OPTIONS } from './colorLabels'
 import { pinnedFilterKey, pinnedFilterLabel } from './pinnedFilters'
 import FilterControlStrip from './FilterControlStrip'
 import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
-import { runManualPostprocess, showPostprocessIssuesDialog, useStore } from '../../store'
+import { runManualPostprocess, useStore } from '../../store'
 import { useLatestPostprocessRun, useRuntimeStore } from '../../stores/runtimeStore'
 import { countPostprocessIssues, formatPostprocessRunProgress } from '../postprocess/postprocessRun'
 import { POSTPROCESS_STAGE_LABELS } from '../postprocess/postprocessIssue'
+import PostprocessRunsDialog from '../postprocess/PostprocessRunsDialog'
 
 export interface AssetLibraryToolbarProps {
   scopeLabel: string
@@ -904,16 +906,22 @@ function ManualPostprocessButton() {
 }
 
 /**
- * 后处理状态入口：**进行中**显示进度条，**结束后有问题**显示问题入口。
+ * 后处理状态入口：**进行中**显示实时进度，**结束后有问题**显示状态入口 —— 两者都点开同一个面板。
  *
  * 为什么要它：「跑后处理」按钮只在有选中素材时出现，而后处理既可能由生成完成自动触发、
  * 也可能在选中被清掉之后还在跑 —— 那时界面上就没有任何东西说明「它还在跑」。
  * 这个入口不依赖选中状态，是「到底有没有在跑」的常驻答复。
  *
- * 为什么不能只靠 toast：toast 3 秒就没了，而且失败原因多到看不全（哪张图、哪个渠道、
- * 哪个目录、原始错误）。这个入口把完整清单留下来 —— **会话内持久**，直到下一次跑后处理。
+ * 为什么不能只靠 toast：toast 几秒就没了，而且失败原因多到看不全（哪张图、哪个渠道、
+ * 哪个目录、原始错误）。
+ *
+ * 为什么改成「点开面板」而不是「直接弹清单」（2026-09-21 报障）：这个入口是**状态**不是通知 ——
+ * 它不会自己消失，于是「关掉清单之后按钮还在」在用户眼里就是「关不掉」。
+ * 现在问题清单只在面板里按需展开；入口旁边另给一个明确的 ×（这次状态看过了，清掉），
+ * 进度与历次结果也都在同一个面板里查（素材库之外也想看进度时，这就是落点）。
  */
 function PostprocessStatusEntry() {
+  const [open, setOpen] = useState(false)
   const activeRun = useRuntimeStore((s) => {
     for (const id of s.postprocessRunIds) {
       const run = s.postprocessRuns[id]
@@ -922,35 +930,52 @@ function PostprocessStatusEntry() {
     return undefined
   })
   const latestRun = useLatestPostprocessRun()
+  const dismissPostprocessRun = useRuntimeStore((s) => s.dismissPostprocessRun)
 
-  if (activeRun) {
-    return (
-      <span
-        data-testid="asset-postprocess-progress"
-        className="inline-flex shrink-0 items-center gap-1.5 text-xs text-ds-muted"
-        title={`后处理进行中 · ${POSTPROCESS_STAGE_LABELS[activeRun.stage]}${
-          activeRun.currentLabel ? ` · ${activeRun.currentLabel}` : ''
-        }`}
-      >
-        <LoaderCircleIcon className="h-3.5 w-3.5 animate-spin" />
-        {formatPostprocessRunProgress(activeRun) || '后处理中'}
-      </span>
-    )
-  }
+  const { errors, skipped } = latestRun ? countPostprocessIssues(latestRun) : { errors: 0, skipped: 0 }
+  // 结束后的文案：一个真错都没有时叫「跳过」而不是「问题」—— 码表里大多数是配置使然
+  const idleLabel =
+    latestRun && latestRun.issues.length > 0
+      ? errors > 0
+        ? `后处理出错 (${errors})`
+        : `后处理跳过 (${skipped})`
+      : null
+  const showEntry = Boolean(activeRun) || idleLabel !== null
 
-  if (!latestRun || latestRun.issues.length === 0) return null
-
-  const { errors, skipped } = countPostprocessIssues(latestRun)
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      data-testid="asset-postprocess-issues"
-      title="查看最近一次后处理的问题：错误码、涉及的图与文件、以及可照做的定位线索"
-      onClick={() => showPostprocessIssuesDialog(latestRun.issues)}
-    >
-      {errors > 0 ? `后处理问题 (${errors})` : `后处理跳过 (${skipped})`}
-    </Button>
+    <>
+      {showEntry && (
+        <div className="flex shrink-0 items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid={activeRun ? 'asset-postprocess-progress' : 'asset-postprocess-issues'}
+            title={
+              activeRun
+                ? `后处理进行中 · ${POSTPROCESS_STAGE_LABELS[activeRun.stage]}${
+                    activeRun.currentLabel ? ` · ${activeRun.currentLabel}` : ''
+                  }（点开看进度与最近记录）`
+                : '看最近一次后处理的产出、跳过与错误，以及历次运行记录'
+            }
+            onClick={() => setOpen(true)}
+          >
+            {activeRun && <LoaderCircleIcon className="h-3.5 w-3.5 animate-spin" />}
+            {activeRun ? formatPostprocessRunProgress(activeRun) || '后处理中' : idleLabel}
+          </Button>
+          {/* 只在跑完之后给 ×：进行中的记录要留着接进度上报，清掉会让后续上报全部落空 */}
+          {!activeRun && latestRun && (
+            <IconButton
+              aria-label="清除这次后处理的状态"
+              icon={<XIcon size={13} />}
+              size="sm"
+              data-testid="asset-postprocess-dismiss"
+              onClick={() => dismissPostprocessRun(latestRun.id)}
+            />
+          )}
+        </div>
+      )}
+      <PostprocessRunsDialog open={open} onClose={() => setOpen(false)} />
+    </>
   )
 }
 

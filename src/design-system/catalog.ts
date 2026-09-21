@@ -1026,6 +1026,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['TextField', 'Button', 'Alert'],
   },
   {
+    module: 'src/features/postprocess/PostprocessRunsDialog.tsx',
+    responsibility:
+      '后处理进度面板：正在跑的那一次（进度条 + 计数 + 阶段 + 当前产出）与最近几次运行记录（状态 / 来源 / 时间 / 结论 / 问题入口），补上「在素材库之外看不到进度」这块空白',
+    decision: 'compose',
+    targets: ['Dialog', 'Progress', 'StatusIndicator', 'Button', 'IconButton', 'EmptyState'],
+  },
+  {
     module: 'src/features/projectTree/ProjectTreeWorkbench.tsx',
     responsibility: '统一项目树工作台（产品线→产品→方向 的增删改查与参数入口）',
     decision: 'compose',

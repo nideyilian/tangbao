@@ -4,7 +4,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { Checkbox } from './Checkbox'
 import { CopyIcon } from './icons'
-import { Button, useDialogFocusTrap, type ButtonVariant } from '../design-system'
+import { Button, CloseIcon, IconButton, useDialogFocusTrap, type ButtonVariant } from '../design-system'
 
 function renderMessage(message: string) {
   return message.split(/(`[^`]+`|「[^」]+」|\*\*[^*]+\*\*)/g).map((part, index) => {
@@ -104,12 +104,12 @@ export default function ConfirmDialog() {
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby="confirm-dialog-description"
-        className="ds-modal-surface relative z-10 w-full max-w-sm rounded-ds-xl border p-6 animate-confirm-in motion-reduce:animate-none"
+        className="ds-modal-surface relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-sm flex-col rounded-ds-xl border p-6 animate-confirm-in motion-reduce:animate-none"
         onClick={(e) => e.stopPropagation()}
       >
         <h2
           id="confirm-dialog-title"
-          className="mb-2 flex items-center gap-2 text-base font-bold text-ds-text dark:text-ds-text-subtle"
+          className="mb-2 flex items-center gap-2 pr-8 text-base font-bold text-ds-text dark:text-ds-text-subtle"
         >
           {confirmDialog.icon === 'info' && (
             <svg
@@ -129,24 +129,38 @@ export default function ConfirmDialog() {
           {confirmDialog.icon === 'copy' && <CopyIcon className="h-5 w-5 shrink-0 text-ds-primary" />}
           {confirmDialog.title}
         </h2>
-        <p
-          id="confirm-dialog-description"
-          className={`text-sm text-ds-muted dark:text-ds-muted ${confirmDialog.checkbox ? 'mb-4' : 'mb-6'} leading-relaxed whitespace-pre-line ${confirmDialog.messageAlign === 'center' ? 'text-center' : ''}`}
-        >
-          {renderMessage(confirmDialog.message)}
-        </p>
-        {confirmDialog.checkbox && (
-          <Checkbox
-            checked={checkboxChecked}
-            onChange={setCheckboxChecked}
-            label={confirmDialog.checkbox.label}
-            tone={confirmDialog.checkbox.tone}
-            disabled={confirmDialog.checkbox.disabled}
-            className="mb-6"
-          />
-        )}
+        {/* 显式关闭入口：内容高度受限后底部的确认按钮可能滚出视野，必须有一个永远在位、永远可点的出口 */}
+        <IconButton
+          aria-label="关闭"
+          className="absolute right-4 top-4"
+          icon={<CloseIcon size={17} />}
+          onClick={handleClose}
+          disabled={!canConfirm}
+        />
+        {/* 内容区独立滚动：问题清单可能几十条，不能把底部的按钮顶到屏幕外（2026-09-21 报障关不掉）。
+            用 `flex-auto`（= flex:1 1 auto）而不是 `flex-1`：卡片高度是**内容自适应**的，
+            basis 0 会让内容区在固有尺寸计算里贡献 0，弹窗直接塌成「标题 + 按钮」
+            （同一个坑在 `.ds-dialog--postprocess` 上被报障过，见 `dialogSizing.test.ts`）。 */}
+        <div className="min-h-0 flex-auto overflow-y-auto">
+          <p
+            id="confirm-dialog-description"
+            className={`text-sm text-ds-muted dark:text-ds-muted leading-relaxed whitespace-pre-line ${confirmDialog.messageAlign === 'center' ? 'text-center' : ''}`}
+          >
+            {renderMessage(confirmDialog.message)}
+          </p>
+          {confirmDialog.checkbox && (
+            <Checkbox
+              checked={checkboxChecked}
+              onChange={setCheckboxChecked}
+              label={confirmDialog.checkbox.label}
+              tone={confirmDialog.checkbox.tone}
+              disabled={confirmDialog.checkbox.disabled}
+              className="mt-4"
+            />
+          )}
+        </div>
         {customButtons.length > 0 ? (
-          <div className="flex gap-2">
+          <div className="mt-6 flex gap-2">
             {customButtons.map((button) => (
               <Button
                 key={button.label}
@@ -164,7 +178,7 @@ export default function ConfirmDialog() {
             ))}
           </div>
         ) : (
-          <div className="flex gap-2">
+          <div className="mt-6 flex gap-2">
             {confirmDialog.showCancel !== false && (
               <Button variant="secondary" className="flex-1" onClick={handleCancel}>
                 {cancelText}

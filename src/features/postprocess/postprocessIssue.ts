@@ -107,7 +107,7 @@ const ISSUE_TEMPLATES: Record<PostprocessIssueCode, IssueTemplate> = {
   },
   'PP-SCOPE-002': {
     message: '所属方向关闭了自动后处理',
-    hint: '在该方向节点上重新打开「自动后处理」，或选中素材单独跑一次。',
+    hint: '这个方向关掉了「自动后处理」，所以不自动产出变体。要恢复就在该方向节点上重新打开；只想跑这一次，选中素材点「跑后处理」即可（手动跑不受这个开关限制）。',
     severity: 'skipped',
   },
   'PP-TARGET-001': {
