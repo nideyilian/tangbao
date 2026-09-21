@@ -260,6 +260,32 @@ curl -s --ssl-no-revoke \
 | `ci.yml`      | 任意分支 push | `tsc -b` + electron typecheck + lint + format:check + vitest（Node 24）                                                       |
 | `release.yml` | `v*` tag      | **勿改回 `--publish always`**（124MB exe 必超时）→ `--publish never` + `softprops/action-gh-release@v2`；校验步骤硬编码产物名 |
 
+### 只提交自己那部分（工作区混着另一条写线）
+
+**症状**：`git status` 里某个文件同时含**你的**改动与**另一条写线**的未提交改动（本项目常态，R-09）。
+`git add <该文件>` 会把对方整份 WIP 一起提交 —— 2026-09-21 实测踩到（`docs/BACKLOG.md` 里对方的
+TB-066 条目被连带提交，只能 `git commit --amend` 回滚）。
+
+**做法：只把自己的 hunk 加进索引**（脚本模板 `.git/stage-my-hunks.mjs`，按文件配「我新增的行里必须有
+的标记」）：
+
+```bash
+node .git/stage-my-hunks.mjs            # 筛出我的 hunk → git apply --cached（只动索引）
+git diff --cached --stat                # 核对：只应看到自己的行数
+git add <其余完全属于我的文件>           # ⚠️ 绝不能把上面那两个混合文件再 add 一遍
+```
+
+四条必须知道：
+
+1. **`git apply --cached` 只动索引、不动工作区** —— 对方的内容仍在工作区、仍显示为未提交。
+   这是判断做对没做对的依据：**提交后该文件在 `git status` 里仍应是 `M`**。
+2. **拼出来的 patch 末尾必须补回换行**：少了它 `git apply` 报 `corrupt patch at line N`
+   （真因是最后一个 hunk 被截断，不是「第 N 行坏了」）。
+3. **⭐ 精细入索引之后，绝不能再 `git add <该文件>`** —— 整份内容会覆盖掉刚才的筛选，等于白做
+   （本轮就是这么把对方内容提交进去的）。
+4. **回滚已成事实的污染**（只在本机、未推送时）：`git reset <base> -- <file>`（该文件索引回到基线）
+   → 重跑筛选脚本（基准传 `HEAD~1`）→ `git commit --amend --no-edit`。
+
 ## 九、批量写入 localStorage（水印预设 / 左栏比例等）—— 2026-09-18 实测定稿
 
 **为什么不能直接改文件**：水印预设存在 **localStorage**（`tangbao-composite-v2-workspace-storage`，

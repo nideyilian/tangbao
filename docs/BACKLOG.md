@@ -2636,8 +2636,12 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
   - 修改：`features/postprocess/taskPostprocess.ts`（issues 收集 + `onProgress` + 零产出兜底）、
     `features/postprocess/outputRoots.ts`、`stores/runtimeStore.ts`、`store.ts`、
     `features/assetLibrary/AssetLibraryToolbar.tsx`、`components/TaskCard.tsx`
-- **验收证据**：`npm run verify` 全绿（254 文件 / **2935 例**）；新增
-  `postprocessIssue.test.ts` **8 例**、`postprocessRun.test.ts` **10 例**、
+- **验收证据**：`npm run verify` 全绿（254 文件 / **2935 例**）；提交 **`cc228f0`**（已推送）。
+  ⚠️ 该次 CI 在 `Typecheck renderer` 步骤失败，真因是 **R-74**（提交态里
+  `src/features/postprocess/PostprocessParamPanel.tsx:56` 仍 import 已被 TB-064 删掉的
+  `ConsolePresetCard`，且第 463 行还在用 `PresetCover`）—— 属另一条写线的在途改动，
+  其工作区 WIP 已重写该文件，**与本轮改动无关**（本地 `tsc -b` 干净是因为编译的是「HEAD + 它的 WIP」）。
+  新增 `postprocessIssue.test.ts` **8 例**、`postprocessRun.test.ts` **10 例**、
   `store.test.ts` 新增 **3 例**（开跑可查 + 崩溃落码 + 问题清单弹窗逐条给码与线索）、
   `TaskCard.test.tsx` 新增 **3 例**（进行中徽章带真实进度 / 问题徽章把问题交给弹窗 / 无记录不渲染）、
   `outputRoots.test.ts` 改写 **2 例**（改断言错误码，顺带反向验证「文案不再写『请检查路径是否可达』」）。
@@ -2692,7 +2696,8 @@ NAME/WRITE/RENDER/DIST/EMPTY/CRASH-*`），每条固定「描述 + 可照做的�
   - 修改：`features/composite/lib/compositePresetLibrary.ts`（`buildCopiedPresetName` / `planPresetCopies`）、
     `features/composite/storeV2.ts`（`copyPresetsToProduct`）、`features/projectTree/params.ts`（`listProductNodes`）、
     `features/composite/components/PresetManagementTab.tsx`（两个入口 + 弹窗装配）
-- **验收证据**：`npm run verify` 全绿（254 文件 / **2935 例**）；新增 `compositePresetLibrary.test.ts` **5 例**、
+- **验收证据**：`npm run verify` 全绿（254 文件 / **2935 例**）；提交 **`cc228f0`**（已推送）；
+  新增 `compositePresetLibrary.test.ts` **5 例**、
   `storeV2.test.ts` **2 例**、`params.test.ts` **4 例**、`PresetManagementTab.test.tsx` **3 例**
   （单条复制 / 整库复制 + 让名 / 候选排除当前产品）。
 - **知情取舍**
