@@ -4508,3 +4508,94 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
 `tangbao-config-20260922-171903.zip`**（杰哥手动清理）。
 
 **状态**：`DONE`（2026-09-22）。版本处理见下：v0.3.3 已发布**且含此缺口**。
+
+---
+
+### TB-103 任务卡片视图：「失败 N」关不掉 + 点「查看来源任务」后被反复拽回那张卡
+
+- **来源**：杰哥 2026-09-22 17:41 报障（附速览条截图
+  `2 个分组 · 121 个任务 · 120 张素材 ●完成 120 ●失败 1`）：
+  「任务卡片模式下有奇怪的失败提醒，还无法关闭，也突发跳转」。
+- **状态**：DONE（A + B 一次做完；全量 `verify` 因**同期另一条写线**在动而未跑，见验收证据）
+- **实测取证**（直查 dev 库 `%APPDATA%\tangbao\local-saves\db`，`mode=ro` 只读；
+  探针落 `%TEMP%\tb-probe-*.py`，不落项目根）
+  - `app_data_records/tasks` 566 条落盘，其中 **10 条 `status:'error'`**，
+    全部同属 SOP 批次 `sop-batch-muakprir`（「快手短剧_信息流」，`defaultCollectionId: builtin-direction-15`），
+    **错误原文统一 = `HTTP 503: No available providers`**（服务端当时无可用通道，非糖包缺陷），
+    且 `outputImages` 全为 0、`promptFailed` 为 null。
+  - ⇒ **「失败 N」是真失败，不是误报**。截图只算 1 个，是因为速览统计**跟着当前视图范围**走
+    （TB-082 遗留 3 的同一口径问题，仍未改）。
+- **两条独立根因**
+  1. **「关不掉」**：`AssetBatchView.tsx` 顶部那条 sticky 速览行里，`失败 N` 只是统计文本，
+     **从做出来就没有任何关闭入口**。TB-082 / TB-083 两轮「界面上不允许出现关不掉的提示」
+     只覆盖了浮层 + 图片模式那条提示条（`AssetLibraryWorkspace.tsx`）+ 索引进度红条，
+     把它漏了。
+  2. **「突发跳转」**：`AssetBatchView.tsx` 的「查看来源任务」定位/高亮 effect
+     （唯一入口：`AssetViewer.tsx` 大图里的「查看来源任务 →」）依赖数组含 `groups`，
+     而 `groups` 随 `assets` 变；**生成中素材每秒都在新增** ⇒ effect 反复重跑
+     ⇒ `scrollIntoView` 反复执行 + 3 秒高亮计时器反复重置
+     ⇒ 用户手动滚走后被拽回那张卡，且高亮永不消失。
+- **改了什么**
+  1. **定位改成「登记 → 销账」**：新增 `focusIntentRef`。
+     `batchFocusTaskId` 的 effect 只负责**接住意图**（登记进 ref 后立刻把 store 值清空，
+     这样同一个任务再点一次仍算新意图）；真正的滚动放在另一个 effect 里，
+     **只有意图尚未销账时才动作**，滚动那一刻即 `focusIntentRef.current = null`。
+     `groups` 仍留在依赖里（素材未加载完 / 目标卡未进虚拟化视口时要重试），但已不会重复滚。
+  2. **高亮计时拆成独立 effect**（只依赖 `highlightGroupId`）。原来滚动与计时在同一个 effect，
+     `groups` 每次变化都跑 cleanup 把计时器清掉 —— 高亮永远等不到清除。
+     顺带删掉不再需要的 `highlightTimerRef` 与其 unmount 清理 effect（局部 timer + cleanup 已覆盖）。
+  3. **速览的「失败 N」可关**：`store.ts` 新增 `dismissedOverviewFailedCount` + `dismissOverviewFailed`
+     （**不持久化**，不进 `partialize`）。显示条件
+     `overview.failed > 0 && (dismissed === null || overview.failed > dismissed)` ——
+     与图片模式那条提示条**同一口径**：关掉后只有失败数继续上涨才重新出现。
+     值放 store 而不是组件内 state：批次视图在切换图片/卡片模式时会卸载，
+     放组件里会出现「关掉 → 切个视图回来又冒出来」＝用户感知的「关不掉」。
+     关闭按钮用 `IconButton` + `!h-5 !min-h-5 !w-5`：`.ds-icon-button` 自带
+     `height/min-height: var(--ds-control-md)`，特异性与 Tailwind 工具类同为单类，
+     不加 `!` 会静默吃掉尺寸、把这条 sticky 细行撑高（R-80 级联）。
+- **验收标准**（可测）
+  1. 点「查看来源任务」后**只滚动一次**；此后素材持续新增（生成中）不再产生新的滚动；
+  2. 高亮 3 秒后自行清除，且素材变化**不会把计时重置**；
+  3. 速览的「失败 N」有关闭按钮，点掉即消失；
+  4. 关掉后素材再变**不复活**；失败数上涨才重新出现；
+  5. 「生成中 N」不受影响（它是状态，不是提醒）。
+- **改动面**：`src/features/assetLibrary/AssetBatchView.tsx`、`src/features/assetLibrary/AssetBatchView.test.tsx`、
+  `src/features/assetLibrary/store.ts`。
+- **验收证据**（2026-09-22）
+  - `npx tsc -b` + `npx tsc -p electron/tsconfig.json --noEmit` 双端零错；三个文件 `eslint` 零告警、
+    `prettier --check` 通过。
+  - 定向用例：`vitest run AssetBatchView.test.tsx store.test.ts` = **123 passed**（新增 3 例）。
+  - **⚠️ 未跑全量 `npm run verify`**：开工时工作区干净（HEAD `8c0f205`），
+    但验证过程中 `src/features/postprocess/PostprocessTargetsDialog.tsx` 与
+    `taskPostprocess.ts` 出现**本线未触碰的改动**（同期另一条写线）。
+    按 R-74 / work-protocol，混着对方 WIP 的全量门禁绿红都不可信，故只做定向验证 + 逐条单文件门禁。
+  - **反向验证（两条，均精确命中）**
+    1. 关掉滚动销账（删掉 `focusIntentRef.current = null`）→ **2 failed / 26 passed**：
+       恰是那两条新用例。断言 `expected 5 to be 2`（滚动次数 5 vs 期望 2）、
+       另一条高亮未清除（计时被素材变化重置）—— 其余照过。
+    2. 把显示条件改回 `overview.failed > 0` → **1 failed / 27 passed**，恰是失败数那条：
+       `expected '3 个分组 · 3 个任务 · 4 张素材完成 2失败 1' not to contain '失败'`。
+- **测试过程中顺带修掉的一处假断言**：原「滚动 + 高亮」用例断言
+  `className` 含 `'ring-2'` —— 但卡片基础类里本来就有 `focus-visible:ring-2`，
+  该断言**恒真**（写了等于没写）。已改为只有高亮态才出现的 `'ring-inset'`。
+- **本条踩到的测试陷阱（已写进用例注释，防后人也踩）**
+  1. **`AssetGroupedView` 是 `memo`**：`renderer.update` 传等值 props（同 assets 引用）会直接 bailout，
+     新换的 mock 数据读不到 —— 表现为「改了 mock 却没变化」。用新数组引用驱动。
+  2. 因此**「不该发生的事」这类断言（不滚动）极易写成假绿** —— 若 update 被 bailout、
+     根本没重渲染，滚动数自然也不变。新增用例都带一条「重渲染确实发生」的旁证
+     （速览素材数必须跟着涨）。
+  3. `vi.useFakeTimers()` 默认连 `requestAnimationFrame` 一起替换，
+     与 `beforeEach` 里 stub 的 rAF 打架、React effect 刷不出来（实测高亮压根没上）。
+     改成 `vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })`，只冻计时器。
+- **知情取舍 / 遗留**
+  1. **速览「N 张素材」只统计当前视图范围**（与顶部工具栏的「全部素材」口径不同）
+     —— TB-082 遗留 3 的老问题，本轮**未动**，仍需杰哥定口径。
+  2. **目标卡片在虚拟化视口外时定位不到**：`groupElementRefs` 只登记已渲染的卡片，
+     此时意图保持 pending、不滚动（等卡片下次被渲染才会滚）。这是**改动前就有的行为**，
+     本轮未扩大范围去修（可行方案：按 `cardLayouts` / `blockLayouts` 的 top 直接设
+     `scrollTop`，不依赖元素挂载）。杰哥要点再做。
+  3. **未经真机渲染验证**：本机做不了网页/离屏渲染（环境级限制），关闭按钮的实际观感、
+     `!h-5` 是否真的没把 sticky 行撑高，请在运行中的应用里过目。
+     我按 `py-1.5` + `text-xs`（行高约 28px）与按钮 20px 推算不会撑高 —— 这是算式，不是实测。
+
+**状态**：`DONE`（2026-09-22）。

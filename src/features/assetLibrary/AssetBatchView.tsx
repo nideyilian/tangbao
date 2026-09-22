@@ -11,8 +11,8 @@ import {
   type TouchEvent as ReactTouchEvent,
   type UIEvent,
 } from 'react'
-import { EmptyState } from '../../design-system'
-import { BookOpenCheckIcon, Layers3Icon } from '../../design-system/icons'
+import { EmptyState, IconButton } from '../../design-system'
+import { BookOpenCheckIcon, Layers3Icon, XIcon } from '../../design-system/icons'
 import {
   editOutputs,
   prefetchImageThumbnails,
@@ -386,6 +386,8 @@ function AssetGroupedView({
   const clearSelection = useAssetLibraryStore((state) => state.clearSelection)
   const batchFocusTaskId = useAssetLibraryStore((state) => state.batchFocusTaskId)
   const setBatchFocusTaskId = useAssetLibraryStore((state) => state.setBatchFocusTaskId)
+  const dismissedOverviewFailedCount = useAssetLibraryStore((state) => state.dismissedOverviewFailedCount)
+  const dismissOverviewFailed = useAssetLibraryStore((state) => state.dismissOverviewFailed)
   const groupedViewStyle = useAssetLibraryStore((state) => state.groupedViewStyle)
   const viewMode = useAssetLibraryStore((state) => state.viewMode)
   const gridDensity = useAssetLibraryStore((state) => state.gridDensity)
@@ -401,7 +403,14 @@ function AssetGroupedView({
   const initialPrefetchKeyRef = useRef<string | undefined>(undefined)
   const hasInitialPrefetchedRef = useRef(false)
   const groupElementRefs = useRef(new Map<string, HTMLDivElement>())
-  const highlightTimerRef = useRef<number | null>(null)
+  /**
+   * 「查看来源任务」登记下来、**尚未完成定位**的目标任务 id。
+   *
+   * 用它而不是直接看 store 里的 `batchFocusTaskId`：store 那个值由 `AssetViewer` 写、
+   * 在素材变化时不会变，无法区分「这次点的意图」与「上一次点完还留着的意图」。
+   * ref 表达「登记 → 销账」，定位成功即归零，因此**只会滚一次**（见下方 effect 注释）。
+   */
+  const focusIntentRef = useRef<string | null>(null)
 
   const [snapshots, setSnapshots] = useState<ReadonlyMap<string, SopBatchSnapshot>>(new Map())
   const [layoutWidth, setLayoutWidth] = useState(0)
@@ -428,13 +437,6 @@ function AssetGroupedView({
       active = false
     }
   }, [])
-
-  useEffect(
-    () => () => {
-      if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
-    },
-    [],
-  )
 
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks])
   // 无素材任务的可见性按作用域过滤：收藏/未整理/回收站/标签是素材专属作用域 → 不补；
@@ -477,6 +479,16 @@ function AssetGroupedView({
     [assets, includeTaskless, snapshots, tasksById],
   )
   const overview = useMemo(() => buildAssetBatchOverview(groups, tasksById), [groups, tasksById])
+  /**
+   * 速览里的「失败 N」可以关掉。
+   *
+   * 口径与图片模式那条「生成中 / N 个任务失败」提示条完全一致（`AssetLibraryWorkspace.tsx`）：
+   * 关掉后**只有失败数继续上涨**才重新出现 —— 否则切文件夹、切视图回来又冒出来，
+   * 用户感知仍然是「关不掉」（2026-09-22 杰哥报障）。
+   * 「生成中」不计入：它是状态不是提醒，数量变化不该让关掉的失败提示复活。
+   */
+  const overviewFailedNoticeVisible =
+    overview.failed > 0 && (dismissedOverviewFailedCount === null || overview.failed > dismissedOverviewFailedCount)
   const selected = useMemo(() => new Set(selectedAssetIds), [selectedAssetIds])
 
   // 图片砖·列表行形式的组头参数摘要需要实时耗时（运行中的任务每秒刷新一次）
@@ -717,24 +729,49 @@ function AssetGroupedView({
     [blockLayouts, cardLayouts, groupedViewStyle, hasMore, loadingMore, onLoadMore],
   )
 
-  // 查看来源任务：定位并高亮对应分组（3 秒后自动清除）
+  // 查看来源任务：接住意图（登记一次即把 store 值清空 —— 清空后同一个任务再点一次
+  // 仍然算「新意图」，不会因为值没变而被 React 判定为无变化）。
   useEffect(() => {
     if (!batchFocusTaskId) return
-    const group = groups.find((item) => item.taskIds.includes(batchFocusTaskId))
-    setHighlightGroupId(group?.id ?? null)
-    if (group) {
-      const element = groupElementRefs.current.get(group.id)
-      if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
-    highlightTimerRef.current = window.setTimeout(() => {
-      setHighlightGroupId(null)
-      setBatchFocusTaskId(null)
-    }, 3000)
-    return () => {
-      if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
-    }
-  }, [batchFocusTaskId, groups, setBatchFocusTaskId])
+    focusIntentRef.current = batchFocusTaskId
+    setBatchFocusTaskId(null)
+  }, [batchFocusTaskId, setBatchFocusTaskId])
+
+  /**
+   * 查看来源任务：定位并高亮对应分组。
+   *
+   * ⚠️ 依赖里**必须**有 `groups`：素材仍在加载 / 目标卡片还没进虚拟化视口时，
+   * 这一次找不到就什么都不做，等 `groups` 下次变化再试。
+   *
+   * 但**只有意图尚未销账时**才动作 —— 销账（`focusIntentRef.current = null`）发生在
+   * 滚动那一刻，所以整个定位过程只会滚一次。
+   * 2026-09-22 报障「突发跳转」的根因就是缺了这道销账：原实现无条件重跑，而 `groups`
+   * 随 `assets` 变（生成中每秒都在新增素材）⇒ 素材每变一次就再滚一次、并把 3 秒高亮
+   * 计时器一起重置 ⇒ 用户手动滚走后被反复拽回那张卡，且高亮永不消失。
+   */
+  useEffect(() => {
+    const targetTaskId = focusIntentRef.current
+    if (!targetTaskId) return
+    const group = groups.find((item) => item.taskIds.includes(targetTaskId))
+    if (!group) return
+    const element = groupElementRefs.current.get(group.id)
+    if (!element) return
+    focusIntentRef.current = null
+    setHighlightGroupId(group.id)
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [batchFocusTaskId, groups])
+
+  /**
+   * 高亮 3 秒后自动清除。
+   *
+   * 单独一个 effect（上一个是「滚动」，这个是「计时」）：两者混在一起时，`groups` 每次
+   * 变化都会跑一次 cleanup，把计时器清掉 —— 结果是高亮永远等不到清除。
+   */
+  useEffect(() => {
+    if (!highlightGroupId) return
+    const timer = window.setTimeout(() => setHighlightGroupId(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [highlightGroupId])
 
   const setGroupRef = useCallback(
     (groupId: string) => (element: HTMLDivElement | null) => {
@@ -951,10 +988,20 @@ function AssetGroupedView({
             生成中 {overview.running}
           </span>
         )}
-        {overview.failed > 0 && (
+        {overviewFailedNoticeVisible && (
           <span className="flex items-center gap-1 tabular-nums text-ds-danger">
             <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-ds-danger" />
             失败 {overview.failed}
+            {/* `.ds-icon-button` 自带 `height/min-height: var(--ds-control-md)`，特异性与 Tailwind
+                工具类同为单类 ⇒ 不加 `!` 会静默吃掉尺寸、把这条 sticky 细行整行撑高（R-80 级联）。 */}
+            <IconButton
+              className="!h-5 !min-h-5 !w-5 shrink-0"
+              size="sm"
+              aria-label="关闭失败提示"
+              title="关闭失败提示（失败数再次增加时会重新出现）"
+              icon={<XIcon size={12} />}
+              onClick={() => dismissOverviewFailed(overview.failed)}
+            />
           </span>
         )}
       </div>

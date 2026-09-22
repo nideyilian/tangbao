@@ -114,6 +114,14 @@ export interface AssetLibraryStoreState {
   includeSubcollections: boolean
   /** 生成批次视图的聚焦任务（查看来源任务时跳转并高亮，不持久化） */
   batchFocusTaskId: string | null
+  /**
+   * 批次视图顶部速览里「失败 N」被用户手动关闭时记下的失败数（不持久化）。
+   *
+   * 关闭口径与图片模式那条「生成中 / N 个任务失败」提示条一致：**只有失败数继续上涨
+   * 才重新出现**。值必须放在 store 而不是组件内 —— 批次视图在切换图片/卡片模式时会卸载，
+   * 状态留在组件里会出现「关掉 → 切个视图回来又冒出来」＝用户感知的「关不掉」。
+   */
+  dismissedOverviewFailedCount: number | null
   /** 相似图片搜索基准素材；非空时结果按与它的相似度排序（Electron 走 SQLite 感知哈希） */
   similarToAssetId: string | null
   /** 全屏查看器（Eagle 式）：当前素材与浏览列表（asset id 顺序） */
@@ -163,6 +171,8 @@ export interface AssetLibraryStoreState {
   setIncludeSubcollections: (value: boolean) => void
   /** 生成批次视图聚焦到指定任务所在分组（查看来源任务入口） */
   setBatchFocusTaskId: (taskId: string | null) => void
+  /** 关闭批次视图速览里的「失败 N」（传当前失败数；失败数上涨后会重新显示） */
+  dismissOverviewFailed: (failedCount: number) => void
   /** 打开全屏查看器；list 为当前浏览顺序的素材 id */
   openViewer: (assetId: string, list: string[]) => void
   /** 在查看器内切换到指定素材 */
@@ -596,6 +606,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       // 默认关闭「包含子文件夹」：进入文件夹先看子文件夹结构 + 本文件夹图片（Eagle 式）
       includeSubcollections: false,
       batchFocusTaskId: null,
+      dismissedOverviewFailedCount: null,
       similarToAssetId: null,
       viewerAssetId: null,
       viewerAssetIds: [],
@@ -687,6 +698,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       setGroupedViewStyle: (groupedViewStyle) => set({ groupedViewStyle, selectedAssetIds: [] }),
       setIncludeSubcollections: (includeSubcollections) => set({ includeSubcollections }),
       setBatchFocusTaskId: (batchFocusTaskId) => set({ batchFocusTaskId }),
+      dismissOverviewFailed: (failedCount) => set({ dismissedOverviewFailedCount: failedCount }),
       openViewer: (assetId, list) =>
         set((state) => ({
           viewerAssetId: assetId,

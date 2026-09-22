@@ -147,10 +147,24 @@ beforeEach(() => {
     selectedAssetIds: [],
     activeAssetId: null,
     batchFocusTaskId: null,
+    dismissedOverviewFailedCount: null,
     groupedViewStyle: 'cards',
     viewMode: 'grid',
   })
 })
+
+/** 替换 mock 任务 store 里的任务列表（任务来自主 store，测试里只能通过 mock 换）。 */
+function setStoreTasks(tasks: TaskRecord[]) {
+  ;(storeMocks.useStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    (selector: (value: unknown) => unknown) =>
+      selector({
+        tasks,
+        settings: { alwaysShowRetryButton: false },
+        setConfirmDialog: vi.fn(),
+        setDetailTaskId: storeMocks.setDetailTaskId,
+      }),
+  )
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -178,6 +192,11 @@ function renderGrouped() {
 }
 
 function collectText(renderer: ReactTestRenderer): string {
+  return collectTextOf(renderer.root)
+}
+
+/** 拼出任意节点的可见文本（概览条这类局部节点的断言用它，避免被卡片文案串味）。 */
+function collectTextOf(root: unknown): string {
   const parts: string[] = []
   const walk = (node: unknown) => {
     if (typeof node === 'string') parts.push(node)
@@ -186,7 +205,7 @@ function collectText(renderer: ReactTestRenderer): string {
       ;(inst.children ?? []).forEach(walk)
     }
   }
-  walk(renderer.root)
+  walk(root)
   return parts.join('')
 }
 
@@ -419,11 +438,146 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
     })
     const highlighted = renderer!.root.findAllByProps({ 'data-group-id': 'sop-batch:b1' })
     expect(highlighted.length).toBeGreaterThan(0)
-    // 高亮环（ring）落在目标组卡片上
-    expect(highlighted[0]!.props.className).toContain('ring-2')
+    // 高亮环（ring）落在目标组卡片上。
+    // ⚠️ 判据必须是 `ring-inset` 而不是 `ring-2`：卡片基础类里本来就有
+    // `focus-visible:ring-2`，用 `ring-2` 断言恒真、什么都测不到（只有高亮态才加 `ring-inset`）。
+    expect(highlighted[0]!.props.className).toContain('ring-inset')
     expect(scrollIntoViewMock).toHaveBeenCalled()
     useAssetLibraryStore.getState().setBatchFocusTaskId(null)
     act(() => renderer!.unmount())
+  })
+
+  // ===== TB-103：「突发跳转」+ 速览失败数关不掉 =====
+
+  it('查看来源任务只滚一次：生成中素材持续新增时不再把视口拉回那张卡', () => {
+    const scrollIntoViewMock = vi.fn()
+    const createNode = (element: { props?: unknown }) => {
+      const props = (element.props ?? {}) as Record<string, unknown>
+      if (props['data-testid'] === 'asset-batch-view')
+        return { clientHeight: 600, scrollTop: 0, scrollIntoView: scrollIntoViewMock }
+      return { clientWidth: 800, scrollIntoView: scrollIntoViewMock, style: {} }
+    }
+    let renderer: ReactTestRenderer
+    act(() => {
+      renderer = create(createElement(AssetGroupedView, { assets, libraryAssetCount: assets.length }), {
+        createNodeMock: createNode,
+      })
+    })
+    act(() => {
+      useAssetLibraryStore.getState().setBatchFocusTaskId('t2')
+    })
+    const afterFocus = scrollIntoViewMock.mock.calls.length
+    expect(afterFocus).toBeGreaterThan(0)
+
+    // 生成中：每张新图入库都是一次 assets 变化 ⇒ groups 引用必然更新。
+    // 原实现把 groups 当无条件重跑信号，这里会被反复拉动（用户手动滚走又被拽回来）。
+    let running = assets
+    for (let index = 0; index < 3; index += 1) {
+      running = [...running, makeAsset(`stream-${index}`, 't2')]
+      act(() => {
+        renderer!.update(createElement(AssetGroupedView, { assets: running, libraryAssetCount: running.length }))
+      })
+    }
+    // 先证明这 3 次 update 真的重渲染了 —— 否则「没再滚」是假绿：
+    // AssetGroupedView 是 memo，props 全等会 bailout，那就等于什么都没测。
+    // 每次传的都是新 assets 引用，概览素材数必须从 4 一路涨到 7。
+    const overview = () => collectTextOf(renderer!.root.findAllByProps({ 'data-testid': 'asset-batch-overview' })[0])
+    expect(overview()).toContain('7 张素材')
+    expect(scrollIntoViewMock.mock.calls.length).toBe(afterFocus)
+    act(() => renderer!.unmount())
+  })
+
+  it('查看来源任务的高亮 3 秒后自行清除，素材变化不会把计时重置', () => {
+    // 只冻 setTimeout / clearTimeout —— 用默认的 useFakeTimers() 会连 requestAnimationFrame
+    // 一起替换掉，和 beforeEach 里 stub 的 rAF 打架、React 的 effect 刷不出来（实测：高亮压根没上）。
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const createNode = (element: { props?: unknown }) => {
+        const props = (element.props ?? {}) as Record<string, unknown>
+        if (props['data-testid'] === 'asset-batch-view')
+          return { clientHeight: 600, scrollTop: 0, scrollIntoView: vi.fn() }
+        return { clientWidth: 800, scrollIntoView: vi.fn(), style: {} }
+      }
+      let renderer: ReactTestRenderer
+      act(() => {
+        renderer = create(createElement(AssetGroupedView, { assets, libraryAssetCount: assets.length }), {
+          createNodeMock: createNode,
+        })
+      })
+      act(() => {
+        useAssetLibraryStore.getState().setBatchFocusTaskId('t2')
+      })
+      const ringClass = () =>
+        renderer!.root.findAllByProps({ 'data-group-id': 'sop-batch:b1' })[0]!.props.className as string
+      expect(ringClass()).toContain('ring-inset')
+
+      // t=1s：素材变化一次 —— 原实现会在这里 clearTimeout 并重新计 3 秒
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
+      const next = [...assets, makeAsset('stream-x', 't2')]
+      act(() => {
+        renderer!.update(createElement(AssetGroupedView, { assets: next, libraryAssetCount: next.length }))
+      })
+      // 证明这次 update 真的重渲染了（否则「计时没被重置」是假绿：memo 在 props 全等时
+      // 直接 bailout，effect 压根不会重跑）。素材数 4 → 5 就是重渲染发生的证据。
+      expect(collectTextOf(renderer!.root.findAllByProps({ 'data-testid': 'asset-batch-overview' })[0])).toContain(
+        '5 张素材',
+      )
+
+      // t=3s（距聚焦满 3 秒）→ 高亮必须已清除
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(ringClass()).not.toContain('ring-inset')
+      act(() => renderer!.unmount())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('速览的「失败 N」可以关掉，且只有失败数继续上涨才重新出现', () => {
+    const failedTask = {
+      id: 't3',
+      prompt: '失败的任务',
+      params: { n: 1, size: '1024x1024', quality: 'auto', output_format: 'png' },
+      apiModel: 'gpt-image-1',
+      status: 'error',
+      createdAt: 1100,
+      outputImages: [],
+    } as unknown as TaskRecord
+    const anotherFailedTask = { ...failedTask, id: 't4', prompt: '又失败的任务', createdAt: 1200 }
+    setStoreTasks([taskA, taskB, failedTask])
+
+    const renderer = renderGrouped()
+    const overviewText = () => collectTextOf(renderer.root.findAllByProps({ 'data-testid': 'asset-batch-overview' })[0])
+    const closeButton = () =>
+      renderer.root.findAll((node) => node.type === 'button' && node.props['aria-label'] === '关闭失败提示')
+
+    expect(overviewText()).toContain('失败 1')
+    expect(closeButton()).toHaveLength(1)
+
+    act(() => closeButton()[0]!.props.onClick())
+    expect(overviewText()).not.toContain('失败')
+    expect(closeButton()).toHaveLength(0)
+
+    // 素材再变（生成中）不该让它复活：失败数没涨
+    const nextAssets = [...assets, makeAsset('stream-y', 't1')]
+    act(() => {
+      renderer.update(createElement(AssetGroupedView, { assets: nextAssets, libraryAssetCount: nextAssets.length }))
+    })
+    expect(overviewText()).not.toContain('失败')
+
+    // 失败数上涨（1 → 2）→ 重新出现。
+    // ⚠️ 必须同时换一个 assets 引用：AssetGroupedView 是 `memo`，props 全等会直接 bailout，
+    //    tasks 再怎么变这一次也读不到（实测踩过：overview 仍是旧值）。
+    setStoreTasks([taskA, taskB, failedTask, anotherFailedTask])
+    const grownAssets = [...nextAssets, makeAsset('stream-z', 't1')]
+    act(() => {
+      renderer.update(createElement(AssetGroupedView, { assets: grownAssets, libraryAssetCount: grownAssets.length }))
+    })
+    expect(overviewText()).toContain('失败 2')
+    act(() => renderer.unmount())
   })
 })
 
