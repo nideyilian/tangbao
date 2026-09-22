@@ -6,9 +6,10 @@
  * - 发布出来的文件名带时间戳，**字典序即时间序** —— 拉取方不用猜哪份最新，也不靠机器时钟比大小
  * - 拉取前**先把本机配置备份一份**，备份失败就不拉（单向覆盖的护栏）
  *
- * 单向覆盖的语义是刻意的：发布方那份是"标准配置"，拉取方以它为准。
- * 拉取方本地多出来的方向不会被删（见 `restoreTreeConfigBundle` 的注释），
- * 但**同 id 的节点一律以包为准**。
+ * 覆盖范围由调用方传入的 `ImportScope` 决定（场景默认值见 `IMPORT_SCOPE_CONFIG_SYNC`）：
+ * **勾了才用包里的，没勾的这一块完全不动** —— 本机自建的节点与水印默认保留，
+ * 只有显式选了「删除本地自建」才会把它们**移进回收站**（可恢复，不是彻底删）。
+ * 同 id 的一律以包为准：发布方那份是"标准配置"。
  */
 
 import { getConfigSyncPath, getLocalSavePath } from './localSave'
@@ -74,9 +75,9 @@ export async function listSyncDirConfigs(): Promise<string[]> {
 /**
  * 发布当前配置到配置目录。
  *
- * 只发**配置**（树 + 每个方向的参数 + 水印库 + 渠道与尺寸），不带任务、图片，
+ * 只发**配置**（树 + 每个方向的参数 + 水印库 + 渠道与尺寸 + 全局产出配置），不带任务、图片，
  * 也不带本机的素材索引 —— 后者发过去只会让别人的素材库里多出一堆指不到的条目。
- * 树会额外写一份 `assetCollections`，那是给过渡期的老版本（≤0.3.2）用的，见 store.ts 的注释。
+ * 包里落成**独立一份 `config.json`**（v9 起；结构与字段见 `docs/config-spec.md`）。
  */
 export async function publishConfigToSyncDir(): Promise<ConfigSyncResult> {
   const api = getFsApi()
