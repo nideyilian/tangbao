@@ -55,7 +55,7 @@ import {
   TextField,
 } from '../../design-system'
 import ChannelOutputDirs from './ChannelOutputDirs'
-import { normalizeOutputDirList } from '../../lib/postprocessMedia'
+import { normalizeOutputDirList, resolvePostprocessOutputDirs } from '../../lib/postprocessMedia'
 import type { PostprocessMediaConfig, PostprocessNodeOverride } from '../../lib/postprocessMedia'
 import { isCollectionWithinSelection, resolveCollectionPath } from '../../lib/postprocessProjectTree'
 import { useStore } from '../../store'
@@ -271,14 +271,24 @@ export default function PostprocessParamPanel({
     apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
   }
 
-  /** 本渠道去掉本级覆盖后会落到哪：拿父节点那条链单独解析一次，当占位提示 */
+  /**
+   * 本渠道去掉本级覆盖后会落到**哪些**位置（1~2 个）。
+   *
+   * ⚠️ 两个坑（TB-095）：
+   * ① 必须取**按渠道**的生效列表（`resolvePostprocessOutputDirs`），不能只看 `config.outputDir` ——
+   *    按渠道配的目录存在 `mediaOutputDirs[mediaId]` 里，`config.outputDir` 看不到它，
+   *    于是父级配过「百度 → 两个位置」时这里会恒定报成默认位置；
+   * ② 必须把列表**全给出去**：上一级配两处时只说第一个，用户会以为「跟随只跟一处」，
+   *    而产出侧两处都写。
+   *
+   * 口径是**含本级**：占位提示只在框空时可见，框空 ⇒ 该渠道本级没配 `byMedia` 目录；
+   * 但本级可能写了通用 `outputDir`（它同样管这个渠道），含本级解析才能把它算进来。
+   */
   const inheritedDirsByMedia = useMemo(() => {
-    const map: Record<string, string> = {}
-    const path = resolveCollectionPath(collections, selectedNodeId)
-    const parentId = path.length >= 2 ? path[path.length - 2].id : null
+    const map: Record<string, string[]> = {}
     for (const item of media) {
-      const sliceUp = resolveProjectPostprocessSlice(collections, params, parentId, globalConfig, item.id)
-      map[item.id] = sliceUp.config.outputDir || '默认输出位置'
+      const sliceHere = resolveProjectPostprocessSlice(collections, params, selectedNodeId, globalConfig, item.id)
+      map[item.id] = resolvePostprocessOutputDirs(sliceHere.config, item.id)
     }
     return map
   }, [selectedNodeId, collections, params, media, globalConfig])
@@ -403,7 +413,7 @@ export default function PostprocessParamPanel({
       <ChannelOutputDirs
         media={media}
         resolveDirs={resolveDirs}
-        resolveInheritedHint={(mediaId) => inheritedDirsByMedia[mediaId] ?? ''}
+        resolveInheritedDirs={(mediaId) => inheritedDirsByMedia[mediaId] ?? []}
         onChangeDir={writeDirs}
         onRemoveDir={removeDirs}
         onPickError={() => showToast('选择导出位置失败，请重试', 'error')}

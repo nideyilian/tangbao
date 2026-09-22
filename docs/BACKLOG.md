@@ -3936,3 +3936,69 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 | `features/composite/lib/compositeTextLayout.test.ts` | 删掉 5 例折行用例（函数已删）                                          |
 | `docs/RISK.md`（R-83） · `docs/adr/0006-*`        | 风险登记 + ADR 补「标识符不进框，所以框宽不能断行」                        |
 | `docs/tangbao-ops-runbook.md`（§二十三）           | **配方**：从 LevelDB 挖真实预设数据（dev/正式版两处路径、UTF-16LE、只读） |
+
+---
+
+## TB-095 导出位置「跟随上级」要把继承来的位置念全（2026-09-22 阿伟）
+
+**现象**（杰哥 2026-09-22 报障 + 截图）：上一级给某个渠道配了**两个**导出位置（双写），
+在它下面的方向里，那个渠道只显示**一个**位置和一句灰字「留空则 D:/百度A」。
+
+**先定性（这一步决定了修什么）**：跟随**本来就是整份列表** —— 用临时探针实测，
+父级 `byMedia.baidu.outputDirs = ['D:/A','E:/B']` + 本级留空 ⇒ `resolvePostprocessOutputDirs` 返回**两处**，
+产出侧两处都写。所以**不是行为缺失，是界面显示少于实际生效**。
+
+三处成因都在显示层（`ChannelSection` 的 `inheritedHint`，自己扫父节点 `byMedia`）：
+
+| 成因                                     | 后果                                                             |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| 只取列表第 1 个（`dirs[0]`）             | 上一级两处只念一处 —— **本次报障**                                |
+| 只看**直接父节点**那一层                 | 上一级没配、更上层配了 ⇒ 报成「默认输出位置」                      |
+| 只看 `byMedia`，不看父级通用 `outputDir` | 父级用通用输出目录覆盖时同样错报                                  |
+
+⚠️ 这三处正是 `ChannelSection` 头注自己禁的写法（「生效值一律走既有解析函数，不在界面里自己拼一遍继承」）
+—— 它是那句话的漏网之鱼。弹窗侧（`PostprocessParamPanel`）还有一份同源实现，且错得更彻底：
+取 `sliceUp.config.outputDir` 拿不到按渠道配的目录（那条在 `mediaOutputDirs[mediaId]` 里）⇒ **恒定**错报默认位置。
+
+**修法**（杰哥选 A：只把灰字说准，**不动表格结构**）
+
+- `ChannelSection`：`inheritedHint: (mediaId) => string` → `resolveInheritedDirs: (mediaId) => string[]`，
+  值来自 `resolvePostprocessOutputDirs(resolveProjectPostprocessSlice(…, scope, …).config, mediaId)`
+  （口径**含本级**：框空 ⇒ 本级没配 `byMedia` 目录，但本级通用 `outputDir` 同样管这个渠道）；
+- 新增纯函数 `formatInheritedOutputDirsHint(dirs)`：一处 ⇒「留空则 D:/A」；两处 ⇒「留空则继承 2 处：D:/A、E:/B」
+  —— **数量写在最前**，共享盘长路径被输入框截断时，那一眼要看到的就是「几处」；
+- 两个共用组件（中控台 `ConsoleMediaTables` / 弹窗 `ChannelOutputDirs`）的 props 同步改为列表；
+- 弹窗侧 `PostprocessParamPanel` 一并改用 `resolvePostprocessOutputDirs`（含本级链）；
+- 说明条那句改为「导出位置留空则沿树向上继承；整条链都没配过才落到 {默认}」——
+  与逐格灰字分工：**兜底终点**留在条上，**每格落点**由灰字说（原先那句话会被读成「每个空框都落这里」）。
+
+**验收标准（可测）**
+
+- 上一级某渠道两处 ⇒ 该渠道第一行 placeholder = `留空则继承 2 处：A、B`；
+- **隔层**（更上层配两处）⇒ 同样念出两处；
+- 上一级用通用 `outputDir` ⇒ placeholder 跟着变成那条；
+- 纯函数四种输入（两处 / 一处 / 空列表 / 全空串）各有固定文案。
+
+**验证**
+
+- **反向验证（精确命中，且只挂新守卫）**：
+  ① 把 `resolveInheritedDirs` 改回旧实现（手扫直接父节点 `byMedia` + 只取第 1 个）⇒ 上面前三条用例全挂（3 failed）；
+  ② 再把 `formatInheritedOutputDirsHint` 的多位置分支改成「只念第一个」⇒ 4 failed（2 组件 + 2 纯函数）。
+- 全量：`261 文件 / 3060 例全绿`（新增 7 例：纯函数 4 + 组件 3）。
+  `tsc -b` / `tsc -p electron/tsconfig.json` / `eslint .` / `prettier --check` 全绿。
+- ⚠️ **未经渲染验证**（本机离屏渲染被环境拦死）：灰字被输入框截断后的实际可读长度由杰哥在运行应用里过目。
+
+**明确不做（杰哥选 A）**：表格里**看不见**继承来的第二个位置 —— 行数仍按「本级已配的位置数」算。
+要「看得见」得改行模型（把继承值画成只读行），代价是没配过位置的方向表格会变长、扫起来更乱。
+
+**改到的文件**
+
+| 文件                                                      | 改动                                                                 |
+| --------------------------------------------------------- | -------------------------------------------------------------------- |
+| `lib/postprocessMedia.ts`                                 | 新增 `formatInheritedOutputDirsHint`（含「为何要念全」的头注）        |
+| `features/composite/components/ChannelSection.tsx`        | `inheritedHint` → `resolveInheritedDirs`（走既有解析函数）；说明条措辞 |
+| `features/composite/components/ConsoleMediaTables.tsx`    | props 改列表 + 头注补「念全」一节                                     |
+| `features/postprocess/ChannelOutputDirs.tsx`              | 同上（弹窗侧共用组件）                                                |
+| `features/postprocess/PostprocessParamPanel.tsx`          | `inheritedDirsByMedia` 改用 `resolvePostprocessOutputDirs`（原先恒定错报） |
+| `docs/RISK.md`（R-84）                                     | 风险登记：界面里自己拼继承 ⇒ 显示少于实际生效                          |
+

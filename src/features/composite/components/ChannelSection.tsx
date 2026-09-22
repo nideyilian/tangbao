@@ -37,9 +37,9 @@ import {
   FIT_MODE_OPTIONS,
   PURE_MEDIA_ID,
   normalizeOutputDirList,
+  resolvePostprocessOutputDirs,
   type PostprocessNodeOverride,
 } from '../../../lib/postprocessMedia'
-import { resolveCollectionPath } from '../../../lib/postprocessProjectTree'
 import { pruneSelectedMediaIds, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { resolveProjectOverrideChain, resolveProjectPostprocessSlice } from '../../projectTree/params'
@@ -192,23 +192,27 @@ export function ChannelSection({ scope }: Props) {
   }
 
   /**
-   * 本渠道留空后会落到哪。
-   * - 全局作用域：全局层没有上级，落到默认输出位置；
-   * - 节点作用域：拿**父节点**那条链单独解析一次，作为占位提示——
-   *   这样用户能看见「清掉本级覆盖会退回哪里」，而不是清完才发现变了。
+   * 本渠道留空后会落到哪 —— 返回**继承来的全部位置**（可能 1~2 个），走产出链同一个解析函数。
+   *
+   * ⚠️ 这里必须复用 `resolveProjectPostprocessSlice`，**不能自己扫父节点的 `byMedia`**
+   * （2026-09-22 TB-095 修的就是这个）。手扫那一版有三处错，而且错得都很安静：
+   * ① 只取列表第 1 个 → 上一级配了两个位置时界面只念一个，产出侧却两处都写；
+   * ② 只看**直接父节点** → 上一级没配、更上层配了时，报成「落到默认输出位置」；
+   * ③ 只看 `byMedia` → 上一级用通用 `outputDir` 覆盖时同样报错。
+   * 生效值只该有一套推导（本文件头注第 29 条的理由，这段就是当时的漏网之鱼）。
+   *
+   * 口径是**含本级**：占位提示只在框空时可见，框空 ⇒ 该渠道本级没配 `byMedia` 目录；
+   * 但本级可能写了通用 `outputDir`（它同样管这个渠道），含本级解析才能把它算进来。
    */
-  const inheritedHint = useMemo(() => {
-    if (isGlobal) return undefined
-    const path = resolveCollectionPath(collections, scope)
-    const parentId = path.length >= 2 ? path[path.length - 2].id : null
-    const parentOverride = parentId ? params[parentId]?.postprocess : undefined
-    const parentByMedia = parentOverride?.byMedia
-    return (mediaId: string): string => {
-      const entry = parentByMedia?.[mediaId]
-      const dirs = normalizeOutputDirList(entry?.outputDirs ?? (entry?.outputDir ? [entry.outputDir] : []))
-      return dirs[0] ?? outputDir.trim() ?? '默认输出位置'
-    }
-  }, [isGlobal, collections, scope, params, outputDir])
+  const resolveInheritedDirs = useMemo(() => {
+    // 全局层没有上级：留空就落到默认输出位置；那条位置本身为空时给一句兜底文案
+    if (isGlobal) return (): string[] => [outputDir.trim() || '本地保存目录下的 postprocess']
+    return (mediaId: string): string[] =>
+      resolvePostprocessOutputDirs(
+        resolveProjectPostprocessSlice(collections, params, scope, globalConfig, mediaId).config,
+        mediaId,
+      )
+  }, [collections, globalConfig, isGlobal, outputDir, params, scope])
 
   /**
    * 有节点级输出覆盖的方向数。只在**全局作用域**下提示——切到节点作用域时用户正在编辑覆盖本身，
@@ -286,8 +290,13 @@ export function ChannelSection({ scope }: Props) {
                 </>
               )}
               <span className="min-w-0 flex-1" />
+              {/*
+               * 说清「留空往哪退」的**兜底终点** —— 具体到每个渠道的落点由表格每格的灰字给
+               * （`formatInheritedOutputDirsHint`）。这里再写一遍「落到某目录」会与那些灰字打架：
+               * 上一级配过位置时，空框落的是上一级那几处，不是这句里的默认位置（TB-095）。
+               */}
               <span className="shrink-0 truncate text-xs text-ds-muted dark:text-ds-muted">
-                导出位置留空则继承上级，最终落到 {defaultDirLabel}
+                导出位置留空则沿树向上继承；整条链都没配过才落到 {defaultDirLabel}
               </span>
             </Inline>
           </div>
@@ -382,7 +391,7 @@ export function ChannelSection({ scope }: Props) {
           onToggleSelected={toggleSelected}
           participationScopeLabel={isGlobal ? '全局基线' : (scopeNode?.name ?? '已删除节点')}
           resolveDirs={resolveDirs}
-          resolveInheritedHint={inheritedHint ?? (() => outputDir.trim() || '本地保存目录下的 postprocess')}
+          resolveInheritedDirs={resolveInheritedDirs}
           onChangeDir={handleChangeDir}
           onRemoveDir={handleRemoveDir}
           onPickError={() => showToast('选择导出位置失败，请重试', 'error')}

@@ -18,6 +18,12 @@
  * 对应地，「详细尺寸」列**必须给固定宽度**：它是 `flex-wrap` 的复选框组，不给宽会被浏览器按
  * 「内容偏好宽度」抢走弹性空间，路径列又被挤窄。
  *
+ * ## 「留空 = 继承」要把继承来的位置**念全**（TB-095）
+ *
+ * 灰字由调用方给的 `resolveInheritedDirs` 算（本组件不自己读作用域），并且是**列表**而不是一个
+ * 字符串：上一级可以给同一个渠道配两处（双写）。只说第一个会让人以为「跟随只跟一处」，
+ * 而产出侧两处都照写 —— 界面显示少于实际生效，用户照着界面判断就会错（2026-09-22 杰哥报障）。
+ *
  * ## 这张表里混着两种作用域（合并的代价，靠列说明说清）
  *
  * | 列                                  | 层级     | 数据                                                 |
@@ -57,6 +63,7 @@ import { buildPostprocessMediaSizeId, usePostprocessMediaStore } from '../../../
 import {
   MAX_POSTPROCESS_OUTPUT_DIRS,
   PURE_MEDIA_ID,
+  formatInheritedOutputDirsHint,
   normalizeOutputDirList,
   type PostprocessMediaSize,
 } from '../../../lib/postprocessMedia'
@@ -73,8 +80,13 @@ interface Props {
   participationScopeLabel: string
   /** 读某渠道**本级已配**的导出位置（1~2 个）；空数组 = 本级没配，用继承值 */
   resolveDirs: (mediaId: string) => string[]
-  /** 占位提示：本级留空时会落到哪个位置（继承链解析结果，调用方给） */
-  resolveInheritedHint: (mediaId: string) => string
+  /**
+   * 占位提示：本级留空时会落到**哪些**位置（继承链解析结果，调用方给）。
+   *
+   * 是列表而不是一个字符串（TB-095）：上一级可以给同一个渠道配两处（双写），
+   * 只说第一个会让人以为「跟随只跟一处」，产出侧却两处都写。
+   */
+  resolveInheritedDirs: (mediaId: string) => string[]
   /** 写某渠道第 `index` 个位置；传空串 = 清掉该位置 */
   onChangeDir: (mediaId: string, index: number, outputDir: string) => void
   /** 删某渠道第 `index` 个位置，其余位置上移（删到一个不剩 = 该渠道回到「留空」） */
@@ -98,8 +110,11 @@ interface ChannelRow {
   span: number
   /** 该渠道**已配**的位置数（不含刚点出来还没填的空行） */
   dirCount: number
-  /** 留空时会继承到的位置 —— 逐行不同，所以走 `placeholderForRow` */
-  inherited: string
+  /**
+   * 留空时会继承到的**全部**位置（通常 1~2 个）—— 逐行不同，所以走 `placeholderForRow`。
+   * 空数组 = 链上没人配过这一格，落到默认输出位置。
+   */
+  inheritedDirs: string[]
   /** 是否给「在下面再加一个位置」 */
   canAdd: boolean
   /** 是否给「删掉这个位置」 */
@@ -117,7 +132,7 @@ export function ConsoleMediaTables({
   onToggleSelected,
   participationScopeLabel,
   resolveDirs,
-  resolveInheritedHint,
+  resolveInheritedDirs,
   onChangeDir,
   onRemoveDir,
   onPickError,
@@ -165,7 +180,7 @@ export function ConsoleMediaTables({
       const extra = extraOpen.includes(item.id) && dirCount > 0 && dirCount < MAX_POSTPROCESS_OUTPUT_DIRS
       // 每个渠道至少占一行：留空也要有个能打字的地方（这就是「留空 = 继承上级」的入口）
       const slotCount = Math.min(MAX_POSTPROCESS_OUTPUT_DIRS, Math.max(1, dirCount + (extra ? 1 : 0)))
-      const inherited = resolveInheritedHint(item.id)
+      const inheritedDirs = resolveInheritedDirs(item.id)
       const applied = selectedMediaIds.includes(item.id)
       for (let index = 0; index < slotCount; index += 1) {
         result.push({
@@ -177,7 +192,7 @@ export function ConsoleMediaTables({
           outputDir: dirs[index] ?? '',
           span: index === 0 ? slotCount : 0,
           dirCount,
-          inherited,
+          inheritedDirs,
           // 「+」只在组内最后一行：读作「在这一行下面加一行」
           canAdd: dirCount > 0 && index === slotCount - 1 && slotCount < MAX_POSTPROCESS_OUTPUT_DIRS,
           canRemove: dirCount > 0,
@@ -188,7 +203,7 @@ export function ConsoleMediaTables({
       }
     }
     return result
-  }, [channelRows, extraOpen, resolveDirs, resolveInheritedHint, selectedMediaIds])
+  }, [channelRows, extraOpen, resolveDirs, resolveInheritedDirs, selectedMediaIds])
 
   /** 行主键 → 行模型：提交单元格时要从中还原「是哪个渠道的第几个位置」 */
   const rowById = useMemo(() => new Map(rows.map((row) => [row.rowId, row])), [rows])
@@ -360,9 +375,10 @@ export function ConsoleMediaTables({
         help: '留空 = 用默认输出位置（节点作用域下继续沿树向上继承）；给两个 = 双写，同一份产物两处各写一份。',
         editor: 'path',
         pickPath,
-        // 留空的含义逐行不同：第一行是「继承上级」，第二行是「不多写这一份」
+        // 留空的含义逐行不同：第一行是「继承上级」（**几个位置都要念出来**，见
+        // `formatInheritedOutputDirsHint`），第二行是「不多写这一份」
         placeholderForRow: (row) =>
-          row.index === 0 ? (row.inherited ? `留空则 ${row.inherited}` : '留空则继承上级') : '留空 = 不多写这一个位置',
+          row.index === 0 ? formatInheritedOutputDirsHint(row.inheritedDirs) : '留空 = 不多写这一个位置',
       },
       {
         key: 'actions',

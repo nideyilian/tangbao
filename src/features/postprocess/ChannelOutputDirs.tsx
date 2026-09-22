@@ -46,14 +46,24 @@ import { useState, type ReactNode } from 'react'
 import { Button, DataGrid, IconButton, Inline, Stack } from '../../design-system'
 import type { DataGridColumn } from '../../design-system'
 import { CloseIcon, PlusIcon } from '../../design-system/icons'
-import { MAX_POSTPROCESS_OUTPUT_DIRS, normalizeOutputDirList, type PostprocessMedia } from '../../lib/postprocessMedia'
+import {
+  MAX_POSTPROCESS_OUTPUT_DIRS,
+  formatInheritedOutputDirsHint,
+  normalizeOutputDirList,
+  type PostprocessMedia,
+} from '../../lib/postprocessMedia'
 
 interface Props {
   media: PostprocessMedia[]
   /** 读某渠道**本级已配**的位置（1~2 个）；空数组 = 本级没配，用继承值 */
   resolveDirs: (mediaId: string) => string[]
-  /** 占位提示：本级留空时会落到哪个位置（继承链解析结果，调用方给） */
-  resolveInheritedHint: (mediaId: string) => string
+  /**
+   * 占位提示：本级留空时会落到**哪些**位置（继承链解析结果，调用方给）。
+   *
+   * 是列表而不是一个字符串：上一级可以给同一渠道配两处（双写），只说第一个会让人以为
+   * 「跟随只跟一处」，产出侧却两处都写（TB-095）。
+   */
+  resolveInheritedDirs: (mediaId: string) => string[]
   /** 写某渠道第 `index` 个位置；传空串 = 清掉该位置 */
   onChangeDir: (mediaId: string, index: number, outputDir: string) => void
   /** 删掉某渠道第 `index` 个位置，其余位置上移（删到一个不剩 = 该渠道回到「留空」） */
@@ -85,8 +95,8 @@ interface ChannelDirRow {
   channelSpan: number
   /** 该渠道**已配**的位置数（不含刚点出来还没填的空行） */
   dirCount: number
-  /** 留空时会继承到的目录 —— 逐行不同，所以走 `placeholderForRow` */
-  inherited: string
+  /** 留空时会继承到的**全部**位置（1~2 个）—— 逐行不同，所以走 `placeholderForRow` */
+  inheritedDirs: string[]
   /** 是否给「在下面再加一个位置」 */
   canAdd: boolean
   /** 是否给「删掉这个位置」 */
@@ -96,7 +106,7 @@ interface ChannelDirRow {
 export default function ChannelOutputDirs({
   media,
   resolveDirs,
-  resolveInheritedHint,
+  resolveInheritedDirs,
   onChangeDir,
   onRemoveDir,
   onPickError,
@@ -136,7 +146,7 @@ export default function ChannelOutputDirs({
         outputDir: dirs[index] ?? '',
         channelSpan: index === 0 ? slotCount : 0,
         dirCount,
-        inherited: resolveInheritedHint(item.id),
+        inheritedDirs: resolveInheritedDirs(item.id),
         // 「+」只在组内最后一行：读作「在这一行下面加一行」
         canAdd: dirCount > 0 && index === slotCount - 1 && slotCount < MAX_POSTPROCESS_OUTPUT_DIRS,
         canRemove: dirCount > 0,
@@ -184,7 +194,7 @@ export default function ChannelOutputDirs({
       editor: 'path',
       pickPath,
       placeholderForRow: (row) =>
-        row.index === 0 ? (row.inherited ? `留空则 ${row.inherited}` : '留空则继承上级') : '留空 = 不多写这一个位置',
+        row.index === 0 ? formatInheritedOutputDirsHint(row.inheritedDirs) : '留空 = 不多写这一个位置',
     },
     {
       key: 'actions',

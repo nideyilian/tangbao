@@ -403,6 +403,24 @@ export function resolvePostprocessOutputDirs(
 }
 
 /**
+ * 「本级留空会落到哪」的占位提示文案 —— 导出位置那格输入框的灰字。
+ *
+ * ⚠️ **一个位置都不能漏**（2026-09-22 TB-095）：同一个渠道上一级可以配两处（双写），
+ * 只说第一个会让人以为「跟随只跟一处」，而产出侧两处都会照写 —— 界面显示少于实际生效，
+ * 恰恰是最难自查的那类不一致（用户照着界面判断「只会出一份」，实际出两份）。
+ *
+ * 多于一处时把**数量写在最前**：共享盘路径常被输入框截断，`2 处` 是那一眼要看的信息。
+ *
+ * 空列表 = 链上没人配过这一格 → 落到默认输出位置（全局层由调用方直接给默认位置那条）。
+ */
+export function formatInheritedOutputDirsHint(dirs: string[]): string {
+  const list = normalizeOutputDirList(dirs)
+  if (list.length === 0) return '留空则用默认输出位置'
+  if (list.length === 1) return `留空则 ${list[0]}`
+  return `留空则继承 ${list.length} 处：${list.join('、')}`
+}
+
+/**
  * 某个项目树节点（产品线 / 产品 / 方向）对后处理参数的**局部覆盖**。
  *
  * 只保留「与这个项目 / 这个方向直接相关」的字段（口径见 ADR-0011；`selectedMediaIds`

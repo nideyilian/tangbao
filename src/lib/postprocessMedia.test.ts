@@ -10,6 +10,7 @@ import {
   applyPostprocessOverride,
   buildPostprocessOutputs,
   findPostprocessMedia,
+  formatInheritedOutputDirsHint,
   getOutputDirectionLabel,
   matchMediaSizes,
   normalizeOutputDirList,
@@ -640,6 +641,32 @@ describe('导出位置：全局渠道表 + 双写', () => {
     const base = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/全局百度'] } }
     applyPostprocessOverride(base, { byMedia: { baidu: { outputDirs: ['D:/节点'] } } }, 'baidu')
     expect(base.mediaOutputDirs.baidu).toEqual(['D:/全局百度'])
+  })
+})
+
+describe('导出位置的继承提示文案（TB-095）', () => {
+  it('⭐ 继承到两处时两处都念出来 —— 少念一个，用户就会以为「跟随只跟一处」', () => {
+    // 报障原话：上一级某渠道有两个导出位置，跟随的（本级留空）却只显示一个。
+    // 实际产出两处都写（见上面那条「留空 = 继承整份列表」），所以提示必须念全。
+    expect(formatInheritedOutputDirsHint(['D:/百度A', 'E:/留档B'])).toBe('留空则继承 2 处：D:/百度A、E:/留档B')
+  })
+
+  it('一处时保持原说法，不啰嗦成「1 处」', () => {
+    expect(formatInheritedOutputDirsHint(['D:/百度A'])).toBe('留空则 D:/百度A')
+  })
+
+  it('链上没人配过 → 落到默认输出位置', () => {
+    expect(formatInheritedOutputDirsHint([])).toBe('留空则用默认输出位置')
+    // 全是空串 = 没有有效位置，不能念成「留空则 」
+    expect(formatInheritedOutputDirsHint(['', '  '])).toBe('留空则用默认输出位置')
+  })
+
+  it('数量写在最前：共享盘路径常被输入框截断，那一眼要看到的是「几处」', () => {
+    const hint = formatInheritedOutputDirsHint([
+      '\\\\192.168.202.10\\素材\\抖音商城\\成品\\很长的路径',
+      'D:\\留档\\抖音商城\\成品\\另一条很长的路径',
+    ])
+    expect(hint.startsWith('留空则继承 2 处：')).toBe(true)
   })
 })
 

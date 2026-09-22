@@ -554,6 +554,39 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(text()).toContain('跟随「全局默认」')
     expect(container.querySelector<HTMLInputElement>('[aria-label="参与产出：广点通"]')?.checked).toBe(true)
   })
+
+  it('⭐ 导出位置留空时，把继承来的**全部**位置念出来（上一级配了两处就说两处）', () => {
+    // TB-095 报障原话：「上一级有一个渠道有两个导出位置，但跟随的只有一个」。
+    // 实际产出两处都写，界面只念一处 —— 用户照界面判断就会以为只出一份。
+    useProjectTreeParamsStore.setState({
+      params: { 'product-a': { postprocess: { byMedia: { baidu: { outputDirs: ['D:/百度A', 'E:/留档B'] } } } } },
+    })
+    render(<ChannelSection scope="direction-a" />)
+
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="导出位置：百度"]')!
+    expect(input.value).toBe('')
+    expect(input.placeholder).toBe('留空则继承 2 处：D:/百度A、E:/留档B')
+  })
+
+  it('⭐ 隔层继承也念得出来（只看直接父节点会漏成「默认输出位置」）', () => {
+    useProjectTreeParamsStore.setState({
+      params: { 'line-a': { postprocess: { byMedia: { baidu: { outputDirs: ['D:/A', 'E:/B'] } } } } },
+    })
+    render(<ChannelSection scope="direction-a" />)
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="导出位置：百度"]')!.placeholder).toBe(
+      '留空则继承 2 处：D:/A、E:/B',
+    )
+  })
+
+  it('⭐ 上一级用通用「输出目录」覆盖时提示跟着变（只看 byMedia 会错报成默认位置）', () => {
+    useProjectTreeParamsStore.setState({
+      params: { 'product-a': { postprocess: { outputDir: 'D:/产品级通用' } } },
+    })
+    render(<ChannelSection scope="direction-a" />)
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="导出位置：百度"]')!.placeholder).toBe(
+      '留空则 D:/产品级通用',
+    )
+  })
 })
 
 describe('中控台 · 分发分区', () => {
