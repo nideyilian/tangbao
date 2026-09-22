@@ -23,6 +23,7 @@ type GenerationStatsMetricKey = 'total' | 'elapsedMs' | 'success' | 'failure'
 // 工作区切换：策略（strategy）与下单（ordering）模块已屏蔽，不再提供入口
 const appModeOptions: Array<{ value: AppMode; label: string }> = [
   { value: 'gallery', label: '素材库' },
+  { value: 'daily', label: '每日生成' },
   { value: 'postprocess', label: '中控台' },
   { value: 'agent', label: 'Agent' },
 ]

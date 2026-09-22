@@ -7,7 +7,7 @@ export type ApiMode = 'images' | 'responses'
 export type AgentApiConfigMode = 'native' | 'hybrid'
 export type AgentTextProtocol = 'responses' | 'chat-completions'
 export type ApiTransportMode = 'auto' | 'renderer'
-export type AppMode = 'gallery' | 'strategy' | 'ordering' | 'agent' | 'postprocess'
+export type AppMode = 'gallery' | 'strategy' | 'ordering' | 'agent' | 'postprocess' | 'daily'
 export type AgentBackend = 'agent' | 'canny' | 'kling'
 export type ThemeMode = 'light' | 'dark'
 /**

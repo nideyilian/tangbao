@@ -36,6 +36,9 @@ const AUTO_BACKUP_KEEP = 10
 
 const AgentWorkspace = React.lazy(() => import('./components/AgentWorkspace'))
 const CompositeWorkspace = React.lazy(() => import('./features/composite/CompositeWorkspace'))
+const DailyWorkspace = React.lazy(() => import('./features/dailyBatch/DailyWorkspace'))
+// 每日生成的自动执行器：无界面，但要**常驻**（用户停在素材库时也要能跑当天的量）
+const DailyBatchRunner = React.lazy(() => import('./features/dailyBatch/DailyBatchRunner'))
 // 策略（strategy）与下单（ordering）模块已屏蔽：不再懒加载对应工作区，历史 appMode 值兜底渲染素材库
 const DetailModal = React.lazy(() => import('./components/DetailModal'))
 const AssetViewer = React.lazy(() => import('./features/assetLibrary/AssetViewer'))
@@ -466,6 +469,12 @@ export default function App() {
           <React.Suspense fallback={null}>
             <CompositeWorkspace />
           </React.Suspense>
+        ) : appMode === 'daily' ? (
+          // 每日生成：策略卡 / 每日任务 / 预览审核 三步在同一条流水线上，
+          // 卡与数量配一次长期有效，每天只看「预览审核」，所以它是这个工作区的默认分区。
+          <React.Suspense fallback={null}>
+            <DailyWorkspace />
+          </React.Suspense>
         ) : (
           // 单一画廊模式：素材库（收藏夹概览 / 收藏夹素材 / 图片与批次分组都在素材库界面内完成）；
           // 已屏蔽的 strategy / ordering 模式同样兜底到这里
@@ -496,6 +505,7 @@ export default function App() {
           <ScheduleModal />
           <ScheduleRunner />
           <AgentBatchQueueRunner />
+          <DailyBatchRunner />
           <WorkspaceTabManagerModal />
           <UpdateReleaseNotesModal />
         </React.Suspense>

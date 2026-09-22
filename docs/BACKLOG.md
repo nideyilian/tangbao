@@ -4939,3 +4939,86 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
 **仍未做**
 
 - 分发结果可见性（「已排期 N 个 → M 天」写进运行结论）。
+
+---
+
+### TB-108 每日素材批量生成：策略卡 + 每日比例抽取 + 预览审核发布
+
+- **来源**：杰哥 2026-09-23 01:02 口述四条 —— ① 需求分析与拆解；② 策略卡管理页
+  （每张 SOP 或配方卡出图后可转成策略卡，卡须关联方向与产品，一个方向可有多张）；
+  ③ 每日生成任务（以项目为单位设每日总数如 1000 张，为每个方向配抽取比例，
+  每天按比例从各方向策略卡中随机抽取并生成对应数量，确保总数达标，多产品各配各的）；
+  ④ 预览与后续处理（专门的预览界面、按方向分区展示、可看详情，审核通过后执行后处理并分发）。
+- **状态**：DOING · 本线
+- **杰哥拍板（2026-09-23，三选三）**
+  1. **策略卡 = SOP/配方卡 × 方向**：每张卡引用一张 SOP/配方卡并固定挂在某个方向下
+     （同一张 SOP 可在不同方向各建一张，参数互不干扰）；出图后点「存为策略卡」建立。
+  2. **应用开着才跑**：复用现有「运行期每分钟 tick + 当天只跑一次」的机制，**不动主进程调度**。
+  3. **一期范围**：策略卡 + 每日生成 + 预览审核（通过后触发现有后处理分发）一次做完。
+     每日报表 / 失败补跑 / 多产品并发闸门留二期。
+- **现状（开工前查证：三块有现成骨架，两块纯新建）**
+  - **按比例分张数已有**：`agentBatchPlanner.ts:127 allocateInteger` —— 先按权重取底、
+    余数按小数部分从大到小补，**合计恒等于总数**（「确保总数达到设定值」就靠这条）。
+  - **「随机但不重复」已有引擎**：配方卡 `campaignRecipe.ts` 的最远点采样 + `existingPrompts`
+    跨批次去重；三个入口签名一致（`storeSopGeneration.ts:381/609/856`）。
+  - **每日一次的跑批模式已有**：`AgentBatchQueueRunner.tsx`（60s tick + `lastRunDate` 去重）。
+  - **出图只要一条线**：`submitTaskWithData`（`store.ts:6036`），带 `sopBatch.batchId` +
+    `defaultCollectionId` 就能「批次可聚 + 自动归档到方向」—— **不另开生成链路**。
+  - **审核 / 后处理 / 分发已有**：`reviewedAt` + `markAssetsReviewed`（TB-105）；
+    `runManualPostprocess`（`store.ts:1117`）；输出位置按方向解析；命名模板全局一套。
+    ⇒ **本页不重配后处理参数，全用中控台已有配置**。
+  - **新建**：策略卡实体本身、长期「每日配置」、按方向分区的预览页。
+- **验收标准**（可测）
+  1. 策略卡页：左树选方向、右侧该方向的卡；能新建 / 启停 / 删除；卡上显示引用的 SOP
+     与**从树推出的产品名**（产品不落在卡上）；
+  2. 卡引用的 SOP 被删、或挂的方向节点没了 ⇒ 卡片标红并写清原因，不参与抽取；
+  3. 每日配置按产品设总数 + 各方向比例；**各方向张数之和恒等于总数**；
+  4. 比例旁**实时显示折算张数**（配 50% 就看到 500 张），用的是与跑批同一个分配函数；
+  5. 多产品各配一套，互不影响；
+  6. 应用内每分钟检查，当天只跑一次（`findRun(date, product)` 去重）；可手动「立即跑一次」；
+  7. 预览页按方向分区，显示「计划 N / 已出 M」，差的张数与原因一并显示；
+  8. 整区 / 单张挑选通过后，走现有后处理链路（水印 / 适配 / 命名 / 按方向落盘 / 分发）；
+  9. 新 namespace 进主进程白名单（有守卫测试钉着）、新增 `.tsx` 全部登记 catalog；
+  10. 全量 `npm run verify` 全绿。
+- **改动面**
+  - 新增 `src/features/dailyBatch/`：`types.ts`、`normalize.ts`、`planner.ts`、`runner.ts`、
+    `execute.ts`、`scope.ts`、`store.ts`、`DailyScopeTree.tsx`、`DailyWorkspace.tsx`、
+    `StrategyCardsSection.tsx`、`DailyTargetsSection.tsx`、`DailyReviewSection.tsx`、
+    `DailyBatchRunner.tsx` + 3 个测试文件。
+  - 修改：`electron/asset-kernel.ts`（namespace 白名单）、`src/types.ts`（AppMode）、
+    `src/components/Header.tsx`（tab）、`src/App.tsx`（lazy + 分支 + 执行器挂载）、
+    `src/store.ts`（setAppMode 分支 + **持久化归一化白名单**）、
+    `src/design-system/catalog.ts`（pageCoverage + legacyComponentCoverage）、
+    `src/design-system/page-coverage-regression.test.tsx`、`design-system/tangbao/pages/daily.md`。
+- **设计取舍**
+  - **产品不落库**：卡上只存 `directionCollectionId`，产品沿树由 `describeCollectionPath` 推导。
+    改名 / 移动节点后归属自动跟着走；代价是节点被删时只能退到 id 显示（已写明）。
+  - **策略卡只引用不复制 SOP**：改 SOP，所有引用它的卡一起变；SOP 删了则卡标失效并报出来。
+  - **不新建第二棵树、不新配后处理参数**（见「现状」）。
+  - **随机做成「按日期的稳定抖动」**（`dailyJitter`）：每天份额有浮动，但当天重跑结果一致
+    —— 用 `Math.random` 会让补跑翻盘，出了问题没法复现。
+- **知情取舍**
+  1. **应用关掉就不跑**（杰哥已拍板），机器休眠 / 关机当天不补。
+  2. **串行提交**：1000 张会慢，但不会把 API 打挂；并发闸门留二期。
+  3. **1000 张/天受 API 并发与配额限制**，建议先 100–200 张验证链路（数量本身可配）。
+  4. **未经真机渲染验证**：新页面布局请在运行中的应用里过目（本机做不了网页与离屏渲染）。
+- **验收证据**（2026-09-23）
+  - **全量 `npm run verify` 通过**：`265 files / 3167 passed`（Node v24.14.0，tsc 双端 +
+    lint + format:check + test 全绿）。比基线 `262 / 3133` 多 **3 文件 34 用例** —— 正是本轮新增。
+  - 定向：`planner.test.ts` **14 passed**（比例分配 / 抖动可复现 / 跳过原因）、
+    `normalize.test.ts` **10 passed**（含⭐字段白名单往返）、`runner.test.ts` **8 passed**
+    （含⭐单卡失败不牵连整批、⭐SOP 被删不静默）。
+  - 门禁关联：`appDataNamespaceContract.test.ts` 3 passed（新 namespace 已进白名单）；
+    `catalog.test.ts` / `page-coverage-regression.test.tsx`（新页面登记 + `pages/daily.md` 存在）。
+  - **开工前先收口了 TB-105**：那批未提交改动（11 文件 / 396 行）单独提交为 `0e8c4c2`，
+    与本轮改动分离（R-09 / R-79）。
+- **遗留 / 未覆盖**
+  1. **未经真机渲染验证**：新页面布局请在运行中的应用里过目（本机做不了网页与离屏渲染）。
+  2. 「出图后存为策略卡」的**界面入口**尚未接到 SOP 批量结果卡上 —— 数据层
+     `createCardFromGeneration` 已就绪并可用，接 UI 是下一步（TB-108 子项）。
+  3. 每日生成**没有端到端用例**（要跑通真实 API + 电子环境）：分配、归一化、编排三层各有测试，
+     「提示词引擎 → submitTaskWithData」那一跳靠注入点隔离 + 类型检查。
+  4. 二期：每日报表、失败自动补跑、多产品并发闸门。
+- **⚠️ 并行写线提醒（开工时实测）**：本轮开工时 `src/features/projectTree/params.ts` 与
+  `src/lib/postprocessMedia.ts` 正被 TB-107 那条线**活跃修改**（`params.ts` 在开工前 12 秒
+  刚落盘）。本轮**一个字节都没碰**这两个文件（R-09 / R-79）。

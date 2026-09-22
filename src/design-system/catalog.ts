@@ -1068,6 +1068,42 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Progress', 'ToastMessage', 'StatusIndicator'],
   },
   {
+    module: 'src/features/dailyBatch/DailyWorkspace.tsx',
+    responsibility: '每日生成工作区（策略卡 / 每日任务 / 预览审核 三步流水线）',
+    decision: 'retain',
+    targets: ['SplitPane', 'Panel'],
+  },
+  {
+    module: 'src/features/dailyBatch/DailyScopeTree.tsx',
+    responsibility: '每日生成左栏：复用项目树的作用域选择（产品线 / 产品 / 方向）',
+    decision: 'retain',
+    targets: ['ScrollArea'],
+  },
+  {
+    module: 'src/features/dailyBatch/StrategyCardsSection.tsx',
+    responsibility: '策略卡管理：挂卡片到方向、引用 SOP、启停与删除',
+    decision: 'retain',
+    targets: ['Fieldset', 'TextField', 'Button'],
+  },
+  {
+    module: 'src/features/dailyBatch/DailyTargetsSection.tsx',
+    responsibility: '每日任务配置：按产品设每日总数与各方向比例（实时显示折算张数）',
+    decision: 'retain',
+    targets: ['Fieldset', 'TextField'],
+  },
+  {
+    module: 'src/features/dailyBatch/DailyReviewSection.tsx',
+    responsibility: '预览审核：当天产出按方向分区、挑选通过后跑后处理与分发',
+    decision: 'retain',
+    targets: ['Thumbnail', 'StatusIndicator', 'Alert', 'Button'],
+  },
+  {
+    module: 'src/features/dailyBatch/DailyBatchRunner.tsx',
+    responsibility: '每日生成的自动执行器（应用运行期每分钟检查，当天只跑一次）',
+    decision: 'retain',
+    targets: [],
+  },
+  {
     module: 'src/features/strategy/adapters/GallerySopBatchModal.tsx',
     responsibility: '画廊 SOP 批量配置和执行弹窗',
     decision: 'retain',
@@ -1286,6 +1322,17 @@ export const pageCoverage: PageCoverage[] = [
     entry: "appMode==='postprocess'（顶栏第三个 tab，与素材库 / Agent 同级）",
     differences: ['工作区顶部功能分区（水印为首个分区）', '水印分区内图层拖拽编辑', 'Ctrl+Z 撤销'],
     document: 'design-system/tangbao/pages/postprocess.md',
+  },
+  {
+    id: 'daily',
+    workspace: '每日生成工作区',
+    entry: "appMode==='daily'（顶栏 tab，与素材库 / 中控台 / Agent 同级）",
+    differences: [
+      '左树 + 右区三步流水线（策略卡 → 每日任务 → 预览审核）',
+      '默认分区是预览审核：卡与数量配一次长期有效，每天只看结果',
+      '所有「排不下去 / 少出」都要显示原因，不许静默',
+    ],
+    document: 'design-system/tangbao/pages/daily.md',
   },
 ]
 

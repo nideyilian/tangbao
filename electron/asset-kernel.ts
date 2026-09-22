@@ -54,6 +54,7 @@ const APP_DATA_NAMESPACES = new Set([
   'compositeWorkspace',
   'requirementPrototype',
   'assetLibraryUi',
+  'dailyBatch',
 ])
 
 function appDataNamespace(value: unknown): string {

@@ -34,6 +34,7 @@ const WORKSPACE_ENTRY_MODULES: Record<string, string> = {
   gallery: 'src/App.tsx',
   agent: 'src/components/AgentWorkspace.tsx',
   postprocess: 'src/features/composite/CompositeWorkspace.tsx',
+  daily: 'src/features/dailyBatch/DailyWorkspace.tsx',
 }
 
 /** 所有必须有 pageCoverage 登记的顶层工作区 ID */

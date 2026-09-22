@@ -2493,9 +2493,10 @@ function mergePersistedState(persistedState: unknown, currentState: AppState): A
       agentConversations.some((conversation) => conversation.id === persisted.activeAgentConversationId))
       ? persisted.activeAgentConversationId
       : (agentConversations[0]?.id ?? null)
-  // 下单 / 策略模块已屏蔽：历史持久化中的这两个模式归一化回素材库；
-  // postprocess 已弹窗化（不占用 appMode），同样归一化回素材库
-  const appMode = persisted.appMode === 'agent' ? persisted.appMode : 'gallery'
+  // 下单 / 策略模块已屏蔽：历史持久化中的这两个模式归一化回素材库。
+  // ⚠️ `daily` 必须在这里放行 —— 不放行的话重启后会被打回素材库，
+  //    用户的观感是「昨天配好的每日任务没了」，而数据其实还在。
+  const appMode = persisted.appMode === 'agent' || persisted.appMode === 'daily' ? persisted.appMode : 'gallery'
   const galleryInputDraft = settings.persistInputOnRestart
     ? normalizeAgentInputDraft(
         persisted.galleryInputDraft ?? {
@@ -3400,6 +3401,16 @@ export const useStore = create<AppState>()(
         if (appMode === 'postprocess') {
           // 水印预设工作区：与素材库 / Agent 同级的第三个 tab。它没有输入栏，
           // 只需把两边的输入草稿存下来再切——否则从 Agent 切过来会丢掉正在写的那段提示词。
+          const state = get()
+          const agentInputDrafts = saveActiveAgentInputDrafts(state)
+          const galleryInputDraft = saveGalleryInputDraft(state)
+          set({ appMode, agentInputDrafts, galleryInputDraft, agentMobileHeaderVisible: true })
+          return
+        }
+
+        if (appMode === 'daily') {
+          // 每日生成：与中控台同款 —— 自带工作区、没有底部输入栏，
+          // 切换时只需把两边正在写的提示词存下来。
           const state = get()
           const agentInputDrafts = saveActiveAgentInputDrafts(state)
           const galleryInputDraft = saveGalleryInputDraft(state)
