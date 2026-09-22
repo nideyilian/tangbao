@@ -16,7 +16,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_POSTPROCESS_MEDIA } from '../../lib/postprocessMedia'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import type { AssetCollection } from '../../types'
+import { resolveProjectPostprocessSlice } from '../projectTree/params'
+import type { ProjectNodeParamsMap } from '../projectTree/types'
 import { runTaskPostprocess } from './taskPostprocess'
+
+/**
+ * 包一层 mock 才能断言「参数是按哪个方向解析的」—— 这是「多目标不串味」在**可测层面**的
+ * 等价观测。真正的串味表现是文件写进错目录，那要跑渲染 + 写盘，jsdom 下测不到。
+ */
+vi.mock('../projectTree/params', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../projectTree/params')>()
+  return { ...actual, resolveProjectPostprocessSlice: vi.fn(actual.resolveProjectPostprocessSlice) }
+})
 
 /** 执行体会先问 `isElectron()`，非桌面环境直接返回（`PP-ENV-001`）。 */
 function stubElectron(): void {
@@ -45,6 +56,26 @@ const DIRECTION: AssetCollection = {
 
 /** 这个方向把「自动后处理」关了（就是提示里让用户「单独跑一次」的那种局面）。 */
 const DIRECTION_SWITCH_OFF = { 'direction-a': { postprocess: { enabled: false } } }
+
+/** 一个真实形状的三级树：产品线 → 产品 → 方向（`{line}/{product}/{direction}` 命名段靠它）。 */
+function collection(id: string, name: string, parentId: string | null): AssetCollection {
+  return {
+    id,
+    name,
+    normalizedName: name.toLowerCase(),
+    parentId,
+    order: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    pinned: false,
+  }
+}
+
+const LINE = collection('line-x', '医疗线', null)
+const PRODUCT = collection('product-x', '百万医疗险', LINE.id)
+const DIRECTION_A = collection('direction-a', '月亮', PRODUCT.id)
+const DIRECTION_B = collection('direction-b', '图标', PRODUCT.id)
+const THREE_LEVEL_TREE = [LINE, PRODUCT, DIRECTION_A, DIRECTION_B]
 
 const readSource = async (imageId: string) => ({
   imageId,
@@ -93,5 +124,114 @@ describe('后处理执行体：方向级「自动后处理」开关只拦自动�
     const result = await run('manual')
 
     expect(codesOf(result.issues)).not.toContain('PP-SCOPE-002')
+  })
+})
+
+/**
+ * 多目标产出（「记住配置」）。
+ *
+ * 背景（2026-09-22）：一批素材经常要同时投到多个产品 / 多个方向，而归属（`collectionIds` 里
+ * 最深那条）只能表达「这张图属于哪个方向」——靠把素材挂到多个方向绕不过去（同级挂两个只有
+ * 一个生效），还会改写素材的真实归属。用户点「记住配置」把「这批图要投到哪几个方向」定下来
+ * （`savedTargetCollectionIds`），之后跑批一直复用，直到他再改。
+ *
+ * 这里守两件事：
+ * ① **每个目标各用自己那一套参数**（输出目录 / 水印 / 渠道）—— 复用归属那一份会把后一个方向的
+ *    文件静默写进前一个方向的目录，属于最难发现的一类错（看着正常但不能投）；
+ * ② 启用范围对**每个目标**都要过，且方向级「自动后处理」开关只对归属方向生效。
+ */
+describe('多目标产出：记住的产出目标', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+    stubElectron()
+    vi.mocked(resolveProjectPostprocessSlice).mockClear()
+    usePostprocessMediaStore.setState({
+      media: DEFAULT_POSTPROCESS_MEDIA,
+      // 不勾任何渠道 → 零产出、不进渲染链。这几条只关心「目标怎么定、参数按谁解析」
+      selectedMediaIds: [],
+      savedTargetCollectionIds: [],
+    })
+  })
+
+  /** 参数是按哪些方向解析的（`resolveProjectPostprocessSlice` 的第 3 个入参）。 */
+  function resolvedDirectionIds(): Set<string> {
+    return new Set(vi.mocked(resolveProjectPostprocessSlice).mock.calls.map((call) => String(call[2])))
+  }
+
+  function run(options: { source?: 'auto' | 'manual'; params?: ProjectNodeParamsMap } = {}) {
+    return runTaskPostprocess({
+      taskId: 'task-targets',
+      imageIds: ['image-a'],
+      collections: THREE_LEVEL_TREE,
+      projectParams: options.params ?? {},
+      resolveImageCollectionId: () => DIRECTION_A.id,
+      readSource,
+      source: options.source ?? 'manual',
+    })
+  }
+
+  it('记住多个方向 → 每个方向各解析一次参数，不再只解析归属那一个', async () => {
+    usePostprocessMediaStore.setState({
+      selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+    })
+
+    await run()
+
+    expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id, DIRECTION_B.id]))
+  })
+
+  it('没记住（空数组）→ 退回旧口径：只解析归属方向', async () => {
+    usePostprocessMediaStore.setState({
+      selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      savedTargetCollectionIds: [],
+    })
+
+    await run()
+
+    expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id]))
+  })
+
+  it('记住的目标里有一个不在启用范围内 → 只跳过它，并说明是哪个方向', async () => {
+    usePostprocessMediaStore.setState({
+      // 只启用 A：B 是「记住过、后来又被取消勾选」的那种方向
+      selectedCollectionIds: [DIRECTION_A.id],
+      savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+    })
+
+    const result = await run()
+
+    const scopeIssues = result.issues.filter((issue) => issue.code === 'PP-SCOPE-001')
+    expect(scopeIssues).toHaveLength(1)
+    expect(scopeIssues[0]?.detail).toContain('图标')
+  })
+
+  it('目标不是归属方向时，不被归属那个「自动后处理」开关牵连', async () => {
+    usePostprocessMediaStore.setState({
+      selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      // 这一批只产到 B；A 是归属方向但不打算产它
+      savedTargetCollectionIds: [DIRECTION_B.id],
+    })
+
+    const result = await run({
+      source: 'auto',
+      params: { [DIRECTION_A.id]: { postprocess: { enabled: false } } },
+    })
+
+    expect(codesOf(result.issues)).not.toContain('PP-SCOPE-002')
+  })
+
+  it('归属方向自己就是目标时，它的「自动后处理」开关照旧拦自动触发（防回退）', async () => {
+    usePostprocessMediaStore.setState({
+      selectedCollectionIds: [DIRECTION_A.id],
+      savedTargetCollectionIds: [DIRECTION_A.id],
+    })
+
+    const result = await run({
+      source: 'auto',
+      params: { [DIRECTION_A.id]: { postprocess: { enabled: false } } },
+    })
+
+    expect(codesOf(result.issues)).toContain('PP-SCOPE-002')
   })
 })

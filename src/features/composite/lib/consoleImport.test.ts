@@ -326,6 +326,7 @@ describe('往返：导出的工作簿能被导入解析回同样的数据', () =
         media: MEDIA,
         selectedMediaIds: [PURE_MEDIA_ID, 'gdt'],
         selectedCollectionIds: ['direction-a'],
+        savedTargetCollectionIds: [],
         direction: null,
         fitMode: 'crop-fill' as const,
         outputDir: 'D:/默认',

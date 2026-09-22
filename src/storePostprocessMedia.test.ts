@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   buildPostprocessMediaSizeId,
@@ -72,6 +74,45 @@ describe('画面适配模式（fitMode，全局一套）', () => {
   it('运行期传非法值时也落回默认值，不把坏值原样存进去', () => {
     usePostprocessMediaStore.getState().setFitMode('blur' as never)
     expect(usePostprocessMediaStore.getState().fitMode).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
+  })
+})
+
+describe('记住的产出目标（savedTargetCollectionIds）', () => {
+  it('默认与旧数据都是空数组 = 按图片归属方向产出（与改动前的行为一致）', () => {
+    expect(createDefaultPostprocessMediaConfig().savedTargetCollectionIds).toEqual([])
+    expect(normalizePostprocessMediaConfig({}).savedTargetCollectionIds).toEqual([])
+  })
+
+  it('写入 → 快照 → 归一化往返都带得走（等价于「重启之后还在」）', () => {
+    usePostprocessMediaStore.getState().setSavedTargetCollectionIds(['direction-a', 'direction-b'])
+    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
+
+    const snapshot = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
+    expect(snapshot.savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
+    expect(normalizePostprocessMediaConfig(snapshot).savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
+  })
+
+  it('归一化去重、去空、丢非字符串；非数组落回空数组', () => {
+    expect(
+      normalizePostprocessMediaConfig({ savedTargetCollectionIds: ['a', 'a', '', ' b ', 7] }).savedTargetCollectionIds,
+    ).toEqual(['a', 'b'])
+    expect(
+      normalizePostprocessMediaConfig({ savedTargetCollectionIds: 'direction-a' }).savedTargetCollectionIds,
+    ).toEqual([])
+  })
+
+  it('clearSavedTargetCollectionIds 回到「按归属方向产出」', () => {
+    usePostprocessMediaStore.getState().setSavedTargetCollectionIds(['direction-a'])
+    usePostprocessMediaStore.getState().clearSavedTargetCollectionIds()
+    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([])
+  })
+
+  it('⭐ 落盘白名单（partialize）带上了这个字段', () => {
+    // `partialize` 是**显式白名单**，类型系统管不到它：漏字段 = 点完「记住配置」当场生效、
+    // 重启就没了，而界面上不报任何错（`appDataNamespaceContract` 只守 namespace，守不住字段）。
+    // 测试环境没有存储后端（node 既无 localStorage 也无 electronAPI），拿不到运行期的白名单结果，
+    // 所以照那个契约测试的做法读源码（全字段覆盖见文件末尾的守卫）。
+    expect(readPersistedFields()).toContain('savedTargetCollectionIds')
   })
 })
 
@@ -548,3 +589,37 @@ describe('渠道导出位置（双写）', () => {
 function resolveSub(config: Parameters<typeof getPostprocessMediaConfigSnapshot>[0], mediaId = 'baidu') {
   return resolvePostprocessOutputDirs(getPostprocessMediaConfigSnapshot(config), mediaId)
 }
+
+// ---------------------------------------------------------------------------
+// 落盘白名单契约
+//
+// `partialize` 决定哪些字段真能落盘，是**手写的显式白名单**：类型系统不会因为
+// `PostprocessMediaConfig` 多了个字段就报错，漏字段的症状是「界面上改完当场生效、重启就没了」，
+// 而且**一声不响** —— 与 namespace 漏配同一族（见 `appDataNamespaceContract.test.ts`）。
+// node 环境没有存储后端，拿不到运行期的白名单结果，所以照那个契约测试读源码做守卫。
+// ---------------------------------------------------------------------------
+
+const STORE_SOURCE = readFileSync(fileURLToPath(new URL('./storePostprocessMedia.ts', import.meta.url)), 'utf8')
+
+/** `partialize: (state) => ({ … })` 里列出的字段名（形如 `namePattern: state.namePattern`）。 */
+function readPersistedFields(): string[] {
+  const start = STORE_SOURCE.indexOf('partialize:')
+  if (start < 0) throw new Error('未找到 partialize，请同步更新本守卫')
+  const end = STORE_SOURCE.indexOf('}),', start)
+  if (end < 0) throw new Error('partialize 定义不完整，请同步更新本守卫')
+  return [...STORE_SOURCE.slice(start, end).matchAll(/^\s+(\w+): state\./gm)].map((match) => match[1])
+}
+
+describe('落盘白名单契约（partialize）', () => {
+  it('守卫本身有覆盖面，避免解析规则与源码格式脱节后静默失效', () => {
+    // 与 `appDataNamespaceContract` 同一条自检：解析不出东西时下一条断言会恒真
+    expect(readPersistedFields().length).toBeGreaterThan(5)
+  })
+
+  it('配置里的每个字段都在白名单里（谁加了字段却没进白名单，这里立刻红）', () => {
+    const persisted = new Set(readPersistedFields())
+    const missing = Object.keys(createDefaultPostprocessMediaConfig()).filter((key) => !persisted.has(key))
+
+    expect(missing).toEqual([])
+  })
+})

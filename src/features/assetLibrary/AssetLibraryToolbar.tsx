@@ -43,6 +43,8 @@ import {
 } from '../postprocess/postprocessRun'
 import { POSTPROCESS_STAGE_LABELS } from '../postprocess/postprocessIssue'
 import PostprocessRunsDialog from '../postprocess/PostprocessRunsDialog'
+import PostprocessTargetsDialog from '../postprocess/PostprocessTargetsDialog'
+import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 
 export interface AssetLibraryToolbarProps {
   scopeLabel: string
@@ -219,6 +221,8 @@ function AssetLibraryToolbar({
       {isCollectionScope && <IncludeSubcollectionsSwitch />}
 
       <ProjectTreeEntryButton />
+
+      <PostprocessTargetsEntryButton />
 
       <ManualPostprocessButton />
 
@@ -874,6 +878,40 @@ function ProjectTreeEntryButton() {
         项目树
       </Button>
       {open && <ProjectTreeWorkbench onClose={closeProjectTreeWorkbench} />}
+    </>
+  )
+}
+
+/**
+ * 「产出目标」入口：一批素材要产出到哪些方向（可跨产品多选）。
+ *
+ * 与「跑后处理」不同，它**常驻**：改的是长期生效的配置（点「记住配置」后每次跑都按它产出），
+ * 用户会在没选素材的时候来改它，所以不跟选中状态走。
+ *
+ * 按钮上带已记住的数量：「按图片归属产出」和「按记住的 3 个方向产出」在跑之前完全看不出区别，
+ * 结果却差好几倍的文件数 —— 这个数字就是跑之前唯一的可见状态。
+ */
+function PostprocessTargetsEntryButton() {
+  const savedCount = usePostprocessMediaStore((s) => s.savedTargetCollectionIds.length)
+  const selectedAssetCount = useAssetLibraryStore((s) => s.selectedAssetIds.length)
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        data-testid="asset-postprocess-targets"
+        title={
+          savedCount > 0
+            ? `已记住 ${savedCount} 个产出方向：跑后处理按这份清单产出，点这里改`
+            : '选择要产出到哪些方向（可跨产品多选），选完点「记住配置」长期复用'
+        }
+        onClick={() => setOpen(true)}
+      >
+        {savedCount > 0 ? `产出目标 (${savedCount})` : '产出目标'}
+      </Button>
+      {open && <PostprocessTargetsDialog onClose={() => setOpen(false)} assetCount={selectedAssetCount} />}
     </>
   )
 }

@@ -1027,6 +1027,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Dialog', 'Progress', 'StatusIndicator', 'Button', 'IconButton', 'EmptyState'],
   },
   {
+    module: 'src/features/postprocess/PostprocessTargetsDialog.tsx',
+    responsibility:
+      '产出目标弹窗（「记住配置」的落点）：勾选这批素材要产出到哪些方向（可跨产品多选，只列**启用范围内的叶子节点**）+ 逐目标估算产出文件数；确认后写入 `savedTargetCollectionIds`，此后每次跑批复用它，直到再改',
+    decision: 'compose',
+    targets: ['Dialog', 'Checkbox', 'Button', 'EmptyState'],
+  },
+  {
     module: 'src/features/projectTree/ProjectTreeWorkbench.tsx',
     responsibility: '统一项目树工作台（产品线→产品→方向 的增删改查与参数入口）',
     decision: 'compose',

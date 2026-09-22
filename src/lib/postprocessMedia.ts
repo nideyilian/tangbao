@@ -285,6 +285,22 @@ export interface PostprocessMediaConfig {
   selectedMediaIds: string[]
   /** 勾选的项目（`AssetCollection` id）；复用内置三级项目树 */
   selectedCollectionIds: string[]
+  /**
+   * 「记住配置」保存的产出目标（`AssetCollection.id` 列表）；顺序即产出顺序。
+   *
+   * - **空数组 = 没记住** → 每张图按**自己的归属方向**产出（原行为，也是默认值）。
+   * - **非空** → 这一批图**全部**按这份列表产出，各自归属不再参与目标推导。
+   *
+   * 为什么需要它：归属只能表达「这张图属于哪个方向」，而同一批素材经常要同时投到
+   * 多个产品 / 多个方向。靠「把素材挂到多个方向」绕不过去 —— 归属取最深的一条
+   * （`pickDeepestCollectionId`），同级挂两个只有一个生效、另一个**静默忽略**，
+   * 而且挂载会改写素材的真实归属，越挂越乱。
+   *
+   * ⚠️ 它**不是**「启用范围」：`selectedCollectionIds` 回答「哪些方向允许跑」，
+   * 这个字段回答「这次产出到哪些」。两者互相独立，判定也分开做
+   * （目标要逐个过启用范围，见 `taskPostprocess`）。
+   */
+  savedTargetCollectionIds: string[]
   /** 手选方向；null = 按源图尺寸自动判定 */
   direction: OutputDirection | null
   /**
@@ -491,6 +507,10 @@ export function applyPostprocessOverride(
     // 本节点不表态就沿用基线上的列表（全局或更浅一层）——`[]` 是有效值，别用 `length` 判
     selectedMediaIds: override.selectedMediaIds ?? base.selectedMediaIds,
     selectedCollectionIds: base.selectedCollectionIds,
+    // 产出目标是**全局一套**：它是「这次产出到哪些方向」的一次性选择（「记住配置」写入），
+    // 逐方向各存一份会让「为什么这张图进了那个目录」需要递归推理。节点层没有覆盖入口，
+    // 但必须在这里显式透传 —— 本函数返回的是白名单对象，漏了就是 `undefined` 往下游走。
+    savedTargetCollectionIds: base.savedTargetCollectionIds,
     direction: base.direction,
     // 用 `??` 而不是 `||`：空串是「用默认输出位置」、空数组是「这个渠道不加水印」，都是有效值
     outputDir: perMedia?.outputDir ?? override.outputDir ?? base.outputDir,

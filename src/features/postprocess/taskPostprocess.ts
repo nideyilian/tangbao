@@ -19,7 +19,7 @@ import {
   sanitizeFolderName,
   saveCompositeImage,
 } from '../../lib/localSave'
-import { PURE_MEDIA_ID, type PostprocessMediaConfig } from '../../lib/postprocessMedia'
+import { PURE_MEDIA_ID, type PostprocessMediaConfig, type PostprocessProjectTarget } from '../../lib/postprocessMedia'
 import { isCollectionWithinSelection, resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
 import {
   runPostprocessDistribution,
@@ -149,7 +149,10 @@ function toResult(acc: PostprocessAccumulator): TaskPostprocessResult {
 function reportIssue(acc: PostprocessAccumulator, input: PostprocessIssueInput, once = false): void {
   const issue = createPostprocessIssue(input)
   if (once) {
-    const keyOf = (item: PostprocessIssue) => [item.code, item.mediaId, item.presetId, item.dir].join('|')
+    // `detail` 也进键：多目标产出时同一个码会因「哪个方向」而不同（PP-SCOPE-001 就是
+    // 「这个目标方向不在启用范围内」），只按码去重会把后一个方向的问题悄悄吃掉 ——
+    // 症状是「记住 3 个方向只出了 2 个，且看不出为什么」。不带 detail 的码行为不变。
+    const keyOf = (item: PostprocessIssue) => [item.code, item.mediaId, item.presetId, item.dir, item.detail].join('|')
     const key = keyOf(issue)
     if (acc.issues.some((item) => keyOf(item) === key)) return
   }
@@ -241,50 +244,95 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     }
 
     const collectionId = input.resolveImageCollectionId?.(imageId) ?? null
-    // 归属方向不在启用范围内 → 跳过。判定放在解析参数之前：没启用的方向连参数都不必解析。
-    if (
-      collectionId &&
-      !isCollectionWithinSelection(input.collections, collectionId, baseConfig.selectedCollectionIds)
-    ) {
-      reportIssue(result, { code: 'PP-SCOPE-001', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
-      continue
-    }
 
-    const slice = resolveProjectPostprocessSlice(input.collections, params, collectionId, baseConfig)
-    // 方向级「自动后处理」开关只拦自动触发（理由见 `RunTaskPostprocessInput.source`）：
-    // 手动是用户明确要求跑这一次，不能被一个管「自动产出」的开关否决。
-    if (!slice.enabled && input.source !== 'manual') {
-      reportIssue(result, { code: 'PP-SCOPE-002', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
-      continue
-    }
-
-    // 有归属就用归属方向本身做产出目标——这正是「无需手动选择」的含义；
-    // 没有归属（手工拖入、旧数据）才退回全局勾选的项目。
-    const targetIds = collectionId ? [collectionId] : slice.config.selectedCollectionIds
+    /**
+     * 产出目标。两个来源，优先级不同：
+     *
+     * - **记住了**（`savedTargetCollectionIds` 非空）→ 按记住的那批方向产出，跨图统一，
+     *   自动与手动都照它跑。这正是「记住配置」的含义：用户把「这批图要投到哪几个方向」
+     *   显式定下来，之后一直复用，直到他再改。
+     * - **没记住** → 退回旧口径：有归属就用归属方向本身（「执行时无需手动选项目」的含义）；
+     *   无归属（手工拖入、旧数据）才退回全局勾选的项目。
+     */
+    const targetIds =
+      baseConfig.savedTargetCollectionIds.length > 0
+        ? baseConfig.savedTargetCollectionIds
+        : collectionId
+          ? [collectionId]
+          : baseConfig.selectedCollectionIds
     const projects = resolvePostprocessProjectTargets(input.collections, targetIds)
     if (projects.length === 0) {
       reportIssue(result, { code: 'PP-TARGET-001', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
       continue
     }
 
-    // 按渠道拆桶：输出目录与水印预设都能按渠道覆盖（一个方向的厂商/百度/头条可能交付到
-    // 完全不同的目录、叠不同的合规水印），一份配置展开不了全部渠道。
-    // 纯净版没有渠道，用通用配置单独成桶。
-    const channelIds = slice.config.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)
-    const wantClean =
-      slice.config.selectedMediaIds.includes(PURE_MEDIA_ID) ||
-      (slice.config.autoCompanionClean && channelIds.length > 0)
-    const buckets: PostprocessMediaConfig[] = []
-    if (wantClean) {
-      // `autoCompanionClean` 关掉：纯净版只在这一桶里产出，否则每个渠道桶都会顺手多产一份原图
-      buckets.push({ ...slice.config, selectedMediaIds: [PURE_MEDIA_ID], autoCompanionClean: false })
-    }
-    for (const mediaId of channelIds) {
-      const perChannel = resolveProjectPostprocessSlice(input.collections, params, collectionId, baseConfig, mediaId)
-      buckets.push({ ...perChannel.config, selectedMediaIds: [mediaId], autoCompanionClean: false })
+    /**
+     * 逐目标 × 逐渠道展开成一张**扁平**清单，每项自带它所属的目标。
+     *
+     * ⚠️ 参数必须**逐个目标重新解析**，不能拿归属方向那一份复用：每个方向有自己的输出目录、
+     * 水印预设、投放渠道（ADR-0003 实测 25/61 个方向的目录不同、56/61 个方向的水印不同）。
+     * 复用的后果不是报错，而是**后一个方向的文件静默写进前一个方向的目录、叠错水印** ——
+     * 用户拿到的是「看着正常但投错地方」的素材，是最难发现的一类错。
+     *
+     * 展平成一层而不是嵌两个循环：下面的写盘循环体原样不动，少一层缩进就少一处抄错的机会。
+     */
+    const jobBuckets: Array<{ project: PostprocessProjectTarget; config: PostprocessMediaConfig }> = []
+    for (const project of projects) {
+      const targetId = project.collectionId
+      // 启用范围是硬开关，**每个目标都要过**。记住了一个后来又被取消启用的方向时，
+      // 这里跳过并说明是哪个方向，而不是照旧产出（否则「取消勾选」就形同虚设）。
+      if (!isCollectionWithinSelection(input.collections, targetId, baseConfig.selectedCollectionIds)) {
+        reportIssue(
+          result,
+          {
+            code: 'PP-SCOPE-001',
+            stage: 'prepare',
+            sourceImageId: imageId,
+            sourceIndex: index,
+            // 多目标下「是哪个方向没启用」是必要线索（去重键含 detail，若干方向各报一条）
+            detail: `目标方向：${[project.line, project.product, project.direction].filter(Boolean).join(' / ') || targetId}`,
+          },
+          true,
+        )
+        continue
+      }
+
+      const slice = resolveProjectPostprocessSlice(input.collections, params, targetId, baseConfig)
+      // 方向级「自动后处理」开关只拦自动触发（理由见 `RunTaskPostprocessInput.source`），
+      // 且只对**归属方向**判：其余目标是用户明确记住的，不该被「归属方向参不参与自动产出」牵连。
+      if (targetId === collectionId && !slice.enabled && input.source !== 'manual') {
+        reportIssue(
+          result,
+          { code: 'PP-SCOPE-002', stage: 'prepare', sourceImageId: imageId, sourceIndex: index },
+          true,
+        )
+        continue
+      }
+
+      // 按渠道拆桶：输出目录与水印预设都能按渠道覆盖（一个方向的厂商/百度/头条可能交付到
+      // 完全不同的目录、叠不同的合规水印），一份配置展开不了全部渠道。
+      // 纯净版没有渠道，用通用配置单独成桶。
+      const channelIds = slice.config.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)
+      const wantClean =
+        slice.config.selectedMediaIds.includes(PURE_MEDIA_ID) ||
+        (slice.config.autoCompanionClean && channelIds.length > 0)
+      if (wantClean) {
+        // `autoCompanionClean` 关掉：纯净版只在这一桶里产出，否则每个渠道桶都会顺手多产一份原图
+        jobBuckets.push({
+          project,
+          config: { ...slice.config, selectedMediaIds: [PURE_MEDIA_ID], autoCompanionClean: false },
+        })
+      }
+      for (const mediaId of channelIds) {
+        const perChannel = resolveProjectPostprocessSlice(input.collections, params, targetId, baseConfig, mediaId)
+        jobBuckets.push({
+          project,
+          config: { ...perChannel.config, selectedMediaIds: [mediaId], autoCompanionClean: false },
+        })
+      }
     }
 
-    for (const bucketConfig of buckets) {
+    for (const { project, config: bucketConfig } of jobBuckets) {
       const bucketMediaId = bucketConfig.selectedMediaIds[0] ?? PURE_MEDIA_ID
       // 逐个解析本渠道引用的预设（一个渠道可以挂多套水印）。
       // 任何一个不存在就跳过这一桶——刻意**不**静默降级成无水印，那等于给用户交付了错误的投放素材。
@@ -316,10 +364,12 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       const presetNames: Record<string, string> = {}
       for (const [presetId, preset] of bucketPresets) presetNames[presetId] = preset.name
 
+      // 只传**当前这一个**目标：单元上的 `project` 决定命名段（`{line}/{product}/{direction}`）
+      // 与子目录，把整批目标一起传进去会把所有方向的名字混进同一份计划里。
       const selected = selectPostprocessOutputPlan(
         bucketConfig,
         { width: source.width, height: source.height },
-        projects,
+        [project],
         presetNames,
       )
       for (const mediaId of selected.skippedMediaIds) {

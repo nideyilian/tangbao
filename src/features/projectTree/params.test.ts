@@ -44,6 +44,7 @@ function baseConfig(): PostprocessMediaConfig {
     media: [],
     selectedMediaIds: ['clean'],
     selectedCollectionIds: [],
+    savedTargetCollectionIds: [],
     direction: null,
     fitMode: 'crop-fill',
     outputDir: '',

@@ -53,6 +53,15 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   toggleSelectedMedia: (mediaId: string) => void
   setSelectedCollectionIds: (ids: string[]) => void
   toggleSelectedCollection: (collectionId: string) => void
+  /**
+   * 「记住配置」：把这次选定的产出目标固化下来，后续跑批一直复用它，直到再次修改。
+   *
+   * 传空数组 = 恢复「按图片归属方向产出」（与从没点过记住一致）。注意空数组表达的是
+   * 「不指定目标」，**不是**「什么都不产出」—— 产不产由启用范围（`selectedCollectionIds`）决定。
+   */
+  setSavedTargetCollectionIds: (ids: string[]) => void
+  /** 清掉记住的产出目标（等价于 `setSavedTargetCollectionIds([])`，给界面一个语义明确的入口） */
+  clearSavedTargetCollectionIds: () => void
   setDirection: (direction: OutputDirection | null) => void
   /**
    * 设置源图适配目标尺寸的方式（全局一套）。
@@ -91,6 +100,8 @@ export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
     media: createDefaultPostprocessMedia(),
     selectedMediaIds: [PURE_MEDIA_ID],
     selectedCollectionIds: [],
+    // 默认没记住任何产出目标 → 按图片归属方向产出（与历史行为一致）
+    savedTargetCollectionIds: [],
     direction: null,
     // 默认「裁剪填满」：与历史行为一致，升级不改观感
     fitMode: DEFAULT_POSTPROCESS_FIT_MODE,
@@ -236,6 +247,9 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
     media,
     selectedMediaIds: selectedMediaIds.filter((id) => !legacyDisabledMediaIds.has(id)),
     selectedCollectionIds: normalizeStringList(input.selectedCollectionIds) ?? defaults.selectedCollectionIds,
+    // 缺字段（旧数据 / 从没点过「记住配置」）→ 空数组 = 按归属方向走，与旧行为完全一致，
+    // 所以**不需要 bump persist.version**：没有需要折算的旧语义。
+    savedTargetCollectionIds: normalizeStringList(input.savedTargetCollectionIds) ?? defaults.savedTargetCollectionIds,
     direction,
     // 旧数据没有这个字段 → 回落默认值，恰好等于它原来的行为（产出链路里写死的也是 crop-fill）
     fitMode: normalizePostprocessFitMode(input.fitMode),
@@ -403,6 +417,10 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
 
       setSelectedCollectionIds: (ids) => set({ selectedCollectionIds: normalizeStringList(ids) ?? [] }),
 
+      setSavedTargetCollectionIds: (ids) => set({ savedTargetCollectionIds: normalizeStringList(ids) ?? [] }),
+
+      clearSavedTargetCollectionIds: () => set({ savedTargetCollectionIds: [] }),
+
       toggleSelectedCollection: (collectionId) =>
         set((state) => {
           const trimmed = collectionId.trim()
@@ -483,6 +501,9 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         media: state.media,
         selectedMediaIds: state.selectedMediaIds,
         selectedCollectionIds: state.selectedCollectionIds,
+        // ⚠️ 这是**显式白名单**：新字段忘了加进来 = 点完「记住配置」当场生效、重启就没了，
+        // 而界面上不报任何错（`appDataNamespaceContract` 只能守住 namespace，守不住字段）。
+        savedTargetCollectionIds: state.savedTargetCollectionIds,
         direction: state.direction,
         fitMode: state.fitMode,
         outputDir: state.outputDir,
@@ -504,6 +525,7 @@ export function getPostprocessMediaConfigSnapshot(state: PostprocessMediaStore):
     media: state.media.map((media) => ({ ...media, sizes: media.sizes.map((size) => ({ ...size })) })),
     selectedMediaIds: [...state.selectedMediaIds],
     selectedCollectionIds: [...state.selectedCollectionIds],
+    savedTargetCollectionIds: [...state.savedTargetCollectionIds],
     direction: state.direction,
     fitMode: state.fitMode,
     outputDir: state.outputDir,

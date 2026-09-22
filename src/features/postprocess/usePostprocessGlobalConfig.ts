@@ -18,6 +18,7 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
   const media = usePostprocessMediaStore((state) => state.media)
   const selectedMediaIds = usePostprocessMediaStore((state) => state.selectedMediaIds)
   const selectedCollectionIds = usePostprocessMediaStore((state) => state.selectedCollectionIds)
+  const savedTargetCollectionIds = usePostprocessMediaStore((state) => state.savedTargetCollectionIds)
   const direction = usePostprocessMediaStore((state) => state.direction)
   const fitMode = usePostprocessMediaStore((state) => state.fitMode)
   const outputDir = usePostprocessMediaStore((state) => state.outputDir)
@@ -36,6 +37,7 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
           media,
           selectedMediaIds,
           selectedCollectionIds,
+          savedTargetCollectionIds,
           direction,
           fitMode,
           outputDir,
@@ -52,6 +54,7 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
       media,
       selectedMediaIds,
       selectedCollectionIds,
+      savedTargetCollectionIds,
       direction,
       fitMode,
       outputDir,

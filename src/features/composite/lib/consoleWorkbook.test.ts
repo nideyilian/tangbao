@@ -45,6 +45,7 @@ function makeGlobalConfig(overrides: Partial<PostprocessMediaConfig> = {}): Post
     ],
     selectedMediaIds: [PURE_MEDIA_ID, 'gdt'],
     selectedCollectionIds: ['direction-a'],
+    savedTargetCollectionIds: [],
     direction: null,
     fitMode: 'crop-fill',
     outputDir: 'D:/默认位置',

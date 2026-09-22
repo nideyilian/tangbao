@@ -406,6 +406,7 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
       media: DEFAULT_POSTPROCESS_MEDIA,
       selectedMediaIds: ['clean'],
       selectedCollectionIds: [],
+      savedTargetCollectionIds: [],
       direction: null,
       fitMode: 'crop-fill',
       outputDir: '基线目录',
@@ -511,6 +512,25 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
     expect(merged.outputDir).toBe('百度目录')
     expect(merged.fitMode).toBe('stretch')
   })
+
+  it('⭐ 记住的产出目标从基线透传：白名单漏了它，多目标就整体失效', () => {
+    // 与 `fitMode` 走同一条路：只要节点写了**任何**字段，返回值就由白名单重建。
+    // 漏掉本字段的后果不是报错，而是产出目标变 `undefined` → 多目标静默退化成按归属产出，
+    // 用户看到的是「点了记住配置，还是只出了一个方向」。
+    const config: PostprocessMediaConfig = {
+      ...baseConfig(),
+      savedTargetCollectionIds: ['direction-a', 'direction-b'],
+    }
+    const merged = applyPostprocessOverride(config, { outputDir: '节点目录' }, 'baidu')
+    expect(merged.savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
+  })
+
+  it('记住的产出目标是全局一套：节点层与 byMedia 都没有覆盖入口', () => {
+    const config: PostprocessMediaConfig = { ...baseConfig(), savedTargetCollectionIds: ['direction-a'] }
+    // 用 `as` 绕过类型模拟旧数据 / JS 调用方，验证运行期也不会被采纳
+    const legacy = { savedTargetCollectionIds: ['direction-x'] } as unknown as PostprocessNodeOverride
+    expect(applyPostprocessOverride(config, legacy, 'baidu').savedTargetCollectionIds).toEqual(['direction-a'])
+  })
 })
 
 describe('导出位置：全局渠道表 + 双写', () => {
@@ -519,6 +539,7 @@ describe('导出位置：全局渠道表 + 双写', () => {
       media: DEFAULT_POSTPROCESS_MEDIA,
       selectedMediaIds: ['clean'],
       selectedCollectionIds: [],
+      savedTargetCollectionIds: [],
       direction: null,
       fitMode: 'crop-fill',
       outputDir: '全局默认目录',

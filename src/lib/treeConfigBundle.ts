@@ -83,6 +83,16 @@ export interface TreeConfigRoot {
   distribution: PostprocessMediaConfig['distribution']
   /** 启用范围：这份配置勾了哪些节点（空 = 没启用） */
   selectedCollectionIds: string[]
+  /**
+   * 「记住配置」保存的产出目标（空 = 没记住，按图片归属方向产出）。
+   *
+   * 跟着配置包走：「这套配置该产出到哪些方向」是配置本身的一部分。落在包外的话，
+   * 别人导入这份包会**少掉目标**却看不出少在哪 —— 属于 R-63 那一类静默丢配置。
+   *
+   * 纯新增字段，**不 bump `version`**：老包缺它 → 回落空数组 = 按归属产出的旧行为，
+   * 没有需要折算的旧语义；新包给老应用读也是被忽略，不breaking。
+   */
+  savedTargetCollectionIds: string[]
 }
 
 export interface TreeConfigBundle {
@@ -195,6 +205,7 @@ export function buildTreeConfigBundle(input: BuildTreeConfigInput): TreeConfigBu
       autoCompanionClean: config.autoCompanionClean,
       distribution: config.distribution,
       selectedCollectionIds: config.selectedCollectionIds,
+      savedTargetCollectionIds: config.savedTargetCollectionIds,
     },
     // 顶层只放没有父节点的那些（游离节点也要导出去，否则同样算丢配置）
     nodes: sortSiblings(childrenOf.get('') ?? []).map(buildNode),
@@ -301,6 +312,8 @@ export function toPostprocessMediaConfig(bundle: TreeConfigBundle): PostprocessM
     media: root.channels,
     selectedMediaIds: root.selectedMediaIds,
     selectedCollectionIds: root.selectedCollectionIds,
+    // 老包没有这个字段 → `?? []` = 按图片归属方向产出（与旧行为一致），不要写成必填
+    savedTargetCollectionIds: root.savedTargetCollectionIds ?? [],
     direction: root.direction,
     fitMode: root.fitMode,
     outputDir: root.outputDir,
