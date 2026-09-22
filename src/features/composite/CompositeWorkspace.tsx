@@ -8,8 +8,7 @@ import {
   type ConsoleScope,
 } from './lib/controlConsoleSections'
 import { ConsoleAssetTree } from './components/ConsoleAssetTree'
-import { MediaSection } from './components/MediaSection'
-import { OutputSection } from './components/OutputSection'
+import { ChannelSection } from './components/ChannelSection'
 import { PresetManagementTab } from './components/PresetManagementTab'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
@@ -354,12 +353,11 @@ export default function CompositeWorkspace() {
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
             {/*
-             * 两个分区都消费作用域（各自内部有混合层，由小节标题说清）。
-             * 原先这里按 `active.globalOnly` 挂过一句「全局设置，所有方向共用」——
+             * 只剩一个非水印分区（2026-09-22 起）：它消费作用域（内部有混合层，由列说明
+             * 与作用域条说清）。原先这里按 `active.globalOnly` 挂过一句「全局设置，所有方向共用」——
              * 2026-09-21 连同那个字段一起删了，理由见文件头注。
              */}
-            {activeSection === 'media' && <MediaSection scope={scope} />}
-            {activeSection === 'output' && <OutputSection scope={scope} />}
+            <ChannelSection scope={scope} />
           </div>
         )}
       </div>

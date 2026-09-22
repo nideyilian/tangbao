@@ -17,11 +17,8 @@ import { useStore } from '../../store'
  * 分区内容各自 mock 成占位文本：这里锁的是**分区注册表 → tab → 渲染分支**的对应关系，
  * 以及「树 → 作用域 → 右区标题」这条链 —— 不是各分区内部的业务逻辑。
  */
-vi.mock('./components/MediaSection', () => ({
-  MediaSection: () => <div>media-screen</div>,
-}))
-vi.mock('./components/OutputSection', () => ({
-  OutputSection: () => <div>output-screen</div>,
+vi.mock('./components/ChannelSection', () => ({
+  ChannelSection: () => <div>channel-screen</div>,
 }))
 vi.mock('./components/PresetManagementTab', () => ({
   PresetManagementTab: () => <div>editor-screen</div>,
@@ -99,7 +96,7 @@ describe('CompositeWorkspace', () => {
     })
 
     expect(renderer.root.findByProps({ children: 'editor-screen' })).toBeTruthy()
-    expect(renderer.root.findAllByProps({ children: 'media-screen' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ children: 'channel-screen' })).toHaveLength(0)
   })
 
   it('labels the console as 中控台 and exposes the scope tree', () => {
@@ -119,11 +116,11 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    // 「分发」2026-09-21 起不是分区了：它作为小节并进「输出位置」，所以这里没有它的占位
+    // 2026-09-22 起右区只剩两个分区：「输出位置」并入「渠道与尺寸」（合称「渠道与输出」），
+    // 所以别指望还有它们的占位 —— 合并前那两个 id 现在都由别名收敛到 `channel`。
     const expectations: Record<string, string> = {
       watermark: 'editor-screen',
-      media: 'media-screen',
-      output: 'output-screen',
+      channel: 'channel-screen',
     }
     // 注册表里的每个分区都要真的能切过去 —— 加了分区却忘了接线是这类注册表最常见的失效
     for (const section of CONTROL_CONSOLE_SECTIONS) {
@@ -144,24 +141,24 @@ describe('CompositeWorkspace', () => {
   it('⭐ 外部带目标分区跳进来时直接落在那一个分区（不能只切工作区）', () => {
     // 场景：别处（如「后处理」弹窗）点了「去中控台改全局规格」。
     // 分区是应用 store 里的唯一真相源，所以跳转方直接写它即可，不需要额外握手协议。
-    useStore.setState({ controlConsoleSection: 'output' })
+    useStore.setState({ controlConsoleSection: 'channel' })
 
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    expect(renderer.root.findByProps({ children: 'output-screen' })).toBeTruthy()
+    expect(renderer.root.findByProps({ children: 'channel-screen' })).toBeTruthy()
   })
 
   it('⭐ 离开中控台后分区归位默认，所以「从顶栏进来」仍是水印（既有行为不变）', () => {
-    useStore.setState({ controlConsoleSection: 'media' })
+    useStore.setState({ controlConsoleSection: 'channel' })
 
     let renderer!: ReturnType<typeof create>
     act(() => {
       renderer = create(<CompositeWorkspace />)
     })
-    expect(renderer.root.findByProps({ children: 'media-screen' })).toBeTruthy()
+    expect(renderer.root.findByProps({ children: 'channel-screen' })).toBeTruthy()
 
     act(() => renderer.unmount())
     expect(useStore.getState().controlConsoleSection).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
@@ -174,7 +171,7 @@ describe('CompositeWorkspace', () => {
     })
 
     expect(renderer.root.findByProps({ children: 'editor-screen' })).toBeTruthy()
-    expect(renderer.root.findAllByProps({ children: 'output-screen' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ children: 'channel-screen' })).toHaveLength(0)
   })
 
   it('右区标题跟着左树走：树选到哪一层，标题就是哪一层', () => {
@@ -200,7 +197,7 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    for (const section of ['media', 'output', 'watermark'] as const) {
+    for (const section of ['channel', 'watermark'] as const) {
       switchSection(renderer, section)
       expect(
         renderer.root.findAllByProps({ children: '全局设置，所有方向共用 —— 这一块不按方向分。' }),
@@ -237,7 +234,7 @@ describe('CompositeWorkspace', () => {
     expect(editorSlot[0]!.props.className).not.toContain('overflow-y-auto')
 
     // 对照：表格型分区那一格仍要能滚（水印是特例，不能把别的分区也带成不可滚）
-    switchSection(renderer, 'media')
+    switchSection(renderer, 'channel')
     const scrollSlot = renderer.root.findAll((node) => isSectionSlot(node.props.className))
     expect(scrollSlot).toHaveLength(1)
     expect(scrollSlot[0]!.props.className).toContain('overflow-y-auto')

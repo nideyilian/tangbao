@@ -1,17 +1,20 @@
 /* @vitest-environment jsdom */
 
 /**
- * 中控台的后处理分区：**全局参数的编辑入口**。
+ * 中控台「渠道与输出」分区：**全局参数的编辑入口**。
  *
  * 2026-09-20「后处理」弹窗收窄为「只显示当前方向的参数」之后，原先挂在弹窗全局作用域里的
- * 四个参数搬到了中控台，本文件就是它们的**入口守卫**：
+ * 四个参数搬到了中控台；2026-09-22（TB-093）「输出位置」又并入「渠道与尺寸」——
+ * 于是这些参数现在都在**同一个分区**里。本文件是它们的**入口守卫**：
  *
- * | 参数                     | 新家                              |
- * | ------------------------ | --------------------------------- |
- * | 命名模板 / 创作者 / 产出预览 | 「输出位置」分区                   |
- * | 画面方向                 | 「渠道与尺寸」分区                 |
- * | 画面适配                 | 「渠道与尺寸」分区（与画面方向并排） |
- * | 分发 / 纯净版自动伴随     | 「分发」分区（本来就在这里）        |
+ * | 参数                         | 落在哪                                          |
+ * | ---------------------------- | ----------------------------------------------- |
+ * | 命名模板 / 创作者 / 产出预览 | 「渠道与输出」分区（文件命名 / 产出预览小节）    |
+ * | 画面方向                     | 「渠道与输出」分区（表上方，整批三选一）         |
+ * | 画面适配                     | 「渠道与输出」分区（与画面方向并排）             |
+ * | 分发 / 纯净版自动伴随        | 「渠道与输出」分区（分发小节）                   |
+ * | 渠道名 / 尺寸规格 / 参与产出 | 「渠道与输出」分区的**表本体**                   |
+ * | 按渠道的导出位置             | 同上 —— 就在那张表的「导出位置」列（TB-093 并入） |
  *
  * 断言口径不是「组件渲染出来了」，而是**改得动、写得进 store**：参数换了家但入口断了，
  * 是这轮改造最容易出的回归，光看渲染通过是测不出来的。
@@ -27,9 +30,8 @@ import { PURE_MEDIA_ID } from '../../../lib/postprocessMedia'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import type { AssetCollection } from '../../../types'
+import { ChannelSection } from './ChannelSection'
 import { DistributionSection } from './DistributionSection'
-import { MediaSection } from './MediaSection'
-import { OutputSection } from './OutputSection'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -124,12 +126,33 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () => {
+describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名 / 分发 / 产出预览）', () => {
+  // 下面两例从 `OutputSection.test.tsx` 搬来（2026-09-22 两个分区合并，那个文件随之删掉）。
+  // 锁的是**合并之后内容真的还在这**：原先的独立 tab 已经删掉，漏在这里等于功能直接消失，
+  // 而不是「换个地方」。
+  it('⭐ 分发并进来了：纯净版伴随与分发字段都渲染得出来', () => {
+    const body = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+
+    // 这两串分别来自「分发」小节的两张卡片 —— 它们原先只出现在独立的分发分区里
+    expect(body).toContain('纯净版自动伴随')
+    expect(body).toContain('启用分发')
+  })
+
+  it('⭐ 三个全局小节各有自己的标题，说清「不随作用域变」', () => {
+    const body = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+
+    // 这一区是混合的：渠道导出目录按作用域走，后三节是全局一套 ——
+    // 标题里不写清，用户切了节点会以为连命名 / 分发也一起变了
+    expect(body).toContain('文件命名')
+    expect(body).toContain('分发')
+    expect(body).toContain('全局一套')
+  })
+
   it('命名模板的未知 / 缺失占位符会给出提示', () => {
     act(() => {
       usePostprocessMediaStore.getState().setNamePattern('{date}-{oops}')
     })
-    const body = render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    const body = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(body).toContain('不认识的占位符：{oops}')
     expect(body).toContain('缺少占位符：{seq}')
   })
@@ -138,7 +161,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
     act(() => {
       usePostprocessMediaStore.getState().setNamePattern('{seq}')
     })
-    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     // 输入框里显示的是**中文占位符**，存进 store 的仍是 `{seq}`（显示层与存储层分家）
     expect(container.querySelector<HTMLInputElement>('[data-testid="name-pattern-input"]')!.value).toBe('{序号}')
 
@@ -151,7 +174,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
     act(() => {
       usePostprocessMediaStore.getState().setNamePattern('{seq}')
     })
-    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     const input = container.querySelector<HTMLInputElement>('[data-testid="name-pattern-input"]')!
     input.setSelectionRange(0, 0)
     act(() => {
@@ -164,7 +187,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
   })
 
   it('创作者写进 store（供 {creator} 占位符取值）', () => {
-    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     const creatorInput = Array.from(container.querySelectorAll<HTMLInputElement>('input')).find(
       (node) => node.placeholder === '如：糖包',
     )
@@ -182,7 +205,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
       usePostprocessMediaStore.getState().toggleSelectedCollection('product-a')
       usePostprocessMediaStore.getState().toggleSelectedMedia('gdt')
     })
-    const body = render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    const body = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(body).toContain('产出预览')
     expect(body).toContain('广点通')
     expect(body).toContain('1280×720')
@@ -191,15 +214,15 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
 
   it('产出预览跟随作用域：全局层没启用方向时给提示，节点层按该节点照常展开', () => {
     // 全局层：产出目标来自「已启用的范围」，一条都没启用时就没有可展开的目标
-    expect(render(<OutputSection scope={GLOBAL_NODE_ID} />)).toContain('还没有启用任何方向')
+    expect(render(<ChannelSection scope={GLOBAL_NODE_ID} />)).toContain('还没有启用任何方向')
     // 节点层：作用域本身就是产出目标，不需要「启用范围」也能展开出归属路径
-    const nodeBody = render(<OutputSection scope="direction-a" />)
+    const nodeBody = render(<ChannelSection scope="direction-a" />)
     expect(nodeBody).not.toContain('还没有启用任何方向')
     expect(nodeBody).toContain('智能客服 / 机器人 / 竖版展示')
   })
 
   it('全局渠道目录在全局作用域写全局渠道表，并支持双写', () => {
-    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     commitGridCell('导出位置：百度', 'D:/百度一')
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一'])
 
@@ -215,7 +238,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
       usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度一')
       usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 1, 'D:/百度二')
     })
-    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
 
     clickByAriaLabel('百度（位置2）：删除这个位置')
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度一'])
@@ -233,7 +256,7 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
         byMedia: { baidu: { outputDirs: ['D:/节点一', 'D:/节点二'] } },
       })
     })
-    render(<OutputSection scope="direction-a" />)
+    render(<ChannelSection scope="direction-a" />)
 
     clickByAriaLabel('百度（位置2）：删除这个位置')
     expect(useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.byMedia?.baidu?.outputDirs).toEqual(
@@ -250,13 +273,13 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
     act(() => {
       usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度一')
     })
-    render(<OutputSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(container.querySelector('[aria-label="百度：用默认"]')).toBeNull()
     expect(container.querySelector('[aria-label="百度：恢复继承"]')).toBeNull()
   })
 
   it('节点作用域下同一条目录写进该节点的 byMedia，而不是全局渠道表', () => {
-    render(<OutputSection scope="direction-a" />)
+    render(<ChannelSection scope="direction-a" />)
     commitGridCell('导出位置：百度', 'D:/节点百度')
     const override = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess
     expect(override?.byMedia?.baidu?.outputDirs).toEqual(['D:/节点百度'])
@@ -264,9 +287,9 @@ describe('中控台 · 输出位置分区（文件命名 + 产出预览）', () 
   })
 })
 
-describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
+describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出 / 导出位置合成一张表）', () => {
   it('画面方向默认「跟随尺寸」，在这里可以整批强制竖版', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(text()).toContain('画面方向')
     expect(usePostprocessMediaStore.getState().direction).toBeNull()
 
@@ -278,7 +301,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('⭐ 画面适配默认「裁剪填满」，可整批切成模糊填充 / 拉伸铺满，并写进产出链读的那份配置', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(text()).toContain('画面适配')
     // 默认值必须与这次改动之前的行为一致（当时写死在产出链路里）——改了默认就是改了所有人的产出
     expect(usePostprocessMediaStore.getState().fitMode).toBe('crop-fill')
@@ -294,7 +317,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('画面适配只显示**当前选中**那条的代价：三个模式都能填满画布，差别全在代价上', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(text()).toContain('代价是丢边缘内容')
     // 没选的那两条不铺开，否则这一区会被撑成一段说明文字
     expect(text()).not.toContain('对留白敏感的渠道可能不收')
@@ -305,31 +328,77 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('渠道表的「参与产出」开关写进 selectedMediaIds（决定这个渠道参不参与产出）', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     clickByAriaLabel('参与产出：广点通')
     expect(usePostprocessMediaStore.getState().selectedMediaIds).toContain('gdt')
   })
 
-  it('渠道表与尺寸表直接可见、就地可编辑：不再需要先展开折叠的规格编辑器', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
-    expect(container.querySelector('table[aria-label="渠道表"]')).toBeTruthy()
-    expect(container.querySelector('table[aria-label="尺寸表"]')).toBeTruthy()
+  it('渠道表直接可见、就地可编辑：不再需要先展开折叠的规格编辑器', () => {
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+    // 2026-09-22 起只有**一张**表（渠道 + 尺寸 + 参与产出 + 导出位置），独立的「尺寸表」没有了
+    expect(container.querySelector('table[aria-label="渠道与输出"]')).toBeTruthy()
+    expect(container.querySelector('table[aria-label="尺寸表"]')).toBeNull()
     expect(container.querySelector<HTMLInputElement>('input[placeholder="新渠道名称，如「抖音」"]')).toBeTruthy()
   })
 
-  it('渠道名、尺寸数都落在列上（原卡片看板的信息一个没丢）', () => {
-    const body = render(<MediaSection scope={GLOBAL_NODE_ID} />)
+  it('渠道名、详细尺寸、导出位置都落在列上（原两张表的列合成一张）', () => {
+    const body = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(body).toContain('广点通')
-    expect(body).toContain('尺寸数')
+    expect(body).toContain('详细尺寸')
+    expect(body).toContain('导出位置')
     expect(body).toContain('横版')
+    // 「尺寸数 / 可用尺寸」两个派生列已删：尺寸那格本来就是「一眼数出配了几套」的复选框组
+    expect(body).not.toContain('尺寸数')
+  })
+
+  it('⭐ 双写占两行：渠道名 / 详细尺寸 / 参与产出 三格跨两行合并，只有导出位置逐行', () => {
+    // 一个渠道最多两个位置（双写），所以表的行粒度是**位置槽** —— 第二行读作「它的第二个位置」，
+    // 而不是「另一个渠道」。合并靠 `DataGridColumn.spanRows`：三个列返回同一个跨行数，
+    // 切换渠道时不会一列合、一列不合。
+    act(() => usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度'))
+    act(() => usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 1, 'E:/留档百度'))
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+
+    const table = container.querySelector<HTMLTableElement>('table[aria-label="渠道与输出"]')!
+    const channelCount = usePostprocessMediaStore.getState().media.filter((item) => item.id !== PURE_MEDIA_ID).length
+    // 百度配了两个位置 → 它占两行，所以总行数比渠道数多 1
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(channelCount + 1)
+
+    // 行序跟渠道表一致：广点通 / 百度#0 / 百度#1 / 厂商 / 头条
+    const rows = table.querySelectorAll('tbody tr')
+    const baiduFirst = rows[1]!
+    const cells = baiduFirst.querySelectorAll('td')
+    expect(cells).toHaveLength(5)
+    expect(cells[0]!.getAttribute('rowspan')).toBe('2')
+    expect(cells[1]!.getAttribute('rowspan')).toBe('2')
+    expect(cells[2]!.getAttribute('rowspan')).toBe('2')
+    // 导出位置与操作逐行（跨行的那三格以外，这两列每行各自一格）
+    expect(cells[3]!.getAttribute('rowspan')).toBeNull()
+    expect(cells[4]!.getAttribute('rowspan')).toBeNull()
+
+    // 第二行只剩「导出位置 + 操作」：被跨行格盖住的那三格**不能出空格子**，否则后面整体右移
+    const baiduSecond = rows[2]!
+    expect(baiduSecond.querySelectorAll('td')).toHaveLength(2)
+  })
+
+  it('⭐ 双写的第 2 个位置写进第 2 槽，第 1 个位置一个字节不动', () => {
+    act(() => usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度'))
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+
+    // 第 2 行要配过第 1 个位置、再点「+」才会出现（「+」只在组内最后一行）
+    clickByAriaLabel('百度：在下面再加一个位置')
+    commitGridCell('导出位置：百度（位置2）', 'E:/留档百度')
+
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度', 'E:/留档百度'])
   })
 
   it('⭐ 尺寸表一行一个渠道，详细尺寸是一组复选框（勾选 = 参与产出）', () => {
     // 2026-09-21 反馈：「详细尺寸使用复选框，尽可能排一行，放不下的排两行」。
     // 行 = 渠道，格子里横排复选框 —— 扫一眼就知道每个渠道配了哪几套、哪几套是开的。
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
-    const table = container.querySelector<HTMLTableElement>('table[aria-label="尺寸表"]')!
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+    const table = container.querySelector<HTMLTableElement>('table[aria-label="渠道与输出"]')!
     const channelCount = usePostprocessMediaStore.getState().media.filter((item) => item.id !== PURE_MEDIA_ID).length
+    // 行粒度是**位置槽**：默认没配导出位置，所以每个渠道正好占一行（配了双写才占两行）
     expect(table.querySelectorAll('tbody tr')).toHaveLength(channelCount)
 
     // 勾选按**可访问名称**定位（「渠道 宽×高 参与产出」），不受渲染顺序影响
@@ -341,7 +410,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('⭐ 详细尺寸排不下就折行：格子是 flex-wrap 容器，尺寸多的渠道自己折到第二行', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     const vendorCell = container.querySelector<HTMLElement>('[data-testid="size-checks-vendor"]')!
     expect(vendorCell.className).toContain('flex-wrap')
     const vendor = usePostprocessMediaStore.getState().media.find((item) => item.id === 'vendor')!
@@ -349,7 +418,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('⭐ 点尺寸名展开详细编辑：改宽高 = 换一套尺寸，主键跟着换', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     act(() => container.querySelector<HTMLElement>('[data-testid="edit-size-gdt-1280x720"]')!.click())
     expect(text()).toContain('编辑尺寸：广点通 1280×720')
 
@@ -370,7 +439,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
     // 且「删除尺寸」的图标被 preflight 的 `svg{display:block}` 顶到文字上方单独成行。
     // 这里钉住三件事：① 字段行是顶对齐；② 操作区用 `.ds-field` 的标签槽对齐到控件那条线；
     // ③ 图标走 `leadingIcon`（直接挂在 button 下，而不是塞进文字 span 里）。
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     act(() => container.querySelector<HTMLElement>('[data-testid="edit-size-gdt-1280x720"]')!.click())
 
     const row = container.querySelector<HTMLElement>('[data-testid="size-editor-fields"]')!
@@ -403,7 +472,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   })
 
   it('尺寸行的「+」是图标按钮：加尺寸就近加在这个渠道上', () => {
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     clickByAriaLabel('给「头条」加一个尺寸')
     const toutiao = usePostprocessMediaStore.getState().media.find((item) => item.id === 'toutiao')!
     expect(toutiao.sizes.some((size) => size.width === 1024 && size.height === 1024)).toBe(true)
@@ -411,8 +480,8 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
 
   it('⭐ 渠道表只剩一个开关：没有「启用」列（ADR-0013 把它并进了「参与产出」）', () => {
     // 两个开关对产出完全等价，留着只会让人怀疑它们有什么区别 —— 这条是「别再合出来一个」的守卫
-    render(<MediaSection scope={GLOBAL_NODE_ID} />)
-    const header = container.querySelector('table[aria-label="渠道表"] thead')!
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+    const header = container.querySelector('table[aria-label="渠道与输出"] thead')!
     expect(header.textContent).toContain('参与产出')
     expect(header.textContent).not.toContain('启用')
     expect(container.querySelector('[aria-label="启用：广点通"]')).toBeNull()
@@ -421,7 +490,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
   it('⭐ 节点作用域：「参与产出」写进该方向的 selectedMediaIds，全局基线一个字节不动', () => {
     // ADR-0013 的核心：渠道**规格**全局一套，但「这个方向投哪几个渠道」是方向级的。
     // 原先选着某个方向改的却是所有方向共用的那份勾选 —— 这条钉住新行为。
-    render(<MediaSection scope="direction-a" />)
+    render(<ChannelSection scope="direction-a" />)
     clickByAriaLabel('参与产出：广点通')
 
     const override = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess
@@ -431,7 +500,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
 
   it('⭐ 开关显示的是**生效值**：全局勾了、方向没表态时，方向下看到的也是勾上的', () => {
     act(() => usePostprocessMediaStore.getState().setSelectedMediaIds([PURE_MEDIA_ID, 'gdt']))
-    render(<MediaSection scope="direction-a" />)
+    render(<ChannelSection scope="direction-a" />)
 
     const sw = container.querySelector<HTMLInputElement>('[aria-label="参与产出：广点通"]')
     expect(sw?.checked).toBe(true)
@@ -444,7 +513,7 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
       usePostprocessMediaStore.getState().setSelectedMediaIds([PURE_MEDIA_ID, 'gdt'])
       useProjectTreeParamsStore.getState().setPostprocessOverride('direction-a', { selectedMediaIds: ['baidu'] })
     })
-    render(<MediaSection scope="direction-a" />)
+    render(<ChannelSection scope="direction-a" />)
     expect(text()).toContain('本级自定义')
 
     clickByText('改为跟随上级')

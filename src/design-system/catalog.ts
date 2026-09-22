@@ -961,23 +961,16 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/ConsoleMediaTables.tsx',
     responsibility:
-      '中控台「渠道与尺寸」分区的表格本体：渠道表（参与产出勾选与尺寸计数）+ 尺寸表（一行一个渠道、详细尺寸是复选框组，折行自适应；点尺寸名展开 SizeEditor 改宽高/体积上限/跨渠道移动）',
+      '中控台「渠道与输出」分区的表格本体（TB-093 把渠道表与输出位置表合成一张）：一行一个渠道、双写占两行；渠道名/详细尺寸/参与产出三列跨行合并，导出位置逐行（位置1 在上、位置2 在下）；点尺寸名展开 SizeEditor 改宽高/体积上限/跨渠道移动',
     decision: 'compose',
-    targets: ['DataGrid', 'SectionHeader', 'Checkbox', 'Button', 'IconButton', 'SelectField', 'TextField'],
+    targets: ['DataGrid', 'Checkbox', 'Button', 'IconButton', 'SelectField', 'TextField'],
   },
   {
-    module: 'src/features/composite/components/MediaSection.tsx',
+    module: 'src/features/composite/components/ChannelSection.tsx',
     responsibility:
-      '中控台「渠道与尺寸」分区：画面方向（整批三选一）+ 渠道与尺寸两张可编辑表 + 纯净版产出项；卡片看板的信息已全部并入渠道表的列',
+      '中控台「渠道与输出」分区（TB-093 由「渠道与尺寸」+「输出位置」合并成一个 tab）：画面方向 / 画面适配（整批三选一，表上方）+ 渠道主表（含各渠道导出位置）+ 纯净版；作用域由左树驱动（全局写 mediaOutputDirs、节点写 byMedia，并兼容旧单值 outputDir）；文件命名、分发与产出预览三节是全局一套，各自在小节标题里说明',
     decision: 'compose',
-    targets: ['SectionHeader', 'SegmentedControl', 'Checkbox', 'DataGrid'],
-  },
-  {
-    module: 'src/features/composite/components/OutputSection.tsx',
-    responsibility:
-      '中控台「输出位置」分区：作用域由左树驱动（全局层写 mediaOutputDirs、节点层写 byMedia，并兼容旧单值 outputDir）；文件命名、分发与产出预览三节也挂在这一区（后三节是全局一套，各自在小节标题里说明）',
-    decision: 'compose',
-    targets: ['SectionHeader', 'Alert', 'Badge'],
+    targets: ['SectionHeader', 'SegmentedControl', 'Checkbox', 'DataGrid', 'Alert', 'Badge'],
   },
   {
     module: 'src/features/composite/components/PostprocessOutputPreview.tsx',
@@ -988,7 +981,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/DistributionSection.tsx',
     responsibility:
-      '中控台「输出位置」分区里的**分发小节**：纯净版自动伴随开关 + 分发配置（复用 PostprocessDistributionFields）。2026-09-21 从独立分区并入，只留内容 —— 标题与小节壳由 OutputSection 给',
+      '中控台「渠道与输出」分区里的**分发小节**：纯净版自动伴随开关 + 分发配置（复用 PostprocessDistributionFields）。2026-09-21 从独立分区并入，只留内容 —— 标题与小节壳由 ChannelSection 给',
     decision: 'compose',
     targets: ['Switch'],
   },

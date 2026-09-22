@@ -25,21 +25,25 @@ describe('controlConsoleSections', () => {
 
   it('认不出分区时退回默认分区，而不是抛错或返回 undefined', () => {
     // 界面传进来的可能是任意字符串（旧值 / 拼错的 id），必须能收敛
-    expect(normalizeControlConsoleSection('media')).toBe('media')
+    expect(normalizeControlConsoleSection('channel')).toBe('channel')
     expect(normalizeControlConsoleSection('不存在的分区')).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
     expect(normalizeControlConsoleSection(undefined)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
     expect(normalizeControlConsoleSection(null)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
     expect(normalizeControlConsoleSection(42)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
   })
 
-  it('⭐「分发」不再是分区：它作为小节并进了「输出位置」', () => {
-    expect(CONTROL_CONSOLE_SECTIONS.map((section) => section.id)).toEqual(['watermark', 'output', 'media'])
+  it('⭐ 右区只剩两个分区：「输出位置」并入「渠道与尺寸」（合称「渠道与输出」）', () => {
+    // 2026-09-21「分发」并入「输出位置」，2026-09-22「输出位置」再并入「渠道与尺寸」——
+    // 两步是同一个道理（同一份数据的半张表不该各占一个 tab），**别再拆回去**。
+    expect(CONTROL_CONSOLE_SECTIONS.map((section) => section.id)).toEqual(['watermark', 'channel'])
   })
 
   it('⭐ 退役的分区值收敛到它搬去的地方，而不是弹回默认分区', () => {
-    // 分区是**持久化**的：老用户机器上存着 'distribution'。让它掉进「认不出」分支会把人弹回水印，
-    // 等于把「我上次停在哪」这件事默默抹掉 —— 而它其实有明确的新家（输出位置）。
-    expect(normalizeControlConsoleSection('distribution')).toBe('output')
+    // 分区是**持久化**的：老用户机器上可能存着这三个历史值。让它们掉进「认不出」分支会把人
+    // 弹回水印，等于把「我上次停在哪」这件事默默抹掉 —— 而它们都有明确的新家。
+    expect(normalizeControlConsoleSection('media')).toBe('channel')
+    expect(normalizeControlConsoleSection('output')).toBe('channel')
+    expect(normalizeControlConsoleSection('distribution')).toBe('channel')
     // 更早的退役值（'directions'）没有对应新家，照旧退回默认分区
     expect(normalizeControlConsoleSection('directions')).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
   })

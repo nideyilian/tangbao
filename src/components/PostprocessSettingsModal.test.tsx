@@ -525,13 +525,13 @@ describe('PostprocessSettingsModal — 跳转到中控台（不能在这里改�
     render()
     act(() => findButton('去中控台改全局规格').click())
     // 只切工作区不写意图 = 跳过去落在默认分区（水印），等于没跳
-    expect(useStore.getState().controlConsoleSection).toBe('media')
+    expect(useStore.getState().controlConsoleSection).toBe('channel')
     expect(useStore.getState().appMode).toBe('postprocess')
   })
 
   it('水印分组头给「去中控台配水印」（只读项必须指出下一步，且真的能到）', () => {
     // 先把分区放在别处：否则「写没写 watermark」和「什么都没写」都是 watermark，测不出区别
-    useStore.setState({ controlConsoleSection: 'media' })
+    useStore.setState({ controlConsoleSection: 'channel' })
     render()
     act(() => findButton('去中控台配水印').click())
     expect(useStore.getState().controlConsoleSection).toBe('watermark')

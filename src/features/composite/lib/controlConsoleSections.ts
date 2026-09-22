@@ -5,7 +5,7 @@
  *
  * ```
  * 左：项目树                        右：一排 tab
- * 业务线 → 产品 → 方向              水印 / 输出位置 / 渠道与尺寸 / 分发
+ * 业务线 → 产品 → 方向              水印 / 渠道与输出
  * 管「改谁」，可增删改查             管「改什么」，跟着树选中哪一层走
  * ```
  *
@@ -29,8 +29,9 @@
  * 可覆盖字段时才消费作用域** —— 给了作用域却什么都不变，比不给更糟。
  * `PostprocessNodeOverride` 现有 `outputDir` / `byMedia` / `watermarkPresetIds` /
  * `selectedMediaIds`（ADR-0013 加回）/ `enabled`，所以：
- * - 「渠道与尺寸」消费作用域（**2026-09-21 起**：它的「参与产出」是方向级）；
- * - 「分发」不消费 —— 它不是分区了，作为小节并进「输出位置」，且那两项已上收全局。
+ * - 「渠道与输出」消费作用域（**2026-09-22 起**：「渠道与尺寸」并入「输出位置」后的分区 ——
+ *   「参与产出」是方向级、导出位置跟着作用域走且留空可继承）；
+ * - 「分发」不消费 —— 它不是分区了，作为小节并进「渠道与输出」，且那两项已上收全局。
  * 详见 `design-system/tangbao/pages/postprocess.md`。
  */
 
@@ -47,7 +48,7 @@ export function isGlobalScope(scope: ConsoleScope): boolean {
   return scope === GLOBAL_NODE_ID
 }
 
-export type ControlConsoleSectionId = 'watermark' | 'output' | 'media'
+export type ControlConsoleSectionId = 'watermark' | 'channel'
 
 export interface ControlConsoleSection {
   id: ControlConsoleSectionId
@@ -58,20 +59,24 @@ export interface ControlConsoleSection {
 
 /**
  * ⚠️ 曾经有一个 `globalOnly` 字段，用来在分区顶上挂一句「全局设置，所有方向共用」。
- * **2026-09-21 删除**：两个分区现在都是**混合**的 ——
- * 「渠道与尺寸」是「规格全局 + 参与产出方向级」，「输出位置」是「渠道目录跟作用域 +
- * 命名 / 分发 / 产出预览全局」。一条**分区级**提示已经说不清，挂着只会连不该覆盖的那一半
- * 一起误导。改成每个小节在自己的标题里说清属于哪一层。**别再按分区级提示加回来。**
+ * **2026-09-21 删除**：分区都是**混合**的 —— 「渠道与输出」（合并前那两个分区也一样）是
+ * 「渠道名与尺寸规格全局 + 参与产出与导出位置跟作用域 + 命名 / 分发 / 产出预览全局」。
+ * 一条**分区级**提示已经说不清，挂着只会连不该覆盖的那一半一起误导。
+ * 改成每个小节在自己的标题里说清属于哪一层。**别再按分区级提示加回来。**
  */
 
 /**
  * tab 顺序即右区显示顺序。**第一个是默认 tab**，也是历史行为唯一的入口，
  * 所以它必须是 `watermark` —— 否则老用户点进来会先看到一块空的地方。
  *
- * ⚠️ 「分发」曾是与「输出位置」并列的第 4 个分区，2026-09-21 并入后者：
- * 两者本来就是同一件事的两半（一个管「目录 + 文件名」，一个管「按天怎么分」），
- * 各占一个 tab 只会让「产出放哪」这件事要看两个地方。内容搬进
- * `OutputSection` 的滚动区，形态与它隔壁的「文件命名」小节一致。
+ * ⚠️ 分区合并账（每一步都有人踩过，别再往回拆）：
+ * - 「分发」曾是与「输出位置」并列的第 4 个分区，2026-09-21 并入后者：两者本来就是同一件事的
+ *   两半（一个管「目录 + 文件名」，一个管「按天怎么分」），各占一个 tab 只会让「产出放哪」
+ *   要看两个地方。
+ * - 「输出位置」2026-09-22 再并入「渠道与尺寸」（合起来叫**渠道与输出**）：两张表**大部分是
+ *   同一份数据** —— 都是「一行一个渠道」（尺寸表 2026-09-21 起已是一行一个渠道，见
+ *   `ConsoleMediaTables`）—— 所以合成一张表：渠道名 / 详细尺寸 / 参与产出 / 导出位置 在一行里，
+ *   双写占两行。合成之后「这个渠道出到哪」一屏看全，不必两个 tab 对着看。
  */
 export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
   {
@@ -80,15 +85,10 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
     description: '这个范围内用哪几套水印，以及水印库的建与改。',
   },
   {
-    id: 'output',
-    label: '输出位置',
-    description: '这个范围的导出目录（按渠道，可双写），以及全局一套的文件命名、分发与产出预览。',
-  },
-  {
-    id: 'media',
-    label: '渠道与尺寸',
+    id: 'channel',
+    label: '渠道与输出',
     description:
-      '渠道名与尺寸规格是所有方向共用的一份；「参与产出」跟着左侧作用域走——全局改基线，选某个方向就改它自己那份。',
+      '渠道名与尺寸规格是所有方向共用的一份；「参与产出」与导出位置跟着左侧作用域走——全局改基线，选某个方向就改它自己那份，目录留空则向上继承。',
   },
 ]
 
@@ -99,12 +99,15 @@ export const DEFAULT_CONTROL_CONSOLE_SECTION: ControlConsoleSectionId = CONTROL_
  * 已退役的分区 id → 现行分区 id。
  *
  * **必须有这张表**：分区 id 是持久化的（`useStore.controlConsoleSection`），
- * 老用户机器上就存着 `'distribution'`。让它掉进「认不出」分支会把人弹回水印，
- * 等于把「我上次停在哪」这件事默默抹掉 —— 而它其实有明确的新家。
+ * 老用户机器上就存着 `'distribution'` / `'output'` / `'media'` 三个历史值。让它们掉进
+ * 「认不出」分支会把人弹回水印，等于把「我上次停在哪」这件事默默抹掉 —— 而它们都有明确的新家
+ * （三个都指到「渠道与输出」：前两个是它先后吞掉的邻居，`media` 是它自己的前身）。
  * （同类的历史值还有更早的 `'directions'`，那个没有对应新家，所以照旧退回默认。）
  */
 const RETIRED_SECTION_ALIASES: Record<string, ControlConsoleSectionId> = {
-  distribution: 'output',
+  distribution: 'channel',
+  output: 'channel',
+  media: 'channel',
 }
 
 /** 把任意字符串收敛成合法分区 id；认不出时退回默认分区，不抛错。 */

@@ -190,8 +190,8 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
           <Button
             variant="secondary"
             className="mr-auto"
-            title="渠道与尺寸、画面方向、命名模板、创作者、分发、产出预览都在中控台配置"
-            onClick={() => jumpToConsole('media')}
+            title="渠道与输出分区管渠道名 / 尺寸 / 参与产出 / 导出位置；画面方向、命名模板、创作者、分发、产出预览也在中控台配置"
+            onClick={() => jumpToConsole('channel')}
           >
             去中控台改全局规格
           </Button>
