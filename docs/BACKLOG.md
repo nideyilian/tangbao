@@ -4200,3 +4200,53 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 
 **状态**：**已完成**（2026-09-22）。
 
+
+---
+
+## TB-099 配置包结构重设计 + 配置规范文档（v8 → v9，2026-09-22 阿伟）
+
+**需求**（杰哥原话）：「优化配置文档的结构，按照最优实践重新设计配置文件的组织方式。由于目前尚未交付
+他人使用，可不受向后兼容性约束，请明确配置文件的整体分层与模块划分、命名规范、字段类型与默认值、
+必填与选填项、各配置项的作用及取值范围，并给出可直接替换现有配置的完整示例与必要的注释说明。」
+
+**诊断（实测，不是印象）**
+
+| # | 问题 | 证据 |
+| - | ---- | ---- |
+| 1 | 配置不是一个文件，是 ZIP 包里 `manifest.json` 的一个字段 | `store.ts:12099` 写 `manifest.treeConfig` |
+| 2 | 为了 ≤0.3.2 双写了三份重复内容 | `store.ts:12100-12108` 同时写 `compositeState` / `postprocessMediaState` / `assetCollections` |
+| 3 | 同名异物：「水印本体」与「水印引用」都叫 watermark 系 | 节点上 `watermarks`（实体）vs `watermarkPresetIds`（引用） |
+| 4 | 元信息与配置内容混在顶层 | `version` / `exportedAt` 与 `root` / `nodes` 平级 |
+| 5 | 「没写 vs 空」这条继承地基只活在代码注释里，不成文 | `treeConfigBundle.ts:180` 靠 `...(x ? {x} : {})` 表达 |
+| 6 | 无 schema，字段类型只能读 TS；写错字段名导入时静默丢弃 | 本次新增 schema 后才可校验 |
+
+**本轮的交付物（设计定稿，已落盘）**
+
+| 文件 | 内容 |
+| ---- | ---- |
+| `docs/config-spec.md` | **配置规范（唯一真相源）**：分层 / 命名 / 字段表（类型·默认值·必填选填·取值范围·作用）/ 继承与空值语义 / 完整示例骨架 / 落地清单 / 安全边界 |
+| `docs/examples/tangbao.config.example.json` | 可直接替换的完整示例（4 渠道 15 尺寸 / 6 节点树 / 含水印库） |
+| `docs/examples/tangbao.config.schema.json` | JSON Schema，编辑器实时校验 + 悬浮说明 |
+
+**核心设计取舍（与 v8 的差异）**
+
+- 配置从包内 `treeConfig` 字段**拆成独立一份 `config.json`**（zip 只当信封；水印 LOGO 等资源进 `assets/`）。
+- `root` → `defaults`（`root` 会被误读成"树的根"，而树的第一层是产品线）、`nodes` → `tree`。
+- 节点 `postprocess` → `overrides`（它是覆盖值，不是"后处理本身"）；`watermarks` → `watermarkPresets`（与引用区分）。
+- `version` + `exportedAt` 收进 `format`，新增 `kind` / `appVersion` / `skippedNodes`。
+- **删掉过渡期双写与 v7 老恢复路径**（不受兼容约束）。
+- **字段名与代码保持一致**（`media` / `mediaOutputDirs` / `selectedMediaIds`），只加一份"文件里的名字 ↔ 界面上的说法"对照表 —— 不制造第二套名字。
+
+**验收标准（可测）**
+
+1. 导出的 ZIP 内确实有 `config.json` 且通过 schema 校验；不再有 `treeConfig` 字段。
+2. 导出 → 导入 round-trip 后**逐节点字段值一致**（断言字段值，不是"恢复了几条"）。
+3. v8 旧包导入时**明确报「版本不认识」并拒收**，不静默什么都不恢复。
+4. `format.skippedNodes` == 回收站节点数；`unassignedWatermarks` 含缺归属水印。
+5. 映射层加穷尽守卫（`Record<keyof X, …>` 让漏字段编译报错），并有反向验证。
+6. 全量 `npm run verify` 全绿。
+
+**状态**：`TODO` —— **设计已定稿（文档 + 示例 + schema 已落盘并通过正反向校验）；
+代码落地（§八 清单 10 项）等杰哥过目设计后再开工**。
+
+**为什么分成两步**：这是核心链路（store 导出/导入 + 配置同步），先让设计可评审比直接改代码省返工。

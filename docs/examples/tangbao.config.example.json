@@ -1,0 +1,196 @@
+{
+  "$schema": "./tangbao.config.schema.json",
+
+  "format": {
+    "kind": "tangbao-config",
+    "version": 9,
+    "exportedAt": "2026-09-22T15:30:00.000Z",
+    "appVersion": "0.3.2",
+    "skippedNodes": 6
+  },
+
+  "defaults": {
+    "channels": [
+      {
+        "id": "gdt",
+        "name": "广点通",
+        "sizes": [
+          { "id": "gdt-1280x720", "width": 1280, "height": 720, "maxSizeKb": 399, "enabled": true },
+          { "id": "gdt-1080x1920", "width": 1080, "height": 1920, "maxSizeKb": 399, "enabled": true }
+        ]
+      },
+      {
+        "id": "baidu",
+        "name": "百度",
+        "sizes": [
+          { "id": "baidu-1140x640", "width": 1140, "height": 640, "maxSizeKb": 299, "enabled": true },
+          { "id": "baidu-370x245", "width": 370, "height": 245, "maxSizeKb": 299, "enabled": true },
+          { "id": "baidu-1080x1920", "width": 1080, "height": 1920, "maxSizeKb": 399, "enabled": true }
+        ]
+      },
+      {
+        "id": "vendor",
+        "name": "厂商",
+        "sizes": [
+          { "id": "vendor-1280x720", "width": 1280, "height": 720, "maxSizeKb": 99, "enabled": true },
+          { "id": "vendor-1080x1920", "width": 1080, "height": 1920, "maxSizeKb": 99, "enabled": true },
+          { "id": "vendor-320x211", "width": 320, "height": 211, "maxSizeKb": 80, "enabled": true },
+          { "id": "vendor-320x210", "width": 320, "height": 210, "maxSizeKb": 80, "enabled": true },
+          { "id": "vendor-720x1280", "width": 720, "height": 1280, "maxSizeKb": 99, "enabled": true },
+          { "id": "vendor-720x498", "width": 720, "height": 498, "maxSizeKb": 99, "enabled": true },
+          { "id": "vendor-474x768", "width": 474, "height": 768, "maxSizeKb": 99, "enabled": true },
+          { "id": "vendor-1080x528", "width": 1080, "height": 528, "maxSizeKb": 99, "enabled": true }
+        ]
+      },
+      {
+        "id": "toutiao",
+        "name": "头条",
+        "sizes": [
+          { "id": "toutiao-1080x1920", "width": 1080, "height": 1920, "maxSizeKb": 399, "enabled": true },
+          { "id": "toutiao-1280x720", "width": 1280, "height": 720, "maxSizeKb": 399, "enabled": true }
+        ]
+      }
+    ],
+
+    "outputDir": "",
+    "mediaOutputDirs": {
+      "gdt": ["D:\\交付\\广点通"]
+    },
+
+    "namePattern": "{date}-{product}-{direction}-{media}-{size}-{seq}",
+    "creator": "阿伟",
+
+    "watermarkPresetIds": [],
+
+    "selectedMediaIds": ["clean"],
+    "selectedCollectionIds": ["line-home", "prod-vacuum", "dir-moon"],
+    "savedTargetCollectionIds": ["dir-moon", "dir-sun"],
+
+    "direction": null,
+    "fitMode": "crop-fill",
+    "autoCompanionClean": true,
+
+    "distribution": {
+      "enabled": false,
+      "startDate": "",
+      "days": 1,
+      "mode": "copy",
+      "randomize": false,
+      "skipWeekends": false,
+      "renameMode": "date",
+      "modifyMd5": false,
+      "targetDir": ""
+    }
+  },
+
+  "tree": [
+    {
+      "id": "line-home",
+      "name": "智能家居",
+      "kind": "line",
+      "order": 0,
+      "color": "#7F77DD",
+      "children": [
+        {
+          "id": "prod-vacuum",
+          "name": "扫地机器人",
+          "kind": "product",
+          "order": 0,
+          "watermarkPresets": [
+            {
+              "id": "wm-vacuum-01",
+              "name": "扫地机-合规角标",
+              "productId": "prod-vacuum",
+              "baseCanvas": { "width": 1080, "height": 1920 },
+              "sampleBackgroundPath": "",
+              "layers": [
+                {
+                  "id": "layer-text-1",
+                  "name": "卖点文案",
+                  "type": "text",
+                  "visible": true,
+                  "locked": false,
+                  "opacity": 1,
+                  "rotation": 0,
+                  "position": {
+                    "mode": "anchor",
+                    "anchor": "bottom-left",
+                    "marginX": 0.04,
+                    "marginY": 0.04,
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "width": 0.5,
+                    "height": 0.08
+                  },
+                  "shadow": { "enabled": false, "color": "#000000", "x": 0, "y": 0, "blur": 0, "opacity": 0.3 },
+                  "text": "一地不落灰",
+                  "fontFamily": "思源黑体",
+                  "fontSize": 0.045,
+                  "fontWeight": 700,
+                  "color": "#FFFFFF",
+                  "align": "left",
+                  "lineHeight": 1.2,
+                  "letterSpacing": 0,
+                  "padding": 0,
+                  "orientation": "horizontal",
+                  "withIdentifier": false
+                }
+              ],
+              "updatedAt": 1758500000000
+            }
+          ],
+          "children": [
+            {
+              "id": "dir-moon",
+              "name": "月亮",
+              "kind": "direction",
+              "order": 0,
+              "overrides": {
+                "enabled": true,
+                "outputDir": "D:\\交付\\扫地机\\月亮",
+                "watermarkPresetIds": ["wm-vacuum-01"],
+                "selectedMediaIds": ["gdt", "baidu"],
+                "byMedia": {
+                  "baidu": { "outputDirs": ["D:\\交付\\百度\\扫地机月亮"] }
+                }
+              },
+              "children": []
+            },
+            {
+              "id": "dir-sun",
+              "name": "太阳",
+              "kind": "direction",
+              "order": 1,
+              "overrides": {
+                "watermarkPresetIds": [],
+                "selectedMediaIds": ["clean", "toutiao"]
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "prod-purifier",
+          "name": "空气净化器",
+          "kind": "product",
+          "order": 1,
+          "children": [
+            {
+              "id": "dir-living",
+              "name": "客厅",
+              "kind": "direction",
+              "order": 0,
+              "overrides": {
+                "enabled": false,
+                "selectedMediaIds": ["vendor"]
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "unassignedWatermarks": []
+}

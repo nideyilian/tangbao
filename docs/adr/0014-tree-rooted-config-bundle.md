@@ -5,6 +5,8 @@
 - **决策者**：杰哥（产品负责人）
 - **相关**：[0001](0001-unified-project-tree.md)（统一项目树）、[0012](0012-watermark-library-per-product.md)
   （水印库按产品隔离）、[0013](0013-participation-follows-direction.md)、TB-086
+- **字段级规范**：[`config-spec.md`](../config-spec.md)（**唯一真相源**，已重设计到 v9 / TB-099）。
+  本文只记「为什么这么定」；包里每个字段的类型、默认值、必填选填与取值范围，一律查规范。
 
 ## 背景：杰哥提的（原话链）
 

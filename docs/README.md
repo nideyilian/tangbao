@@ -23,6 +23,7 @@
 | 文件                                                             | 作用                                                                                                                     | 状态 |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---- |
 | [`architecture-constraints.md`](architecture-constraints.md)     | **哪些设计勿改回**：性能基线 / 生图编排 / 协议约束 / 后处理与项目树模型 / 持久化 / UI 约定                               | 现行 |
+| [`config-spec.md`](config-spec.md)                               | **配置规范（唯一真相源）**：配置包的分层 / 命名 / 字段类型与默认值 / 必填选填 / 取值范围 / 完整示例（v9 目标态）        | 现行 |
 | [`tangbao-ops-runbook.md`](tangbao-ops-runbook.md)               | **唯一操作配方**：持久化铁律 / 本地验收 / 抓渲染报错 / 调试装置 / API 三层解析 / 推 GitHub 与查 CI / 批量写 localStorage | 现行 |
 | [`asset-kernel.md`](asset-kernel.md)                             | 素材内核（SQLite + UtilityProcess）说明                                                                                  | 现行 |
 | [`mock-image-api.md`](mock-image-api.md)                         | 本地模拟生图接口，零成本验证链路                                                                                         | 现行 |

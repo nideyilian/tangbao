@@ -1,0 +1,419 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/nideyilian/tangbao/docs/examples/tangbao.config.schema.json",
+  "title": "糖包配置（config.json）",
+  "description": "糖包中控台配置包 v9。规范全文见 docs/config-spec.md；本文件是它的机器可读版本，供编辑器校验与悬浮说明。",
+  "type": "object",
+  "required": ["format", "defaults", "tree"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "本文档的 schema 位置。写相对路径即可让编辑器自动校验。"
+    },
+    "format": {
+      "type": "object",
+      "description": "文件头：身份、版本、导出信息。不是配置内容，改它不会影响产出。",
+      "required": ["kind", "version", "exportedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "tangbao-config",
+          "description": "文件类型标记。固定值，用来一眼认出这是配置本体（而不是备份包里的其它 json）。"
+        },
+        "version": {
+          "type": "integer",
+          "const": 9,
+          "description": "配置格式版本。本规范 = 9。版本不认识时整包拒收，不做猜测性解析。"
+        },
+        "exportedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "导出时刻（ISO 8601）。排查「这份包是什么时候发的」用。"
+        },
+        "appVersion": {
+          "type": "string",
+          "description": "导出这份配置的糖包版本，例如 \"0.3.2\"。缺省表示未知。"
+        },
+        "skippedNodes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "导出时被跳过的回收站节点数。回收站里的节点不进包，但必须报个数 —— 否则「我有 80 个方向，怎么只过去 74 个」查不出来。"
+        }
+      }
+    },
+
+    "defaults": {
+      "type": "object",
+      "description": "全局默认层。树上任何节点没表态的项，用的就是这里。它不对应树上的任何节点。",
+      "required": ["channels"],
+      "additionalProperties": false,
+      "properties": {
+        "channels": {
+          "type": "array",
+          "minItems": 0,
+          "description": "渠道与尺寸字典（全局唯一）。节点只写「我用哪几个渠道」，规格本身在这里定义一次。数组中渠道 id 必须唯一。",
+          "items": { "$ref": "#/definitions/channel" }
+        },
+        "outputDir": {
+          "type": "string",
+          "default": "",
+          "description": "默认输出位置（绝对路径）。空串 = 用应用的默认位置（本地保存目录下的 postprocess）。"
+        },
+        "mediaOutputDirs": {
+          "type": "object",
+          "default": {},
+          "description": "按渠道单独指定的导出位置，键是渠道 id，值是该渠道的 1~2 个目录。命中时优先于 outputDir；空数组或缺键都表示「该渠道用 outputDir」。",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": {
+            "type": "array",
+            "maxItems": 2,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "1 个 = 单写；2 个 = 双写（同一份产物两处各写一份，文件名相同）。上限 2 是刻意的：导出位置是写盘放大，放开会一次误配写满磁盘。"
+          }
+        },
+        "namePattern": {
+          "type": "string",
+          "default": "{date}-{product}-{direction}-{media}-{size}-{seq}",
+          "description": "命名模板。可用 token：{date} {line} {product} {direction} {creator} {media} {size} {seq} {preset}。取值为空的段会被整段删除（不留 A--B）。必须含 {seq}，否则同批次产物互相覆盖。"
+        },
+        "creator": {
+          "type": "string",
+          "default": "",
+          "description": "{creator} token 的取值。空串 = 该段被删掉。"
+        },
+        "watermarkPresetIds": {
+          "type": "array",
+          "default": [],
+          "description": "默认引用的水印预设 id。空数组 = 不加水印（显式）。数组顺序即产出顺序。配 N 个预设，每个渠道尺寸各出 N 套（产出量按预设数倍增）。",
+          "items": { "type": "string" }
+        },
+        "selectedMediaIds": {
+          "type": "array",
+          "default": ["clean"],
+          "description": "默认参与产出的渠道 id。'clean' 是保留的「纯净版」渠道（无水印、不压缩、沿用生成尺寸）。不在这份列表里的渠道不产出 —— 渠道是否启用就是看它有没有出现在这里。",
+          "items": { "type": "string" }
+        },
+        "selectedCollectionIds": {
+          "type": "array",
+          "default": [],
+          "description": "启用范围：哪些树节点允许跑产出。空数组 = 没启用任何一个方向。与 savedTargetCollectionIds 是两件事，别混（一个回答「允许哪些」，一个回答「这次产出到哪些」）。",
+          "items": { "type": "string" }
+        },
+        "savedTargetCollectionIds": {
+          "type": "array",
+          "default": [],
+          "description": "「记住配置」保存的产出目标节点 id，顺序即产出顺序。空数组 = 没记住 → 每张图按自己的归属方向产出（原行为）。",
+          "items": { "type": "string" }
+        },
+        "direction": {
+          "type": ["string", "null"],
+          "enum": ["landscape", "portrait", "square", null],
+          "default": null,
+          "description": "手选画面方向。null = 按源图尺寸自动判定。"
+        },
+        "fitMode": {
+          "type": "string",
+          "enum": ["crop-fill", "contain-blur", "stretch"],
+          "default": "crop-fill",
+          "description": "源图适配到目标尺寸的方式，全局一套（不参与方向级继承）。crop-fill = 等比放大填满 + 裁边（默认）；contain-blur = 完整画面居中 + 四周补模糊底；stretch = 填满但比例被改变。"
+        },
+        "autoCompanionClean": {
+          "type": "boolean",
+          "default": true,
+          "description": "纯净版自动伴随：勾了任一渠道时，额外多产一份无水印原图。"
+        },
+        "distribution": {
+          "$ref": "#/definitions/distribution"
+        }
+      }
+    },
+
+    "tree": {
+      "type": "array",
+      "description": "项目树，第一层是产品线。每个节点自带的 overrides 覆盖 defaults 里的同名项；没写 = 继续向上继承。",
+      "items": { "$ref": "#/definitions/node" }
+    },
+
+    "unassignedWatermarks": {
+      "type": "array",
+      "default": [],
+      "description": "没有归属到任何产品的水印预设（productId 缺省，或指向一个已被删除的节点）。必须单独兜住 —— 按产品分组的循环会漏掉它们，漏掉就等于静默丢配置，用户只会觉得「水印少了几套」却查不出为什么。",
+      "items": { "$ref": "#/definitions/watermarkPreset" }
+    }
+  },
+
+  "definitions": {
+    "channel": {
+      "type": "object",
+      "description": "一个投放渠道及其可用尺寸。",
+      "required": ["id", "name", "sizes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "渠道 id，全局唯一。内置：gdt / baidu / vendor / toutiao；自建的形如 custom-xxxxxxxx。'clean' 是保留 id，不要占用。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "渠道显示名，进 {media} 命名段。"
+        },
+        "sizes": {
+          "type": "array",
+          "description": "该渠道的尺寸列表。id 在渠道内唯一。",
+          "items": { "$ref": "#/definitions/size" }
+        }
+      }
+    },
+
+    "size": {
+      "type": "object",
+      "required": ["id", "width", "height", "maxSizeKb", "enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "尺寸 id，约定为 <渠道id>-<宽>x<高>，例如 gdt-1280x720。"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "目标宽（像素）。"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "目标高（像素）。"
+        },
+        "maxSizeKb": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "产出文件的体积上限（KB）。0 = 不压缩。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "这个尺寸要不要参与产出。"
+        }
+      }
+    },
+
+    "node": {
+      "type": "object",
+      "description": "项目树的一个节点。层级：产品线(line) → 产品(product) → 方向(direction) → 扩展层(extra，第 4 层及以后)。",
+      "required": ["id", "name", "order"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "节点 id。被 selectedCollectionIds / savedTargetCollectionIds / byMedia 之外的引用指向，改它等于改动所有引用。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "节点名。产品线 / 产品 / 方向 / 扩展层都能进命名模板的 {line} {product} {direction} 段。"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["line", "product", "direction", "extra"],
+          "description": "层级语义。**刻意不在文件里强求**：自建节点没有内置前缀，反推迟早出错，算不出就省略，恢复时按 parentId 挂回去即可。"
+        },
+        "order": {
+          "type": "integer",
+          "description": "同级排序位。同 order 时按 name 排序，所以同级 order 不要重复 —— 拖拽移动后源那一层会留空洞，是已知的坑。"
+        },
+        "color": {
+          "type": "string",
+          "description": "节点色标（hex 或语义令牌）。缺省 = 无颜色。"
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "是否置顶。缺省 = 否。"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "description": "该节点参数最后改动时间（毫秒时间戳）。纯记录用，不参与产出判定。"
+        },
+        "overrides": {
+          "$ref": "#/definitions/nodeOverrides"
+        },
+        "watermarkPresets": {
+          "type": "array",
+          "description": "挂在这个节点下的水印库。判据是「有没有水印挂在它下面」，不看层级标记 —— 所以自建节点也能当库主。其余层级省略此字段（空数组等价）。",
+          "items": { "$ref": "#/definitions/watermarkPreset" }
+        },
+        "children": {
+          "type": "array",
+          "description": "子节点。同级按 order 排。",
+          "items": { "$ref": "#/definitions/node" }
+        }
+      }
+    },
+
+    "nodeOverrides": {
+      "type": "object",
+      "description": "该节点自己的覆盖值。**字段缺席 = 继续向上继承；写了值 = 覆盖**。这里的「空」语义逐字段不同，见各字段说明。",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "该方向是否参与自动后处理。false = 归属此方向的图片不产出变体。缺省 = 参与。"
+        },
+        "outputDir": {
+          "type": "string",
+          "description": "该节点的输出位置。空串 = 用默认输出位置（等价于没写）。"
+        },
+        "watermarkPresetIds": {
+          "type": "array",
+          "description": "该节点引用的水印预设 id。[] = 显式「这个方向不加水印」；字段缺席 = 继承上一层。",
+          "items": { "type": "string" }
+        },
+        "selectedMediaIds": {
+          "type": "array",
+          "description": "该节点投哪几个渠道。[] = 这个方向一个渠道都不投；字段缺席 = 继承上一层。数组顺序即产出顺序。",
+          "items": { "type": "string" }
+        },
+        "byMedia": {
+          "type": "object",
+          "description": "按渠道再细分覆盖，键是渠道 id。只对本节点生效，不会往父节点继续找。刻意只开放「同一方向在不同渠道上确实不一样」的项（目录与水印）。",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "outputDirs": {
+                "type": "array",
+                "maxItems": 2,
+                "items": { "type": "string", "minLength": 1 },
+                "description": "该渠道的导出位置（1~2 个）。空数组 = 该渠道用默认输出位置。"
+              },
+              "watermarkPresetIds": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "该渠道引用的水印预设 id。[] = 该渠道不加水印。"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "watermarkPreset": {
+      "type": "object",
+      "description": "一套水印预设。层（layers）的完整结构见 src/features/composite/lib/compositeV2Types.ts —— 那是水印编辑器的事，本规范只保证「它随配置走、含引用的图片资源」。",
+      "required": ["id", "name", "baseCanvas", "layers", "updatedAt"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "预设 id。被 watermarkPresetIds 引用。" },
+        "name": { "type": "string", "minLength": 1, "description": "预设名，进 {preset} 命名段。" },
+        "productId": {
+          "type": "string",
+          "description": "归属产品（节点 id）。**缺省或空串 = 未分配**：不进任何产品的库，界面上单独成区，可一键指派。未分配的预设会进 unassignedWatermarks。"
+        },
+        "baseCanvas": {
+          "type": "object",
+          "required": ["width", "height"],
+          "additionalProperties": false,
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "画布基准宽（像素）。层里的比例值都以它为基准。"
+            },
+            "height": { "type": "integer", "minimum": 1, "description": "画布基准高（像素）。" }
+          }
+        },
+        "sampleBackgroundPath": {
+          "type": "string",
+          "description": "预览用的样例背景图路径。空串 = 无样例背景。"
+        },
+        "layers": {
+          "type": "array",
+          "description": "图层数组，自下而上渲染。每层必带 id / name / type / visible / opacity / position / shadow。",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "type", "visible", "opacity", "position"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "type": { "type": "string", "enum": ["text", "image", "logo"] },
+              "visible": { "type": "boolean" },
+              "locked": { "type": "boolean" },
+              "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+              "rotation": { "type": "number" },
+              "position": {
+                "type": "object",
+                "description": "定位方式：mode='anchor' 按九宫格锚点 + 边距定位；mode='free' 按绝对坐标。width/height 为比例值。",
+                "required": ["mode"],
+                "properties": { "mode": { "type": "string", "enum": ["anchor", "free"] } }
+              },
+              "shadow": { "type": "object" },
+              "stroke": { "type": "object" },
+              "text": { "type": "string", "description": "仅 text 层：文案。换行符在竖排下表示换列。" },
+              "orientation": {
+                "type": "string",
+                "enum": ["horizontal", "vertical"],
+                "description": "仅 text 层：文字方向。缺省或任何非 'vertical' 的值都按横排（老数据因此不受影响）。"
+              },
+              "withIdentifier": {
+                "type": "boolean",
+                "description": "仅 text 层：这一层要不要带水印标识符（署名）。缺省 = 带。只有显式 false 才是不带 —— 反向字段会让老数据整批丢标识。"
+              }
+            }
+          }
+        },
+        "updatedAt": { "type": "integer", "description": "最后修改时间（毫秒时间戳）。" }
+      }
+    },
+
+    "distribution": {
+      "type": "object",
+      "description": "产出后的按天分发。默认关闭 —— 它会在磁盘上移动文件，绝不能靠默认值把用户的产物搬走。",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "是否启用分发。" },
+        "startDate": { "type": "string", "default": "", "description": "起始日期，格式 YYYYMMDD。空串 = 未设置。" },
+        "days": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "分配天数。小于 1 的取值一律按 1 处理。"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["copy", "move"],
+          "default": "copy",
+          "description": "copy = 保留原文件；move = 搬走，并清理已空的源目录。"
+        },
+        "randomize": {
+          "type": "boolean",
+          "default": false,
+          "description": "打乱后再平均分配，避免同一批素材出现肉眼可见的排期规律。"
+        },
+        "skipWeekends": { "type": "boolean", "default": false, "description": "只按工作日排期（跳过周六周日）。" },
+        "renameMode": {
+          "type": "string",
+          "enum": ["date", "sequence"],
+          "default": "date",
+          "description": "date = 替换文件名里的日期段；sequence = 按日期文件夹名 + 序号重排。"
+        },
+        "modifyMd5": {
+          "type": "boolean",
+          "default": false,
+          "description": "追加随机字节改变 md5，规避投放平台的「重复素材」判定。"
+        },
+        "targetDir": {
+          "type": "string",
+          "default": "",
+          "description": "分发目标根目录。空串 = 在产出目录原地按日期建子文件夹。"
+        }
+      }
+    }
+  }
+}
