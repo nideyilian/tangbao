@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import ts from 'typescript'
 
 // 全仓 UI 合规回归测试：锁定规范明确禁止的模式，防止再次分叉。
 // 覆盖：MASTER 6.1（不使用 transition: all）、MASTER 4.8（禁止任意数字 z-index，tooltip 为最高层）、
@@ -41,9 +42,92 @@ function hasHexExemptMarker(src: string): boolean {
  * 说明性文字误判为违规，逼着后来者不敢写注释 —— 那是更糟的结果。
  */
 function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '') // 块注释
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1') // 行注释（避开 http:// 这类）
+  return (
+    src
+      // 块注释：**保留原有行数**（换成等量换行），这样剥离后行号仍与源文件对齐 ——
+      // 定位工具类检查要把违规行号报给人看，行号错位等于没线索。
+      .replace(/\/\*[\s\S]*?\*\//g, (block) => '\n'.repeat((block.match(/\n/g) ?? []).length))
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1') // 行注释（避开 http:// 这类）
+  )
+}
+
+// ===== 设计系统组件的定位工具类（2026-09-22） =====
+//
+// `styles.css` 里这些基础类声明了 `position: relative`：
+//   .ds-button / .ds-icon-button / .ds-check__control / .ds-switch__control / .ds-radio /
+//   .ds-select / .ds-aspect-ratio / .ds-tabs__item / .ds-dialog / .ds-tooltip / .ds-popover / .ds-menu
+// 而 `main.tsx` 的加载顺序是 `index.css`（Tailwind utilities）→ 再 `design-system/styles.css`。
+// 两者特异性相同（都是单类），**后写的赢** → 调用方传 `className="absolute right-4 top-4"`
+// 会被静默吃成「相对定位」：元素**留在文档流里**（后面的兄弟节点被挤到它那一行），
+// 再被 right/top 平移 16px —— 表现就是「按钮压在正文上」。
+//
+// 2026-09-22 报障「删除预设？弹窗的 × 压住正文」正是此因（当时全仓 3 处漏了 `!`）。
+// 解法与仓库既有约定一致：定位工具类加 `!` 前缀（`!absolute` / `!fixed`），见
+// AssetLibrarySidebar / SeriesConsistencyControl 等 6 处先例。
+const POSITION_UTILITY = /\b(absolute|fixed|sticky)\b/
+const IMPORTANT_POSITION_UTILITY = /!\s*(absolute|fixed|sticky)/
+const POSITIONED_DS_CLASS =
+  /\bds-(?:button|icon-button|check__control|switch__control|radio|select|legacy-select__option|aspect-ratio|tabs__item|dialog|tooltip|popover|menu|data-grid__editor-wrap)\b/
+const DS_POSITIONED_COMPONENTS = new Set([
+  'Button',
+  'IconButton',
+  'Checkbox',
+  'Switch',
+  'Radio',
+  'SelectField',
+  'AspectRatio',
+  'Tabs',
+  'Dialog',
+  'Tooltip',
+  'Popover',
+  'Menu',
+])
+
+/** 找出「被子类吃掉」的定位工具类：返回 `文件:行 描述` 列表，空数组 = 合规。 */
+function findSwallowedPositionUtilities(path: string, src: string): string[] {
+  const display = normalizeKey(path)
+  const violations: string[] = []
+
+  // ① ds-* 类直接写在元素上（position 与工具类同处一个 className）
+  const clean = stripComments(src)
+  for (const match of clean.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
+    const cls = match[1] ?? match[2] ?? ''
+    if (!POSITION_UTILITY.test(cls) || IMPORTANT_POSITION_UTILITY.test(cls)) continue
+    if (!POSITIONED_DS_CLASS.test(cls)) continue
+    const line = clean.slice(0, match.index).split('\n').length
+    violations.push(`${display}:${line} className="${cls.replace(/\s+/g, ' ').trim()}"（ds-* 基础类吃掉了定位）`)
+  }
+
+  // ② 设计系统组件：position 来自组件基础类，className 里看不到 ds-*
+  if (!path.endsWith('.tsx')) return violations
+
+  const file = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const tag = node.tagName.getText(file).split('.').pop() ?? ''
+      if (DS_POSITIONED_COMPONENTS.has(tag)) {
+        const attr = node.attributes.properties.find(
+          (prop): prop is ts.JsxAttribute => ts.isJsxAttribute(prop) && prop.name.getText(file) === 'className',
+        )
+        const init = attr?.initializer
+        const cls = init
+          ? ts.isStringLiteral(init)
+            ? init.text
+            : ts.isJsxExpression(init)
+              ? (init.expression?.getText(file) ?? '')
+              : ''
+          : ''
+        if (cls && POSITION_UTILITY.test(cls) && !IMPORTANT_POSITION_UTILITY.test(cls)) {
+          const { line } = file.getLineAndCharacterOfPosition(node.getStart(file))
+          violations.push(`${display}:${line + 1} <${tag}> className="${cls.replace(/\s+/g, ' ').trim()}"（缺 ! 前缀）`)
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+
+  return violations
 }
 
 describe('UI 合规回归', () => {
@@ -58,6 +142,11 @@ describe('UI 合规回归', () => {
     const violations = entries
       .filter(([, src]) => /z-\[(?!var)[0-9]/.test(src))
       .map(([path]) => path.replace(/^\.\.\//, ''))
+    expect(violations).toEqual([])
+  })
+
+  it('设计系统组件的定位工具类必须加 ! 前缀（styles.css 的 position: relative 会连带吃掉它）', () => {
+    const violations = entries.flatMap(([path, src]) => findSwallowedPositionUtilities(path, src))
     expect(violations).toEqual([])
   })
 

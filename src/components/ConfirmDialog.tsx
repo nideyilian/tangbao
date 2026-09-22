@@ -129,10 +129,14 @@ export default function ConfirmDialog() {
           {confirmDialog.icon === 'copy' && <CopyIcon className="h-5 w-5 shrink-0 text-ds-primary" />}
           {confirmDialog.title}
         </h2>
-        {/* 显式关闭入口：内容高度受限后底部的确认按钮可能滚出视野，必须有一个永远在位、永远可点的出口 */}
+        {/* 显式关闭入口：内容高度受限后底部的确认按钮可能滚出视野，必须有一个永远在位、永远可点的出口。
+            ⚠️ `!absolute` 的 `!` 不能省：`.ds-icon-button` 自带 `position: relative`，而 design-system/styles.css
+            在 index.css **之后**加载（特异性相同 → 后写的赢），光写 `absolute` 会被吃成相对定位：
+            按钮留在文档流里（正文因此被顶到它那一行），再被 right/top 平移 16px，
+            正好压在正文第一行上。2026-09-22 报障（「删除预设？」× 压住「将永久删除预设…」）就是此因。 */}
         <IconButton
           aria-label="关闭"
-          className="absolute right-4 top-4"
+          className="!absolute right-4 top-4"
           icon={<CloseIcon size={17} />}
           onClick={handleClose}
           disabled={!canConfirm}

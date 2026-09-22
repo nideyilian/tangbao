@@ -3596,3 +3596,46 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 **开工时的环境风险（记一笔）**：落地期间同仓有另一条写线在活跃改 `SettingsModal.tsx` / `localSave.ts` /
 `electron/ipc-handlers.ts`（配置目录相关），`tsc` 全量会因为它的半成品红在 `selectDirectory` 未导出上。
 本轮按隔离方式做：只跑定向用例 + 过滤后的 `tsc`，提交只 add 自己的文件。
+
+
+## TB-090 删除类弹窗的 × 压住正文：ds 基础类吃掉定位工具类（2026-09-22 阿伟）
+
+**背景**（杰哥报障 + 截图）：删水印预设时弹「删除预设？」，右上角的 × 跑到正文第一行上，
+压住「将永久删除预设「…」。」的开头。杰哥判断「其他删除的弹窗也有这个问题」。
+
+**根因（一步定位）**：`main.tsx` 的加载顺序是 `./index.css`（Tailwind utilities）→ 再
+`./design-system/styles.css`，两者特异性相同（单类）→ **后写的赢**。
+`.ds-button, .ds-icon-button { position: relative }` 因此吃掉了 `className="absolute right-4 top-4"`：
+按钮**留在文档流里**（正文被顶到它那一行）、再被 `top/right` 平移 16px → 正好压在正文上。
+构建产物里可直接验证：`.absolute{position:absolute}` @6105 **早于** 基础类 @64924。
+
+**扫全仓**：写 AST 扫描（ds 组件 + `ds-*` 类两种形态），同类漏项共 **3 处**，其余 6 处早已手写 `!absolute`：
+
+| 位置                                               | 症状                                                                                                |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `ConfirmDialog.tsx:135`（所有删除/清空弹窗共用）   | × 压住正文第一行（本轮报障）                                                                        |
+| `AssetLibraryWorkspace.tsx:910` 移动端导航关闭键   | 留在流里 + 平移 8px；且 `min-h-ds-control-lg` 也被基础类的 `min-height` 吃掉（触控高度长不到 40px） |
+| `WorkspaceTabBar.tsx:518` 窄屏「打开标签页」悬浮键 | `fixed` 失效 → 不悬浮，挤进标签栏流里                                                               |
+
+**改法**：定位/尺寸工具类加 `!` 前缀（`!absolute` / `!fixed` / `!min-h-ds-control-lg`），
+**不动全局加载顺序**（会让一批本来靠 ds 赢的规则与 `!important` 一起翻车，属单独评估）。
+判据与配方写进 runbook §21；风险登记 R-80。
+
+**验收标准（可测）**
+
+1. 弹窗关闭键 `className` 含 `!absolute`；`.ds-icon-button` 的 `position: relative` 不再赢。
+2. 全仓扫描「ds 组件 + 定位工具类」无一处缺 `!`。
+3. 改动文件 `tsc -b` / `tsc -p electron` / eslint / prettier 零错。
+
+**验收证据（2026-09-22）**
+
+- 定向用例 **29 文件 / 540 例全绿**（`src/design-system` + `src/features/assetLibrary` + `WorkspaceTabBar.test.tsx`）；
+  `tsc -b`、`tsc -p electron/tsconfig.json --noEmit`、eslint、prettier 全部零错。
+- **反向验证（实做，精确命中）**：把 3 处 `!` 去掉 → 新增合规用例报
+  `expected [ …(3) ] to deeply equal []` 并逐条列出那 3 个文件:行；
+  `ConfirmDialog.test.tsx` 报 `expected 'absolute right-4 top-4' to contain '!absolute'`；
+  恢复后 14/14 全绿。
+- **新增守卫**：`compliance.test.ts`「设计系统组件的定位工具类必须加 ! 前缀」（AST + 文本双扫）；
+  `ConfirmDialog.test.tsx` 补 `!absolute` 断言（原先只断言「存在 + 点得动」，正是这样漏掉的）。
+- ⚠️ **未做渲染验证**（本机离屏渲染限制）：修复前的表现由杰哥截图确证、修复后请杰哥在应用里过目一次。
+

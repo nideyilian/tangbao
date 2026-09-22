@@ -70,6 +70,9 @@ describe('ConfirmDialog 关得掉', () => {
     const renderer = render()
 
     const closeButton = renderer.root.findByProps({ 'aria-label': '关闭' })
+    // 必须真的脱离文档流：`.ds-icon-button` 自带 `position: relative`，且 styles.css 在 index.css 之后加载，
+    // 少写 `!` 就会退化成「留在流里 + 被 right/top 平移」→ 正好压在正文第一行上（2026-09-22 报障）。
+    expect(String(closeButton.props.className)).toContain('!absolute')
     act(() => {
       closeButton.props.onClick()
     })

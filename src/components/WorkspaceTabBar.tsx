@@ -515,7 +515,8 @@ export default function WorkspaceTabBar() {
         aria-label="打开标签页"
         icon={<CalendarIcon className="h-4 w-4" />}
         onClick={() => setCompactOpen(true)}
-        className="fixed left-2 top-[calc(var(--app-header-offset)+var(--ds-space-2))] z-[var(--ds-z-overlay)] border border-ds-border bg-ds-raised shadow-[var(--ds-shadow-md)]"
+        // `!fixed`：`.ds-icon-button` 的 `position: relative` 会吃掉普通 `fixed`（styles.css 在 index.css 之后加载）
+        className="!fixed left-2 top-[calc(var(--app-header-offset)+var(--ds-space-2))] z-[var(--ds-z-overlay)] border border-ds-border bg-ds-raised shadow-[var(--ds-shadow-md)]"
       />
     )
   }

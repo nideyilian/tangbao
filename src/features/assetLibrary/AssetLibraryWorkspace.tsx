@@ -906,8 +906,11 @@ function AssetLibraryWorkspaceInner() {
                 setSidebarOpen(false)
               }}
             />
+            {/* `!` 不能省：`.ds-icon-button` 自带 `position: relative` 与 `min-height: --ds-control-md`，
+                而 design-system/styles.css 在 index.css 之后加载 → 普通 `absolute` / `min-h-*` 会被它吃掉
+                （按钮留在文档流里、触控高度也长不到 40px）。 */}
             <IconButton
-              className="absolute right-2 top-2 min-h-ds-control-lg min-w-11"
+              className="!absolute right-2 top-2 !min-h-ds-control-lg min-w-11"
               size="sm"
               aria-label="关闭导航"
               icon={<XIcon size={16} />}

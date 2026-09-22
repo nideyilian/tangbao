@@ -1321,3 +1321,97 @@ settings.themeMode → App.tsx effect → applyAppearance() → html.dark + styl
 
 排查「切换主题后某处颜色不对」时，**先确认这条链路上有没有旁路**——
 任何第二处直接改 `documentElement.classList` 的地方都是 bug。
+
+## 二十、给全局编排配置（`PostprocessMediaConfig`）加一个字段（2026-09-22 定稿）
+
+「记住的产出目标」（`savedTargetCollectionIds`）是照这份清单走完的第一例。**清单是 4.2.1（节点级字段）的全局版对应物**。
+
+### 1. 六处必改（漏任一处 = 静默失效）
+
+| #   | 位置                                                                 | 漏了会怎样                                                       |
+| --- | -------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| ①   | `PostprocessMediaConfig` 接口（`lib/postprocessMedia.ts`）           | 后面几处都不认它                                                 |
+| ②   | `createDefaultPostprocessMediaConfig`（`storePostprocessMedia.ts`）  | 首装 / 恢复默认时缺字段                                          |
+| ③   | `normalizePostprocessMediaConfig`（同文件）                          | **存不住**：写进去、重启就没了                                   |
+| ④   | `partialize` 白名单（同文件，persist 配置）                          | 同上。⚠️ ③ 与 ④ 是**两条独立的白名单**，只改一条仍然存不住       |
+| ⑤   | `getPostprocessMediaConfigSnapshot`（同文件）                        | 备份导出 / 跨模块读取少一个字段                                  |
+| ⑥   | `applyPostprocessOverride` 的返回白名单（`lib/postprocessMedia.ts`） | 节点一写别的字段就走重建路径 → 本字段变 `undefined`（R-65 家族） |
+
+**怎么保证不漏**：改完 ① 立刻 `npx tsc -b` —— 所有构造点会一次性报出来（生产构造与测试 fixture 都算），比人工过清单可靠。
+
+### 2. 视情况要过的两处
+
+- **配置包 `TreeConfigRoot`**（`lib/treeConfigBundle.ts`）：它是「整套配置搬运」，字段要跟着走，否则别人导入会少一块而看不出少在哪。纯新增字段**不 bump `version`** —— 老包缺字段回落默认正好等于旧行为，没有需要折算的旧语义；bump 反而会让老包被 `validateTreeConfigBundle` 拒收。
+- **Excel 往返**（`consoleWorkbook` / `consoleImport`）：先看导入侧是**逐个 action 调用**还是**整份 `setState`**。本项目是前者 → 表里没有的字段既不会被导出、也不会被抹掉（这正是想要的：Excel 管树与渠道，运行偏好不进表）。
+
+### 3. 落盘白名单（④）怎么验证 —— 环境限制与替代手法
+
+测试环境**没有存储后端**（node 无 `localStorage`、无 `electronAPI`），且 zustand v5 的 `store.persist.getOptions()` 在本项目 vitest 里拿到的是 `undefined`。
+
+⇒ 拿不到运行期的白名单结果，**改用源码契约测试**（照 `src/lib/appDataNamespaceContract.test.ts` 的手法）：读 `storePostprocessMedia.ts` 源码 → 解析 `partialize` 块 → 断言「`createDefaultPostprocessMediaConfig()` 的每个键都在白名单里」。
+
+⚠️ 这类守卫**必须配一条自检**（`expect(解析出的字段数).toBeGreaterThan(5)`）：解析规则与源码格式一旦脱节，断言会恒真、守卫静默失效。
+
+### 4. 「一批图产出到多个方向」这类改动的正确性怎么测
+
+串味的**真实表现**是「后一个方向的文件写进了前一个方向的目录」—— 那要跑渲染 + 写盘才看得见。等价的可测量是**参数按哪个 `collectionId` 解析的**：
+
+```ts
+vi.mock('../projectTree/params', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../projectTree/params')>()
+  return { ...actual, resolveProjectPostprocessSlice: vi.fn(actual.resolveProjectPostprocessSlice) }
+})
+// 断言入参，而不是断言产出的文件路径
+expect(new Set(vi.mocked(resolveProjectPostprocessSlice).mock.calls.map((call) => call[2]))).toEqual(
+  new Set([DIRECTION_A.id, DIRECTION_B.id]),
+)
+```
+
+**必须做反向验证**（本轮实做两轮，均精确命中）：
+
+- 把产出目标退回单元素 → **3 failed**（恰好是那 3 条，其余照过）
+- 把逐目标解析退回归属方向 → **1 failed**：`AssertionError: expected Set{'direction-a'} to equal Set{'direction-a','direction-b'}`
+
+---
+
+## 二十一、判断一个 Tailwind 工具类「是不是真的生效了」（2026-09-22 定稿）
+
+**症状长什么样**（先记这个，比读文档快）：元素**没消失、没报错**，只是位置怪 ——
+它把后面的兄弟节点挤到「它那一行」，自己再平移上去压住对方。
+2026-09-22 报障「删除预设？弹窗的 × 压住正文」就是：× 本该 `absolute right-4 top-4`，
+实际是 `relative` + 平移 16px，正好落在「将永久删除预设…」那一行上。
+
+### 1. 30 秒自查（三步）
+
+1. **这个属性，ds 基础类声明过吗？** 例如 `.ds-button, .ds-icon-button` 里有
+   `position: relative` 与 `min-height: var(--ds-control-md)`：
+   ```bash
+   grep -n "position: relative\|min-height" src/design-system/styles.css | head
+   ```
+2. **两条规则的先后**：`main.tsx` 是 `import './index.css'`（Tailwind utilities）→ 再
+   `import './design-system/styles.css'`，**特异性相同（单类）→ 后写的赢**。
+   构建产物里可以直接比字节位置：
+   ```bash
+   node -e "const c=require('fs').readFileSync('dist/assets/index-'+process.argv[1]+'.css','utf8');console.log('.absolute@'+c.indexOf('.absolute{position:absolute}'),'ds-icon-button基础类@'+c.indexOf('position:relative'))" <hash>
+   ```
+   实测：`.absolute` @6105 **早于** 基础类 @64924 ⇒ 工具类输。
+3. **结论**：凡是要覆盖 ds 基础类里**已声明过**的属性，工具类必须带 `!`：`!absolute` / `!fixed` / `!min-h-…`。
+
+### 2. 修法与边界
+
+- **加 `!`，不要改加载顺序**。把 `styles.css` 提到 utilities 之前会让一大批「本来靠 ds 赢」的
+  `!important` 规则与调用点同时翻车，属于单独评估的改动。
+- 这个坑**不只对 position 成立**：任何 ds 基础类声明过的属性（`min-height` / `padding` / `background`…）
+  都会被静默吃掉。AssetLibraryWorkspace 的 `min-h-ds-control-lg` 就是这么丢的。
+- 新增浮层关闭按钮 / 需要脱离文档流的 ds 组件时，照抄这两处现成写法：
+  `ConfirmDialog.tsx`（`!absolute right-4 top-4`）、`WorkspaceTabBar.tsx`（`!fixed left-2 …`）。
+
+### 3. 守卫（已经在了，别绕过）
+
+- `src/design-system/compliance.test.ts` →「设计系统组件的定位工具类必须加 ! 前缀」：
+  AST 扫 ds 组件 + 文本扫 `ds-*` 类，缺 `!` 即红，报错里直接给 `文件:行 + className`。
+- `src/components/ConfirmDialog.test.tsx` → 断言关闭按钮 `className` 含 `!absolute`
+  （只断言「按钮存在 + 点得动」是不够的 —— 正是这种断言让本坑滑过了一个版本）。
+- 反向验证（本轮实做）：把 3 处 `!` 去掉 → 合规用例报 `expected […(3)] to deeply equal []`
+  且逐条列出那 3 个文件；ConfirmDialog 用例报 `expected 'absolute right-4 top-4' to contain '!absolute'`；
+  恢复后 14/14 全绿。
