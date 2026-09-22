@@ -72,3 +72,19 @@
 **证据**：`src/features/composite/lib/compositeIdentifier.ts`、
 `src/features/composite/lib/compositePresetTransfer.ts`、`storeV2.ts` v5→v6、
 `compositeRendererV2.getCompositeOverlayCacheKey`（第 4 参 `identifierSignature`）。
+
+## 后续补充：叠加是「逐层」的，可按层关闭（2026-09-22）
+
+标题里的「**全局单点**」说的是**标识符配置只有一份**（`storeV2.identifier`，一处改全部生效），
+**不是**「整个水印只贴一处」—— 实现上 `applyIdentifierToText` 在**每一个文字层的渲染里**都会跑
+（`compositeRendererV2` 的文本分支），所以**多文案水印默认每段文案都带标识**。
+单文案水印看不出区别，这就是它一直没暴露的原因。
+
+杰哥 2026-09-22 报障：一个水印里两块文案（合规声明 + 卖点），**卖点也被贴了标识**。
+
+补充决策：`CompositeV2TextLayer` 增加 **`withIdentifier?: boolean`**，**缺省 = 带**
+（只有显式 `false` 才跳过），判据集中在 `layerWantsIdentifier` **一处** ——
+图层面板那个「带标识」勾选框与渲染器读的是同一份判据，不各写一次。
+**不做「预设级选一层」**（那种只能指定一层）：逐层开关更灵活，两层都该带就都勾上。
+
+**本 ADR 的其余决策不变**：标识仍不写回预设、仍是渲染时叠加、overlay 缓存键仍含标识签名。

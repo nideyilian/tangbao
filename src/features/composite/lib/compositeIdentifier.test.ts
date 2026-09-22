@@ -6,8 +6,10 @@ import {
   getIdentifierSignature,
   hasRenderableTextLayer,
   isIdentifierEnabled,
+  layerWantsIdentifier,
   normalizeIdentifier,
   resolveIdentifierLayer,
+  resolveLayerText,
 } from './compositeIdentifier'
 import type { CompositeV2Preset, CompositeV2TextLayer } from './compositeV2Types'
 
@@ -132,5 +134,38 @@ describe('水印标识符 · 缓存签名', () => {
 
   it('未启用时是稳定值', () => {
     expect(getIdentifierSignature(createDefaultIdentifier())).toBe(getIdentifierSignature(null))
+  })
+})
+
+/**
+ * 2026-09-22 杰哥的场景：一个水印里有**多段文案**时，标识是逐层贴的 ——
+ * 连「卖点」那种不该带标识的文案也会被贴上。`withIdentifier: false` 就是给它的出口。
+ */
+describe('水印标识符 · 逐层开关（withIdentifier）', () => {
+  const identifier = { text: '@小王', placement: 'suffix' as const }
+
+  it('缺省 = 带标识（老数据一个字段都不用补）', () => {
+    expect(layerWantsIdentifier({})).toBe(true)
+    expect(layerWantsIdentifier({ withIdentifier: true })).toBe(true)
+    expect(resolveLayerText({ text: '限时秒杀' }, identifier)).toBe('限时秒杀@小王')
+  })
+
+  it('⭐ 显式 false 的那一层不带标识：合规文案带、卖点不带', () => {
+    expect(layerWantsIdentifier({ withIdentifier: false })).toBe(false)
+    // 同一份标识配置下，两层结果不同 —— 这正是「多文案水印里挑一层带标识」的用法
+    expect(resolveLayerText({ text: '本素材纯属广告创意' }, identifier)).toBe('本素材纯属广告创意@小王')
+    expect(resolveLayerText({ text: '★投保条件0~70岁', withIdentifier: false }, identifier)).toBe('★投保条件0~70岁')
+  })
+
+  it('关掉标识只影响标识：文案本身（含多行）一个字不动', () => {
+    const text = '第一行\n第二行'
+    expect(resolveLayerText({ text, withIdentifier: false }, identifier)).toBe(text)
+    // 开着时也只贴**整段**末行，不是逐行贴
+    expect(resolveLayerText({ text }, identifier)).toBe('第一行\n第二行@小王')
+  })
+
+  it('标识本身没启用时，开关开不开都是原文', () => {
+    expect(resolveLayerText({ text: '限时秒杀' }, createDefaultIdentifier())).toBe('限时秒杀')
+    expect(resolveLayerText({ text: '限时秒杀', withIdentifier: false }, createDefaultIdentifier())).toBe('限时秒杀')
   })
 })

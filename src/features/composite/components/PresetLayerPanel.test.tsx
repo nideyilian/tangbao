@@ -97,5 +97,39 @@ describe('PresetLayerPanel', () => {
     expect(html).toContain('描边颜色')
     expect(html).toContain('描边宽度')
     expect(html).toContain('软件LOGO')
+    // 图片 / LOGO 层不给「带标识」：它们本来就不会被贴标识（渲染器是逐**文字层**叠加的）
+    expect(html).not.toContain('带标识')
+  })
+
+  it('⭐「带标识」缺省勾上，关掉后不勾（多文案水印里挑一层带标识）', () => {
+    const store = createCompositeV2Store()
+    const presetId = store.getState().presets[0]!.id
+    store.getState().addTextLayer(presetId)
+    const preset = store.getState().presets[0]!
+    const textLayerId = preset.layers[0]!.id
+    /** 属性头那排勾选框的数量（只渲染选中层的属性，所以就是「显示 / 锁定 / 带标识」这三个） */
+    const checkedCount = (html: string) => (html.match(/checked/g) ?? []).length
+
+    const renderPanel = () =>
+      renderToStaticMarkup(
+        <PresetLayerPanel
+          preset={store.getState().presets[0]!}
+          selectedLayerId={textLayerId}
+          onSelectLayer={() => {}}
+          onUpdatePreset={() => {}}
+        />,
+      )
+
+    const defaultHtml = renderPanel()
+    expect(defaultHtml).toContain('带标识')
+
+    // 关掉这一层的标识：勾选框少一个 checked。
+    // 断言「少了一个」而不是「还剩 N 个」—— 后者会被「锁定」默认值一改就假红。
+    store.getState().updatePreset(presetId, {
+      layers: preset.layers.map((layer) => (layer.id === textLayerId ? { ...layer, withIdentifier: false } : layer)),
+    })
+    const offHtml = renderPanel()
+    expect(offHtml).toContain('带标识')
+    expect(checkedCount(defaultHtml) - checkedCount(offHtml)).toBe(1)
   })
 })

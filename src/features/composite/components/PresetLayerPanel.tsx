@@ -13,6 +13,7 @@ import {
 } from '../../../design-system/icons'
 import { useAppDialog } from '../../../hooks/useAppDialog'
 import { useStore } from '../../../store'
+import { layerWantsIdentifier } from '../lib/compositeIdentifier'
 import { fitCompositeTextLayer } from '../lib/compositeTextLayout'
 import type { CompositeV2Layer, CompositeV2Preset } from '../lib/compositeV2Types'
 
@@ -264,6 +265,25 @@ export function PresetLayerPanel({ preset, selectedLayerId, onSelectLayer, onUpd
                       />
                       锁定
                     </label>
+                    {/*
+                     * 「带标识」只给文字层：图片 / LOGO 层本来就不会被贴标识
+                     * （渲染器那边是**逐文字层**叠加的，见 `compositeRendererV2`）。
+                     * 缺省勾上 = 老水印行为不变；去掉勾 = 这一层不贴署名 ——
+                     * 多文案水印里给「卖点」这类不需要标识的文案用（2026-09-22 杰哥提的场景）。
+                     */}
+                    {selectedLayer.type === 'text' && (
+                      <label
+                        className="flex cursor-pointer items-center gap-1.5 text-xs text-ds-muted"
+                        title="去掉勾：这一层不贴水印标识符（署名）。多文案水印里，只给需要标识的那一层留勾"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={layerWantsIdentifier(selectedLayer)}
+                          onChange={(event) => updateLayer(selectedLayer.id, { withIdentifier: event.target.checked })}
+                        />
+                        带标识
+                      </label>
+                    )}
                   </div>
                 </div>
 

@@ -105,6 +105,18 @@ export type CompositeV2TextLayer = CompositeV2LayerBase & {
   lineHeight: number
   letterSpacing: number
   padding: number
+  /**
+   * 这一层要不要带水印标识符（署名）。**缺省 = 带**。
+   *
+   * 为什么需要它（2026-09-22 杰哥报障）：标识是**逐层**叠加的，于是多文案水印里连
+   * 「卖点」这种不该带标识的文案也会被贴上。这个字段让**层自己**回答「我要不要标识」——
+   * 比「预设级指定一层」灵活（两层都该带就都勾上），也比按关键词猜「哪段是合规文案」可靠。
+   *
+   * ⚠️ 用**正向**字段 + 判据 `layer.withIdentifier !== false`（而不是反向的 `identifierDisabled`）：
+   * 反向字段在缺省时是 falsy，会让**老数据整批丢掉标识**。只有显式 `false` 才是不带 ——
+   * 与 ADR-0004「`undefined` = 没表态、显式值 = 覆盖」同一口径。
+   */
+  withIdentifier?: boolean
 }
 
 export type CompositeV2Layer = CompositeV2ImageLayer | CompositeV2LogoLayer | CompositeV2TextLayer

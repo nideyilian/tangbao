@@ -10,10 +10,10 @@ import {
   type OrientedImageSource,
 } from '../../../lib/canvasImage'
 import {
-  applyIdentifierToText,
   getIdentifierSignature,
   normalizeIdentifier,
   resolveIdentifierLayer,
+  resolveLayerText,
 } from './compositeIdentifier'
 import type {
   CompositeV2IdentifierConfig,
@@ -301,8 +301,14 @@ async function drawLayer(
     ctx.fillStyle = layer.color
     ctx.textAlign = layer.align
     ctx.textBaseline = 'middle'
-    // 标识符在这里叠加，不写回预设：一次改动要对所有预设同时生效，且导出预设时不该把署名带走
-    const lines = applyIdentifierToText(layer.text, identifier).split('\n')
+    /*
+     * 标识符在这里叠加，不写回预设：一次改动要对所有预设同时生效，且导出预设时不该把署名带走。
+     *
+     * ⚠️ 叠加是**逐层**的（这段在每一个文字层的渲染里都会跑）—— 单段文案的水印只贴一处，
+     * 多段文案的水印默认**每段都贴**。所以给「卖点」这种不该带标识的文案留了出口：
+     * 该层 `withIdentifier: false` 时跳过（2026-09-22 加，缺省仍然带）。
+     */
+    const lines = resolveLayerText(layer, identifier).split('\n')
     const textX =
       layer.align === 'left' ? -rect.width / 2 + padding : layer.align === 'right' ? rect.width / 2 - padding : 0
     lines.forEach((line, index) => {

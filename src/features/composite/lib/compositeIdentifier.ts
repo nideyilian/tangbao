@@ -1,9 +1,13 @@
 /**
  * 水印标识符的附加规则（纯函数，无副作用，便于单测）。
  *
- * 两条规则：
+ * 三条规则：
  * 1. **预设里有能出字的文字层** → 按位置把标识符贴到文案上（开头 / 结尾 / 两侧）。
+ *    ⚠️ 这是**逐层**的：多文案水印默认每段都贴，除非那一层 `withIdentifier: false`
+ *    （2026-09-22 加 —— 多文案水印里「卖点」这种文案不该带标识）。
  * 2. **一个能出字的文字层都没有** → 退化成一个左下角的独立文字层，只写标识符本身。
+ * 3. 「这一层贴不贴」由 `layerWantsIdentifier` **一处**判定 —— 图层界面的勾选框与渲染器
+ *    读的是同一份判据，不各写一次。
  *
  * 标识符**不写回预设**：它是渲染时叠加的派生值。写回就得在导出/复制/撤销时反复处理
  * 「这段到底是不是用户自己写的」，还会让「改一次标识符」变成改 N 个预设的批量写盘；
@@ -70,6 +74,30 @@ export function applyIdentifierToText(text: string, identifier?: CompositeV2Iden
   if (atPrefix) lines[0] = value + (lines[0] ?? '')
   if (atSuffix) lines[lines.length - 1] = (lines[lines.length - 1] ?? '') + value
   return lines.join('\n')
+}
+
+/**
+ * 这一层要不要贴标识符。**缺省 = 要**，只有显式 `false` 才跳过。
+ *
+ * 单独成函数，是为了让「图层面板那个勾选框」与「渲染时贴不贴」读**同一个判据**——
+ * 两处各写一次 `!== false` / `=== false`，迟早有一处写反，而症状是
+ * 「界面上勾着、产出的图上却没有」这种最难查的一类不一致。
+ */
+export function layerWantsIdentifier(layer: { withIdentifier?: boolean }): boolean {
+  return layer.withIdentifier !== false
+}
+
+/**
+ * 某一层**最终要画的文字**：要标识就叠加，不要就原样。
+ *
+ * 渲染器与测试都读它 —— 「贴不贴标识」只有这一处实现；测试也就不必 mock 一个 canvas
+ * 才能验证「关掉标识的那一层真的不带署名」。
+ */
+export function resolveLayerText(
+  layer: Pick<CompositeV2TextLayer, 'text' | 'withIdentifier'>,
+  identifier?: CompositeV2IdentifierConfig | null,
+): string {
+  return layerWantsIdentifier(layer) ? applyIdentifierToText(layer.text, identifier) : layer.text
 }
 
 /**
