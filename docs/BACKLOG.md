@@ -3935,3 +3935,4 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 | `features/composite/lib/compositeRendererV2.test.ts` | 新增假 ctx 工具 + 2 例守卫                                            |
 | `features/composite/lib/compositeTextLayout.test.ts` | 删掉 5 例折行用例（函数已删）                                          |
 | `docs/RISK.md`（R-83） · `docs/adr/0006-*`        | 风险登记 + ADR 补「标识符不进框，所以框宽不能断行」                        |
+| `docs/tangbao-ops-runbook.md`（§二十三）           | **配方**：从 LevelDB 挖真实预设数据（dev/正式版两处路径、UTF-16LE、只读） |

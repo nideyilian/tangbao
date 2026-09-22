@@ -1475,3 +1475,39 @@ Tailwind preflight：`img,svg,video,canvas,audio,iframe,embed,object{display:blo
 本文所述「差 20px」就是这么来的。运行中的应用可以截图抽查（见 `.workbuddy/memory/MEMORY.md`
 的「正在运行的 GUI 窗口可以抽查」一条；`PrintWindow` 抓**可能拿到过时的位图**，
 用 `ImageGrab.grab()` 全屏抓更可信）。
+
+## 二十三、查真实落盘状态：从 Chromium 的 LevelDB 里挖预设 / 设置（2026-09-22 定稿）
+
+**什么时候用**：报障的根因取决于**具体数值**（框多宽、几个字、字号多少）时。
+只读代码只能在「实现本该如此」的层面打转，而这类的偏差常常来自**历史数据** ——
+代码是对的、数据是老版本留下的，只有把用户那份数据挖出来才看得见。
+2026-09-22 的「没设置换行却自己换行」就是靠它一击定位：
+实测框内宽 432 正好等于「`★` + 23 字」×18px，卡在边界上，于是折行把末字挤到第二行。
+
+**糖包的存储位置**（dev 与正式版**不是同一个** userData，别找错）：
+
+| 版本   | 目录                                      |
+| ------ | ----------------------------------------- |
+| dev    | `%APPDATA%\tangbao\Local Storage\leveldb` |
+| 正式版 | `%APPDATA%\糖包\Local Storage\leveldb`    |
+
+**怎么读**：Chromium 的 localStorage 值带前缀字节 —— `0x00` = **UTF-16**、`0x01` = Latin-1。
+含中文的 JSON 一律按 **UTF-16LE** 解码，再正则找你关心的键：
+
+```python
+# 只读；探针脚本一律落 %TEMP%，别落项目根（根目录是主进程 CWD）
+import os, re
+ROOT = os.path.join(os.environ.get('APPDATA'), 'tangbao', 'Local Storage', 'leveldb')
+for name in os.listdir(ROOT):
+    if not name.endswith(('.log', '.ldb')):
+        continue
+    text = open(os.path.join(ROOT, name), 'rb').read().decode('utf-16-le', errors='ignore')
+    for m in re.finditer('具体活动', text):          # ← 你要找的字面量
+        print(text[max(0, m.start() - 4000): m.end() + 4000])
+```
+
+- 关键键名：合成预设 / 水印库 = `tangbao-composite-v2-workspace-storage`（`storeV2` 的 `persist`）。
+- 应用**开着也能读**（只读文件即可，不必停应用、不必碰 `LOCK`）。
+- ⚠️ **别去 SQLite 找它**：`app_data_records` 只放另一批 namespace，zustand 型状态不在那儿。
+- ⚠️ 早先「搜不到」是因为只按 UTF-8 找中文字面量（实际存的是 UTF-16）—— **别据此断定「没存盘」**，
+  本文件 §十六 的 SQLite 探查同理，两条通道各管一批数据。
