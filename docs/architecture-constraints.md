@@ -319,7 +319,7 @@ prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步�
 > **字段级细节一律以 [`config-spec.md`](config-spec.md)（配置规范）为准** —— 本文只说
 > 「哪些设计勿改回」。注意规范已重设计到 **v9**（配置拆成包内独立一份 `config.json`、
 > `root`→`defaults`、`nodes`→`tree`、删掉过渡期双写），**当前代码仍是 v8**，
-> 落地清单见规范 §八 / TB-099。
+> 落地清单见规范 §八 / TB-100。
 
 - **包结构**：根节点 = 渠道与尺寸字典 + 默认输出位置 / 命名模板 / 分发排期；
   产品节点 = 水印库（按 `CompositeV2Preset.productId` 归属，含 LOGO 图）；
