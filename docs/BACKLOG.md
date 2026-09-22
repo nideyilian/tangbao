@@ -12,6 +12,7 @@
 | TB-015 | 水印预设升为顶栏 tab，归属与参数分离  | DOING | 主写线 | 2026-09-18 |
 | TB-089 | 多目标产出：「产出目标」+「记住配置」 | DOING | 主写线 | 2026-09-22 |
 | TB-107 | 分发排期：起算日自动 + 原地建日期文件夹 + 按素材打乱 | DOING | 主写线 | 2026-09-23 |
+| TB-108 | 每日素材批量生成：策略卡 + 每日比例抽取 + 预览审核发布 | DOING | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -4914,11 +4915,27 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
    （= 把素材库里本来就无水的原图有损重编一份）。升级后**产出会比以前少一份**，这是预期变化。
 2. **起始日期不再手填**：旧配置里存过的 `startDate` 被忽略（`normalize` 不读），界面与导出表都已去掉。
 
-**仍未做（下一步）**
+### 第二轮：分发排期回到方向层（2026-09-23 · ADR-0017）
 
-- **分发跟产品 / 方向走**（杰哥 2026-09-22 提出）：`PostprocessNodeOverride` 加 `distribution`，
-  `applyPostprocessOverride` 合并、`normalizePostprocessNodeOverride` 恢复读、中控台分发小节接作用域、
-  反转 `params.test.ts:332`「节点写 distribution 会被丢弃」那条用例、补一条 ADR 推翻 ADR-0011 裁决 #4。
-  ⚠️ 背景：这事杰哥提过两次 —— 2026-09-20 那次是 **`tsc` 报错拦下的**（类型里没这个字段），
-  不是判断「方向级没用」；ADR-0011 收窄的理由栏原文也是「无逐方向差异证据」。
+**杰哥 2026-09-23 01:15 选 A 方案**：只有「铺几天 / 跳过周末」跟方向走，
+其余（启用 / 搬运方式 / 重命名 / 打乱 / 改 md5 / 目标目录）留全局。
+
+- `PostprocessNodeOverride.distribution?: PostprocessDistributionOverride`
+  （`= Partial<Pick<…, 'days' | 'skipWeekends'>>`）；`applyPostprocessOverride` **逐字段**合并
+  ⇒ 节点只改「铺几天」不会把目标目录一起抹成默认。
+- `normalizePostprocessNodeOverride` 恢复读它；`collectPromotedNodeFieldValues` 不再提升它
+  （但 `PromotedNodeFieldValues.distribution` 与 `mergePromotedGlobals` 的合并**保留** ——
+  那是给「已经迁移过一次、值已落在全局基线里」的历史数据用的，删掉会让那批用户的排期消失）。
+- 中控台分发小节接作用域：排期那组带「本级自定义 / 恢复继承」，其余字段**始终写全局**
+  （表单内**分开投递**：否则节点上改排期会把目标目录一起写进节点覆盖）。
+- 反转 `params.test.ts` 里「节点写 distribution 会被丢弃」那两条；
+  与「namePattern / creator 仍被丢弃」形成**互为反向**的钉子（同样是曾被收走的字段，
+  一个读不回来、一个能读回来，谁改错谁看到它变红）。
+- 新 ADR `0017-distribution-schedule-follows-direction.md`，并在 ADR-0011 顶部加了交叉引用提示。
+
+**验收证据（第二轮）**：`tsc -b` 零错 · 改动文件 eslint 零告警 · prettier 全过 ·
+**`npx vitest run` → 264 文件 / 3159 用例全绿**（比第一轮多 26 条）。
+
+**仍未做**
+
 - 分发结果可见性（「已排期 N 个 → M 天」写进运行结论）。

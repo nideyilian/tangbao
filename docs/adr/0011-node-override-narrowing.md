@@ -6,6 +6,11 @@
 - **相关**：[0010](0010-param-center-scope-correction.md)（本条的出发认知）、
   [0003](0003-postprocess-channel-override.md)（按渠道覆盖）、TB-050、R-63
 
+> ⚠️ **2026-09-23 修订提示（二）**：裁决 #4 里的 **`distribution`** 部分
+> **已被 [0017](0017-distribution-schedule-follows-direction.md) 推翻** —— 排期（铺几天 / 跳过周末）
+> 回到了节点层。**同一条裁决里的 `autoCompanionClean` 那部分已随字段删除失效**（TB-107）。
+> 读下面「刻意收窄掉的字段」那张表时请连同 0013、0017 一起看，不要把 `distribution` 再收走一次。
+>
 > ⚠️ **2026-09-21 修订提示**：下方表格里的裁决 #3（「节点级渠道勾选 —— 不需要，我自己勾选」）
 > **已被 [0013](0013-participation-follows-direction.md) 推翻**：`selectedMediaIds` 回到了节点层，
 > 节点覆盖现在是 **4 字段 + `byMedia`**。本文件其余部分（尤其 §三 的 R-63 迁移设计）

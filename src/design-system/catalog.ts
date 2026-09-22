@@ -987,15 +987,15 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/composite/components/DistributionSection.tsx',
     responsibility:
-      '中控台「渠道与输出」分区里的**分发小节**：纯净版自动伴随开关 + 分发配置（复用 PostprocessDistributionFields）。2026-09-21 从独立分区并入，只留内容 —— 标题与小节壳由 ChannelSection 给',
+      '中控台「渠道与输出」分区里的**分发小节**：排期（铺几天 / 跳过周末）按左边树选的方向读写，其余字段写全局；复用 PostprocessDistributionFields。2026-09-21 从独立分区并入，只留内容 —— 标题与小节壳由 ChannelSection 给',
     decision: 'compose',
-    targets: ['Switch'],
+    targets: ['Switch', 'Badge', 'Button'],
   },
   {
     module: 'src/features/postprocess/PostprocessDistributionFields.tsx',
-    responsibility: '分发配置表单（后处理面板与项目树节点参数弹窗共用同一份字段与措辞）',
+    responsibility: '分发配置表单（中控台分发小节专用；作用域标记由宿主注入）',
     decision: 'compose',
-    targets: ['Switch', 'TextField', 'SegmentedControl', 'Button', 'Alert'],
+    targets: ['Switch', 'TextField', 'SegmentedControl', 'Button', 'Badge'],
   },
   {
     module: 'src/features/postprocess/ChannelOutputDirs.tsx',

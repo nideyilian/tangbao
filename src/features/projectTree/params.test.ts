@@ -239,8 +239,8 @@ describe('normalizeProjectNodeParamsMap', () => {
     expect(result.good.postprocess?.outputDir).toBe('D:/投放')
   })
 
-  it('⭐ 收窄后：节点上已收归全局的字段被丢弃（ADR-0011）', () => {
-    // 这四者移到了全局层，节点上再写也不再被读取 —— 只有 `collectPromotedNodeFieldValues`
+  it('⭐ 收窄后：namePattern / creator 这些已收归全局的字段仍被丢弃（ADR-0011）', () => {
+    // 这三者移到了全局层，节点上再写也不再被读取 —— 只有 `collectPromotedNodeFieldValues`
     // 会在 normalize **之前**把它们接住（R-63 的迁移），这里验证「读不回来」
     const result = normalizeProjectNodeParamsMap({
       node: {
@@ -248,11 +248,18 @@ describe('normalizeProjectNodeParamsMap', () => {
           namePattern: '{product}-{seq}',
           creator: '设计组',
           autoCompanionClean: false,
-          distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true },
         },
       },
     })
     expect(result.node).toBeUndefined()
+  })
+
+  it('⭐ 分发排期回到节点层（2026-09-23）：写 days 会被读回来', () => {
+    // 与上面那条互为反向：同样是「曾经被收走」的字段，namePattern 读不回来、days 能读回来
+    const result = normalizeProjectNodeParamsMap({
+      node: { postprocess: { distribution: { days: 14 } } },
+    })
+    expect(result.node?.postprocess?.distribution).toEqual({ days: 14 })
   })
 
   it('收窄后：节点上的 direction 仍被丢弃（画面方向不给手选口子）', () => {
@@ -328,22 +335,28 @@ describe('normalizePostprocessNodeOverride —— 水印预设多值与旧字段
   })
 })
 
-describe('分发配置已收归全局（ADR-0011）—— 节点上不再可覆盖', () => {
-  it('⭐ 节点写 distribution 会被归一化丢弃', () => {
+describe('分发排期回到节点层（2026-09-23，推翻 ADR-0011 裁决 #4）', () => {
+  it('⭐ 节点只能覆盖排期（days / skipWeekends），操作口径一律丢掉', () => {
     const normalized = normalizePostprocessNodeOverride({
-      distribution: { enabled: true, startDate: '20260901', days: 7, mode: 'delete', renameMode: 'uuid' },
+      distribution: { enabled: true, days: 7, skipWeekends: true, mode: 'delete', renameMode: 'uuid' },
     })
-    // 整条记录没有任何可保留字段 → undefined（不再是「保留一份整份配置」）
-    expect(normalized).toBeUndefined()
+    // 排期进来；启用与否 / 复制还是移动 / 改名 / 目标目录 **不在** 节点层 —— 那是全局一套
+    expect(normalized?.distribution).toEqual({ days: 7, skipWeekends: true })
   })
 
-  it('⭐ 语义变化前：node.creator 会压掉全局值；收窄后沿用到全局基线', () => {
+  it('排期字段非法（0 天、非布尔）时逐条丢掉；一条都不剩 = 这个方向没表态', () => {
+    expect(normalizePostprocessNodeOverride({ distribution: { days: 0 } })).toBeUndefined()
+    expect(normalizePostprocessNodeOverride({ distribution: { skipWeekends: 'yes' } })).toBeUndefined()
+  })
+
+  it('⭐ 节点写了排期就压掉全局值，没写的字段继续继承（逐字段合并，不是整份替换）', () => {
     const chain: ProjectNodeParamsMap = {
-      [DIRECTION]: { postprocess: { outputDir: 'D:/方向' } },
+      [DIRECTION]: { postprocess: { distribution: { days: 30 }, outputDir: 'D:/方向' } },
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
-    // 分发固定取全局基线的值，节点层无法再改
-    expect(slice.config.distribution).toEqual(baseConfig().distribution)
+    expect(slice.config.distribution.days).toBe(30)
+    expect(slice.config.distribution.mode).toBe(baseConfig().distribution.mode)
+    expect(slice.config.distribution.targetDir).toBe(baseConfig().distribution.targetDir)
     expect(slice.config.outputDir).toBe('D:/方向')
   })
 })
@@ -706,13 +719,14 @@ describe('R-63 迁移：节点上已收归全局的旧值必须被接住（ADR-0
     const promoted = collectPromotedNodeFieldValues(LEGACY_PAYLOAD)
     expect(promoted.creator).toBe('方向级创作者')
     expect(promoted.namePattern).toBe('{product}-{seq}')
-    expect(promoted.distribution?.days).toBe(30)
+    // `distribution` **不再**被提升：2026-09-23 起节点上写的排期会被直接读回，不必走迁移
+    expect(promoted.distribution).toBeUndefined()
   })
 
   it('⭐ 必须吃原始数据 —— 归一化结果里这些字段已经没了', () => {
     const normalized = normalizeProjectNodeParamsMap(LEGACY_PAYLOAD)
-    // 归一化把整条记录丢了（没有可保留字段），所以从它里面收集只能是空
-    expect(normalized[DIRECTION]).toBeUndefined()
+    // namePattern / creator 在归一化时被丢掉了 ⇒ 从归一化结果里**收集不到**它们。
+    // （`distribution` 现在是节点可覆盖项，会被原样读回 —— 它本来就不走提升这条路。）
     expect(collectPromotedNodeFieldValues(normalized)).toEqual({})
   })
 

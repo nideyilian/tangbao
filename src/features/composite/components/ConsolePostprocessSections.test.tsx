@@ -611,7 +611,7 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
 
 describe('中控台 · 分发分区', () => {
   it('默认关闭时只留开关，不展开具体字段', () => {
-    const body = render(<DistributionSection />)
+    const body = render(<DistributionSection scope={GLOBAL_NODE_ID} />)
     expect(body).toContain('启用分发')
     expect(body).not.toContain('铺几天')
   })
@@ -620,7 +620,7 @@ describe('中控台 · 分发分区', () => {
     act(() => {
       usePostprocessMediaStore.getState().patchDistribution({ enabled: true })
     })
-    const body = render(<DistributionSection />)
+    const body = render(<DistributionSection scope={GLOBAL_NODE_ID} />)
     expect(body).toContain('铺几天')
     expect(body).toContain('搬运方式')
     expect(body).toContain('重命名方式')

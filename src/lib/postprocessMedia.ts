@@ -463,11 +463,25 @@ export function formatInheritedOutputDirsHint(dirs: string[]): string {
  * | `selectedMediaIds`  | 「这个方向投哪几个渠道」是方向维度（ADR-0013，见下）       |
  * | `enabled`           | 「这个方向要不要跑」是节点自有语义                         |
  *
- * **刻意收窄掉的字段**（原 10 字段 → 现 4 + `byMedia`）：`direction` /
- * `namePattern` / `creator` / `autoCompanionClean` / `distribution`。理由是它们**不是**方向维度：
+ * **刻意收窄掉的字段**（原 10 字段 → 现 5 + `byMedia`）：`direction` / `namePattern` /
+ * `creator` / `autoCompanionClean`。理由是它们**不是**方向维度：
  * - `direction`：画面方向**按源图自动判**（见 `resolveOutputDirection`），不提供手选口子；
  * - `namePattern` / `creator`：命名规则**全局一套**，逐方向配只会让文件名口径分散；
- * - `autoCompanionClean` / `distribution`：属于「全局怎么跑」，无任何逐方向差异证据。
+ * - `autoCompanionClean`：**字段已删除**（2026-09-23 —— 纯净版产出的就是素材库里本来就
+ *   无水的原图，「自动伴随」等于把它有损重编一份白占磁盘）。
+ *
+ * ### `distribution` 为什么回到节点层（2026-09-23，推翻 ADR-0011 裁决 #4）
+ *
+ * ADR-0011 把它收走，理由栏原文是「**无逐方向差异证据**」—— 也就是当时是「没找到反证」，
+ * 而不是「已证伪」。更早（2026-09-20）还曾打算给它挂作用域选择器，那次是被 **`tsc` 报错
+ * 拦下的**（类型里根本没有这个字段），同样不是判断「方向级没用」。
+ *
+ * 实际用下来，「A 产品铺 7 天、B 产品铺 30 天」本来就是**逐方向的投放节奏**，
+ * 只放全局等于所有方向只能共用一个节奏 —— 这正是 ADR-0003 里「输出目录 / 水印按方向分叉」
+ * 那一类证据，只是当时没人去量。
+ *
+ * ⚠️ **收回来的只有排期口径**（`days` / `skipWeekends`）：搬运方式、重命名、改 md5、目标目录
+ * 属于「怎么搬」的操作习惯，全局一套更省心（ADR-0011 的顾虑在这一半上仍然成立）。
  *
  * ### `selectedMediaIds` 为什么回到节点层（ADR-0013，2026-09-21）
  *
@@ -490,9 +504,46 @@ export function formatInheritedOutputDirsHint(dirs: string[]): string {
  * `byMedia` 是**同层内的再细分**，不是新的一级继承：本节点某渠道没写时回退到本节点的通用值，
  * 而不是继续往父节点找。否则「方向级写了百度、产品级写了通用」会拼出无法从界面上推理的组合。
  */
+/**
+ * 方向级可覆盖的**排期**字段（见上方「distribution 为什么回到节点层」）。
+ *
+ * - `days`：铺几天；
+ * - `skipWeekends`：跳不跳周末。
+ *
+ * **没有** `enabled` / `mode` / `renameMode` / `modifyMd5` / `targetDir`：
+ * 「要不要分发」归全局那个开关统一管（方向不参与产出有自己的 `enabled`，别再叠一层）；
+ * 其余是操作口径，全局一套。逐字段可选 ⇒ `undefined` 表示「这个方向没表态，向上继承」。
+ */
+export type PostprocessDistributionOverride = Partial<Pick<PostprocessDistributionConfig, 'days' | 'skipWeekends'>>
+
+/**
+ * 归一化方向级排期覆盖。
+ *
+ * 逐字段保留「没表态」：只收 `days` / `skipWeekends`，一条有效字段都没有就整个丢掉 ——
+ * 留一个空对象会让界面显示成「这个方向覆盖了排期」却什么都没改（与 `byMedia` 同一条口径）。
+ */
+export function normalizePostprocessDistributionOverride(raw: unknown): PostprocessDistributionOverride | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const input = raw as Record<string, unknown>
+  const result: PostprocessDistributionOverride = {}
+  if (typeof input.days === 'number' && Number.isFinite(input.days)) {
+    const days = Math.trunc(input.days)
+    if (days > 0) result.days = days
+  }
+  if (typeof input.skipWeekends === 'boolean') result.skipWeekends = input.skipWeekends
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
 export interface PostprocessNodeOverride {
   /** 输出目录（绝对路径）；空串 = 用默认输出位置 */
   outputDir?: string
+  /**
+   * 这个方向的**排期**（铺几天 / 跳不跳周末）。
+   *
+   * 只覆盖这两个字段，其余分发口径（复制还是移动、改名方式、改 md5、目标目录、启用与否）
+   * 一律继承全局。`undefined` 或空对象 = 这个方向没表态 ⇒ 沿继承链向上取。
+   */
+  distribution?: PostprocessDistributionOverride
   /** 水印预设 id 列表；`[]` = 该方向不加水印（显式覆盖），`undefined` = 继承 */
   watermarkPresetIds?: string[]
   /**
@@ -570,7 +621,9 @@ export function applyPostprocessOverride(
     namePattern: base.namePattern,
     creator: base.creator,
     watermarkPresetIds: perMedia?.watermarkPresetIds ?? override.watermarkPresetIds ?? base.watermarkPresetIds,
-    distribution: base.distribution,
+    // 排期按方向覆盖，**逐字段**合并：这个方向没写的字段继续继承全局那份
+    // （不是整份替换 —— 否则节点上只改「铺几天」就会把「目标目录」一起抹成默认）
+    distribution: override.distribution ? { ...base.distribution, ...override.distribution } : base.distribution,
   }
 }
 

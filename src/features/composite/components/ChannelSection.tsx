@@ -434,10 +434,10 @@ export function ChannelSection({ scope }: Props) {
         <div className="mt-5 border-t border-ds-border pt-4">
           <SectionHeader
             title="分发"
-            description="全局一套，不随作用域变：按天把产出分散到日期目录，并决定纯净版原图是否跟随产出。"
+            description="排期（铺几天 / 跳过周末）跟着左边树选的方向走；其余是全局一套：按天把产出分散到日期目录。"
           />
           <div className="mt-3">
-            <DistributionSection />
+            <DistributionSection scope={scope} />
           </div>
         </div>
 

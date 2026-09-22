@@ -7,13 +7,11 @@
  */
 
 import type { AssetCollection } from '../../types'
-import {
-  normalizePostprocessDistributionConfig,
-  type PostprocessDistributionConfig,
-} from '../../lib/postprocessDistribution'
+import type { PostprocessDistributionConfig } from '../../lib/postprocessDistribution'
 import {
   applyPostprocessOverride,
   normalizeOutputDirList,
+  normalizePostprocessDistributionOverride,
   type PostprocessMediaConfig,
   type PostprocessMediaOverride,
   type PostprocessNodeOverride,
@@ -320,10 +318,13 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
   const input = raw as Record<string, unknown>
   const result: PostprocessNodeOverride = {}
 
-  // 已收归全局的字段（`direction` / `namePattern` / `creator` /
-  // `autoCompanionClean` / `distribution`）在这里**刻意不读**：它们不再是节点可覆盖项（ADR-0011）。
-  // 旧数据里的值由 `collectPromotedNodeFieldValues` 在 migrate 阶段先接住，不会丢。
+  // 已收归全局的字段（`direction` / `namePattern` / `creator`）在这里**刻意不读**：
+  // 它们不再是节点可覆盖项（ADR-0011）。`autoCompanionClean` 字段已删（2026-09-23）。
+  // ⚠️ `distribution` **不再**在此列 —— 2026-09-23 起排期回到节点层（推翻 ADR-0011 裁决 #4），
+  // 旧数据里挂在节点上的排期会被**直接读回**，不再需要走 migrated 提升那条路。
   if (typeof input.outputDir === 'string') result.outputDir = input.outputDir
+  const distribution = normalizePostprocessDistributionOverride(input.distribution)
+  if (distribution) result.distribution = distribution
   // 空数组是**显式**「这个方向不加水印」，必须与「没表态」（undefined）区分，所以数组照收不误。
   // 旧版单值字段（`watermarkPresetId`）一并迁移，否则升级后用户已配的水印会消失。
   if (Array.isArray(input.watermarkPresetIds)) {
@@ -356,10 +357,14 @@ export interface PromotedNodeFieldValues {
 /**
  * 从**原始（未归一化）**节点参数表里，为已收归全局的字段各挑一个旧值（R-63 的一次性迁移）。
  *
- * **为什么需要它**：`PostprocessNodeOverride` 从 10 字段收到 3 字段（ADR-0011）后，
- * 旧数据里挂在节点上的 `namePattern` / `creator` / `autoCompanionClean` / `distribution`
- * 会被 `normalizePostprocessNodeOverride` 直接丢弃 —— 用户**已经配好的值凭空消失、
- * 界面上不报任何错**，且不可逆。这是 R-63 记的场景，所以升级时必须先把值接住、提升到全局基线。
+ * **为什么需要它**：`PostprocessNodeOverride` 从 10 字段收到 4 字段（ADR-0011）后，
+ * 旧数据里挂在节点上的 `namePattern` / `creator` 会被 `normalizePostprocessNodeOverride`
+ * 直接丢弃 —— 用户**已经配好的值凭空消失、界面上不报任何错**，且不可逆。这是 R-63 记的场景，
+ * 所以升级时必须先把值接住、提升到全局基线。
+ *
+ * ⚠️ `distribution` **不在此列**（2026-09-23 起排期回到节点层）：节点上写过的值现在会被
+ * 正常读回，不再需要提升。`PromotedNodeFieldValues` 里仍留着它 —— 那是给**已经迁移过一次**
+ * 的历史数据用的（值已落在全局基线里），新改动一律走节点覆盖。
  *
  * **必须吃原始数据**：归一化后这些字段已经没了，从归一化结果里收集只会得到空对象。
  *
@@ -386,9 +391,6 @@ export function collectPromotedNodeFieldValues(rawParams: unknown): PromotedNode
     if (promoted.creator === undefined && typeof fields.creator === 'string') {
       promoted.creator = fields.creator
     }
-    if (promoted.distribution === undefined && fields.distribution && typeof fields.distribution === 'object') {
-      promoted.distribution = normalizePostprocessDistributionConfig(fields.distribution)
-    }
   }
   return promoted
 }
@@ -402,7 +404,8 @@ export function hasLegacyNodeOnlyFields(rawParams: unknown): boolean {
     const input = (record as Record<string, unknown>).postprocess
     if (!input || typeof input !== 'object') continue
     const fields = input as Record<string, unknown>
-    if (fields.namePattern !== undefined || fields.creator !== undefined || fields.distribution !== undefined) {
+    // `distribution` 不算残留：2026-09-23 起它就是节点可覆盖项（排期回到节点层）
+    if (fields.namePattern !== undefined || fields.creator !== undefined) {
       return true
     }
   }
