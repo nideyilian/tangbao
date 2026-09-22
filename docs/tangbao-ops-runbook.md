@@ -1546,8 +1546,10 @@ TANGBAO_ELECTRON_ARGS="--remote-debugging-port=9333 --disable-gpu" npm run dev
 - 起完 `curl -s http://127.0.0.1:9333/json/list`，page target 的 `url` 必须是
   `http://localhost:41731/`；**是 `file://` 就说明 origin 拿错了**。
 - **本机是 RDP 会话**：不带 `--disable-gpu` 会 GPU 进程反复崩溃 → `GPU process isn't usable. Goodbye.`
-- 探针脚本落 `%TEMP%`（**别落项目根**，根目录是主进程 CWD）：连 target → `Runtime.evaluate`
-  即可；`awaitPromise` 要开，DOM 操作用 `element.click()` 就能触发 React 合成事件。
+- **探针直接用现成的 `scripts/cdp-eval.mjs`**（表达式当参数传进去，已开 `awaitPromise`；
+  页面是 `file://` 时它会明确警告）：`node scripts/cdp-eval.mjs "location.href"`。
+  自写脚本时落 `%TEMP%`（**别落项目根**，根目录是主进程 CWD）。
+- DOM 操作用 `element.click()` 就能触发 React 合成事件，不必模拟真实鼠标事件。
 
 ### 3. 校验产物：别只看「已发布」四个字
 
