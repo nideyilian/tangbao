@@ -4645,3 +4645,57 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
      我按 `py-1.5` + `text-xs`（行高约 28px）与按钮 20px 推算不会撑高 —— 这是算式，不是实测。
 
 **状态**：`DONE`（2026-09-22）。
+
+---
+
+### TB-104 后处理 `{seq}` 按产出文件夹各自计数（不再整批共用一个计数器）
+
+- **来源**：杰哥 2026-09-22 17:56：「输出多渠道多尺寸时，不同的文件夹里的素材共用了一个排序」。
+  追问三层（产出先后 / 文件名序号 / 两层都要）后确认是**文件名的 `{seq}`**。
+- **状态**：DONE · 本线
+- **问题**：`taskPostprocess.ts` 里 `sequence` 是**一个**计数器，贯穿整批
+  （所有图片 × 所有方向 × 所有渠道 × 所有尺寸）。于是：
+  ① 同一个产出文件夹里的号是跳的（1、4、7…，中间的号被别的文件夹吃掉）；
+  ② 在 A 方向多勾一个渠道/尺寸 → A 的产出量变 → **B 方向的文件名序号整体后移**
+  （这正是杰哥说的「在某一处改了会串到别处」）。
+- **改法**：序号改成**按产出文件夹（`subFolders[0]`，即 方向×渠道×尺寸）各自计数**，
+  每个文件夹从 1 开始；计数器跨图片保留，同一文件夹内仍连续。
+- **验收标准**（可测）
+  1. 同一产出文件夹内的 `{seq}` 从 1 连续（不再跳跃）；
+  2. 改 A 方向的渠道/尺寸后，B 方向的文件名序号**不变**；
+  3. 同一文件夹内不出现重号（不覆盖已有文件，`-2/-3` 兜底仍生效）；
+  4. 产出预览显示的序号与实际产出一致；
+  5. 全量 `npm run verify` 全绿。
+- **改动面**：`src/lib/postprocessRunner.ts`、`src/features/postprocess/taskPostprocess.ts`、
+  `src/features/composite/components/PostprocessOutputPreview.tsx` + 对应测试、
+  `docs/hanling-postprocess-replica-plan.md`（口径那句）。
+- **改了什么**
+  1. `postprocessRunner.ts`：`startSequence: number` → `startSequences: Record<文件夹名, 号>`
+     （返回 `nextSequences`）。分组键就用 `subFolders[0]`（文件夹名），因为**重名只可能发生在
+     同一个文件夹内**：不同文件夹是不同目录，跨文件夹重号无妨 —— 这也让「不覆盖已有文件」
+     这条性质在改造后依然成立。
+  2. `taskPostprocess.ts`：`let sequence = 1` → `let sequencesByFolder`（跨图片保留），
+     调用处改成传入/接收这张表。
+  3. `PostprocessOutputPreview.tsx`：预览不再自己数 `units` 下标，改成直接复用
+     `buildSourceVariantPlans` —— 预览与真实产出从此是**同一份编排**，序号不可能分叉。
+- **验收证据**（2026-09-22）
+  - **全量 `npm run verify` 通过**：`262 files / 3111 passed`（Node v24.14.0，tsc 双端 + lint +
+    format:check + test 全绿）。开工时工作区挂着 TB-089 的未提交改动，验证前它已被提交
+    （`c0311b2`）→ 门禁是在**只剩本轮改动**的工作区上跑的，R-74 的顾虑消除、结论可信。
+  - 定向用例：`vitest run src/lib/postprocess src/features/postprocess src/features/composite`
+    = 39 files / 543 passed（新增 2 例：runner 的「方向隔离」+ 预览的「按文件夹分组」）。
+  - **反向验证（两条，均精确命中）**
+    1. 把分组键改回「所有单元共用一把号」→ `postprocessRunner.test.ts` **5 failed / 13 passed**，
+       失败全是新口径那几条；核心断言原文
+       `expected '产品B-百度-1140x640-3.jpg' to be '产品B-百度-1140x640-1.jpg'`
+       —— **这正是杰哥报的现象**（B 方向的号被 A 吃掉两位）。
+    2. 让预览自己数下标（`fileName: index + 1`）→ `ConsolePostprocessSections.test.tsx`
+       **1 failed / 38 skipped**，恰是预览那条（`expected false to be true`）。
+- **提交**：TB-089 已独立提交（`c0311b2`），本条因此可与它分开提交
+  （R-09：只 add 本轮 7 个文件）。本轮由杰哥决定何时提。
+- **知情取舍**
+  1. 同一批次里，某个文件夹内的号可能与其他文件夹重号 —— 这是刻意的（不同目录）。
+     真正要守的性质是「**同一文件夹内唯一**」，它仍然成立，且 `-2`/`-3` 兜底没动。
+  2. `{seq}` 在模板里的位置不限于末尾，所以分组键取的是**文件夹名**而不是「文件名去掉尾部序号」，
+     模板再怎么改都不会错配。
+  3. 已产出的文件不受影响，**只有新产出**的文件名会变（同一批重跑、配置没变时，号也一模一样）。

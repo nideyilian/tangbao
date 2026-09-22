@@ -212,6 +212,26 @@ describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名
     expect(body).toContain('纯净版')
   })
 
+  it('⭐ 产出预览的序号按文件夹分组：两个渠道各自从 1 开始（跟真实产出同一套编排）', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().toggleSelectedCollection('direction-a')
+      usePostprocessMediaStore.getState().toggleSelectedMedia('gdt')
+      usePostprocessMediaStore.getState().toggleSelectedMedia('baidu')
+    })
+    const body = render(<ChannelSection scope="direction-a" />)
+
+    /**
+     * 只断言文件名**尾巴**（`-序号.jpg`），不比对整串：模板开头的 `{date}` 取当前时间，
+     * 整串断言会随日期变红。
+     */
+    const fileNames = body.match(/[\w\u4e00-\u9fa5-]+\.jpg/g) ?? []
+    // 纯净版 / 广点通 / 百度×2 落在**四个不同文件夹** → 都是 `-1`（先断数量，防 `every` 空数组假绿）
+    expect(fileNames.length).toBeGreaterThanOrEqual(4)
+    expect(fileNames.every((name) => name.endsWith('-1.jpg'))).toBe(true)
+    // 预览自己数下标时（TB-104 之前）第二个渠道会显示成 `-2` —— 这条就是那个缺陷的反向验证
+    expect(fileNames.some((name) => name.endsWith('-2.jpg'))).toBe(false)
+  })
+
   it('产出预览跟随作用域：全局层没启用方向时给提示，节点层按该节点照常展开', () => {
     // 全局层：产出目标来自「已启用的范围」，一条都没启用时就没有可展开的目标
     expect(render(<ChannelSection scope={GLOBAL_NODE_ID} />)).toContain('还没有启用任何方向')

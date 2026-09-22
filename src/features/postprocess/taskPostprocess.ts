@@ -210,7 +210,14 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   })
 
   const produced = new Set(input.alreadyProducedImageIds ?? [])
-  let sequence = 1
+  /**
+   * 产出的 `{seq}` **按产出文件夹分别计数**（key = 文件夹名），跨图片保留在这个表里。
+   *
+   * 不能整批共用一个计数器（2026-09-22 杰哥报障）：那样「在某个方向多勾一个渠道 / 尺寸」
+   * 会让**别的方向**的产出文件名整体串号 —— 跟这次配置毫无关系的那批素材，文件名却变了。
+   * 每个文件夹从 1 开始，同一文件夹内连续且不重号（重名只可能发生在同一文件夹内）。
+   */
+  let sequencesByFolder: Record<string, number> = {}
   /** 已写成的文件数（双写按实际份数算），进度与收尾结论都看它。 */
   let producedFiles = 0
 
@@ -385,14 +392,14 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         if (!result.skippedMediaIds.includes(mediaId)) result.skippedMediaIds.push(mediaId)
       }
 
-      const { plans, nextSequence } = buildSourceVariantPlans({
+      const { plans, nextSequences } = buildSourceVariantPlans({
         source: { imageId, index, width: source.width, height: source.height },
         units: selected.units,
         config: bucketConfig,
-        startSequence: sequence,
+        startSequences: sequencesByFolder,
         createdAt: input.createdAt,
       })
-      sequence = nextSequence
+      sequencesByFolder = nextSequences
 
       // 单元数只有到这里才知道（要按渠道 × 尺寸 × 预设展开）：报给进度，界面才能显示
       // 「这张图 3/8」而不是干等。

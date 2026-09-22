@@ -5,7 +5,7 @@ import {
   shouldCompressPostprocessUnit,
   type PostprocessSourceImage,
 } from './postprocessRunner'
-import { PURE_MEDIA_ID, type PostprocessOutputUnit } from './postprocessMedia'
+import { PURE_MEDIA_ID, type PostprocessOutputUnit, type PostprocessProjectTarget } from './postprocessMedia'
 
 function makeUnit(patch: Partial<PostprocessOutputUnit> = {}): PostprocessOutputUnit {
   return {
@@ -25,6 +25,11 @@ const source: PostprocessSourceImage = { imageId: 'img-1', index: 0, width: 2048
 
 const shortPattern = { namePattern: '{product}-{media}-{size}-{seq}', creator: '' }
 
+/** 造一个项目目标；方向名走 `{product}` 段，方便用例里认人。 */
+function makeProject(collectionId: string, product: string): PostprocessProjectTarget {
+  return { collectionId, line: '', product, direction: '横构图' }
+}
+
 describe('shouldCompressPostprocessUnit', () => {
   it('maxSizeKb 为 0 表示不限体积，不算压缩', () => {
     expect(shouldCompressPostprocessUnit({ maxSizeKb: 0 })).toBe(false)
@@ -40,34 +45,77 @@ describe('shouldCompressPostprocessUnit', () => {
 })
 
 describe('buildSourceVariantPlans', () => {
-  it('文件名带扩展名，序号按单元顺序连续递增', () => {
-    const { plans, nextSequence } = buildSourceVariantPlans({
+  it('不同文件夹各自从 1 开始编号（序号按文件夹分组，不共用一个计数器）', () => {
+    const { plans, nextSequences } = buildSourceVariantPlans({
       source,
       config: shortPattern,
-      startSequence: 1,
       units: [
         makeUnit({ sizeId: 'baidu-1140x640', mediaName: '百度', width: 1140, height: 640 }),
         makeUnit({ sizeId: 'gdt-1280x720', mediaId: 'gdt', mediaName: '广点通', width: 1280, height: 720 }),
       ],
     })
 
+    // 两个单元落在**不同文件夹**（百度-1140x640 / 广点通-1280x720）→ 各自从 1 起。
+    // 2026-09-22 之前这里是整批一个计数器，第二个单元会拿到 `-2`（见 TB-104）。
     expect(plans.map((plan) => plan.fileName)).toEqual([
       `百度-1140x640-1.${POSTPROCESS_OUTPUT_EXTENSION}`,
-      `广点通-1280x720-2.${POSTPROCESS_OUTPUT_EXTENSION}`,
+      `广点通-1280x720-1.${POSTPROCESS_OUTPUT_EXTENSION}`,
     ])
-    expect(nextSequence).toBe(3)
+    expect(nextSequences).toEqual({ '百度-1140x640': 2, '广点通-1280x720': 2 })
   })
 
-  it('跨源图续号，一次生成多张图时不会同名覆盖', () => {
-    const first = buildSourceVariantPlans({ source, config: shortPattern, startSequence: 1, units: [makeUnit()] })
+  it('⭐ 某个方向多勾一个渠道，别的方向的序号不受影响（TB-104 的核心诉求）', () => {
+    const unitOf = (
+      project: PostprocessProjectTarget,
+      mediaName: string,
+      sizeId: string,
+      width: number,
+      height: number,
+    ) => makeUnit({ project, mediaName, sizeId, width, height })
+    const projectA = makeProject('a', '产品A')
+    const projectB = makeProject('b', '产品B')
+
+    // 改配置前：只有 B 方向出一个渠道
+    const before = buildSourceVariantPlans({
+      source,
+      config: shortPattern,
+      units: [unitOf(projectB, '百度', 'baidu-1140x640', 1140, 640)],
+    })
+    // 改配置后：A 方向多勾了一个渠道 —— A 的产出量变了，但 B 的号不该跟着串
+    const after = buildSourceVariantPlans({
+      source,
+      config: shortPattern,
+      units: [
+        unitOf(projectA, '百度', 'baidu-1140x640', 1140, 640),
+        unitOf(projectA, '广点通', 'gdt-1280x720', 1280, 720),
+        unitOf(projectB, '百度', 'baidu-1140x640', 1140, 640),
+      ],
+    })
+
+    expect(before.plans[0].fileName).toBe(`产品B-百度-1140x640-1.${POSTPROCESS_OUTPUT_EXTENSION}`)
+    // 整批共用一个计数器时这里是 `-3`（被 A 的两个单元吃掉了 1、2）—— 反向验证就靠这条
+    expect(after.plans[2].fileName).toBe(`产品B-百度-1140x640-1.${POSTPROCESS_OUTPUT_EXTENSION}`)
+    expect(after.plans[0].fileName).toBe(`产品A-百度-1140x640-1.${POSTPROCESS_OUTPUT_EXTENSION}`)
+    expect(after.plans[1].fileName).toBe(`产品A-广点通-1280x720-1.${POSTPROCESS_OUTPUT_EXTENSION}`)
+  })
+
+  it('同一文件夹内跨源图接着编号，一次生成多张图时不会同名覆盖', () => {
+    const first = buildSourceVariantPlans({ source, config: shortPattern, units: [makeUnit()] })
     const second = buildSourceVariantPlans({
       source: { ...source, imageId: 'img-2', index: 1 },
       config: shortPattern,
-      startSequence: first.nextSequence,
+      startSequences: first.nextSequences,
       units: [makeUnit()],
     })
 
     expect(second.plans[0].fileName).toBe(`百度-1140x640-2.${POSTPROCESS_OUTPUT_EXTENSION}`)
+  })
+
+  it('不修改传入的序号表（调用方会把上次返回的对象原样传回来）', () => {
+    const startSequences = { '百度-1140x640': 5 }
+    buildSourceVariantPlans({ source, config: shortPattern, startSequences, units: [makeUnit()] })
+
+    expect(startSequences).toEqual({ '百度-1140x640': 5 })
   })
 
   it('纯净版不限体积，不参与体积二分', () => {
@@ -79,7 +127,7 @@ describe('buildSourceVariantPlans', () => {
       maxSizeKb: 0,
       clean: true,
     })
-    const { plans } = buildSourceVariantPlans({ source, config: shortPattern, startSequence: 1, units: [cleanUnit] })
+    const { plans } = buildSourceVariantPlans({ source, config: shortPattern, units: [cleanUnit] })
 
     expect(plans).toHaveLength(1)
     expect(plans[0].compress).toBe(false)
@@ -87,7 +135,7 @@ describe('buildSourceVariantPlans', () => {
   })
 
   it('渠道单元按 maxSizeKb 标记为需要压缩', () => {
-    const { plans } = buildSourceVariantPlans({ source, config: shortPattern, startSequence: 1, units: [makeUnit()] })
+    const { plans } = buildSourceVariantPlans({ source, config: shortPattern, units: [makeUnit()] })
     expect(plans[0].compress).toBe(true)
   })
 
@@ -95,7 +143,6 @@ describe('buildSourceVariantPlans', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: { namePattern: '{direction}', creator: '' },
-      startSequence: 1,
       units: [
         makeUnit({
           direction: 'landscape',
@@ -111,7 +158,6 @@ describe('buildSourceVariantPlans', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: { namePattern: '{direction}', creator: '' },
-      startSequence: 1,
       units: [makeUnit({ direction: 'portrait' })],
     })
 
@@ -122,14 +168,13 @@ describe('buildSourceVariantPlans', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: shortPattern,
-      startSequence: 1,
       units: [
         makeUnit({ project: { collectionId: 'd', line: '线A', product: '产品1', direction: '横构图' } }),
         makeUnit({ sizeId: 'gdt-1280x720', width: 1280, height: 720 }),
       ],
     })
 
-    expect(plans.map((plan) => plan.fileName)).toEqual(['产品1-百度-1140x640-1.jpg', '百度-1280x720-2.jpg'])
+    expect(plans.map((plan) => plan.fileName)).toEqual(['产品1-百度-1140x640-1.jpg', '百度-1280x720-1.jpg'])
     expect(plans.map((plan) => plan.subFolders)).toEqual([['产品1-百度-1140x640'], ['百度-1280x720']])
     // 两者必须同源：文件夹名就是文件名去掉末尾 `-序号`，模板里没有的段两边都不会有
     for (const plan of plans) {
@@ -138,35 +183,34 @@ describe('buildSourceVariantPlans', () => {
     }
   })
 
-  it('起始序号非法时兜底为 1', () => {
-    const { plans, nextSequence } = buildSourceVariantPlans({
+  it('某个文件夹的起始序号非法时兜底为 1', () => {
+    const { plans, nextSequences } = buildSourceVariantPlans({
       source,
       config: shortPattern,
-      startSequence: Number.NaN,
+      startSequences: { '百度-1140x640': Number.NaN },
       units: [makeUnit()],
     })
 
     expect(plans[0].fileName).toBe(`百度-1140x640-1.${POSTPROCESS_OUTPUT_EXTENSION}`)
-    expect(nextSequence).toBe(2)
+    expect(nextSequences).toEqual({ '百度-1140x640': 2 })
   })
 
   it('单元为空时不产出也不推进序号', () => {
-    const { plans, nextSequence } = buildSourceVariantPlans({
+    const { plans, nextSequences } = buildSourceVariantPlans({
       source,
       config: shortPattern,
-      startSequence: 7,
+      startSequences: { '百度-1140x640': 7 },
       units: [],
     })
 
     expect(plans).toEqual([])
-    expect(nextSequence).toBe(7)
+    expect(nextSequences).toEqual({ '百度-1140x640': 7 })
   })
 
   it('源图标识透传到每个单元', () => {
     const { plans } = buildSourceVariantPlans({
       source: { imageId: 'img-9', index: 3, width: 1024, height: 1024 },
       config: shortPattern,
-      startSequence: 1,
       units: [makeUnit(), makeUnit({ sizeId: 'gdt-1280x720' })],
     })
 
@@ -185,7 +229,6 @@ describe('多水印预设时的文件夹归属', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: shortPattern,
-      startSequence: 1,
       units: [makeUnit({ watermark: watermarks[0] }), makeUnit({ watermark: watermarks[1] })],
     })
 
@@ -199,18 +242,18 @@ describe('多水印预设时的文件夹归属', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: { namePattern: '{media}-{size}-{preset}-{seq}', creator: '' },
-      startSequence: 1,
       units: [makeUnit({ watermark: watermarks[0] }), makeUnit({ watermark: watermarks[1] })],
     })
 
     expect(plans.map((plan) => plan.subFolders)).toEqual([['百度-1140x640-客户甲'], ['百度-1140x640-客户乙']])
+    // 分到两个文件夹 → 各自从 1 起（不再一个 1、一个 2）
+    expect(plans.map((plan) => plan.fileName)).toEqual(['百度-1140x640-客户甲-1.jpg', '百度-1140x640-客户乙-1.jpg'])
   })
 
   it('纯净版（不叠水印）的文件夹名照旧不含预设名', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: shortPattern,
-      startSequence: 1,
       units: [makeUnit({ clean: true, maxSizeKb: 0 }), makeUnit({ watermark: watermarks[0] })],
     })
 

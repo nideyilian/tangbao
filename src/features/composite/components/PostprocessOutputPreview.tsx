@@ -23,7 +23,7 @@ import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreePar
 import { useCompositeV2Store } from '../storeV2'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { usePostprocessGlobalConfig } from '../../postprocess/usePostprocessGlobalConfig'
-import { buildPostprocessOutputName } from '../../../lib/postprocessNaming'
+import { buildSourceVariantPlans } from '../../../lib/postprocessRunner'
 import { resolvePostprocessProjectTargets } from '../../../lib/postprocessProjectTree'
 import { selectPostprocessOutputPlan } from '../../../storePostprocessMedia'
 
@@ -70,7 +70,24 @@ export function PostprocessOutputPreview({ scope }: Props) {
     [config, targets, presetNames],
   )
 
-  const visible = plan.units.slice(0, VISIBLE_UNITS)
+  /**
+   * 文件名在**产出链路自己的编排**里算（`buildSourceVariantPlans`），不在这里数下标。
+   *
+   * 序号是按产出文件夹分别计数的（见 `postprocessRunner` 头注）—— 拿 `units` 的下标当序号，
+   * 预览会显示成另一套号，而这块的用途恰恰是「跑之前核对会产出什么」。
+   */
+  const namedPlans = useMemo(
+    () =>
+      buildSourceVariantPlans({
+        source: { imageId: 'preview', index: 0, ...SAMPLE_SOURCE },
+        units: plan.units,
+        config,
+        startSequences: {},
+      }).plans,
+    [plan, config],
+  )
+
+  const visible = namedPlans.slice(0, VISIBLE_UNITS)
 
   return (
     <div className="space-y-2">
@@ -88,7 +105,7 @@ export function PostprocessOutputPreview({ scope }: Props) {
         <p className="text-xs text-ds-muted">当前配置产不出文件，请检查渠道勾选、尺寸与画面方向。</p>
       ) : (
         <ul className="space-y-1">
-          {visible.map((unit, index) => (
+          {visible.map(({ unit, fileName }, index) => (
             <li
               key={`${unit.project?.collectionId ?? 'none'}-${unit.sizeId}-${index}`}
               className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-ds-lg border border-ds-border bg-ds-surface-subtle px-3 py-1.5 text-xs"
@@ -102,16 +119,13 @@ export function PostprocessOutputPreview({ scope }: Props) {
               <span className="shrink-0 text-ds-muted">
                 {unit.width}×{unit.height}
               </span>
-              <span
-                className="ml-auto min-w-0 truncate text-ds-text"
-                title={buildPostprocessOutputName(config, unit, unit.project ?? {}, index + 1)}
-              >
-                {buildPostprocessOutputName(config, unit, unit.project ?? {}, index + 1)}
+              <span className="ml-auto min-w-0 truncate text-ds-text" title={fileName}>
+                {fileName}
               </span>
             </li>
           ))}
-          {plan.units.length > visible.length && (
-            <li className="px-3 text-xs text-ds-muted">还有 {plan.units.length - visible.length} 个文件未列出。</li>
+          {namedPlans.length > visible.length && (
+            <li className="px-3 text-xs text-ds-muted">还有 {namedPlans.length - visible.length} 个文件未列出。</li>
           )}
         </ul>
       )}
