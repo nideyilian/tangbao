@@ -39,7 +39,9 @@
   → **runbook §18 / R-61**。
 - `npm run verify` ≈ 3–4 分钟（tsc 双端 + lint + format + 全量测试）。
 - **改完源码必须 `npx prettier --write`**。`format:check` 范围（2026-09-22 核实）：
-  `src/**/*.{ts,tsx,css}` + `electron/**/*.ts` + 根目录 `*.{js,json,md}`；**`docs/**` 不在门禁里**。
+  `src/**/*.{ts,tsx,css}` + `electron/**/*.ts` + 根目录 `*.{js,json,md}`；**`docs/**` 不在门禁里**
+  → 顺手把 `docs/**` 喂给 `--write` 会**重排整篇表格**，造出几百行无关 diff（实测只追加一段
+  就得到 215 增 / 160 删）⇒ **别把 docs 丢进去**，runbook §6。
 - `release.yml` **勿**改回 `--publish always`（exe 超时）。
 
 ## 铁律（数据安全级 —— 违反会不可逆丢数据）
