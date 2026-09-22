@@ -4501,8 +4501,10 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
   树 82 / 预设 28 + 未归属 1 = 29 / LOGO 27 / 库内资源 28 且**缺图 0** / 渠道 4 / 尺寸 16 /
   `globalFitMode = crop-fill` / 含 identifier / 不含 API Key / 双写字段全清。
 
-**遗留**：网盘目录里留了一份作废的 `tangbao-config-20260922-171523.zip`（我在 `file://` origin
-下发的**空水印包**）和两个探测文件 —— 本机**无法删除 UNC 上的文件**（safe-delete 网关 + `cmd` 被拦），
-需人工清理。它比正式那份旧，**不会被「拉取最新」选中**（按文件名字典序取最大）。
+**遗留**（已消除）：发布期间在网盘目录留过一份作废的 `tangbao-config-20260922-171523.zip`
+（在 `file://` origin 下发的**空水印包**）与两个探测文件。本机**无法删除 UNC 上的文件** ——
+shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境拦（详见 runbook §二十四 第 4 节），
+故当时标注需人工清理；**2026-09-22 17:39 复查，目录里只剩正式那份
+`tangbao-config-20260922-171903.zip`**（杰哥手动清理）。
 
 **状态**：`DONE`（2026-09-22）。版本处理见下：v0.3.3 已发布**且含此缺口**。
