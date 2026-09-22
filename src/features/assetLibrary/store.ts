@@ -14,6 +14,7 @@ import type {
   PinnedFilter,
 } from '../../types'
 import {
+  canAssetBeReviewed,
   collectCollectionSubtreeIds,
   createEmptyCollection,
   createEmptyTag,
@@ -215,7 +216,23 @@ export interface AssetLibraryStoreState {
   /** 设置顶部工具栏放出的筛选控件（维度级，「+」菜单勾选结果） */
   setVisibleFilterControls: (keys: FilterControlKey[]) => void
 
-  patchAssets: (ids: string[], patch: AssetPatch) => Promise<void>
+  /** `label` 只影响撤销栈里显示的动作名（缺省「修改素材」） */
+  patchAssets: (ids: string[], patch: AssetPatch, label?: string) => Promise<void>
+  /**
+   * 批量打「已审核」标记（TB-105）。
+   *
+   * **只对未产出后处理的素材生效**：已跑出产物的那些**跳过**，而不是整批失败或整批照打 ——
+   * 返回实际标记数与跳过数，由调用方**如实告知**用户（静默少标比报错更糟：他会以为全打上了）。
+   * 全选区都不可标时返回 `{ marked: 0, skipped: N }`，由调用方决定置灰还是提示。
+   */
+  markAssetsReviewed: (ids: string[]) => Promise<{ marked: number; skipped: number }>
+  /**
+   * 后处理产出成功后回写素材（TB-105）：打上「已使用」、同时清掉「已审核」（互斥）。
+   *
+   * **刻意不进撤销栈**：这是产出链路自动写下的**事实记录**，不是用户动作 ——
+   * 混进 undo 会让 Ctrl+Z 撤销掉「已使用」，还会把用户真正想撤的那一步挤下栈。
+   */
+  applyPostprocessProduced: (assetIds: string[]) => Promise<void>
   /**
    * 批量移动素材到目标项目文件夹（sourceId 为来源文件夹时执行「移动」语义，否则「加入」）。
    * Eagle 式：快照 + 分批写入（onProgress 报告进度）+ 单次 store 更新（网格不闪烁）+ 记录可撤销快照。
@@ -888,7 +905,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       },
       setVisibleFilterControls: (visibleFilterControls) => set({ visibleFilterControls }),
 
-      patchAssets: async (ids, patch) => {
+      patchAssets: async (ids, patch, label) => {
         // 撤销快照：记录受影响素材的修改前状态
         const assetsBefore: Record<string, GeneratedAsset> = {}
         for (const id of ids) {
@@ -900,7 +917,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
         const assetsAfter: Record<string, GeneratedAsset> = {}
         for (const asset of updated) assetsAfter[asset.id] = asset
         pushUndoEntry(set, {
-          label: '修改素材',
+          label: label ?? '修改素材',
           assetsBefore,
           assetsAfter,
           collectionsBefore: null,
@@ -908,6 +925,30 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
           tagsBefore: null,
           tagsAfter: null,
         })
+        set((state) => ({ ...applyAssetsToState(state, updated), mutationVersion: state.mutationVersion + 1 }))
+      },
+
+      markAssetsReviewed: async (ids) => {
+        const assetsById = get().assetsById
+        const unique = Array.from(new Set(ids))
+        // 互斥按**逐条素材**判、不按选区整体判：混选时该打的一张不少、不该打的一张不多
+        const targets = unique.filter((id) => {
+          const asset = assetsById[id]
+          return asset ? canAssetBeReviewed(asset) : false
+        })
+        const skipped = unique.length - targets.length
+        // 一张都不可标时不写库、不产生撤销记录：否则 Ctrl+Z 会回退「什么都没改」的一次
+        if (targets.length === 0) return { marked: 0, skipped }
+        await get().patchAssets(targets, { reviewedAt: Date.now() }, '标记为已审核')
+        return { marked: targets.length, skipped }
+      },
+
+      applyPostprocessProduced: async (assetIds) => {
+        const unique = Array.from(new Set(assetIds))
+        if (unique.length === 0) return
+        // 一次原子批量写：整批同一个补丁（标量字段，不像 tagIds 那样要逐张合并）
+        const updated = await repository.patchAssets(unique, { postprocessAt: Date.now(), reviewedAt: null })
+        if (updated.length === 0) return
         set((state) => ({ ...applyAssetsToState(state, updated), mutationVersion: state.mutationVersion + 1 }))
       },
 

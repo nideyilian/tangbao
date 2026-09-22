@@ -965,6 +965,21 @@ export interface GeneratedAsset {
   tagIds: string[]
   /** 用户备注/注释（纯文本） */
   notes?: string
+  /**
+   * 后处理**产出成功**的时间戳（ms）；undefined = 没产出过。
+   *
+   * 这是**事实记录**而不是用户标记：只由产出链路（自动任务完成 / 手动跑批）在写盘成功后回写，
+   * 界面上不给手动增删的入口。失败、或产出 0 个文件都不写 —— 否则「亮着标签却没有任何产物」
+   * 会让这个标记失去意义。
+   */
+  postprocessAt?: number
+  /**
+   * 人工「已审核」标记的时间戳（ms）；undefined = 未审核。
+   *
+   * 与 `postprocessAt` **互斥**：已经跑出后处理产物的素材不给打这个标（需求原文
+   * 「已后处理的图片不可被标记为已审核」），产出成功时也会把已有的这个值清掉。
+   */
+  reviewedAt?: number
   /** 所有生成来源；相同内容由多个任务产生时不会覆盖 */
   origins: GeneratedAssetOrigin[]
   primaryOriginKey: string | null
@@ -1140,6 +1155,13 @@ export interface AssetTombstone {
   lastOriginOccurredAt: number
 }
 
+/**
+ * 素材的可写字段补丁。
+ *
+ * 两个状态字段的口径：
+ * - `postprocessAt` 缺省 = 不改；**没有「清除」语义**（产出过就是产出过，不给撤回）。
+ * - `reviewedAt` 传 `null` = **清除**审核标记（与 `colorLabel` 同款写法），传数字 = 打上。
+ */
 export type AssetPatch = Partial<{
   favorite: boolean
   rating: AssetRating
@@ -1147,6 +1169,8 @@ export type AssetPatch = Partial<{
   collectionIds: string[]
   tagIds: string[]
   notes: string
+  postprocessAt: number
+  reviewedAt: number | null
 }>
 
 export type AssetLibraryScope =

@@ -16,7 +16,7 @@ import {
 import { assetCommands, getAssetFileName } from '../../lib/assetCommands'
 import { copyImageSourceToClipboard, getClipboardFailureMessage } from '../../lib/clipboard'
 import { downloadImageEntries } from '../../lib/downloadImages'
-import { isCollectionTrashed } from '../../lib/assetLibraryModel'
+import { canAssetBeReviewed, isCollectionTrashed } from '../../lib/assetLibraryModel'
 import { buildCollectionTree } from './AssetLibrarySidebar'
 import type { CollectionTreeNode } from '../../lib/assetSidebarUtils'
 import type { AssetMenuActionScope } from './assetContextMenuTarget'
@@ -102,6 +102,15 @@ function AssetCardMenuInner({
   const showToast = (message: string, tone: 'success' | 'error' | 'info') => {
     void import('../../store').then(({ useStore }) => useStore.getState().showToast(message, tone))
   }
+
+  /**
+   * 「标记为已审核」（TB-105）：**只收未产出后处理的素材**（需求原文的互斥规则：已后处理的
+   * 不可被标记为已审核）。
+   *
+   * 先把可标数算出来，是为了让菜单项在「一张都标不了」时**置灰并写明原因** ——
+   * 点完什么都不发生，比按钮灰着更让人摸不着头脑。
+   */
+  const reviewTargetIds = targetAssets.filter((item) => canAssetBeReviewed(item)).map((item) => item.id)
 
   const openLightbox = () => {
     const list = assetIdList.length > 0 ? assetIdList : [asset.id]
@@ -299,6 +308,36 @@ function AssetCardMenuInner({
               : allFavorite
                 ? '取消收藏'
                 : '收藏'}
+          </MenuItem>
+          <MenuItem
+            disabled={reviewTargetIds.length === 0}
+            icon={<CheckIcon size={14} />}
+            onClick={() => {
+              void useAssetLibraryStore
+                .getState()
+                .markAssetsReviewed(targetIds)
+                .then(({ marked, skipped }) => {
+                  onClose()
+                  // 跳过数必须念出来：混选时用户会以为整批都打上了，实际只打了一部分 ——
+                  // 静默少标比报错更糟（他会带着「都审过了」的判断去交付）
+                  showToast(
+                    skipped > 0
+                      ? `已标记 ${marked} 张为已审核，另有 ${skipped} 张已使用、跳过`
+                      : `已标记 ${marked} 张为已审核`,
+                    'success',
+                  )
+                })
+                .catch(() => {
+                  onClose()
+                  showToast('标记失败，请重试', 'error')
+                })
+            }}
+          >
+            {reviewTargetIds.length === 0
+              ? '标记为已审核（选中的都已使用）'
+              : multi
+                ? `标记为已审核（${reviewTargetIds.length} 张）`
+                : '标记为已审核'}
           </MenuItem>
           <MenuItem onClick={() => setView('collections')} icon={<FolderIcon size={14} />}>
             添加到项目{batchLabel}

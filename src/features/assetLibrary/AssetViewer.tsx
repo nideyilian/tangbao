@@ -47,10 +47,11 @@ import {
 import { ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, useStore } from '../../store'
 import { copyImageSourceToClipboard, getClipboardFailureMessage } from '../../lib/clipboard'
 import { assetCommands } from '../../lib/assetCommands'
-import { cycleColorLabel } from '../../lib/assetLibraryModel'
+import { cycleColorLabel, resolveAssetStatusMark } from '../../lib/assetLibraryModel'
 import type { AssetColorLabel, AssetRating, GeneratedAsset } from '../../types'
 import { useAssetLibraryStore } from './store'
 import AssetParamBreakdown from './AssetParamBreakdown'
+import { AssetStatusBadge } from './AssetTile'
 import { DerivedChain, NotesEditor } from './AssetDetailSections'
 import { COLOR_LABELS_WITH_NAMES } from './colorLabels'
 import { clamp } from '../../lib/clamp'
@@ -71,6 +72,8 @@ function AssetViewerInner() {
   const setViewerAsset = useAssetLibraryStore((state) => state.setViewerAsset)
 
   const asset = viewerAssetId ? assetsById[viewerAssetId] : undefined
+  /** 状态标记（TB-105）：大图上也看得见，不然「列表里亮着、点开就没了」 */
+  const statusMark = asset ? resolveAssetStatusMark(asset) : null
   const imageId = asset?.imageId
   const [src, setSrc] = useState('')
   /**
@@ -482,6 +485,8 @@ function AssetViewerInner() {
                 {Math.round(s * 100)}%
               </span>
             )}
+            {/* 状态标记放左上角：避开左下角的缩放百分比与左右两侧的翻页按钮 */}
+            {statusMark && <AssetStatusBadge mark={statusMark} className="absolute left-3 top-3" />}
 
             {total > 1 && (
               <>

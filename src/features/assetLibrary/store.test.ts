@@ -217,6 +217,70 @@ describe('view state', () => {
 })
 
 describe('mutation actions', () => {
+  // ===== 状态标记：已使用 / 已审核（TB-105）=====
+
+  it('markAssetsReviewed 只标未产出后处理的：已产出的跳过，且只把可标那批交给仓库', async () => {
+    useAssetLibraryStore.setState({
+      assetsById: { clean: makeAsset('clean'), used: makeAsset('used', { postprocessAt: 1000 }) },
+      assetOrder: ['clean', 'used'],
+    })
+    mock.patchAssets.mockResolvedValue([makeAsset('clean', { reviewedAt: 2000 })])
+
+    const outcome = await useAssetLibraryStore.getState().markAssetsReviewed(['clean', 'used'])
+
+    // 跳过数要报出来：调用方要靠它如实告诉用户「有几张没打上」，静默少标比报错更糟
+    expect(outcome).toEqual({ marked: 1, skipped: 1 })
+    expect(mock.patchAssets).toHaveBeenCalledWith(['clean'], { reviewedAt: expect.any(Number) })
+    expect(useAssetLibraryStore.getState().assetsById.clean.reviewedAt).toBe(2000)
+  })
+
+  it('markAssetsReviewed 一张都不可标时不写库（不留一条「什么都没改」的撤销记录）', async () => {
+    useAssetLibraryStore.setState({
+      assetsById: { used: makeAsset('used', { postprocessAt: 1000 }) },
+      assetOrder: ['used'],
+    })
+
+    const outcome = await useAssetLibraryStore.getState().markAssetsReviewed(['used'])
+
+    expect(outcome).toEqual({ marked: 0, skipped: 1 })
+    expect(mock.patchAssets).not.toHaveBeenCalled()
+    expect(useAssetLibraryStore.getState().undoStack).toHaveLength(0)
+  })
+
+  it('markAssetsReviewed 进撤销栈，动作名是「标记为已审核」而不是笼统的「修改素材」', async () => {
+    useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a') }, assetOrder: ['a'] })
+    mock.patchAssets.mockResolvedValue([makeAsset('a', { reviewedAt: 2000 })])
+
+    await useAssetLibraryStore.getState().markAssetsReviewed(['a'])
+
+    const stack = useAssetLibraryStore.getState().undoStack
+    expect(stack).toHaveLength(1)
+    expect(stack[0].label).toBe('标记为已审核')
+  })
+
+  it('applyPostprocessProduced：打「已使用」的同时清掉「已审核」（两者互斥）', async () => {
+    useAssetLibraryStore.setState({
+      assetsById: { a: makeAsset('a', { reviewedAt: 1000 }) },
+      assetOrder: ['a'],
+    })
+    mock.patchAssets.mockResolvedValue([makeAsset('a', { postprocessAt: 2000 })])
+
+    await useAssetLibraryStore.getState().applyPostprocessProduced(['a'])
+
+    expect(mock.patchAssets).toHaveBeenCalledWith(['a'], { postprocessAt: expect.any(Number), reviewedAt: null })
+    expect(useAssetLibraryStore.getState().assetsById.a.postprocessAt).toBe(2000)
+  })
+
+  it('applyPostprocessProduced 不进撤销栈 —— 它是链路写的事实，不是用户动作', async () => {
+    useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a') }, assetOrder: ['a'] })
+    mock.patchAssets.mockResolvedValue([makeAsset('a', { postprocessAt: 2000 })])
+
+    await useAssetLibraryStore.getState().applyPostprocessProduced(['a'])
+
+    // 进栈的话，Ctrl+Z 会把「已使用」撤销掉，还顺手把用户真正想撤的那一步挤出栈
+    expect(useAssetLibraryStore.getState().undoStack).toHaveLength(0)
+  })
+
   it('patches assets through the repository and updates the store', async () => {
     useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a') }, assetOrder: ['a'] })
     mock.patchAssets.mockResolvedValue([makeAsset('a', { favorite: true, rating: 5 })])

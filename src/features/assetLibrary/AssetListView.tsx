@@ -12,6 +12,7 @@ import type { GeneratedAsset } from '../../types'
 import { useAssetLibraryStore } from './store'
 import AssetCardMenu from './AssetCardMenu'
 import { getColorLabelHex } from './colorLabels'
+import { ASSET_STATUS_MARK_LABELS, resolveAssetStatusMark } from '../../lib/assetLibraryModel'
 import { useDragSelect, getMarqueeBoxStyle } from '../../hooks/useDragSelect'
 import { startAssetDrag, type TileSelectMode } from './AssetTile'
 import { resolveAssetContextMenuScope, type AssetMenuActionScope } from './assetContextMenuTarget'
@@ -81,6 +82,14 @@ export const AssetListRow = memo(function AssetListRow({
   onKeyDown,
 }: AssetListRowProps) {
   const origin = asset.origins.find((item) => item.key === asset.primaryOriginKey) ?? asset.origins[0]
+  /**
+   * 状态标记（TB-105）。
+   *
+   * 列表行**不像网格那样把胶囊压在缩略图上**：这一列的缩略图只有 56px 宽，
+   * 三个字的胶囊会把画面盖掉大半。改成跟在星标 / 来源数同一行的小 chip —— 列表本来就是
+   * 信息密集的读法，状态词混在文字里比压在图上更省事。
+   */
+  const statusMark = resolveAssetStatusMark(asset)
   return (
     <div
       role="row"
@@ -127,6 +136,18 @@ export const AssetListRow = memo(function AssetListRow({
         <p className="mt-0.5 flex items-center gap-1.5 text-xs text-ds-muted">
           {asset.favorite && <StarIcon size={10} fill="currentColor" className="text-ds-warning" />}
           {asset.origins.length > 1 && <span>{asset.origins.length} 来源</span>}
+          {statusMark && (
+            <span
+              data-asset-status={statusMark}
+              className={
+                statusMark === 'used'
+                  ? 'rounded-ds-sm bg-ds-muted/15 px-1 text-ds-muted'
+                  : 'rounded-ds-sm bg-ds-primary-subtle px-1 text-ds-primary'
+              }
+            >
+              {ASSET_STATUS_MARK_LABELS[statusMark]}
+            </span>
+          )}
           {asset.status === 'trashed' && <span className="text-ds-danger">回收站</span>}
         </p>
       </div>

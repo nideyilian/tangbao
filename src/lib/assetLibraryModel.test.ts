@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { GeneratedAsset } from '../types'
 import {
+  ASSET_STATUS_MARK_LABELS,
   applyAssetPatch,
   assetScopeMatches,
+  canAssetBeReviewed,
   containsAssetOrigin,
   countAssetOrigins,
   createEmptyCollection,
@@ -16,6 +18,7 @@ import {
   normalizeCollection,
   normalizeTag,
   normalizeTombstone,
+  resolveAssetStatusMark,
   sortCollections,
 } from './assetLibraryModel'
 
@@ -192,6 +195,51 @@ describe('applyAssetPatch', () => {
     const patched = applyAssetPatch(base, { notes: '新备注' }, 5000)
     expect(patched.notes).toBe('新备注')
     expect(applyAssetPatch(base, { favorite: true }, 6000).notes).toBe('原有备注')
+  })
+})
+
+describe('状态标记：已使用 / 已审核（TB-105）', () => {
+  it('⭐ 新字段过一遍 normalizeAsset 不丢 —— 白名单漏加就是静默丢数据', () => {
+    // 这条守的是「落库 → 读回」这一段：`normalizeAsset` 是显式白名单，
+    // 加了字段却忘了放行，界面上只是「标签不亮」，全程一个错都不报。
+    const asset = normalizeAsset({ id: 'a', imageId: 'h', origins: [], postprocessAt: 1727, reviewedAt: 1728 })
+    expect(asset.postprocessAt).toBe(1727)
+    expect(asset.reviewedAt).toBe(1728)
+
+    const bare = normalizeAsset({ id: 'a', imageId: 'h', origins: [] })
+    expect(bare.postprocessAt).toBeUndefined()
+    expect(bare.reviewedAt).toBeUndefined()
+  })
+
+  it('applyAssetPatch：postprocessAt 只写不清，缺省时保持原值', () => {
+    const patched = applyAssetPatch(makeAsset(), { postprocessAt: 1727 }, 2000)
+    expect(patched.postprocessAt).toBe(1727)
+    // 之后任何不带该字段的补丁都不该把它抹掉
+    expect(applyAssetPatch(patched, { favorite: true }, 3000).postprocessAt).toBe(1727)
+  })
+
+  it('applyAssetPatch：reviewedAt 传 null 是**清除**，与「没传」不是一回事', () => {
+    const reviewed = applyAssetPatch(makeAsset(), { reviewedAt: 1727 }, 2000)
+    expect(reviewed.reviewedAt).toBe(1727)
+    expect(applyAssetPatch(reviewed, { reviewedAt: null }, 3000).reviewedAt).toBeUndefined()
+    expect(applyAssetPatch(reviewed, {}, 3000).reviewedAt).toBe(1727)
+  })
+
+  it('两枚标记互斥：最多亮一枚，都有值时以「已使用」为准（事实优先于人的判断）', () => {
+    expect(resolveAssetStatusMark({})).toBeNull()
+    expect(resolveAssetStatusMark({ reviewedAt: 1 })).toBe('reviewed')
+    expect(resolveAssetStatusMark({ postprocessAt: 1 })).toBe('used')
+    expect(resolveAssetStatusMark({ postprocessAt: 1, reviewedAt: 2 })).toBe('used')
+  })
+
+  it('产出过后面处理的素材，不再可被标记为已审核', () => {
+    expect(canAssetBeReviewed({})).toBe(true)
+    expect(canAssetBeReviewed({ postprocessAt: 1 })).toBe(false)
+  })
+
+  it('两枚标记的文案各只有一份来源（网格胶囊与列表 chip 共用）', () => {
+    expect(ASSET_STATUS_MARK_LABELS.used).toBe('已使用')
+    expect(ASSET_STATUS_MARK_LABELS.reviewed).toBe('已审核')
   })
 })
 

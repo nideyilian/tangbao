@@ -9,7 +9,7 @@ const storeMock = vi.hoisted(() => ({
 }))
 vi.mock('../../store', () => storeMock)
 
-function makeAsset(id: string, collectionIds: string[] = []): GeneratedAsset {
+function makeAsset(id: string, collectionIds: string[] = [], overrides: Partial<GeneratedAsset> = {}): GeneratedAsset {
   return {
     id,
     imageId: id,
@@ -25,6 +25,7 @@ function makeAsset(id: string, collectionIds: string[] = []): GeneratedAsset {
     primaryOriginKey: null,
     parentAssetIds: [],
     metadataVersion: 1,
+    ...overrides,
   }
 }
 
@@ -184,6 +185,50 @@ describe('AssetCardMenu batch actions (Eagle-style selection)', () => {
     expect(root.findAll((node) => node.type === 'button' && nodeText(node).includes('关闭'))).toHaveLength(0)
     // 新增打开文件位置
     expect(root.findAll((node) => node.type === 'button' && nodeText(node).includes('打开文件位置'))).toHaveLength(1)
+
+    await act(async () => renderer!.unmount())
+  })
+})
+
+describe('「标记为已审核」（TB-105）', () => {
+  it('混合选区：只对未产出后处理的那些计数，张数如实写在菜单项上', async () => {
+    // a 没跑出过后处理（可标），b 已使用（按需求互斥规则不可标）
+    useAssetLibraryStore.setState({
+      assetsById: { a: makeAsset('a'), b: makeAsset('b', [], { postprocessAt: 1000 }) },
+    })
+    let renderer: ReactTestRenderer
+    await act(async () => {
+      renderer = create(
+        <AssetCardMenu
+          x={0}
+          y={0}
+          asset={makeAsset('a')}
+          assetIds={['a', 'b']}
+          actionScope="multi"
+          onClose={vi.fn()}
+        />,
+      )
+    })
+
+    // 写「1 张」而不是「2 张」：菜单上先说来真的会标几张，点下去才不会与预期不符
+    expect(findButton(renderer!.root, '标记为已审核（1 张）')).toBeDefined()
+
+    await act(async () => renderer!.unmount())
+  })
+
+  it('选中的都已使用 → 置灰并写明原因，不留「点了没反应」', async () => {
+    const used = makeAsset('a', [], { postprocessAt: 1000 })
+    useAssetLibraryStore.setState({ assetsById: { a: used } })
+    let renderer: ReactTestRenderer
+    await act(async () => {
+      renderer = create(
+        <AssetCardMenu x={0} y={0} asset={used} assetIds={['a']} actionScope="single" onClose={vi.fn()} />,
+      )
+    })
+
+    const button = findButton(renderer!.root, '标记为已审核')
+    expect(button.props.disabled).toBe(true)
+    expect(nodeText(button)).toContain('选中的都已使用')
 
     await act(async () => renderer!.unmount())
   })

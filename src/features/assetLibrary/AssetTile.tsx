@@ -14,6 +14,7 @@ import { cx } from '../../design-system/components'
 import { useAssetLibraryStore } from './store'
 import { ASSET_SOURCE_DATA_TYPE } from '../../lib/assetSidebarUtils'
 import { COLOR_LABELS } from './colorLabels'
+import { resolveAssetStatusMark, ASSET_STATUS_MARK_LABELS, type AssetStatusMark } from '../../lib/assetLibraryModel'
 
 export type TileSelectMode = 'replace' | 'toggle' | 'range'
 
@@ -59,6 +60,31 @@ export function startAssetDrag(event: React.DragEvent<HTMLElement>, asset: Gener
   if (typeof scope === 'object' && scope.kind === 'collection') {
     event.dataTransfer.setData(ASSET_SOURCE_DATA_TYPE, scope.id)
   }
+}
+
+/**
+ * 素材状态标记（TB-105）：一枚胶囊，网格 / 大图查看器共用（列表视图见 `AssetListView` 的行内 chip）。
+ *
+ * 组件**只出外观，定位由调用方给**（`className`）——`cx` 是纯字符串拼接、不做同类冲突合并，
+ * 组件里写死 `absolute left-5` 再让调用方传 `left-3` 会两条并存，谁赢取决于 CSS 顺序。
+ *
+ * `pointer-events-none`：它只是状态显示，点上去应该落到卡片本身（选中 / 打开查看器）。
+ * 两枚标记**互斥**，所以不需要并排布局（见 `resolveAssetStatusMark`）。
+ */
+export function AssetStatusBadge({ mark, className }: { mark: AssetStatusMark; className?: string }) {
+  return (
+    <span
+      data-asset-status={mark}
+      className={cx(
+        'pointer-events-none rounded-ds-sm px-1.5 py-0.5 text-xs font-medium shadow-ds-sm',
+        // 「已使用」是链路自动写的事实，用低调的中性底；「已审核」是人的动作，用主题色
+        mark === 'used' ? 'bg-black/55 text-white' : 'bg-ds-primary text-ds-text-inverse',
+        className,
+      )}
+    >
+      {ASSET_STATUS_MARK_LABELS[mark]}
+    </span>
+  )
 }
 
 function AssetTile({
@@ -188,6 +214,8 @@ function AssetTile({
   }
 
   const imageSrc = fullSrc || thumbnailSrc
+  /** 状态标记：已使用 / 已审核（两者互斥，都没有则为 null） */
+  const statusMark = resolveAssetStatusMark(asset)
 
   return (
     <div
@@ -257,6 +285,12 @@ function AssetTile({
           style={{ backgroundColor: COLOR_LABELS.find((item) => item.value === asset.colorLabel)?.color }}
         />
       )}
+      {/*
+        状态标记（常驻）：贴在颜色标签圆点右侧（left-5 = 圆点占位 6px + 直径 12px + 2px 间隙）。
+        位置**不随有无颜色圆点浮动** —— 同一屏里标签对齐成一条竖线，比省下 20px 重要。
+        另外三个角都被占了：右上角是选中勾、底部是 hover 才浮出的渐变条。
+      */}
+      {statusMark && <AssetStatusBadge mark={statusMark} className="absolute left-5 top-1.5" />}
     </div>
   )
 }

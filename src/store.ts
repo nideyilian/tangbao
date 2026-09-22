@@ -835,6 +835,27 @@ async function resolveImageOwnership(
 }
 
 /**
+ * 产出成功后回写素材状态（TB-105）：素材打上「已使用」、并清掉「已审核」（两者互斥）。
+ *
+ * 入参是**源图 id**（`TaskPostprocessOutput.rawImageId`）。素材库没有 `imageId → assetId` 的
+ * 现成索引，这里按需构建一张反查表 —— 比逐张 `find` 少一个数量级。
+ * 一张图在库里找不到对应素材是正常的（被彻底删除、或本来就不属于素材库），跳过不报错。
+ *
+ * **产出为空的批次根本不调用本函数**：失败、以及「配置指向空产出」都不算「已使用」——
+ * 亮着一枚没有任何产物支撑的标签，比不亮更糟。
+ */
+async function markImagesPostprocessed(imageIds: string[]): Promise<void> {
+  const unique = Array.from(new Set(imageIds.filter(Boolean)))
+  if (unique.length === 0) return
+  const { useAssetLibraryStore } = await import('./features/assetLibrary/store')
+  const { assetsById, applyPostprocessProduced } = useAssetLibraryStore.getState()
+  const byImageId = new Map(Object.values(assetsById).map((asset) => [asset.imageId, asset.id]))
+  const assetIds = unique.map((imageId) => byImageId.get(imageId)).filter((id): id is string => Boolean(id))
+  if (assetIds.length === 0) return
+  await applyPostprocessProduced(assetIds)
+}
+
+/**
  * 任务完成后按后处理配置产出各渠道变体。
  *
  * 幂等三闸：内存键（同会话防并发重入）、任务的 `postprocessOutputs`（跨重启）、
@@ -876,6 +897,9 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
       postprocessOutputs: [...(latest?.postprocessOutputs ?? []), ...result.outputs],
       rawImageId: latest?.rawImageId ?? result.outputs[0].rawImageId,
     })
+    // 素材侧同步亮起「已使用」（TB-105）。放在写回任务之后：任务记录是幂等的依据，
+    // 先落它再改素材，中途失败最多是「标记少了」而不是「任务记录缺一块导致重复产出」。
+    await markImagesPostprocessed(result.outputs.map((item) => item.rawImageId))
   }
   reportPostprocessResult(result, { source: 'auto' })
 }
@@ -1115,6 +1139,9 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
       return
     }
     reportPostprocessResult(result, { successPrefix: '手动后处理完成', source: 'manual' })
+    // 素材侧亮「已使用」（TB-105）：手动跑没有任务记录可写，这行是它**唯一**的落库点 ——
+    // 少了它，手动产出的图在素材库里永远显示成「没跑过」。
+    if (result.outputs.length > 0) await markImagesPostprocessed(result.outputs.map((item) => item.rawImageId))
   } catch (error) {
     // 兜底：任何逃出执行体的异常都要变成用户能看见的提示（调用方是 `void`，抛出去等于没发生）
     console.error('手动后处理失败', error)

@@ -141,6 +141,10 @@ export function normalizeAsset(value: unknown, now = Date.now()): GeneratedAsset
     collectionIds: normalizeStringArray(raw.collectionIds),
     tagIds: normalizeStringArray(raw.tagIds),
     notes: normalizeNullableString(raw.notes) ?? undefined,
+    // 状态标记（TB-105）。⚠️ 这里也是**白名单**：漏加 = 落库读回来字段凭空消失，
+    // 而且全程不报错（界面只是不亮标签）。`normalizeAsset` 的往返有守卫用例钉着。
+    postprocessAt: normalizeOptionalNumber(raw.postprocessAt) ?? undefined,
+    reviewedAt: normalizeOptionalNumber(raw.reviewedAt) ?? undefined,
     origins,
     primaryOriginKey: primaryOrigin?.key ?? null,
     parentAssetIds: normalizeStringArray(raw.parentAssetIds),
@@ -257,6 +261,10 @@ export function applyAssetPatch(asset: GeneratedAsset, patch: AssetPatch, now = 
     collectionIds: patch.collectionIds ?? asset.collectionIds,
     tagIds: patch.tagIds ?? asset.tagIds,
     notes: patch.notes ?? asset.notes,
+    // 「产出过」是事实，只写不清（没有撤销语义）
+    postprocessAt: patch.postprocessAt ?? asset.postprocessAt,
+    // 「已审核」可清除：传 null 即抹掉（与 colorLabel 同款判 `undefined` 而不是判真值）
+    reviewedAt: patch.reviewedAt !== undefined ? (patch.reviewedAt ?? undefined) : asset.reviewedAt,
     updatedAt: now,
   }
 }
@@ -281,6 +289,40 @@ export function isAssetFavorite(asset: GeneratedAsset): boolean {
 
 export function isAssetRated(asset: GeneratedAsset): boolean {
   return asset.rating > 0
+}
+
+/** 素材该显示哪枚状态标记：`used` = 已跑出过后处理产物；`reviewed` = 人工审核过。 */
+export type AssetStatusMark = 'used' | 'reviewed'
+
+/**
+ * 标记的显示文案。
+ *
+ * 抽成一份给「缩略图胶囊」与「列表行内 chip」共用：两处各写一遍的话，
+ * 改文案时漏一处就会出现同一个状态在网格里叫「已使用」、在列表里叫别的 —— 用户会以为是两种状态。
+ */
+export const ASSET_STATUS_MARK_LABELS: Record<AssetStatusMark, string> = {
+  used: '已使用',
+  reviewed: '已审核',
+}
+
+/**
+ * 取素材的状态标记（**两者互斥，最多一枚**）。
+ *
+ * `postprocessAt` 优先：正常写入路径下两者不会并存（产出成功时会把 `reviewedAt` 清掉），
+ * 但历史数据与并发写入仍可能同时有值 —— 这时以「已使用」为准：它是**事实**，
+ * 而审核是人的判断，事实优先。
+ */
+export function resolveAssetStatusMark(
+  asset: Pick<GeneratedAsset, 'postprocessAt' | 'reviewedAt'>,
+): AssetStatusMark | null {
+  if (asset.postprocessAt) return 'used'
+  if (asset.reviewedAt) return 'reviewed'
+  return null
+}
+
+/** 批量打「已审核」时，这条素材收不收 —— 已产出过后处理的一律不收（需求原文的互斥规则）。 */
+export function canAssetBeReviewed(asset: Pick<GeneratedAsset, 'postprocessAt'>): boolean {
+  return !asset.postprocessAt
 }
 
 // ===== 衍生链 =====
