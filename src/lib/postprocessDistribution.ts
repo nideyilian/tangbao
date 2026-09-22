@@ -16,9 +16,15 @@
 
 export interface PostprocessDistributionConfig {
   enabled: boolean
-  /** 起始日期，`YYYYMMDD` */
-  startDate: string
-  /** 分配天数（≥1） */
+  /**
+   * 分配天数（≥1）。
+   *
+   * **没有「起始日期」这个字段**（2026-09-23 删）：起算日由程序取**产出当天**
+   * （与命名模板里的 `{date}` 同源，见 `PostprocessDistributionOptions.baseDate`）。
+   * 让用户手填日期的后果是双向的 —— 他不知道该填哪天，填成产出当天则会算出
+   * 「目标目录 == 产出目录」⇒ 每个文件与**自己**撞名 ⇒ 整目录自我复制一份 `-2`。
+   * 排期起算日不是用户能知道的量，它属于程序。
+   */
   days: number
   /** `copy` 保留原文件；`move` 搬走后清理已空的源目录 */
   mode: 'copy' | 'move'
@@ -37,7 +43,6 @@ export interface PostprocessDistributionConfig {
 /** 默认关闭：分发会移动磁盘上的文件，绝不能靠默认值把用户的产物搬走。 */
 export const DEFAULT_POSTPROCESS_DISTRIBUTION: PostprocessDistributionConfig = {
   enabled: false,
-  startDate: '',
   days: 1,
   mode: 'copy',
   randomize: false,
@@ -53,7 +58,8 @@ export function normalizePostprocessDistributionConfig(raw: unknown): Postproces
   const rawDays = typeof input.days === 'number' && Number.isFinite(input.days) ? Math.trunc(input.days) : 0
   return {
     enabled: input.enabled === true,
-    startDate: typeof input.startDate === 'string' ? input.startDate.trim() : '',
+    // 旧数据里的 `startDate` **刻意不读**：起算日已改为程序按产出当天算（见类型注释），
+    // 用户当年填的值不再有任何含义。留一个死字段往下游传只会让「到底哪个日期生效」需要推理。
     days: rawDays > 0 ? rawDays : DEFAULT_POSTPROCESS_DISTRIBUTION.days,
     mode: input.mode === 'move' ? 'move' : 'copy',
     randomize: input.randomize === true,
@@ -65,13 +71,13 @@ export function normalizePostprocessDistributionConfig(raw: unknown): Postproces
 }
 
 /**
- * 配置是否真正可执行。
+ * 配置是否真正可执行：开关打开 + 天数 ≥ 1。
  *
- * 三件事缺一不可：开关打开、天数 ≥ 1、起始日期是合法的 `YYYYMMDD`。
- * 缺日期时**不做任何搬运**（而不是退回今天）——猜日期会把素材投放到错误的日子上。
+ * 2026-09-23 起**不再需要日期** —— 起算日由程序按产出当天取（`baseDate`），
+ * 于是「开了开关却忘了填日期 ⇒ 什么都不做还不报错」这个坑从根上不存在了。
  */
 export function isPostprocessDistributionActive(config: PostprocessDistributionConfig): boolean {
-  return config.enabled && config.days > 0 && /^\d{8}$/.test(config.startDate)
+  return config.enabled && config.days > 0
 }
 
 export interface PostprocessDistributionElectronApi {
@@ -102,12 +108,30 @@ export interface PostprocessDistributionItem {
    * 让「项目 / 方向 / 预设」的子目录层级在分发后仍然保留。
    */
   outputRoot?: string
+  /**
+   * 这张产出是从哪张源图出来的（`rawImageId`）。
+   *
+   * 存在的唯一目的：**打乱时按「素材」而不是按「文件」洗牌**。一批图会导出到多个渠道目录、
+   * 每个目录再展开成多个尺寸，同一张素材因此有十几个文件；若按文件各自洗牌，同一张素材的
+   * 头条版可能排在第 1 天、广点通版排在第 3 天 —— **跨渠道就对不上了**（投放要的是同一张
+   * 素材在同期上线）。缺省回退用 `path` 当 key（等价于按文件洗牌，兼容手工构造的调用）。
+   */
+  sourceKey?: string
 }
 
 export interface PostprocessDistributionOptions {
   onProgress?: (completed: number, total: number) => void
   /** 返回 true 时尽快停止剩余分发（已完成的保持完成） */
   shouldCancel?: () => boolean
+  /**
+   * 排期起算日（`YYYYMMDD`）—— **由调用方给，不再由用户填**。
+   *
+   * 取值口径：本次产出所用源图的生成时间（`taskPostprocess` 的 `createdAt`），与命名模板
+   * `{date}` **同源**，这样「产出目录名里的日期」与「第一个日期文件夹」必然一致 ——
+   * 不一致会让用户看到一个凭空早于 / 晚于产出日的文件夹，且无从解释。
+   * 缺省回退执行当天，只为兼容单测与脚本。
+   */
+  baseDate?: string
 }
 
 export interface PostprocessDistributionResult {
@@ -119,8 +143,30 @@ export interface PostprocessDistributionResult {
   moved: Array<{ originalPath: string; targetPath: string }>
 }
 
-const DATE_SEGMENT_TEST = /(?<!\d)(20\d{6})(?!\d)/
+/**
+ * 文件名里的日期段：`img_20260601.jpg` → 换成排期日期。
+ *
+ * ⚠️ 只能用「前后都不是数字」界定，**不能用 `\b`**：`img_20260601.jpg` 里下划线是单词字符，
+ * `\b` 在 `_2` 前不成立，最常见的下划线命名会直接失效。
+ *
+ * ⚠️ 这里只剩这一个**全局**副本：`replace` 不依赖 `lastIndex`（内部会重置），可以安全复用。
+ * 原先还有一个非全局副本 `DATE_SEGMENT_TEST`，专门判定「目录名里有没有日期段」——
+ * **2026-09-23 随「原地恒定建日期子文件夹」一并去掉**：那个判定会把命名模板产出的
+ * `20260922-{方向}-{渠道}…` 目录当成「日期层」去替换，于是
+ * ① 用户要的日期子文件夹永远不出现；② 填成产出当天时算出「目标目录 == 产出目录」，
+ * 每个文件与**自己**撞名 ⇒ 整目录凭空多出一份 `-2` 自我复制。这两条都是实测踩到的。
+ */
 const DATE_SEGMENT_PATTERN = /(?<!\d)(20\d{6})(?!\d)/g
+
+/** 把毫秒时间戳格式化成 `YYYYMMDD`；非法值回退执行当天（`baseDate` 的兜底口径）。 */
+export function toBaseDate(timestampMs: number | undefined): string {
+  const safe = typeof timestampMs === 'number' && Number.isFinite(timestampMs) ? timestampMs : Date.now()
+  const date = new Date(safe)
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yyyy}${mm}${dd}`
+}
 
 function dirnameOf(path: string): string {
   return path.replace(/[/\\][^/\\]+$/, '')
@@ -135,9 +181,15 @@ function normalizePathForCompare(value: string): string {
   return value.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
-/** 生成待分配的日期序列（`YYYYMMDD`）。 */
-export function buildDistributionDates(startDate: string, days: number, skipWeekends: boolean): string[] {
-  const match = startDate.match(/^(\d{4})(\d{2})(\d{2})$/)
+/**
+ * 生成待分配的日期序列（`YYYYMMDD`）。
+ *
+ * `baseDate` 是**起算日**，由调用方按产出当天给出（不是用户填的，见
+ * `PostprocessDistributionOptions.baseDate`）。配了 `skipWeekends` 时跳过周六周日往后顺延 ——
+ * 顺延后日期不连续，但**天数一定给够**（不是「排到周末就少一天」）。
+ */
+export function buildDistributionDates(baseDate: string, days: number, skipWeekends: boolean): string[] {
+  const match = baseDate.match(/^(\d{4})(\d{2})(\d{2})$/)
   if (!match || days <= 0) return []
   const cursor = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
   const dates: string[] = []
@@ -210,6 +262,37 @@ async function resolveBaseTargetDir(
   return relative ? await api.pathJoin(targetRoot, ...relative.split(/[/\\]+/)) : targetRoot
 }
 
+/**
+ * 每张源图的排期序号（越小越先排）。**全量**素材只洗一次牌，各目标目录共用这一份结果。
+ *
+ * 为什么必须按素材而不是按文件洗牌（2026-09-23）：一批图会导出到多个渠道目录，每个目录里
+ * 都是**同一批素材**的一套变体。若按文件各自洗牌，同一张素材的头条版与广点通版会被排到
+ * 不同的日子 —— 投放时跨渠道对不上（同一素材本该同期上线）。
+ *
+ * 集合不同也没关系：`items` 是全量的，缺素材的目录只是在序号序列里留空洞，
+ * **相对顺序仍然一致** —— 这正是「共用一次洗牌」而不是「各组各洗一次」的意义。
+ */
+function buildSourceRank(items: PostprocessDistributionItem[], randomize: boolean): Map<string, number> {
+  const keys: string[] = []
+  const seen = new Set<string>()
+  for (const item of items) {
+    const key = item.sourceKey ?? item.path
+    if (seen.has(key)) continue
+    seen.add(key)
+    keys.push(key)
+  }
+  if (randomize) {
+    // Fisher-Yates：先打乱再切分，反过来就白打乱了
+    for (let i = keys.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const swap = keys[i]
+      keys[i] = keys[j]
+      keys[j] = swap
+    }
+  }
+  return new Map(keys.map((key, index) => [key, index]))
+}
+
 export async function runPostprocessDistribution(
   items: PostprocessDistributionItem[],
   config: PostprocessDistributionConfig,
@@ -218,18 +301,22 @@ export async function runPostprocessDistribution(
 ): Promise<PostprocessDistributionResult> {
   const shouldCancel = options?.shouldCancel ?? (() => false)
   const result: PostprocessDistributionResult = { success: 0, failed: 0, errors: [], canceled: false, moved: [] }
-  // 守卫只看 `enabled`，**不**用 `isPostprocessDistributionActive`：
-  // 后者还需要起始日期与天数都合法，用它做守卫会把「用户开了分发但日期没填」变成静默什么都不做，
-  // 恰恰是最需要报错的情形。配置不完整走下面的显式报错。
   if (items.length === 0 || !config.enabled) return result
 
-  const targetDates = buildDistributionDates(config.startDate, config.days, config.skipWeekends)
+  // 起算日：调用方按产出当天给（与命名模板 `{date}` 同源）；没给就退回执行当天。
+  const baseDate = options?.baseDate?.trim() || toBaseDate(undefined)
+  const targetDates = buildDistributionDates(baseDate, config.days, config.skipWeekends)
   if (targetDates.length === 0) {
+    // 走到这里说明 `baseDate` 不合法 —— 它现在由程序算，所以这是内部缺陷而非用户填错。
+    // 仍然报错而不是「悄悄换一天继续搬」：猜日期会把素材排到错误的日子上。
     result.errors.push(
-      `起始日期或天数无效（起始日期需为 YYYYMMDD，天数需 ≥ 1），实际为: ${config.startDate || '空'} / ${config.days}`,
+      `排期起算日无效（需为 YYYYMMDD），实际为: ${baseDate || '空'}；天数需 ≥ 1，实际为 ${config.days}`,
     )
     return result
   }
+
+  // 按**素材**打乱：全量洗一次牌，各目标目录共用同一份顺序（见 `buildSourceRank`）。
+  const sourceRank = buildSourceRank(items, config.randomize)
 
   // 1. 按目标目录分组。主进程只允许写入「允许根」内的路径，未授权会导致整组静默失败，
   //    所以这里按目标根逐个授权并记录失败原因，而不是让整批悄悄什么都没做。
@@ -262,15 +349,16 @@ export async function runPostprocessDistribution(
   const sourceDirsToClean = new Set<string>()
 
   outer: for (const [baseDir, groupItems] of grouped.entries()) {
-    const queue = [...groupItems]
-    if (config.randomize) {
-      for (let i = queue.length - 1; i > 0; i -= 1) {
-        const j = Math.floor(Math.random() * (i + 1))
-        const swap = queue[i]
-        queue[i] = queue[j]
-        queue[j] = swap
-      }
-    }
+    // 按素材序号排；同序号（同一张素材的多个尺寸变体）用原始下标兜底保持原顺序 ——
+    // 显式兜底而不是依赖引擎的排序稳定性，让结果可复现。
+    const queue = groupItems
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => {
+        const rankA = sourceRank.get(a.item.sourceKey ?? a.item.path) ?? 0
+        const rankB = sourceRank.get(b.item.sourceKey ?? b.item.path) ?? 0
+        return rankA - rankB || a.index - b.index
+      })
+      .map((entry) => entry.item)
 
     const baseCount = Math.floor(queue.length / targetDates.length)
     const remainder = queue.length % targetDates.length
@@ -283,11 +371,12 @@ export async function runPostprocessDistribution(
       }
       const targetDate = targetDates[dayIndex]
       const countForThisDay = baseCount + (dayIndex < remainder ? 1 : 0)
-      // 目录里已有日期段就替换它，否则在末尾追加日期子文件夹。
-      // 用非全局副本做判断，避免全局正则的 lastIndex 状态让相邻目录交替走不同分支。
-      const targetDir = DATE_SEGMENT_TEST.test(baseDir)
-        ? baseDir.replace(DATE_SEGMENT_PATTERN, targetDate)
-        : await api.pathJoin(baseDir, targetDate)
+      // **恒定**在产出目录下面建一层日期文件夹（2026-09-23 改）。
+      // 旧实现是「目录名里已有日期段就替换它」，但产出目录名里的日期来自命名模板 `{date}`
+      // （`20260922-{方向}-{渠道}…`）—— 那是「产出日」，不是「排期日」。两者混在一起会：
+      // ① 用户要的日期子文件夹永远不出现；② 起始日期填成产出当天时目标目录 == 产出目录，
+      // 每个文件与**自己**撞名 ⇒ 整目录凭空多出一份 `-2`。现在不再猜，一律建子文件夹。
+      const targetDir = await api.pathJoin(baseDir, targetDate)
       const folderBasename = basenameOf(targetDir) || targetDate
 
       for (let k = 0; k < countForThisDay && cursor < queue.length; k += 1) {

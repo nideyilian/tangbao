@@ -130,7 +130,6 @@ export interface TreeConfigDefaults {
   /** 默认参与产出的渠道 */
   selectedMediaIds: string[]
   direction: PostprocessMediaConfig['direction']
-  autoCompanionClean: boolean
   distribution: PostprocessMediaConfig['distribution']
   /** 启用范围：这份配置勾了哪些节点（空 = 没启用） */
   selectedCollectionIds: string[]
@@ -223,7 +222,6 @@ const POSTPROCESS_FIELD_TO_DEFAULTS: Record<keyof PostprocessMediaConfig, keyof 
   namePattern: 'namePattern',
   creator: 'creator',
   watermarkPresetIds: 'watermarkPresetIds',
-  autoCompanionClean: 'autoCompanionClean',
   distribution: 'distribution',
 }
 

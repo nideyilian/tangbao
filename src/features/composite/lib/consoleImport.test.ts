@@ -89,7 +89,6 @@ function makeActions(overrides: Partial<ConsoleImportActions> = {}): ConsoleImpo
     setNamePattern: vi.fn(),
     setFitMode: vi.fn(),
     setCreator: vi.fn(),
-    setAutoCompanionClean: vi.fn(),
     setIdentifier: vi.fn(),
     createCollection: vi.fn(async () => ({ id: 'created-1' })),
     renameCollection: vi.fn(async () => undefined),

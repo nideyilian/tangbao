@@ -53,7 +53,6 @@ function makeGlobalConfig(overrides: Partial<PostprocessMediaConfig> = {}): Post
     namePattern: '{date}-{index}',
     creator: '小王',
     watermarkPresetIds: ['preset-global'],
-    autoCompanionClean: true,
     distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
     ...overrides,
   }
@@ -213,22 +212,22 @@ describe('buildConsoleSheets', () => {
     expect(rows[0]?.text).toBe('限时')
   })
 
-  it('命名表覆盖署名与纯净版伴随（这两个原先没有集中的导出位置）', () => {
+  it('命名表覆盖署名等原本没有集中导出位置的项', () => {
     const rows = sheetNamed(makeInput(), 'naming').rows
     const byKey = Object.fromEntries(rows.map((row) => [row.key, row.value]))
     expect(byKey.namePattern).toBe('{date}-{index}')
     expect(byKey.creator).toBe('小王')
     expect(byKey.identifierText).toBe('@小王')
     expect(byKey.identifierPlacement).toBe('suffix')
-    expect(byKey.autoCompanionClean).toBe(true)
     // 画面适配也在这张表里：它与命名、分发同属「全局一套」的产出规格
     expect(byKey.fitMode).toBe('crop-fill')
   })
 
-  it('分发表 9 个字段一个不少', () => {
+  it('分发表 8 个字段一个不少（起始日期已移除：起算日由程序按产出当天取）', () => {
     const rows = sheetNamed(makeInput(), 'distribution').rows
-    expect(rows).toHaveLength(9)
+    expect(rows).toHaveLength(8)
     expect(rows.map((row) => row.key)).toContain('targetDir')
+    expect(rows.map((row) => row.key)).not.toContain('startDate')
   })
 })
 

@@ -5,20 +5,30 @@ import {
   isPostprocessDistributionActive,
   normalizePostprocessDistributionConfig,
   runPostprocessDistribution,
+  toBaseDate,
   type PostprocessDistributionConfig,
   type PostprocessDistributionElectronApi,
   type PostprocessDistributionItem,
 } from './postprocessDistribution'
 
+/** 排期起算日固定，用例才可复现（生产里由调用方按产出当天给，见 `toBaseDate`）。 */
+const BASE_DATE = '20260701'
+
 function createConfig(overrides: Partial<PostprocessDistributionConfig> = {}): PostprocessDistributionConfig {
   return {
     ...DEFAULT_POSTPROCESS_DISTRIBUTION,
     enabled: true,
-    startDate: '20260701',
     days: 3,
     renameMode: 'date',
     ...overrides,
   }
+}
+
+function createOptions(overrides: { baseDate?: string; shouldCancel?: () => boolean } = {}): {
+  baseDate: string
+  shouldCancel?: () => boolean
+} {
+  return { baseDate: BASE_DATE, ...overrides }
 }
 
 function createItems(paths: string[], outputRoot?: string): PostprocessDistributionItem[] {
@@ -46,13 +56,22 @@ function createMockApi(initialExisting: string[] = []) {
 }
 
 describe('isPostprocessDistributionActive', () => {
-  it('开关、天数、起始日期三者缺一不可', () => {
+  it('只看开关与天数；日期不再参与判定（起算日由程序取）', () => {
     expect(isPostprocessDistributionActive(createConfig())).toBe(true)
     expect(isPostprocessDistributionActive(createConfig({ enabled: false }))).toBe(false)
     expect(isPostprocessDistributionActive(createConfig({ days: 0 }))).toBe(false)
-    // 缺日期时**不做任何搬运**，而不是退回今天：猜日期会把素材投放到错误的日子上
-    expect(isPostprocessDistributionActive(createConfig({ startDate: '' }))).toBe(false)
-    expect(isPostprocessDistributionActive(createConfig({ startDate: '2026-07-01' }))).toBe(false)
+  })
+})
+
+describe('toBaseDate', () => {
+  it('按本地时区格式化成 YYYYMMDD', () => {
+    expect(toBaseDate(new Date(2026, 6, 1, 12, 0, 0).getTime())).toBe('20260701')
+    expect(toBaseDate(new Date(2026, 11, 31, 23, 59, 59).getTime())).toBe('20261231')
+  })
+
+  it('非法值回退执行当天，不抛错', () => {
+    expect(toBaseDate(undefined)).toMatch(/^\d{8}$/)
+    expect(toBaseDate(Number.NaN)).toMatch(/^\d{8}$/)
   })
 })
 
@@ -66,8 +85,20 @@ describe('buildDistributionDates', () => {
     expect(buildDistributionDates('20261231', 3, false)).toEqual(['20261231', '20270101', '20270102'])
   })
 
-  it('非法日期返回空数组', () => {
+  it('跳过周末不会少给天数（天数给够，只是日期不连续）', () => {
+    // 周五起算 5 天 → 跨过周末，最后落在下周四
+    expect(buildDistributionDates('20260703', 5, true)).toEqual([
+      '20260703',
+      '20260706',
+      '20260707',
+      '20260708',
+      '20260709',
+    ])
+  })
+
+  it('非法起算日或天数返回空数组（起算日由程序算，走到这里即内部缺陷）', () => {
     expect(buildDistributionDates('', 3, false)).toEqual([])
+    expect(buildDistributionDates('2026-07-01', 3, false)).toEqual([])
     expect(buildDistributionDates('20260701', 0, false)).toEqual([])
   })
 })
@@ -84,6 +115,13 @@ describe('normalizePostprocessDistributionConfig', () => {
     expect(config.mode).toBe('copy')
     expect(config.renameMode).toBe('date')
   })
+
+  it('旧数据里的 startDate 被丢弃（起算日改为程序按产出当天取）', () => {
+    const config = normalizePostprocessDistributionConfig({ enabled: true, startDate: '20260901', days: 5 })
+    expect(config.days).toBe(5)
+    expect(config.enabled).toBe(true)
+    expect('startDate' in config).toBe(false)
+  })
 })
 
 describe('runPostprocessDistribution', () => {
@@ -94,26 +132,28 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\img_20260601.jpg', 'D:\\out\\20260701\\img_20260602.jpg']),
       createConfig({ renameMode: 'date', days: 1 }),
       api,
+      createOptions(),
     )
 
     expect(result.success).toBe(2)
     expect(result.canceled).toBe(false)
     // 后缀用「-」与 `taskPostprocess.resolveUniquePath` 保持一致：同一条链路上的重名兜底应该长得一样
     expect(calls.map((call) => call.targetPath)).toEqual([
-      'D:\\out\\20260701\\img_20260701.jpg',
-      'D:\\out\\20260701\\img_20260701-2.jpg',
+      'D:\\out\\20260701\\20260701\\img_20260701.jpg',
+      'D:\\out\\20260701\\20260701\\img_20260701-2.jpg',
     ])
   })
 
   it('目标已存在时继续试探 -2 之后的后缀', async () => {
-    const { api, calls } = createMockApi(['D:\\out\\20260701\\img_20260701.jpg'])
+    const { api, calls } = createMockApi(['D:\\out\\20260701\\20260701\\img_20260701.jpg'])
     await runPostprocessDistribution(
       createItems(['D:\\out\\20260701\\img_20260601.jpg']),
       createConfig({ renameMode: 'date', days: 1 }),
       api,
+      createOptions(),
     )
 
-    expect(calls[0]?.targetPath).toBe('D:\\out\\20260701\\img_20260701-2.jpg')
+    expect(calls[0]?.targetPath).toBe('D:\\out\\20260701\\20260701\\img_20260701-2.jpg')
   })
 
   it('sequence 模式按日期文件夹名 + 序号重排', async () => {
@@ -122,13 +162,14 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\x.jpg', 'D:\\out\\20260701\\y.jpg', 'D:\\out\\20260701\\z.jpg']),
       createConfig({ renameMode: 'sequence', days: 3 }),
       api,
+      createOptions(),
     )
 
     expect(result.success).toBe(3)
     expect(calls.map((call) => call.targetPath)).toEqual([
-      'D:\\out\\20260701\\20260701_01.jpg',
-      'D:\\out\\20260702\\20260702_01.jpg',
-      'D:\\out\\20260703\\20260703_01.jpg',
+      'D:\\out\\20260701\\20260701\\20260701_01.jpg',
+      'D:\\out\\20260701\\20260702\\20260702_01.jpg',
+      'D:\\out\\20260701\\20260703\\20260703_01.jpg',
     ])
   })
 
@@ -138,15 +179,17 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\img_20260601.jpg']),
       createConfig({ renameMode: 'date', days: 1 }),
       api,
+      createOptions(),
     )
 
-    // 目录里没有日期段 → 嵌套日期子文件夹；文件名里的日期段被替换
+    // 文件名里的日期段被替换成分发日期
     expect(calls[0]?.targetPath).toBe('D:\\out\\20260701\\img_20260701.jpg')
   })
 
-  it('日期替换目录在多天之间保持稳定，不出现嵌套日期文件夹', async () => {
+  it('⭐ 原地恒定建日期子文件夹，不再替换目录名里的日期段', async () => {
     const { api, calls } = createMockApi()
-    // 回归：全局正则 test() 的 lastIndex 状态曾让相邻目录交替走「替换」与「嵌套」两个分支
+    // 目录名里的日期来自命名模板 `{date}`（产出日），不是排期日。
+    // 旧实现会把它替换掉 ⇒ 日期子文件夹永远不出现；这里锁住「目录名原样不动 + 下面多一层日期」。
     const result = await runPostprocessDistribution(
       createItems([
         'D:\\out\\20260701\\a.jpg',
@@ -157,16 +200,31 @@ describe('runPostprocessDistribution', () => {
       ]),
       createConfig({ renameMode: 'date', days: 5 }),
       api,
+      createOptions(),
     )
 
     expect(result.success).toBe(5)
     expect(calls.map((call) => call.targetPath)).toEqual([
-      'D:\\out\\20260701\\a.jpg',
-      'D:\\out\\20260702\\b.jpg',
-      'D:\\out\\20260703\\c.jpg',
-      'D:\\out\\20260704\\d.jpg',
-      'D:\\out\\20260705\\e.jpg',
+      'D:\\out\\20260701\\20260701\\a.jpg',
+      'D:\\out\\20260701\\20260702\\b.jpg',
+      'D:\\out\\20260701\\20260703\\c.jpg',
+      'D:\\out\\20260701\\20260704\\d.jpg',
+      'D:\\out\\20260701\\20260705\\e.jpg',
     ])
+  })
+
+  it('⭐ 起算日等于产出当天时，目标目录是日期子文件夹而不是文件自己（自我复制回归）', async () => {
+    const { api, calls } = createMockApi()
+    // 线上实踩：旧实现下 baseDir 含日期段 ⇒ 替换成本身 ⇒ 目标 == 源 ⇒ 每个文件与
+    // **自己**撞名 ⇒ 整目录凭空多出一份 `-2` 副本（`a-2.jpg`）。
+    await runPostprocessDistribution(
+      createItems(['D:\\out\\20260701\\a.jpg']),
+      createConfig({ renameMode: 'date', days: 1 }),
+      api,
+      createOptions({ baseDate: '20260701' }),
+    )
+
+    expect(calls[0]?.targetPath).toBe('D:\\out\\20260701\\20260701\\a.jpg')
   })
 
   it('余数分给前几天，保证总数不多不少', async () => {
@@ -175,40 +233,44 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\a.jpg', 'D:\\out\\20260701\\b.jpg', 'D:\\out\\20260701\\c.jpg']),
       createConfig({ renameMode: 'date', days: 2 }),
       api,
+      createOptions(),
     )
 
     // 3 个 / 2 天 → 第 1 天 2 个、第 2 天 1 个
     expect(calls.map((call) => call.targetPath)).toEqual([
-      'D:\\out\\20260701\\a.jpg',
-      'D:\\out\\20260701\\b.jpg',
-      'D:\\out\\20260702\\c.jpg',
+      'D:\\out\\20260701\\20260701\\a.jpg',
+      'D:\\out\\20260701\\20260701\\b.jpg',
+      'D:\\out\\20260701\\20260702\\c.jpg',
     ])
   })
 
-  it('非法起始日期时一条都不搬，并把原因写进 errors', async () => {
+  it('天数多于文件数时不硬凑：前 N 天各 1 个，其余天为空', async () => {
+    const { api, calls } = createMockApi()
+    const result = await runPostprocessDistribution(
+      createItems(['D:\\out\\20260701\\a.jpg', 'D:\\out\\20260701\\b.jpg']),
+      createConfig({ renameMode: 'date', days: 5 }),
+      api,
+      createOptions(),
+    )
+
+    expect(result.success).toBe(2)
+    expect(calls.map((call) => call.targetPath)).toEqual([
+      'D:\\out\\20260701\\20260701\\a.jpg',
+      'D:\\out\\20260701\\20260702\\b.jpg',
+    ])
+  })
+
+  it('起算日非法时一条都不搬，并把原因写进 errors', async () => {
     const { api, calls } = createMockApi()
     const result = await runPostprocessDistribution(
       createItems(['D:\\out\\20260701\\a.jpg']),
-      createConfig({ startDate: '2026-07-01' }),
+      createConfig(),
       api,
+      createOptions({ baseDate: '2026-07-01' }),
     )
 
     expect(result.success).toBe(0)
-    expect(result.errors.some((error) => error.includes('起始日期'))).toBe(true)
-    expect(calls).toHaveLength(0)
-  })
-
-  it('启用但没填起始日期时报错而不是静默跳过', async () => {
-    const { api, calls } = createMockApi()
-    const result = await runPostprocessDistribution(
-      createItems(['D:\\out\\20260701\\a.jpg']),
-      createConfig({ startDate: '' }),
-      api,
-    )
-
-    // 用户开了开关却什么都没发生是最难排查的情形，必须有可读原因
-    expect(result.errors).toHaveLength(1)
-    expect(result.errors[0]).toContain('起始日期')
+    expect(result.errors.some((error) => error.includes('起算日'))).toBe(true)
     expect(calls).toHaveLength(0)
   })
 
@@ -218,7 +280,7 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\1.jpg', 'D:\\out\\20260701\\2.jpg', 'D:\\out\\20260701\\3.jpg']),
       createConfig({ renameMode: 'date' }),
       api,
-      { shouldCancel: () => calls.length >= 2 },
+      createOptions({ shouldCancel: () => calls.length >= 2 }),
     )
 
     expect(calls).toHaveLength(2)
@@ -229,17 +291,19 @@ describe('runPostprocessDistribution', () => {
   it('move 模式清理搬空的源目录，copy 模式不动源目录', async () => {
     const moved = createMockApi()
     await runPostprocessDistribution(
-      createItems(['D:\\out\\folderA\\20260701\\a.jpg', 'D:\\out\\folderB\\20260701\\b.jpg']),
-      createConfig({ mode: 'move', renameMode: 'date' }),
+      createItems(['D:\\out\\folderA\\a.jpg', 'D:\\out\\folderB\\b.jpg']),
+      createConfig({ mode: 'move', renameMode: 'date', days: 1 }),
       moved.api,
+      createOptions(),
     )
-    expect(moved.removedDirs).toEqual(['D:\\out\\folderA\\20260701', 'D:\\out\\folderB\\20260701'])
+    expect(moved.removedDirs).toEqual(['D:\\out\\folderA', 'D:\\out\\folderB'])
 
     const copied = createMockApi()
     await runPostprocessDistribution(
-      createItems(['D:\\out\\folderA\\20260701\\a.jpg']),
-      createConfig({ mode: 'copy', renameMode: 'date' }),
+      createItems(['D:\\out\\folderA\\a.jpg']),
+      createConfig({ mode: 'copy', renameMode: 'date', days: 1 }),
       copied.api,
+      createOptions(),
     )
     expect(copied.removedDirs).toEqual([])
   })
@@ -250,6 +314,7 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\a.jpg']),
       createConfig({ renameMode: 'date', days: 1, modifyMd5: true }),
       api,
+      createOptions(),
     )
 
     expect(calls[0]?.appendRandomByte).toBe(true)
@@ -261,13 +326,14 @@ describe('runPostprocessDistribution', () => {
     api.authorizeCompositeOutputDirectory = authorize
 
     const result = await runPostprocessDistribution(
-      createItems(['D:\\out\\保险\\月亮\\20260701\\a.jpg'], 'D:/out'),
+      createItems(['D:\\out\\保险\\月亮\\a.jpg'], 'D:/out'),
       createConfig({ renameMode: 'date', days: 1, targetDir: 'D:\\dist' }),
       api,
+      createOptions(),
     )
 
-    // 分隔符混用（根用 /、路径用 \）时前缀匹配仍要成立
-    expect(authorize).toHaveBeenCalledWith('D:\\dist\\保险\\月亮\\20260701')
+    // 分隔符混用（根用 /、路径用 \）时前缀匹配仍要成立；授权的是「相对结构那一层」
+    expect(authorize).toHaveBeenCalledWith('D:\\dist\\保险\\月亮')
     expect(result.success).toBe(1)
     expect(calls[0]?.targetPath).toBe('D:\\dist\\保险\\月亮\\20260701\\a.jpg')
   })
@@ -280,6 +346,7 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\a.jpg'], 'D:\\out'),
       createConfig({ renameMode: 'date', days: 1, targetDir: 'relative\\dist' }),
       api,
+      createOptions(),
     )
 
     expect(result.success).toBe(0)
@@ -293,22 +360,83 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\保险\\月亮\\a.jpg'], 'D:\\out'),
       createConfig({ renameMode: 'date', days: 1 }),
       api,
+      createOptions(),
     )
 
     expect(calls[0]?.targetPath).toBe('D:\\out\\保险\\月亮\\20260701\\a.jpg')
   })
 
-  it('randomize 只打乱顺序，产出数量与目标天数分布不变', async () => {
+  it('⭐ 打乱按素材洗牌：同一张图在各渠道目录里落在同一天', async () => {
+    const { api, calls } = createMockApi()
+    // 同一批素材导出到两个渠道目录，每个目录里各有一份（这是线上的实际形态）
+    const items: PostprocessDistributionItem[] = [
+      { path: 'D:\\out\\gdt\\s1-gdt.jpg', sourceKey: 's1' },
+      { path: 'D:\\out\\gdt\\s2-gdt.jpg', sourceKey: 's2' },
+      { path: 'D:\\out\\gdt\\s3-gdt.jpg', sourceKey: 's3' },
+      { path: 'D:\\out\\toutiao\\s1-tt.jpg', sourceKey: 's1' },
+      { path: 'D:\\out\\toutiao\\s2-tt.jpg', sourceKey: 's2' },
+      { path: 'D:\\out\\toutiao\\s3-tt.jpg', sourceKey: 's3' },
+    ]
+
+    const result = await runPostprocessDistribution(
+      items,
+      createConfig({ renameMode: 'sequence', days: 3, randomize: true }),
+      api,
+      createOptions(),
+    )
+
+    expect(result.success).toBe(6)
+    // 按目录（日期）聚合，看每个日期文件夹里收的是哪些素材
+    const byDate = new Map<string, string[]>()
+    for (const call of calls) {
+      const date = call.targetPath.split('\\').slice(-2)[0]
+      const list = byDate.get(date) ?? []
+      list.push(call.sourcePath)
+      byDate.set(date, list)
+    }
+    expect(byDate.size).toBe(3)
+    for (const [, paths] of byDate) {
+      // 同上一条日期里，两个渠道拿到的**素材**必须一致 ⇒ 同一张素材跨渠道同期。
+      // 比的是素材名（渠道目录前缀本来就不一样），不是整条路径。
+      const stem = (p: string) => (p.split('\\').pop() ?? '').replace(/-(?:gdt|tt)\.jpg$/, '')
+      const gdt = paths
+        .filter((p) => p.includes('gdt'))
+        .map(stem)
+        .sort()
+      const tt = paths
+        .filter((p) => p.includes('toutiao'))
+        .map(stem)
+        .sort()
+      expect(gdt).toHaveLength(1)
+      expect(gdt).toEqual(tt)
+    }
+  })
+
+  it('打乱不改产出数量与天数分布', async () => {
     const { api, calls } = createMockApi()
     const paths = ['D:\\out\\20260701\\a.jpg', 'D:\\out\\20260701\\b.jpg', 'D:\\out\\20260701\\c.jpg']
     const result = await runPostprocessDistribution(
       createItems(paths),
       createConfig({ renameMode: 'date', days: 3, randomize: true }),
       api,
+      createOptions(),
     )
 
     expect(result.success).toBe(3)
     expect(new Set(calls.map((call) => call.sourcePath))).toEqual(new Set(paths))
+  })
+
+  it('没给 sourceKey 时回退按文件洗牌，不影响分法', async () => {
+    const { api, calls } = createMockApi()
+    const result = await runPostprocessDistribution(
+      createItems(['D:\\out\\20260701\\a.jpg', 'D:\\out\\20260701\\b.jpg']),
+      createConfig({ renameMode: 'date', days: 2, randomize: true }),
+      api,
+      createOptions(),
+    )
+
+    expect(result.success).toBe(2)
+    expect(calls).toHaveLength(2)
   })
 
   it('未启用或没有产出时直接返回，不触碰磁盘', async () => {
@@ -317,8 +445,9 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\a.jpg']),
       createConfig({ enabled: false }),
       api,
+      createOptions(),
     )
-    const empty = await runPostprocessDistribution([], createConfig(), api)
+    const empty = await runPostprocessDistribution([], createConfig(), api, createOptions())
 
     expect(disabled.success).toBe(0)
     expect(empty.success).toBe(0)
@@ -339,6 +468,7 @@ describe('runPostprocessDistribution', () => {
       createItems(['D:\\out\\20260701\\a.jpg', 'D:\\out\\20260701\\b.jpg']),
       createConfig({ renameMode: 'date', days: 1 }),
       api,
+      createOptions(),
     )
 
     expect(result.success).toBe(1)

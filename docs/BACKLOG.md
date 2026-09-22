@@ -11,6 +11,7 @@
 | TB-014 | 后处理按图片归属自动匹配参数          | DOING | 主写线 | 2026-09-18 |
 | TB-015 | 水印预设升为顶栏 tab，归属与参数分离  | DOING | 主写线 | 2026-09-18 |
 | TB-089 | 多目标产出：「产出目标」+「记住配置」 | DOING | 主写线 | 2026-09-22 |
+| TB-107 | 分发排期：起算日自动 + 原地建日期文件夹 + 按素材打乱 | DOING | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -4699,3 +4700,225 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
   2. `{seq}` 在模板里的位置不限于末尾，所以分组键取的是**文件夹名**而不是「文件名去掉尾部序号」，
      模板再怎么改都不会错配。
   3. 已产出的文件不受影响，**只有新产出**的文件名会变（同一批重跑、配置没变时，号也一模一样）。
+
+---
+
+### TB-105 图片列表状态标记：「已使用」（自动）+「已审核」（批量人工）
+
+- **来源**：杰哥 2026-09-22 21:22 原话：「为图片列表添加状态标记功能：对已完成后处理的图片，自动在缩略图或
+  预览图上叠加"已使用"小标签；同时支持多选图片批量打上"已审核"标记，且该批量标记操作仅对未后处理的
+  图片生效，已后处理的图片不可被标记为已审核。」
+- **状态**：DOING · 本线
+- **现状（开工前查证）**：「是否已后处理」**在素材上没有任何存放处** —— 自动跑只写 `task.postprocessOutputs`
+  （挂在任务上），手动跑连任务都没有、结果只进内存里的运行记录，重启即丢。所以这个功能必须先把状态落下来。
+- **验收标准**（可测）
+  1. 后处理**产出成功**的素材，缩略图左上角常驻「已使用」小标签（产出 0 文件 / 失败**不亮**）；
+  2. 多选批量「标记为已审核」**只对未产出后处理的素材生效**，已产出的跳过，且提示里**报明跳过了几张**
+     （不许静默少标）；
+  3. 全选区都已使用 → 菜单项**置灰并给出原因**（不留「点了没反应」）；
+  4. 后处理产出成功后，该素材原有的「已审核」被清掉（两者互斥）；
+  5. 批量打标进撤销栈，Ctrl+Z 可回退；
+  6. 网格 / 任务卡片 / 列表 / 大图查看器四处都能看到标记；
+  7. 全量 `npm run verify` 全绿。
+- **改动面**：`src/types.ts`、`src/lib/assetLibraryModel.ts`、`src/store.ts`、
+  `src/features/assetLibrary/{store,AssetTile,AssetListView,AssetViewer,AssetCardMenu}.tsx` + 对应测试。
+- **存储取舍（与口头方案的一处偏离，已在交付说明里报明）**：原话说用「系统标签」，落地改成
+  **素材上的两个时间戳字段**（`postprocessAt` / `reviewedAt`）—— 因为素材库是 IndexedDB（无 schema 迁移成本），
+  而标量字段能用现成的 `patchAssets(ids, patch)` **一次原子批量写**；走标签则要造「系统标签」机制
+  （仓库里只有内置项目树、**没有内置标签**），且 `tagIds` 是整份替换、批量时得逐张合并，
+  还会往用户的标签树里塞一个系统概念。
+- **知情取舍**：功能上线**之前**已产出的历史素材不会亮「已使用」（当时没记这个字段）。
+  回填需扫全部任务的 `postprocessOutputs`，本轮**刻意不做**（会让素材库 hydrate 变重），杰哥要了再补迁移。
+- **改了什么（逐处）**
+  1. `types.ts`：`GeneratedAsset` 加 `postprocessAt` / `reviewedAt`；`AssetPatch` 放行两者
+     （`reviewedAt: number | null`，传 `null` = **清除**）。
+  2. `lib/assetLibraryModel.ts`：
+     - **`normalizeAsset` 白名单放行这两个字段** ← 最容易漏的一处。它是显式白名单，
+       漏加 = 落库读回时字段凭空消失，而**全程一个错都不报**（界面只是不亮标签）。
+     - `applyAssetPatch` 写入两者：`postprocessAt` 只写不清，`reviewedAt` 判 `undefined`（与 `colorLabel` 同款）。
+     - 新增纯函数 `resolveAssetStatusMark`（两枚互斥、`postprocessAt` 优先 —— 事实优先于人的判断）、
+       `canAssetBeReviewed`、`ASSET_STATUS_MARK_LABELS`（网格胶囊与列表 chip **共用同一份文案**，防两处叫法分叉）。
+  3. `features/assetLibrary/store.ts`：
+     - `markAssetsReviewed(ids)`：**逐条**过 `canAssetBeReviewed` 过滤，返回 `{ marked, skipped }`；
+       一张都不可标时**不写库、不留撤销记录**（否则 Ctrl+Z 会回退一次「什么都没改」）。
+     - `applyPostprocessProduced(assetIds)`：一次原子批量写 `{ postprocessAt, reviewedAt: null }`；
+       **刻意不进撤销栈** —— 它是链路写下的事实，进栈会让 Ctrl+Z 撤销掉「已使用」。
+     - `patchAssets` 加可选 `label`：撤销栈里显示「标记为已审核」而不是笼统的「修改素材」。
+  4. `store.ts`：新增 `markImagesPostprocessed(imageIds)`（按需构建 `imageId → assetId` 反查表），
+     接在**自动**（`scheduleTaskPostprocess` 写回任务之后）与**手动**（`executePostprocessImageIds` 出结果之后）两处。
+     **产出为空的批次根本不调用**：失败与「配置指向空产出」都不算已使用 —— 亮一枚没有产物支撑的标签比不亮更糟。
+  5. UI：`AssetTile` 导出 `AssetStatusBadge`，**只出外观、定位由调用方给**
+     （`cx` 是纯字符串拼接、不做同类冲突合并，组件里写死 `absolute left-5` 再让调用方传 `left-3` 会两条并存）
+     + 砖上左上角（颜色圆点右侧）渲染；`AssetListView` 改用**行内 chip**
+     （那列缩略图只有 56px 宽，三个字的胶囊会把画面盖掉大半）；`AssetViewer` 大图左上角；
+     `AssetCardMenu` 加「标记为已审核」项（含置灰与跳过文案）。
+- **验收证据**（2026-09-22）
+  - **全量 `npm run verify` 通过**：`262 files / 3124 passed`（Node v24.14.0，tsc 双端 + lint +
+    format:check + test 全绿）。比 TB-104 时的 3111 多 **13** 例 —— 正是本轮新增的 6 + 5 + 2。
+  - 定向：`assetLibraryModel.test.ts` **33 passed**（新增 6）、`assetLibrary/store.test.ts`
+    **100 passed**（新增 5）、`AssetCardMenu.test.tsx` **10 passed**（新增 2）；
+    改动文件 `eslint` 零告警、`prettier --check` 通过。
+  - **反向验证 3 条，全部精确命中**（每次只红目标那几条，其余照过；改完已逐个回读校验复原）：
+    1. `markAssetsReviewed` 去掉互斥过滤 → store **2 failed / 98 passed**，
+       报错 `expected { marked: 2, skipped: 0 } to deeply equal { marked: 1, skipped: 1 }`；
+    2. `normalizeAsset` 不放行新字段 → model **1 failed / 32 passed**，`expected undefined to be 1727`
+       （正是「白名单漏加 = 静默丢字段」的样子）；
+    3. 菜单项改成不置灰 → 菜单 **1 failed / 9 passed**，`expected false to be true`。
+- **遗留 / 未覆盖**
+  1. 「产出成功 → 回写素材」这根**中间的线没有端到端用例**（要跑通 electronAPI + 渲染链）：
+     产出侧与素材侧各自有测试，中间那一跳靠代码审查 + 类型检查。
+  2. 历史素材不回填（见上「知情取舍」）。
+  3. **未经真机渲染验证**：胶囊与颜色圆点 / 选中勾并存时的实际观感，请在运行中的应用里过目
+     （本机做不了网页与离屏渲染，这是环境级限制）。
+
+---
+
+### TB-106 素材库「任务卡片切换界面后消失」（内存缓存窗口不该决定可见性）
+
+- **来源**：杰哥 2026-09-22 21:32 原话：「任务卡片经常丢失。切换界面后卡片会消失，按 Ctrl+R 刷新后
+  也可能丢失，有时必须重新加载才能重新显示，但缺失依旧存在。」
+- **状态**：DONE（代码）· **未提交**（工作区挂着 TB-105 的未提交改动，R-09 / R-79 无法分离）
+- **实测取证**（只读直查 dev 库 `%APPDATA%\tangbao\local-saves\db\asset-kernel.sqlite`，
+  探针写 `%TEMP%\tb-orphan-probe-{1,3,4}.py`，`mode=ro` 满足 R-06）
+
+  | 指标 | 实测 |
+  | --- | --- |
+  | tasks 记录 | 566（有 `outputImages` 的 556） |
+  | assets 行 | 484（active 479 / trashed 5） |
+  | **孤儿素材（主来源 taskId 查不到）** | **0** |
+  | `origins` 为空的素材（导入图） | **0** |
+  | 内存缓存窗口（`hydrate` 的 `limit: 200`）覆盖到 | 2026-09-21 11:51 |
+  | **落在窗口之外的 active 素材** | **279 / 479（58%）** |
+
+  ⇒ **落盘完全健康，一条任务都没丢**。所以「任务卡片消失」与删除/孤儿/落盘**都无关**。
+
+- **代码根因（三处，缺一不可）**
+  1. **内存缓存窗口被当成可见性判据**：`query.ts:199` 旧实现 `if (!live || live.status !== asset.status)
+     return false` —— 桌面端启动只把**最新 200 条**灌进 `assetsById`
+     （`assetLibraryRepository.ts:175-182` 写死 `limit: 200`），**窗口外的素材一律被剔除**，
+     不显示、不报错、不留占位。
+  2. **没有分页快照时整屏换成另一份数据源**：`AssetLibraryWorkspace.tsx:483` 旧实现
+     `if (!catalogPage) return queryResult` —— `catalogPage` 是**组件局部 state**，
+     切界面重挂载 / 切范围都归零，于是整屏退回「只画内存那 200 条」。
+  3. **查询失败静默清空、且不重试**：`.catch(() => setCatalogPage(null))` —— 一次失败 = 一批卡片
+     消失，且 effect 依赖没变、不会再跑，只能重启（这正是「缺失依旧存在」）。
+- **改了什么（逐处）**
+  1. `src/features/assetLibrary/query.ts`：`!live` 时**以数据库分页结果为准保留**（数据库那一页
+     本身已按范围/搜索/筛选查过，无需复检）；`live` 存在时行为不变（删除/回收即时消失、
+     移动/改标签复检）。
+  2. `src/features/assetLibrary/AssetLibraryWorkspace.tsx`：
+     - 新增 `catalogError` / `catalogRetryToken`；
+     - **查询失败不再清分页快照** —— 有快照就留着（卡片不消失，只出一条「刷新失败」+ 重试），
+       没快照（首帧 / 刚切范围）则由内容区显示失败态 + 重试；
+     - 新增 `catalogAwaitingFirstPage = desktopCatalog && !filterFavorite && !catalogPage`：
+       这种状态下内容区显示「素材列表加载中…」，**不再拿内存那一份当整屏数据源**；
+     - 重试令牌进查询 effect 依赖数组，失败后能真正重跑。
+- **验收证据**
+  - `vitest run src/features/assetLibrary src/lib` → **124 files / 1318 passed**；
+  - `npx tsc -b` 零错；`eslint` 三个改动文件零告警；三个文件 `prettier --check` 通过。
+  - **反向验证（精确命中）**：把 `query.ts` 改回 `if (!live || …) return false` →
+    **恰好 3 条红、其余 39 条绿**：`keeps assets absent from the in-memory state（内存缓存窗口之外不能剔除）`
+    / `keeps snapshot objects when the asset is not in memory (defensive fallback)`
+    / `keeps a whole page when the in-memory cache window is narrower than the library（TB-106 回归）`
+    ，改完已逐行回读校验复原。
+  - ⚠️ 顺带修掉两条**把 bug 钉成预期行为的用例**：`query.test.ts` 原先一条叫
+    `drops assets absent from the in-memory state`（断言剔除），另一条标题写 `keeps snapshot objects
+    when the asset is not in memory`、**断言却是 drop** —— 标题与断言自相矛盾，说明作者本意就是保留。
+- **遗留（未做，已登记 RISK）**
+  1. **真正根治**是把分页快照提到 `features/assetLibrary/store.ts`（模块级、跨重挂载存活），
+     但该文件是 TB-105 的未提交文件，本轮**一个字节都没碰**（R-09 / R-79）。
+  2. **内存缓存仍是 200 条窗口**：`hydrate()` 每次启动都重置，窗口外素材每次都要靠目录查询挣回来。
+     要不要放全量（`hydrateFull`）是启动性能取舍，留给杰哥拍板。
+  3. **侧栏 / 工具栏计数在首帧仍走内存派生**（`queryResult.counts`），加载态只是把网格盖住了，
+     数字会短暂偏小 —— 与「快照提到 store」一并解决更合适。
+  4. `resolveEffectiveAssets` 的 `live.status !== asset.status → 剔除` 是**同一类隐患的反向**
+     （内存陈旧时会把回收站里的图剔掉），本轮**刻意未动**，另记 RISK。
+
+#### TB-106 第二轮（同日 22:40，杰哥「接着做」）
+
+**又修掉两条 + 撤销一条我自己的假警报。**
+
+1. **「还没量到宽度 → 渲染 1px 幻影卡片」已修**（`AssetBatchView.tsx`）
+   - 测量 effect 的依赖原先只有 `measure`（`useCallback([])` 恒定）⇒ **一生只跑一次**；
+     首帧若落在空态（两个 ref 都是 `null` 就 `return`），`ResizeObserver` **从此永不建立**
+     ⇒ `layoutWidth` 恒为 0 ⇒ `cardWidth` 算成 `Math.max(1, 负数)` = **1px** ——
+     卡片「在 DOM 里但看不见」，不报错、不留占位。
+   - 改法：新增 `hasMeasurableContent`（空态与非空态是两棵子树）进依赖，空 → 非空必补一次测量；
+     `cardWidth` 在 `layoutWidth === 0` 时保持 0，由 `visibleItems` 拦住不渲染。
+   - 守卫用例：`AssetBatchView.test.tsx`「never renders 1px phantom cards while the layout width
+     is unknown」；harness 的 `renderGrouped(layoutWidth = 800)` 新增参数，传 0 即可模拟。
+   - **反向验证精确命中 1 条**（`cardWidth` 改回旧算法 → 恰好那条红）。
+   - ⚠️ **实测踩到的测试卫生坑**：这类用例**必须 `try/finally` 卸载 renderer**
+     —— 本文件后续用例共用 `useAssetLibraryStore`，断言失败时漏掉 `unmount()` 会把
+     「查看来源任务」那 3 条滚动用例一起带红（出现 3 条迷惑性连带失败，浪费了一轮排查）。
+2. **查询失败自动补试一次**（`AssetLibraryWorkspace.tsx`）：600ms 退避，成功后计数归零；
+   再失败才停在提示条 / 失败态等人工重试。瞬时 IPC 抖动不该让用户自己去找「重试」按钮。
+3. **撤销 TB-106 第一轮的「遗留 4」**（`live.status !== asset.status → 剔除` 的反向隐患）：
+   **经复核不成立** —— 本应用单实例，所有状态变更都经 store 同时写内存与库，直写库的批量路径
+   （导入 / 恢复 / 迁移）后面都跟 `hydrate()` 重灌内存 ⇒ 内存只可能比库新，不可能更旧，
+   「库说 trashed、内存还说 active」不可达。已同步更正 RISK R-91（不留假警报）。
+
+**验收证据（第二轮）**：`vitest run src/features/assetLibrary src/lib` → **124 files / 1319 passed**
+（比第一轮多 1 条，即新增的 1px 用例）；`tsc -b` 零错；五个改动文件 eslint 零告警 + prettier 全过。
+
+**仍未做（等杰哥拍板）**：启动 `hydrate()` 的 200 条窗口要不要全量化（会拉长启动）；
+分页快照提到 `features/assetLibrary/store.ts`（要碰另一条写线的未提交文件，本轮一个字节没碰）。
+
+---
+
+### TB-107 分发排期：起算日自动 + 原地建日期文件夹 + 按素材打乱
+
+- **来源**：杰哥 2026-09-22 报障 + 原话
+  - 「目标目录留空时，分发就是原地按日期建子文件夹，但却没成功」
+  - 「**这是你机制的问题，就不该让我自己填日期**」
+  - 「我是一批图导出不同渠道不同位置，**图的数量是固定的**」（⇒ 跨渠道同步是硬需求）
+- **状态**：DOING（本轮完成「起算日自动 / 原地语义 / 按素材打乱」三项；方向级覆盖待做）
+
+**报障的真因（复盘）**：不是分发坏了，是**机制本身让用户填了一个他不该填的量**。
+`startDate` 由用户手填 ⇒ 填成产出当天时，`baseDir` 里的日期段被替换成同一个日期 ⇒
+**目标目录 == 产出目录** ⇒ 每个文件与**自己**撞名 ⇒ 整目录凭空多出一份 `-2` 自我复制。
+用户在另一台电脑上试，只看到「没成功」，磁盘上不留任何可解释的痕迹。
+
+**验收标准（本轮部分，已达成）**
+
+| 项 | 验收方式 |
+| --- | --- |
+| 起算日不再由用户填 | 界面上不再有「起始日期」输入框（`ConsolePostprocessSections.test.tsx` 断言 `not.toContain('起始日期')`）；导出表 8 行、不再含 `startDate` |
+| 起算日 = 产出当天，且与命名模板 `{date}` 同源 | `runTaskPostprocess` 把 `input.createdAt ?? Date.now()` 归一化成 `createdAt` 后，**同时**喂给命名与分发（跨零点不会差一天） |
+| 原地恒定建日期子文件夹 | `postprocessDistribution.test.ts`「⭐ 原地恒定建日期子文件夹，不再替换目录名里的日期段」 |
+| 起算日 = 产出当天不再自我复制 | 同上文件「⭐ 起算日等于产出当天时，目标目录是日期子文件夹而不是文件自己（自我复制回归）」 |
+| 打乱按素材（跨渠道同期） | 同上文件「⭐ 打乱按素材洗牌：同一张图在各渠道目录里落在同一天」（连跑 3 次含随机的用例均稳定） |
+| 纯净版只在显式勾选时产出 | `storePostprocessMedia.test.ts`「⭐ 勾渠道媒体时不再自动补纯净版」+「显式勾选纯净版时排在渠道之前产出」 |
+
+**实施要点（代码位置）**
+
+- `src/lib/postprocessDistribution.ts`：删 `startDate` 字段与 `DATE_SEGMENT_TEST`；
+  新增 `toBaseDate()`（导出，供调用方算 `baseDate`）与 `buildSourceRank()`（全量素材只洗一次牌，
+  各组按同一序号排序 ⇒ 同一素材在各渠道落在同一天）；原地改为恒定 `pathJoin(baseDir, targetDate)`。
+- `src/features/postprocess/taskPostprocess.ts`：归一化 `createdAt`；登记项带 `sourceKey: imageId`；
+  `distributeOutputs` 多收一个 `createdAt` 并算出 `baseDate` 传给执行体。
+- `src/features/postprocess/PostprocessDistributionFields.tsx`：日期输入框 → 「铺几天」+ 一句口径说明。
+- 纯净版：`autoCompanionClean` 全链删除（类型 / 归一化 / partialize / action / 产出计划 /
+  导入导出 / treeConfigBundle / R-63 迁移字段 / UI 开关），**`PURE_MEDIA_ID` 保留**（还能显式勾选）。
+
+**验收证据（本轮）**
+
+- `npx tsc -b` 零报错 · `tsc -p electron/tsconfig.json --noEmit` 零报错
+- 改动文件 eslint 零告警 · `prettier --check` 全过
+- **`npx vitest run` → 262 文件 / 3133 用例全绿**
+- 定向：`postprocessDistribution.test.ts` 30 条（含 2 条新回归）连跑 3 次稳定
+
+**行为变化（要写进 RELEASE.md）**
+
+1. **纯净版不再自动伴随**：原来默认 `autoCompanionClean: true`，勾任一渠道就多产一份无水印原图
+   （= 把素材库里本来就无水的原图有损重编一份）。升级后**产出会比以前少一份**，这是预期变化。
+2. **起始日期不再手填**：旧配置里存过的 `startDate` 被忽略（`normalize` 不读），界面与导出表都已去掉。
+
+**仍未做（下一步）**
+
+- **分发跟产品 / 方向走**（杰哥 2026-09-22 提出）：`PostprocessNodeOverride` 加 `distribution`，
+  `applyPostprocessOverride` 合并、`normalizePostprocessNodeOverride` 恢复读、中控台分发小节接作用域、
+  反转 `params.test.ts:332`「节点写 distribution 会被丢弃」那条用例、补一条 ADR 推翻 ADR-0011 裁决 #4。
+  ⚠️ 背景：这事杰哥提过两次 —— 2026-09-20 那次是 **`tsc` 报错拦下的**（类型里没这个字段），
+  不是判断「方向级没用」；ADR-0011 收窄的理由栏原文也是「无逐方向差异证据」。
+- 分发结果可见性（「已排期 N 个 → M 天」写进运行结论）。

@@ -341,8 +341,6 @@ export interface PostprocessMediaConfig {
    * 数组顺序即产出顺序，保证同样的配置每次跑出同样的结果。
    */
   watermarkPresetIds: string[]
-  /** 纯净版自动伴随：勾了任一渠道媒体时，额外多产一份无水印原图 */
-  autoCompanionClean: boolean
   /** 产出后的按天分发（默认关闭）；见 `src/lib/postprocessDistribution.ts` */
   distribution: PostprocessDistributionConfig
 }
@@ -375,7 +373,6 @@ export const POSTPROCESS_FIELD_GROUP: Record<keyof PostprocessMediaConfig, Postp
   creator: 'postprocess',
   fitMode: 'postprocess',
   direction: 'postprocess',
-  autoCompanionClean: 'postprocess',
   distribution: 'postprocess',
 }
 
@@ -573,7 +570,6 @@ export function applyPostprocessOverride(
     namePattern: base.namePattern,
     creator: base.creator,
     watermarkPresetIds: perMedia?.watermarkPresetIds ?? override.watermarkPresetIds ?? base.watermarkPresetIds,
-    autoCompanionClean: base.autoCompanionClean,
     distribution: base.distribution,
   }
 }

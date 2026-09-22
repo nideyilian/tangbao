@@ -23,6 +23,7 @@ import { PURE_MEDIA_ID, type PostprocessMediaConfig, type PostprocessProjectTarg
 import { isCollectionWithinSelection, resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
 import {
   runPostprocessDistribution,
+  toBaseDate,
   type PostprocessDistributionConfig,
   type PostprocessDistributionItem,
 } from '../../lib/postprocessDistribution'
@@ -180,6 +181,13 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   /** 进度上报：绝对值语义，调用方（store）把它写进运行记录；没传就纯静默跑。 */
   const reportProgress = (patch: PostprocessProgressPatch) => input.onProgress?.(patch)
 
+  /**
+   * 本次产出的时间基准：命名模板的 `{date}` 与分发的排期起算日**必须同源**。
+   * 不归一化的话两处各自取一次 `Date.now()`，跨零点那一秒会让「产出目录名里的日期」与
+   * 「第一个日期文件夹」差一天 —— 用户看到一个凭空早/晚一天的文件夹，且无从解释。
+   */
+  const createdAt = input.createdAt ?? Date.now()
+
   if (!isElectron() || input.imageIds.length === 0) return toResult(result)
 
   // 迁移提升值要并进基线，否则「升级前配在方向上的命名模板 / 分发排期」在产出时读不到 ——
@@ -329,21 +337,21 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       // 完全不同的目录、叠不同的合规水印），一份配置展开不了全部渠道。
       // 纯净版没有渠道，用通用配置单独成桶。
       const channelIds = slice.config.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)
-      const wantClean =
-        slice.config.selectedMediaIds.includes(PURE_MEDIA_ID) ||
-        (slice.config.autoCompanionClean && channelIds.length > 0)
+      // 纯净版只在**显式勾选**时单独成桶（2026-09-23 去掉「自动伴随」）：它产出的就是
+      // 「无水印 + 沿用生成尺寸 + 不压缩」的原图，而素材库里那张原图本来就是无水的 ——
+      // 「勾了渠道就顺手多产一份」等于把原图有损重编一份白占磁盘。
+      const wantClean = slice.config.selectedMediaIds.includes(PURE_MEDIA_ID)
       if (wantClean) {
-        // `autoCompanionClean` 关掉：纯净版只在这一桶里产出，否则每个渠道桶都会顺手多产一份原图
         jobBuckets.push({
           project,
-          config: { ...slice.config, selectedMediaIds: [PURE_MEDIA_ID], autoCompanionClean: false },
+          config: { ...slice.config, selectedMediaIds: [PURE_MEDIA_ID] },
         })
       }
       for (const mediaId of channelIds) {
         const perChannel = resolveProjectPostprocessSlice(input.collections, params, targetId, baseConfig, mediaId)
         jobBuckets.push({
           project,
-          config: { ...perChannel.config, selectedMediaIds: [mediaId], autoCompanionClean: false },
+          config: { ...perChannel.config, selectedMediaIds: [mediaId] },
         })
       }
     }
@@ -397,7 +405,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         units: selected.units,
         config: bucketConfig,
         startSequences: sequencesByFolder,
-        createdAt: input.createdAt,
+        createdAt,
       })
       sequencesByFolder = nextSequences
 
@@ -459,7 +467,8 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         const distribution = bucketConfig.distribution
         if (distribution.enabled) {
           const key = JSON.stringify(distribution)
-          const entries = written.map((item) => ({ path: item.path, outputRoot: item.root }))
+          // `sourceKey` = 源图 id：分发据此按**素材**洗牌，同一张图在各渠道目录里落在同一天
+          const entries = written.map((item) => ({ path: item.path, outputRoot: item.root, sourceKey: imageId }))
           const group = distributionGroups.get(key)
           if (group) group.items.push(...entries)
           else distributionGroups.set(key, { config: distribution, items: entries })
@@ -476,7 +485,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     imageUnitsDone: 0,
     producedFiles,
   })
-  await distributeOutputs(api, distributionGroups, result)
+  await distributeOutputs(api, distributionGroups, result, createdAt)
 
   // 一个文件都没出、又没记下任何原因：这本身就是结论（配置指向了空产出 —— 渠道的尺寸全禁用、
   // 预设没挂上东西之类）。不留这条的话，界面只能报「结束了」而说不出为什么，
@@ -498,12 +507,15 @@ async function distributeOutputs(
   api: NonNullable<Window['electronAPI']>,
   groups: Map<string, { config: PostprocessDistributionConfig; items: PostprocessDistributionItem[] }>,
   result: PostprocessAccumulator,
+  /** 本次产出的时间基准（与命名模板 `{date}` 同源）；排期起算日由它得出 */
+  createdAt: number,
 ): Promise<void> {
   if (groups.size === 0) return
   const movedPaths = new Map<string, string>()
+  const baseDate = toBaseDate(createdAt)
   for (const { config, items } of groups.values()) {
     try {
-      const outcome = await runPostprocessDistribution(items, config, api)
+      const outcome = await runPostprocessDistribution(items, config, api, { baseDate })
       for (const item of outcome.moved) movedPaths.set(item.originalPath, item.targetPath)
       for (const error of outcome.errors) {
         reportIssue(result, { code: 'PP-DIST-001', stage: 'distribute', cause: error })

@@ -130,11 +130,11 @@ describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名
   // 下面两例从 `OutputSection.test.tsx` 搬来（2026-09-22 两个分区合并，那个文件随之删掉）。
   // 锁的是**合并之后内容真的还在这**：原先的独立 tab 已经删掉，漏在这里等于功能直接消失，
   // 而不是「换个地方」。
-  it('⭐ 分发并进来了：纯净版伴随与分发字段都渲染得出来', () => {
+  it('⭐ 分发并进来了：分发字段渲染得出来', () => {
     const body = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
 
-    // 这两串分别来自「分发」小节的两张卡片 —— 它们原先只出现在独立的分发分区里
-    expect(body).toContain('纯净版自动伴随')
+    // 这一串来自「分发」小节的卡片 —— 它原先只出现在独立的分发分区里，
+    // 漏在这里等于功能直接消失，而不是「换个地方」。
     expect(body).toContain('启用分发')
   })
 
@@ -613,25 +613,18 @@ describe('中控台 · 分发分区', () => {
   it('默认关闭时只留开关，不展开具体字段', () => {
     const body = render(<DistributionSection />)
     expect(body).toContain('启用分发')
-    expect(body).not.toContain('分配天数')
+    expect(body).not.toContain('铺几天')
   })
 
-  it('开启后展开排期相关字段', () => {
+  it('开启后展开条款：铺几天 + 搬运 / 重命名方式', () => {
     act(() => {
       usePostprocessMediaStore.getState().patchDistribution({ enabled: true })
     })
     const body = render(<DistributionSection />)
-    expect(body).toContain('起始日期')
-    expect(body).toContain('分配天数')
+    expect(body).toContain('铺几天')
     expect(body).toContain('搬运方式')
     expect(body).toContain('重命名方式')
-  })
-
-  it('开了开关但日期不合法时给出原因，而不是静默什么都不做', () => {
-    act(() => {
-      usePostprocessMediaStore.getState().patchDistribution({ enabled: true })
-    })
-    const body = render(<DistributionSection />)
-    expect(body).toContain('起始日期需填满 8 位数字')
+    // 起始日期不再由用户填（起算日由程序按产出当天取），界面上不该再有这个输入框
+    expect(body).not.toContain('起始日期')
   })
 })

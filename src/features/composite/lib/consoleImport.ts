@@ -108,7 +108,6 @@ export interface ConsoleImportPayload {
     creator?: string
     identifierText?: string
     identifierPlacement?: 'prefix' | 'suffix' | 'both'
-    autoCompanionClean?: boolean
     /** 画面适配模式；表里填英文枚举或导出的中文标签都认 */
     fitMode?: CompositeV2FitMode
   }
@@ -615,7 +614,6 @@ export function planConsoleImport(
     }
     const distribution: PostprocessDistributionConfig = {
       enabled: parseImportBool(read('enabled')) ?? false,
-      startDate: read('startDate'),
       days: parseImportNumber(read('days')) ?? 1,
       mode: read('mode') === 'move' ? 'move' : 'copy',
       randomize: parseImportBool(read('randomize')) ?? false,
@@ -625,10 +623,8 @@ export function planConsoleImport(
       targetDir: read('targetDir'),
     }
     if (distribution.targetDir) acc.directoryValues.add(distribution.targetDir)
-    if (distribution.enabled && !/^\d{8}$/.test(distribution.startDate)) {
-      reject(acc, 'distribution', 0, '开了分发但起始日期不是 8 位日期（YYYYMMDD），分发不会被启用')
-      distribution.enabled = false
-    }
+    // 起算日不再由配置提供（程序按产出当天取），导出模板里那一行已去掉；
+    // 老表里若还留着 `startDate` 行，读出来也不用了 —— 因此这里也不再需要「日期不合法就关掉分发」的兜底。
     acc.payload.distribution = distribution
     summarize(acc, 'distribution', { create: 0, update: 1, skip: 0, reject: countRejected(acc, 'distribution') })
   }
@@ -659,7 +655,6 @@ export function planConsoleImport(
       identifierText: read('identifierText') || undefined,
       identifierPlacement:
         placement === 'prefix' || placement === 'suffix' || placement === 'both' ? placement : undefined,
-      autoCompanionClean: parseImportBool(read('autoCompanionClean')),
       fitMode: fitModeOption?.value ?? (fitModeRaw ? DEFAULT_POSTPROCESS_FIT_MODE : undefined),
     }
     summarize(acc, 'naming', { create: 0, update: 1, skip: 0, reject: countRejected(acc, 'naming') })
@@ -738,7 +733,6 @@ export interface ConsoleImportActions {
   setNamePattern: (pattern: string) => void
   setFitMode: (fitMode: CompositeV2FitMode) => void
   setCreator: (creator: string) => void
-  setAutoCompanionClean: (enabled: boolean) => void
   setIdentifier: (patch: Partial<CompositeV2IdentifierConfig>) => void
   createCollection: (name: string, parentId?: string | null) => Promise<{ id: string } | null>
   renameCollection: (id: string, name: string) => Promise<void>
@@ -924,10 +918,9 @@ export async function applyConsoleImport(
   }
 
   if (payload.naming) {
-    const { namePattern, creator, identifierText, identifierPlacement, autoCompanionClean, fitMode } = payload.naming
+    const { namePattern, creator, identifierText, identifierPlacement, fitMode } = payload.naming
     if (namePattern) actions.setNamePattern(namePattern)
     if (creator !== undefined) actions.setCreator(creator)
-    if (autoCompanionClean !== undefined) actions.setAutoCompanionClean(autoCompanionClean)
     if (fitMode !== undefined) actions.setFitMode(fitMode)
     const identifierPatch: Partial<CompositeV2IdentifierConfig> = {}
     if (identifierText !== undefined) identifierPatch.text = identifierText

@@ -350,7 +350,6 @@ export interface PromotedNodeFieldValues {
   /** 值为 `undefined` 表示该节点没写过这个字段 */
   namePattern?: string
   creator?: string
-  autoCompanionClean?: boolean
   distribution?: PostprocessDistributionConfig
 }
 
@@ -387,9 +386,6 @@ export function collectPromotedNodeFieldValues(rawParams: unknown): PromotedNode
     if (promoted.creator === undefined && typeof fields.creator === 'string') {
       promoted.creator = fields.creator
     }
-    if (promoted.autoCompanionClean === undefined && typeof fields.autoCompanionClean === 'boolean') {
-      promoted.autoCompanionClean = fields.autoCompanionClean
-    }
     if (promoted.distribution === undefined && fields.distribution && typeof fields.distribution === 'object') {
       promoted.distribution = normalizePostprocessDistributionConfig(fields.distribution)
     }
@@ -406,12 +402,7 @@ export function hasLegacyNodeOnlyFields(rawParams: unknown): boolean {
     const input = (record as Record<string, unknown>).postprocess
     if (!input || typeof input !== 'object') continue
     const fields = input as Record<string, unknown>
-    if (
-      fields.namePattern !== undefined ||
-      fields.creator !== undefined ||
-      fields.autoCompanionClean !== undefined ||
-      fields.distribution !== undefined
-    ) {
+    if (fields.namePattern !== undefined || fields.creator !== undefined || fields.distribution !== undefined) {
       return true
     }
   }

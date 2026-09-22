@@ -215,7 +215,6 @@ export default function CompositeWorkspace() {
       setNamePattern: media.setNamePattern,
       setFitMode: media.setFitMode,
       setCreator: media.setCreator,
-      setAutoCompanionClean: media.setAutoCompanionClean,
       setPostprocessOverride: tree.setPostprocessOverride,
       setIdentifier: composite.setIdentifier,
       createCollection: library.createCollection,

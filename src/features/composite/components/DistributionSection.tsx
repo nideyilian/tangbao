@@ -21,29 +21,17 @@
  * 宽度也不自带上限（原先有 `max-w-2xl`），交给容器统一 —— 否则它会比同级的渠道表窄一截。
  */
 
-import { Switch } from '../../../design-system'
 import { useStore } from '../../../store'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import PostprocessDistributionFields from '../../postprocess/PostprocessDistributionFields'
 
 export function DistributionSection() {
-  const autoCompanionClean = usePostprocessMediaStore((state) => state.autoCompanionClean)
-  const setAutoCompanionClean = usePostprocessMediaStore((state) => state.setAutoCompanionClean)
   const distribution = usePostprocessMediaStore((state) => state.distribution)
   const patchDistribution = usePostprocessMediaStore((state) => state.patchDistribution)
   const showToast = useStore((state) => state.showToast)
 
   return (
     <div className="space-y-4">
-      <div className="rounded-ds-lg border border-ds-border bg-ds-surface px-3 py-2.5 dark:border-ds-border dark:bg-ds-scrim">
-        <Switch
-          label="纯净版自动伴随"
-          description="勾了任一渠道时，额外多产一份无水印原图。关掉后纯净版只在你显式勾选时才产出。"
-          checked={autoCompanionClean}
-          onCheckedChange={(checked) => setAutoCompanionClean(checked)}
-        />
-      </div>
-
       <div className="rounded-ds-lg border border-ds-border bg-ds-surface p-3 dark:border-ds-border dark:bg-ds-scrim">
         <PostprocessDistributionFields
           config={distribution}

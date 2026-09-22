@@ -26,7 +26,6 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
   const namePattern = usePostprocessMediaStore((state) => state.namePattern)
   const creator = usePostprocessMediaStore((state) => state.creator)
   const watermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
-  const autoCompanionClean = usePostprocessMediaStore((state) => state.autoCompanionClean)
   const distribution = usePostprocessMediaStore((state) => state.distribution)
   const promotedGlobals = useProjectTreeParamsStore((state) => state.promotedGlobals)
 
@@ -45,7 +44,6 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
           namePattern,
           creator,
           watermarkPresetIds,
-          autoCompanionClean,
           distribution,
         },
         promotedGlobals,
@@ -62,7 +60,6 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
       namePattern,
       creator,
       watermarkPresetIds,
-      autoCompanionClean,
       distribution,
       promotedGlobals,
     ],

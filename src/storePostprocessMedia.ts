@@ -85,7 +85,6 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   clearMediaOutputDirs: (mediaId: string) => void
   setNamePattern: (namePattern: string) => void
   setCreator: (creator: string) => void
-  setAutoCompanionClean: (enabled: boolean) => void
   /** 局部更新分发配置（只传要改的字段，其余保持） */
   patchDistribution: (patch: Partial<PostprocessDistributionConfig>) => void
 }
@@ -114,7 +113,6 @@ export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
     namePattern: DEFAULT_POSTPROCESS_NAME_PATTERN,
     creator: '',
     watermarkPresetIds: [],
-    autoCompanionClean: true,
     distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
   }
 }
@@ -261,7 +259,6 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
     namePattern,
     creator: typeof input.creator === 'string' ? input.creator : defaults.creator,
     watermarkPresetIds: normalizeWatermarkPresetIds(input),
-    autoCompanionClean: input.autoCompanionClean !== false,
     distribution: normalizePostprocessDistributionConfig(input.distribution),
   }
 }
@@ -481,8 +478,6 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
 
       setCreator: (creator) => set({ creator: typeof creator === 'string' ? creator : '' }),
 
-      setAutoCompanionClean: (enabled) => set({ autoCompanionClean: enabled === true }),
-
       patchDistribution: (patch) =>
         set((state) => ({ distribution: normalizePostprocessDistributionConfig({ ...state.distribution, ...patch }) })),
     }),
@@ -514,7 +509,6 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         namePattern: state.namePattern,
         creator: state.creator,
         watermarkPresetIds: state.watermarkPresetIds,
-        autoCompanionClean: state.autoCompanionClean,
         distribution: state.distribution,
       }),
       migrate: (persisted) => normalizePostprocessMediaConfig(persisted),
@@ -538,7 +532,6 @@ export function getPostprocessMediaConfigSnapshot(state: PostprocessMediaStore):
     namePattern: state.namePattern,
     creator: state.creator,
     watermarkPresetIds: [...state.watermarkPresetIds],
-    autoCompanionClean: state.autoCompanionClean,
     distribution: { ...state.distribution },
   }
 }
@@ -553,24 +546,22 @@ export type PostprocessOutputSource = { width: number; height: number }
 /**
  * 产出计划：`勾选的项目 × 勾选的媒体 × 尺寸 × 水印预设`。
  *
- * 纯净版自动伴随在这里补：只要勾了任一渠道媒体且开关开着，就确保 `clean` 在列；
- * 用户主动取消勾选 `clean` 且未勾任何渠道时不强加（避免空生成）。
+ * **纯净版只在显式勾选时进列**（2026-09-23 去掉「自动伴随」）：原先「勾了任一渠道就额外多产
+ * 一份无水印原图」产出的其实是「无水印 + 沿用生成尺寸 + 不压缩」的 JPEG —— 而素材库里那张
+ * 原图**本来就是无水的**，尺寸也没适配过渠道要求，等于把原图有损重编一份，白占磁盘。
  *
  * `projects` 由调用方从项目树解析后传入（store 不依赖 assetLibrary，避免循环/耦合）；
  * 不传则不展开项目维度，单元里也不带 `project` 字段。
  * `presetNames` 是水印预设 id → 展示名的映射（store 不依赖 composite，同样由调用方注入）。
  */
 export function selectPostprocessOutputPlan(
-  config: Pick<
-    PostprocessMediaConfig,
-    'media' | 'selectedMediaIds' | 'direction' | 'autoCompanionClean' | 'watermarkPresetIds'
-  >,
+  config: Pick<PostprocessMediaConfig, 'media' | 'selectedMediaIds' | 'direction' | 'watermarkPresetIds'>,
   source: PostprocessOutputSource,
   projects: PostprocessProjectTarget[] = [],
   presetNames: Record<string, string> = {},
 ): PostprocessOutputPlan {
-  const hasChannel = config.selectedMediaIds.some((id) => id !== PURE_MEDIA_ID)
-  const includeClean = config.selectedMediaIds.includes(PURE_MEDIA_ID) || (config.autoCompanionClean && hasChannel)
+  // 勾了 `clean` 就把它提到最前：顺序即产出顺序，维持旧实现的顺序以免 `{seq}` 编号漂移
+  const includeClean = config.selectedMediaIds.includes(PURE_MEDIA_ID)
   const mediaIds = includeClean
     ? [PURE_MEDIA_ID, ...config.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)]
     : [...config.selectedMediaIds]

@@ -61,8 +61,7 @@ export function getProjectTreeParamsSnapshot(state: ProjectTreeParamsStore): Pro
  * **「空缺」的判定按类型分**：
  * - 字符串字段（`namePattern` / `creator`）：`undefined` **或空串**都算空缺 ——
  *   基线里 `creator: ''` 就是「没填过」，不能因为它是空串就把迁移值挡掉；
- * - 布尔 / 对象字段（`autoCompanionClean` / `distribution`）：只有 `undefined` 算空缺 ——
- *   `autoCompanionClean: false` 是一条有效设置（「不要纯净版伴随」），不能被当成没设。
+ * - 对象字段（`distribution`）：只有 `undefined` 算空缺（整个对象缺席才算没设过）。
  *
  * 调用点在组装 `globalConfig` 的地方（`PostprocessSettingsModal` 的宿主
  * 与运行时产出链路 `runTaskPostprocess`）——统一走这里，避免各处各写一遍合并口径。
@@ -78,9 +77,6 @@ export function mergePromotedGlobals<T extends Partial<PromotedNodeFieldValues>>
   }
   if (isBlankString(merged.creator) && promoted.creator) {
     merged.creator = promoted.creator as T['creator']
-  }
-  if (merged.autoCompanionClean === undefined && promoted.autoCompanionClean !== undefined) {
-    merged.autoCompanionClean = promoted.autoCompanionClean as T['autoCompanionClean']
   }
   if (merged.distribution === undefined && promoted.distribution !== undefined) {
     merged.distribution = promoted.distribution as T['distribution']

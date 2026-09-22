@@ -422,7 +422,6 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
       { key: 'creator', label: '创作者', value: globalConfig.creator },
       { key: 'identifierText', label: '署名文本', value: identifier?.text ?? '' },
       { key: 'identifierPlacement', label: '署名位置', value: identifier?.placement ?? 'suffix' },
-      { key: 'autoCompanionClean', label: '纯净版自动伴随', value: globalConfig.autoCompanionClean },
       // 取值域写进 label：这张表是要被人手改的，三个模式名不给出来，填错就只能靠猜
       { key: 'fitMode', label: '画面适配（裁剪填满/模糊填充/拉伸铺满）', value: globalConfig.fitMode },
     ],
@@ -446,8 +445,8 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
 function buildDistributionRows(config: PostprocessDistributionConfig): Array<Record<string, unknown>> {
   return [
     { key: 'enabled', label: '启用分发', value: config.enabled },
-    { key: 'startDate', label: '起始日期', value: config.startDate },
-    { key: 'days', label: '分配天数', value: config.days },
+    // 起算日已从配置中移除（程序按产出当天取），不再导出这一行
+    { key: 'days', label: '铺几天', value: config.days },
     { key: 'mode', label: '搬运方式', value: config.mode },
     { key: 'randomize', label: '打乱后分配', value: config.randomize },
     { key: 'skipWeekends', label: '跳过周末', value: config.skipWeekends },

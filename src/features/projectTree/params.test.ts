@@ -52,7 +52,6 @@ function baseConfig(): PostprocessMediaConfig {
     namePattern: '{line}-{product}-{direction}-{seq}',
     creator: '',
     watermarkPresetIds: [],
-    autoCompanionClean: true,
     distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
   }
 }
@@ -707,7 +706,6 @@ describe('R-63 迁移：节点上已收归全局的旧值必须被接住（ADR-0
     const promoted = collectPromotedNodeFieldValues(LEGACY_PAYLOAD)
     expect(promoted.creator).toBe('方向级创作者')
     expect(promoted.namePattern).toBe('{product}-{seq}')
-    expect(promoted.autoCompanionClean).toBe(false)
     expect(promoted.distribution?.days).toBe(30)
   })
 
@@ -739,15 +737,15 @@ describe('R-63 迁移：节点上已收归全局的旧值必须被接住（ADR-0
     const promoted: PromotedNodeFieldValues = {
       namePattern: '{product}-{seq}',
       creator: '迁移来的',
-      autoCompanionClean: false,
+      distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION, enabled: true, days: 30 },
     }
     const merged = mergePromotedGlobals(baseline, promoted)
     // 基线已有 namePattern → 不被迁移值覆盖
     expect(merged.namePattern).toBe('{line}-{seq}')
     // 基线 creator 是空串（= 没设过）→ 迁移值补上
     expect(merged.creator).toBe('迁移来的')
-    // 基线没这个字段 → 迁移值补上
-    expect(merged.autoCompanionClean).toBe(false)
+    // 基线没这个字段（对象缺席）→ 迁移值补上
+    expect(merged.distribution?.days).toBe(30)
   })
 
   it('空迁移值不改变基线', () => {

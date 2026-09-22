@@ -415,7 +415,6 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
       namePattern: '{seq}',
       creator: '基线',
       watermarkPresetIds: ['基线水印'],
-      autoCompanionClean: true,
       distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
     }
   }
@@ -548,7 +547,6 @@ describe('导出位置：全局渠道表 + 双写', () => {
       namePattern: '{seq}',
       creator: '',
       watermarkPresetIds: [],
-      autoCompanionClean: true,
       distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
     }
   }

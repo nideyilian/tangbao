@@ -9,9 +9,9 @@
  * 不在这里做「恢复继承」：那是节点覆盖层的概念，由宿主用 FieldRow 包一层提供。
  */
 
-import { Alert, Button, SegmentedControl, Switch, TextField } from '../../design-system'
+import { Button, SegmentedControl, Switch, TextField } from '../../design-system'
 import { FolderOpenIcon } from '../../components/icons'
-import { isPostprocessDistributionActive, type PostprocessDistributionConfig } from '../../lib/postprocessDistribution'
+import type { PostprocessDistributionConfig } from '../../lib/postprocessDistribution'
 
 interface Props {
   config: PostprocessDistributionConfig
@@ -40,31 +40,20 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
     }
   }
 
-  // 「开了开关但什么都没发生」是最难排查的情形：日期不合法时给一句明确的话。
-  const incomplete = config.enabled && !isPostprocessDistributionActive(config)
-
   return (
     <div className="space-y-3">
       <Switch
         label="启用分发"
-        description="产出写盘后按天平均分配到日期文件夹，供投放排期使用。"
+        description="产出写盘后按天平均分配到日期文件夹（从产出当天开始算），供投放排期使用。"
         checked={config.enabled}
         onCheckedChange={(enabled) => onChange({ enabled })}
       />
 
       {config.enabled && (
         <>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
             <TextField
-              label="起始日期"
-              containerClassName="min-w-0"
-              value={config.startDate}
-              onChange={(event) => onChange({ startDate: event.target.value.replace(/\D/g, '').slice(0, 8) })}
-              placeholder="YYYYMMDD，如 20260901"
-            />
-            <TextField
-              label="分配天数"
-              containerClassName="min-w-0"
+              label="铺几天"
               value={String(config.days)}
               onChange={(event) => {
                 const next = Number(event.target.value.replace(/\D/g, ''))
@@ -72,6 +61,10 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
               }}
               placeholder="1"
             />
+            <p className="text-xs text-ds-muted dark:text-ds-muted">
+              从产出当天开始算，按天平均分。比如今天导出 1000 张、铺 5 天，就是每天 200 张
+              （多个渠道目录各自分各自的，同一张素材在各渠道落在同一天）。
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -141,12 +134,6 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
               浏览
             </Button>
           </div>
-
-          {incomplete && (
-            <Alert tone="warning">
-              起始日期需填满 8 位数字（如 20260901）。当前配置下不会搬运任何文件，产出仍留在原目录。
-            </Alert>
-          )}
         </>
       )}
     </div>

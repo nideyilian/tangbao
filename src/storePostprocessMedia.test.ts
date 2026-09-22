@@ -35,7 +35,6 @@ describe('默认配置', () => {
     expect(state.fitMode).toBe(DEFAULT_POSTPROCESS_FIT_MODE)
     expect(state.namePattern).toBe(DEFAULT_POSTPROCESS_NAME_PATTERN)
     expect(state.watermarkPresetIds).toEqual([])
-    expect(state.autoCompanionClean).toBe(true)
     expect(state.media).toHaveLength(4)
   })
 
@@ -269,9 +268,6 @@ describe('选择与开关', () => {
 
     usePostprocessMediaStore.getState().setCreator('杰哥')
     expect(usePostprocessMediaStore.getState().creator).toBe('杰哥')
-
-    usePostprocessMediaStore.getState().setAutoCompanionClean(false)
-    expect(usePostprocessMediaStore.getState().autoCompanionClean).toBe(false)
   })
 })
 
@@ -372,20 +368,20 @@ describe('归一化（持久化与备份恢复共用）', () => {
 })
 
 describe('产出计划', () => {
-  it('勾渠道媒体时自动补上纯净版（干净版自动伴随）', () => {
+  it('⭐ 勾渠道媒体时不再自动补纯净版（2026-09-23 去掉「纯净版自动伴随」）', () => {
+    // 纯净版产出的是「无水印 + 沿用生成尺寸 + 不压缩」的原图，而素材库里那张原图本来就是无水的，
+    // 「勾了渠道就顺手多产一份」等于把原图有损重编一份白占磁盘 ⇒ 现在只在显式勾选时产出。
     usePostprocessMediaStore.getState().setSelectedMediaIds(['gdt'])
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })
-    expect(plan.units[0]).toMatchObject({ mediaId: PURE_MEDIA_ID, clean: true, maxSizeKb: 0, width: 1280, height: 720 })
-    expect(plan.units.slice(1).map((unit) => unit.sizeId)).toEqual(['gdt-1280x720'])
+    expect(plan.units.map((unit) => unit.mediaId)).toEqual(['gdt'])
     expect(plan.skippedMediaIds).toEqual([])
   })
 
-  it('关掉伴随开关后只产出勾选内容', () => {
-    const store = usePostprocessMediaStore.getState()
-    store.setSelectedMediaIds(['gdt'])
-    store.setAutoCompanionClean(false)
+  it('显式勾选纯净版时排在渠道之前产出', () => {
+    usePostprocessMediaStore.getState().setSelectedMediaIds(['gdt', PURE_MEDIA_ID])
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })
-    expect(plan.units.map((unit) => unit.mediaId)).toEqual(['gdt'])
+    expect(plan.units[0]).toMatchObject({ mediaId: PURE_MEDIA_ID, clean: true, maxSizeKb: 0, width: 1280, height: 720 })
+    expect(plan.units.slice(1).map((unit) => unit.sizeId)).toEqual(['gdt-1280x720'])
   })
 
   it('只勾纯净版时不重复添加', () => {
@@ -400,7 +396,8 @@ describe('产出计划', () => {
     usePostprocessMediaStore.setState({ selectedMediaIds: ['ghost'] })
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })
     expect(plan.skippedMediaIds).toEqual(['ghost'])
-    expect(plan.units.map((unit) => unit.mediaId)).toEqual([PURE_MEDIA_ID])
+    // 没勾纯净版、也没有「自动伴随」了 ⇒ 一个单元都产不出来（这正是 skippedMediaIds 要提醒的事）
+    expect(plan.units).toEqual([])
   })
 
   it('setSelectedMediaIds 会把悬空媒体清掉（纵深防御，避免脏选择落盘）', () => {
@@ -417,9 +414,8 @@ describe('产出计划', () => {
     expect(isPostprocessReady(usePostprocessMediaStore.getState())).toBe(true)
     expect(isPostprocessReady(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })).toBe(true)
 
-    // 只勾了不存在的媒体 + 无伴随 → 有项目也产不出东西
+    // 只勾了不存在的媒体（悬空 id）→ 有项目也产不出东西
     usePostprocessMediaStore.getState().setSelectedMediaIds(['ghost'])
-    usePostprocessMediaStore.getState().setAutoCompanionClean(false)
     expect(isPostprocessReady(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })).toBe(false)
   })
 })
@@ -454,15 +450,15 @@ describe('产出计划的项目维度', () => {
       { collectionId: 'c1', line: '线一', product: '品一', direction: '' },
       { collectionId: 'c2', line: '线二', product: '品二', direction: '' },
     ])
-    // 每个项目都是「纯净版 + gdt 横版」两份
-    expect(plan.units.map((unit) => unit.project?.collectionId)).toEqual(['c1', 'c1', 'c2', 'c2'])
-    expect(plan.units.map((unit) => unit.mediaId)).toEqual(['clean', 'gdt', 'clean', 'gdt'])
+    // 每个项目只有勾选的 gdt 横版一份（纯净版不再自动伴随）
+    expect(plan.units.map((unit) => unit.project?.collectionId)).toEqual(['c1', 'c2'])
+    expect(plan.units.map((unit) => unit.mediaId)).toEqual(['gdt', 'gdt'])
   })
 
   it('不传项目时不展开（保持阶段二的旧行为）', () => {
     usePostprocessMediaStore.getState().setSelectedMediaIds(['gdt'])
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })
-    expect(plan.units.map((unit) => unit.mediaId)).toEqual(['clean', 'gdt'])
+    expect(plan.units.map((unit) => unit.mediaId)).toEqual(['gdt'])
     expect('project' in plan.units[0]).toBe(false)
   })
 })
@@ -474,13 +470,14 @@ describe('分发配置', () => {
   })
 
   it('patchDistribution 只改传入的字段，其余保持', () => {
-    usePostprocessMediaStore.getState().patchDistribution({ enabled: true, startDate: '20260901', days: 7 })
+    usePostprocessMediaStore.getState().patchDistribution({ enabled: true, days: 7, skipWeekends: true })
     usePostprocessMediaStore.getState().patchDistribution({ days: 14 })
 
     const config = usePostprocessMediaStore.getState().distribution
     expect(config.enabled).toBe(true)
-    expect(config.startDate).toBe('20260901')
     expect(config.days).toBe(14)
+    // 没传的字段保持上一次的值（不是被重置成默认）
+    expect(config.skipWeekends).toBe(true)
   })
 
   it('patchDistribution 走归一化，挡住非法枚举与 0 天', () => {
@@ -492,10 +489,16 @@ describe('分发配置', () => {
   })
 
   it('归一化持久化数据时把分发补成完整结构', () => {
-    const config = normalizePostprocessMediaConfig({ distribution: { enabled: true, startDate: '20260901' } })
+    const config = normalizePostprocessMediaConfig({ distribution: { enabled: true } })
     expect(config.distribution.enabled).toBe(true)
     expect(config.distribution.days).toBe(1)
     expect(config.distribution.mode).toBe('copy')
+  })
+
+  it('旧数据里的 startDate 不再出现在归一化结果里', () => {
+    const config = normalizePostprocessMediaConfig({ distribution: { enabled: true, startDate: '20260901' } })
+    expect(config.distribution.enabled).toBe(true)
+    expect('startDate' in config.distribution).toBe(false)
   })
 })
 
