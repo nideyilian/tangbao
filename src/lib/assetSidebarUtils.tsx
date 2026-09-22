@@ -1,8 +1,12 @@
+import type { DragEvent } from 'react'
 import type { AssetCollection } from '../types'
 
 /**
  * 素材库侧栏（AssetLibrarySidebar）的纯函数工具：
  * 树过滤、拖放数据解析、移动目标计算。
+ *
+ * 其中「集合拖拽协议」一节被**两棵树**共用（画廊左侧栏 + 中控台左栏），
+ * 改它等于同时改两处的拖拽手感。
  */
 
 export interface CollectionTreeNode {
@@ -75,6 +79,54 @@ export function parseAssetSourceCollectionId(dataTransfer: DataTransfer | null):
   if (!dataTransfer) return null
   const value = dataTransfer.getData(ASSET_SOURCE_DATA_TYPE)
   return value || null
+}
+
+// ===== 集合（树节点）拖拽协议 =====
+//
+// 同一份 `AssetCollection` 层级在**两棵树**上渲染：画廊左侧栏、中控台左栏。
+// 两处的手感必须一致 —— 哪算插到前面、哪算插到后面、哪算变成子级 —— 所以协议
+// （负载类型 / 负载解析 / 三区判定）只在这里实现一份，两处各自绑定事件。
+// 落库动作也共用同一个 store action（`moveCollectionsToPosition`），它自带防环：
+// 拖到自身或自身的子孙下会被拒，不会在数据里造出环。
+
+/** 集合拖拽负载类型：JSON 数组（多选拖拽时为全部选中集合 id）。 */
+export const COLLECTION_DRAG_TYPE = 'application/x-tangbao-collection-ids'
+
+/** 投放区：`before` / `after` = 插到参照物的前 / 后（同级）；`into` = 变成参照物的子级。 */
+export type CollectionDropZone = 'before' | 'after' | 'into'
+
+/** 从拖拽负载解析集合 id 列表；非集合拖拽返回 null。 */
+export function parseCollectionDragIds(dataTransfer: DataTransfer | null): string[] | null {
+  if (!dataTransfer) return null
+  const raw = dataTransfer.getData(COLLECTION_DRAG_TYPE)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * dragover 阶段判定是否为集合拖拽。
+ * Chromium 安全限制：dragover 期间 `getData()` 返回空字符串，只能读 `types`，
+ * 因此在 dragover 用类型粗判、drop 阶段再用 `parseCollectionDragIds` 严格解析负载。
+ */
+export function canAcceptCollectionDrag(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false
+  return Array.from(dataTransfer.types).includes(COLLECTION_DRAG_TYPE)
+}
+
+/** 按鼠标在行内的纵向位置判定投放区：上 30% 插入前、下 30% 插入后、中间嵌套。 */
+export function getCollectionDropZone(event: DragEvent<HTMLDivElement>): CollectionDropZone {
+  const rect = event.currentTarget.getBoundingClientRect()
+  if (rect.height > 0 && Number.isFinite(event.clientY)) {
+    const ratio = (event.clientY - rect.top) / rect.height
+    if (ratio < 0.3) return 'before'
+    if (ratio > 0.7) return 'after'
+  }
+  return 'into'
 }
 
 export interface MoveDestination {

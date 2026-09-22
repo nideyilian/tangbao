@@ -48,13 +48,17 @@ import type { AssetCollection, GeneratedAsset } from '../../types'
 import type { AssetSidebarCounts } from './query'
 import { useAssetLibraryStore } from './store'
 import {
+  COLLECTION_DRAG_TYPE,
   canAcceptAssetDrag,
+  canAcceptCollectionDrag,
   computeBatchMoveDestinations,
   computeMoveDestinations,
   computeRecursiveCollectionCounts,
   filterCollectionTree,
+  getCollectionDropZone,
   parseAssetImagePayloadList,
   parseAssetSourceCollectionId,
+  parseCollectionDragIds,
   type CollectionTreeNode,
   type MoveDestination,
 } from '../../lib/assetSidebarUtils'
@@ -953,44 +957,9 @@ function useAssetDropTarget(
 }
 
 // ===== 文件夹拖拽（Eagle 式同级排序/嵌套）=====
-
-/** 文件夹拖拽负载类型：JSON 数组（多选拖拽时为全部选中文件夹 id） */
-export const COLLECTION_DRAG_TYPE = 'application/x-tangbao-collection-ids'
-
-/** 从拖拽负载解析文件夹 id 列表；非文件夹拖拽返回 null。 */
-function parseCollectionDragIds(dataTransfer: DataTransfer | null): string[] | null {
-  if (!dataTransfer) return null
-  const raw = dataTransfer.getData(COLLECTION_DRAG_TYPE)
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * dragover 阶段判定是否为文件夹拖拽。
- * Chromium 安全限制：dragover 期间 getData() 返回空字符串，只能读 types；
- * 因此在 dragover 用类型粗判（与素材拖拽的 canAcceptAssetDrag 同一模式），
- * drop 阶段再用 parseCollectionDragIds 严格解析负载。
- */
-function canAcceptFolderDrag(dataTransfer: DataTransfer | null): boolean {
-  if (!dataTransfer) return false
-  return Array.from(dataTransfer.types).includes(COLLECTION_DRAG_TYPE)
-}
-
-/** 按鼠标在行内的纵向位置判定投放区：上 30% 插入前、下 30% 插入后、中间嵌套。 */
-function getFolderDropZone(event: DragEvent<HTMLDivElement>): 'before' | 'after' | 'into' {
-  const rect = event.currentTarget.getBoundingClientRect()
-  if (rect.height > 0 && Number.isFinite(event.clientY)) {
-    const ratio = (event.clientY - rect.top) / rect.height
-    if (ratio < 0.3) return 'before'
-    if (ratio > 0.7) return 'after'
-  }
-  return 'into'
-}
+//
+// 负载类型 / 解析 / 三区判定由 `lib/assetSidebarUtils` 的「集合拖拽协议」一节提供 ——
+// 中控台左栏那棵树也用同一份，两边手感必须一致。这里只负责绑定事件与局部状态。
 
 /**
  * 素材拖入项目节点后的归类动作：从文件夹视图拖出 = 移动（移除源文件夹归属）；否则 = 添加。
@@ -1255,11 +1224,11 @@ function CollectionTreeItem({
   }
 
   const handleRowDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (canAcceptFolderDrag(event.dataTransfer)) {
+    if (canAcceptCollectionDrag(event.dataTransfer)) {
       event.preventDefault()
       event.stopPropagation()
       event.dataTransfer.dropEffect = 'move'
-      onFolderDragOver(collection.id, getFolderDropZone(event))
+      onFolderDragOver(collection.id, getCollectionDropZone(event))
       return
     }
     dropTarget.onDragOver(event)
@@ -1269,7 +1238,7 @@ function CollectionTreeItem({
     if (parseCollectionDragIds(event.dataTransfer)) {
       event.preventDefault()
       event.stopPropagation()
-      onFolderDrop(collection.id, getFolderDropZone(event))
+      onFolderDrop(collection.id, getCollectionDropZone(event))
       return
     }
     dropTarget.onDrop(event)
@@ -1683,7 +1652,7 @@ function AssetLibrarySidebar({
 
   /** 根目录投放（树的空白区）：追加到根 */
   const handleRootDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!canAcceptFolderDrag(event.dataTransfer)) return
+    if (!canAcceptCollectionDrag(event.dataTransfer)) return
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
     setFolderDropZones((current) => (current.__root__ === 'into' ? current : { ...current, __root__: 'into' }))

@@ -1,11 +1,8 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetCollection, GeneratedAsset } from '../../types'
-import AssetLibrarySidebar, {
-  COLLECTION_DRAG_TYPE,
-  buildCollectionTree,
-  flattenCollectionRows,
-} from './AssetLibrarySidebar'
+import AssetLibrarySidebar, { buildCollectionTree, flattenCollectionRows } from './AssetLibrarySidebar'
+import { COLLECTION_DRAG_TYPE } from '../../lib/assetSidebarUtils'
 import { useAssetLibraryStore } from './store'
 
 const mainStoreMock = vi.hoisted(() => {

@@ -11,6 +11,7 @@
 | TB-014 | 后处理按图片归属自动匹配参数          | DOING | 主写线 | 2026-09-18 |
 | TB-015 | 水印预设升为顶栏 tab，归属与参数分离  | DOING | 主写线 | 2026-09-18 |
 | TB-089 | 多目标产出：「产出目标」+「记住配置」 | DOING | 主写线 | 2026-09-22 |
+| TB-098 | 中控台项目树拖拽移动节点（含子树）    | DOING | 主写线 | 2026-09-22 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -4117,4 +4118,86 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 | `features/composite/lib/compositeTextLayout.test.ts`      | 新增 3 例（框对调 / 老写法折列 / 换列）                                   |
 | `docs/adr/0016-text-orientation.md` · `docs/adr/README.md` | 新 ADR + 索引（**顺带补上遗漏的 0014 索引行**）                          |
 | `docs/RISK.md`（R-85）                                     | 风险登记：空守卫 —— 两条路径产出同一份输出                              |
+
+## TB-098 中控台项目树支持拖拽移动节点：整棵子树跟着走、自动更新层级与顺序（2026-09-22 阿伟）
+
+**需求**（杰哥原话）：「支持通过拖拽将某个产品或方向节点（例如「快手极速版」）连同其包含的子节点
+整体移动到树中的目标位置，并自动更新层级关系和顺序」，并要求说清**交互方式 / 合法放置范围限制 /
+移动后的数据更新逻辑 / 视觉反馈**。
+
+**现状：地基已有，缺的只是绑事件**（这一步决定了改动面）
+
+| 已有的                                | 落在哪                                                             |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| 移动 / 嵌套 / 重排的落库逻辑 + 防环    | `assetLibrary/store.ts` 的 `moveCollectionsToPosition`（1181 行起） |
+| 拖拽协议（负载类型 / 三区判定）        | 原先**私有**在 `AssetLibrarySidebar.tsx` 里（三份实现）             |
+| 两棵树读同一份数据                     | `useAssetLibraryStore.collections`（中控台树与画廊侧栏同源）        |
+| **中控台树一个拖拽事件都没绑**         | `ConsoleAssetTree.tsx` ← 本次补的就是这里                           |
+
+**做法（6 条）**
+
+1. **协议抽成唯一一份**：`COLLECTION_DRAG_TYPE` / `parseCollectionDragIds` / `canAcceptCollectionDrag` /
+   `getCollectionDropZone` 从画廊侧栏搬进 `lib/assetSidebarUtils` 的「集合拖拽协议」一节，两棵树共用
+   —— 同一份数据不该有两种手感。画廊侧栏只换 import，行为不变（测试同步改 import 来源）。
+2. **三区拖拽**：每行可拖；落到某行**上 30% 插到它前**、**下 30% 插到它后**、**中间成为它的子级**；
+   拖到树下面那片空白 = 变成业务线（追加到根末尾）。
+3. **非法目标画成禁止态**：拖到自身或自身的子孙上时不给任何落点提示 + `dropEffect = 'none'`；
+   drop 阶段再用解析出的 id 严格算一遍（dragover 阶段 Chromium 不让读负载内容，只能读 `types`）。
+   store 侧本来就有防环，UI 这层只为「别让人以为能放」。
+4. **落进去自动展开新父级**：否则东西掉进折叠着的节点里，看着像没生效。
+5. **搜索态不给拖**：搜索会剪枝（只留命中节点 + 祖先链），画面里缺了兄弟节点 —— 这时候算
+   「插到同级第几个」会**算错**。宁可这一段不给拖，也不能写错顺序。
+6. **顺带治缩进硬截断**：`INDENT_CLASS` 由 4 档扩到 6 档、取档不再 `Math.min(…, 3)`。
+   原先第 4 层与第 3 层缩进**完全相同** —— 以前点不出第 4 层所以看不出，拖拽一上就随手能造出来。
+
+**数据怎么变（回答第 3 问）**
+
+- 只改两样：被拖节点自己的 `parentId`、落点那一层的 `order`（从 0 重排）；子节点**一个都不动**
+  —— 它们靠 `parentId` 挂在被拖节点上，父级一换整串自动跟随（这就是「连同子节点整体移动」）。
+- 节点 id 不变 ⇒ 右区那些参数（水印 / 导出位置 / 参与产出…）都是按 id 存的，全部跟着节点走。
+- 落盘走 `repository.putCollections`，并进撤销栈（可 Ctrl+Z）。
+- ⚠️ 派生后果：后处理命名里的 `{产品}` / `{方向}` 是按**路径深度**解析的
+  （`resolvePostprocessProjectTargets`：根 / 第二级 / 叶）—— 跨层移动会改这个取值。
+  这是「移动」本身的含义，不是 bug。
+
+**验收标准（可测）**
+
+1. 落在行中间 ⇒ `moveCollectionsToPosition(ids, { kind: 'into', parentId })`；上沿 ⇒ `before`；下沿 ⇒ `after`。
+2. 拖到自身或自身子孙 ⇒ **不落库**、无落点提示（`dropEffect === 'none'`）、给出提示。
+3. 落进折叠着的目标 ⇒ 目标被展开（其子节点行重新出现）。
+4. 拖到树空白区 ⇒ `{ kind: 'append', parentId: null }`。
+5. 搜索态下所有行 `draggable === false`。
+6. 第 4 层缩进 ≠ 第 3 层缩进。
+
+**验收证据（2026-09-22）**
+
+- **全量**：`261 文件 / 3077 例全绿`（本轮基线 3070，+7 例）。
+  `tsc -b` 零错误；`eslint`（改动 5 文件）零告警；`prettier --write` 已跑。
+- **定向**：4 文件 / 73 例 —— `ConsoleAssetTree.test.tsx` **21**（原 14 + 新增 7）、
+  `AssetLibrarySidebar.test.tsx`（协议换家后行为不变）、`assetSidebarUtils.test.ts`、`compliance.test.ts`。
+- **反向验证 3 轮，全部精确命中（每轮只挂 1 例，其余照过）**：
+  1. 去掉 drop 阶段的防环判据（只留「拖到自身」）⇒ 只挂 **「⭐ 不能拖到自己或自己的子孙下」**（20 passed）；
+  2. 关掉自动展开（`zone === 'into'` → `'not-into'`）⇒ 只挂 **「⭐ 落到某行中间…自动展开新父级」**，
+     报错正是 `expected '产品线A|产品A|产品线B' to contain '月亮'`（折叠着没展开，与新父级里的节点
+     真的没出现逐字对上）；
+  3. 缩进改回硬截断（`Math.min(…, 3)`）⇒ 只挂 **「深层缩进继续加深」**，报错 `expected 'pl-11' to be 'pl-14'`
+     —— 正是「第 4 层和第 3 层一样」这件事。
+- ⚠️ **未经渲染验证**（本机离屏/无头渲染被环境拦死，见 `MEMORY.md`）：
+  **三区手感（行高约 28px 时中间那段够不够点）、插入线的粗细/位置、禁止态的光标**需杰哥在
+  运行中的应用里过目一次。实现口径：上/下 30% + 中间 40%（与画廊侧栏同一套阈值，两棵树不另立标准）。
+- **顺带发现并登记 R-86**（本轮不动）：`moveCollectionsToPosition` 只重排落点那一层的 `order`，
+  源那一层留空洞 ⇒ 之后新建节点按「同级数量」取 order 会撞号、顺序静默退化成按名称。画廊侧栏同源。
+
+**改到的文件**
+
+| 文件                                                     | 改动                                                                        |
+| -------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `features/composite/components/ConsoleAssetTree.tsx`     | 绑三区拖拽（拖起 / 落点 / 禁止态 / 自动展开 / 根投放）+ 缩进扩到 6 档 + 头注 |
+| `lib/assetSidebarUtils.tsx`                              | **协议抽成唯一一份**：`COLLECTION_DRAG_TYPE` / 解析 / `canAccept` / 三区判定 |
+| `features/assetLibrary/AssetLibrarySidebar.tsx`          | 删掉私有的三份实现，改 import；调用点改名（行为不变）                       |
+| `features/composite/components/ConsoleAssetTree.test.tsx` | 新增 7 例（拖起 / 三区 / 防环 / 自动展开 / 根投放 / 搜索态不给拖 / 缩进）    |
+| `features/assetLibrary/AssetLibrarySidebar.test.tsx`     | `COLLECTION_DRAG_TYPE` 的 import 来源改到共享模块                           |
+| `docs/RISK.md`（R-86）                                   | 风险登记：源层 `order` 空洞 ⇒ 新建撞号、排序静默退化                        |
+
+**状态**：**已完成**（2026-09-22）。
 

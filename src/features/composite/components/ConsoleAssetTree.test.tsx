@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConsoleAssetTree } from './ConsoleAssetTree'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
+import { COLLECTION_DRAG_TYPE } from '../../../lib/assetSidebarUtils'
 import { useStore } from '../../../store'
 
 /** 新建出来的节点形状（与 `AssetCollection` 对齐；`null` 表示被 store 拒绝了） */
@@ -40,12 +41,14 @@ const createCollection = vi.fn(
 const renameCollection = vi.fn(async () => undefined)
 const deleteCollection = vi.fn(async () => undefined)
 const restoreCollection = vi.fn(async () => undefined)
+const moveCollectionsToPosition = vi.fn(async () => undefined)
 
 function seedStores() {
   createCollection.mockClear()
   renameCollection.mockClear()
   deleteCollection.mockClear()
   restoreCollection.mockClear()
+  moveCollectionsToPosition.mockClear()
   useStore.setState({ confirmDialog: null })
   useAssetLibraryStore.setState({
     collections: [
@@ -58,6 +61,7 @@ function seedStores() {
     renameCollection: renameCollection as never,
     deleteCollection: deleteCollection as never,
     restoreCollection: restoreCollection as never,
+    moveCollectionsToPosition: moveCollectionsToPosition as never,
   })
 }
 
@@ -113,6 +117,34 @@ function treeText(renderer: ReturnType<typeof create>) {
 /** 找到当前的编辑输入框（改名与新增共用一套渲染） */
 function findEditor(renderer: ReturnType<typeof create>) {
   return renderer.root.find((node) => node.type === 'input' && typeof node.props['aria-label'] === 'string')
+}
+
+/**
+ * 造一个拖拽事件。
+ *
+ * `clientY` 决定落点 —— 行高按 40 算：< 12 上沿（插到它前面）、
+ * 12~28 中间（变成它的子级）、> 28 下沿（插到它后面）。
+ */
+function dragEvent(clientY: number, payload: string[] = ['product-a']) {
+  return {
+    dataTransfer: {
+      types: [COLLECTION_DRAG_TYPE],
+      getData: (type: string) => (type === COLLECTION_DRAG_TYPE ? JSON.stringify(payload) : ''),
+      setData: vi.fn(),
+      dropEffect: '',
+      effectAllowed: '',
+    },
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+    currentTarget: { getBoundingClientRect: () => ({ top: 0, height: 40 }) },
+    clientY,
+  }
+}
+
+/** 取某一行的缩进类（`pl-*`），用于断言层级画得出来 */
+function indentOf(renderer: ReturnType<typeof create>, name: string): string | undefined {
+  const row = nodeRows(renderer).find((item) => collectText(item.props.children).includes(name))
+  return (row?.props.className as string | undefined)?.split(/\s+/).find((cls) => cls.startsWith('pl-'))
 }
 
 /** 在输入框里打字并回车 */
@@ -257,5 +289,155 @@ describe('ConsoleAssetTree（项目树：一棵树管整个框架）', () => {
     expect(nodeRows(renderer)).toHaveLength(1)
     clickByAriaLabel(renderer, '恢复 删掉的')
     expect(restoreCollection).toHaveBeenCalledWith('gone')
+  })
+
+  // ===== 拖拽移动（2026-09-22）=====
+  //
+  // 行顺序固定为：产品线A / 产品A / 月亮 / 太阳（全展开）。
+
+  it('每行都能拖；但搜索态不给拖（剪枝后「插到同级第几个」会算错）', () => {
+    const renderer = renderTree()
+    expect(nodeRows(renderer).every((row) => row.props.draggable === true)).toBe(true)
+
+    const search = renderer.root.find((node) => node.type === 'input' && node.props.type === 'search')
+    act(() => {
+      ;(search.props.onChange as (event: { target: { value: string } }) => void)({ target: { value: '月亮' } })
+    })
+    expect(nodeRows(renderer).every((row) => row.props.draggable === false)).toBe(true)
+  })
+
+  it('拖起来：写入负载，源行标成半透明', () => {
+    const renderer = renderTree()
+    const setData = vi.fn()
+    act(() => {
+      nodeRows(renderer)[1]!.props.onDragStart({
+        dataTransfer: { setData, effectAllowed: '' },
+        preventDefault: vi.fn(),
+      })
+    })
+    expect(setData).toHaveBeenCalledWith(COLLECTION_DRAG_TYPE, JSON.stringify(['product-a']))
+    expect(nodeRows(renderer)[1]!.props['data-dragging']).toBe('true')
+  })
+
+  it('⭐ 落到某行中间 = 成为它的子级，并自动展开新父级（否则东西掉进去看着像没生效）', () => {
+    useAssetLibraryStore.setState({
+      collections: [
+        { id: 'line-a', name: '产品线A', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'product-a', name: '产品A', parentId: 'line-a', order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'direction-moon', name: '月亮', parentId: 'product-a', order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'line-b', name: '产品线B', parentId: null, order: 1, createdAt: 0, updatedAt: 0 },
+      ] as never,
+    })
+    const renderer = renderTree()
+    clickByAriaLabel(renderer, '收起 产品A')
+    expect(treeText(renderer)).not.toContain('月亮')
+
+    // 行：产品线A / 产品A / 产品线B —— 把「产品线B」拖进折叠着的「产品A」
+    act(() => {
+      nodeRows(renderer)[2]!.props.onDragStart({
+        dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        preventDefault: vi.fn(),
+      })
+    })
+    act(() => {
+      nodeRows(renderer)[1]!.props.onDragOver(dragEvent(20, ['line-b']))
+    })
+    expect(nodeRows(renderer)[1]!.props['data-drop-zone']).toBe('into')
+    act(() => {
+      nodeRows(renderer)[1]!.props.onDrop(dragEvent(20, ['line-b']))
+    })
+
+    expect(moveCollectionsToPosition).toHaveBeenCalledWith(['line-b'], { kind: 'into', parentId: 'product-a' })
+    expect(treeText(renderer)).toContain('月亮')
+  })
+
+  it('落到行的上沿 = 插到它前面；下沿 = 插到它后面（同级重排）', () => {
+    const renderer = renderTree()
+    const dragSunThenDropOnProductA = (clientY: number) => {
+      act(() => {
+        nodeRows(renderer)[3]!.props.onDragStart({
+          dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+          preventDefault: vi.fn(),
+        })
+      })
+      act(() => {
+        nodeRows(renderer)[1]!.props.onDragOver(dragEvent(clientY, ['direction-sun']))
+      })
+      act(() => {
+        nodeRows(renderer)[1]!.props.onDrop(dragEvent(clientY, ['direction-sun']))
+      })
+    }
+
+    dragSunThenDropOnProductA(4)
+    expect(moveCollectionsToPosition).toHaveBeenLastCalledWith(['direction-sun'], {
+      kind: 'before',
+      siblingId: 'product-a',
+    })
+
+    dragSunThenDropOnProductA(36)
+    expect(moveCollectionsToPosition).toHaveBeenLastCalledWith(['direction-sun'], {
+      kind: 'after',
+      siblingId: 'product-a',
+    })
+  })
+
+  it('⭐ 不能拖到自己或自己的子孙下：不给落点提示、不落库、给出提示', () => {
+    const renderer = renderTree()
+    // 拖「产品A」到它自己的子节点「月亮」上
+    act(() => {
+      nodeRows(renderer)[1]!.props.onDragStart({
+        dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        preventDefault: vi.fn(),
+      })
+    })
+    const over = dragEvent(20, ['product-a'])
+    act(() => {
+      nodeRows(renderer)[2]!.props.onDragOver(over)
+    })
+    expect(over.dataTransfer.dropEffect).toBe('none')
+    expect(nodeRows(renderer)[2]!.props['data-drop-zone']).toBeUndefined()
+
+    act(() => {
+      nodeRows(renderer)[2]!.props.onDrop(dragEvent(20, ['product-a']))
+    })
+    expect(moveCollectionsToPosition).not.toHaveBeenCalled()
+    expect(useStore.getState().toast?.message ?? '').toContain('自身的子节点')
+  })
+
+  it('拖到树下面那片空白 = 变成业务线（追加到根末尾）', () => {
+    const renderer = renderTree()
+    const root = renderer.root.find(
+      (node) => typeof node.props.onDrop === 'function' && String(node.props.className).includes('overflow-y-auto'),
+    )
+    act(() => {
+      nodeRows(renderer)[1]!.props.onDragStart({
+        dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        preventDefault: vi.fn(),
+      })
+    })
+    act(() => {
+      root.props.onDragOver(dragEvent(0, ['product-a']))
+    })
+    expect(
+      renderer.root.find((node) => node.type === 'div' && String(node.props.className).includes('border-dashed')),
+    ).toBeTruthy()
+    act(() => {
+      root.props.onDrop(dragEvent(0, ['product-a']))
+    })
+    expect(moveCollectionsToPosition).toHaveBeenCalledWith(['product-a'], { kind: 'append', parentId: null })
+  })
+
+  it('深层缩进继续加深：第 4 层不再和第 3 层一样（拖拽能随手造出第 4 层）', () => {
+    useAssetLibraryStore.setState({
+      collections: [
+        { id: 'l1', name: '第一层', parentId: null, order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'p2', name: '第二层', parentId: 'l1', order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'd3', name: '第三层', parentId: 'p2', order: 0, createdAt: 0, updatedAt: 0 },
+        { id: 'x4', name: '第四层', parentId: 'd3', order: 0, createdAt: 0, updatedAt: 0 },
+      ] as never,
+    })
+    const renderer = renderTree()
+    expect(indentOf(renderer, '第三层')).toBe('pl-11')
+    expect(indentOf(renderer, '第四层')).toBe('pl-14')
   })
 })
