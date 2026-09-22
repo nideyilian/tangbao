@@ -431,18 +431,19 @@ defaults（全局默认）
 > 当前实现是 v8。以下是把代码对齐到本规范要改的东西；**不受向后兼容约束**
 > （糖包尚未交付他人使用），因此不做过渡期双写。
 
-| #   | 改动                                                                                                                         | 落点                                                                                                   |
-| --- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| 1   | 配置从包内 `treeConfig` 字段拆成独立的一份 `config.json`                                                                     | `src/store.ts`（导出/导入）、`src/lib/configSync.ts`                                                   |
-| 2   | `version`+`exportedAt` 收进 `format`，新增 `kind`/`appVersion`/`skippedNodes`                                                | `src/lib/treeConfigBundle.ts`                                                                          |
-| 3   | `root` → `defaults`、`nodes` → `tree`                                                                                        | 同上                                                                                                   |
-| 4   | 节点 `postprocess` → `overrides`；`watermarks` → `watermarkPresets`                                                          | 同上 + `src/features/projectTree/types.ts`                                                             |
-| 5   | `version` 8 → 9，`validateTreeConfigBundle` 的版本判定同步                                                                   | 同上                                                                                                   |
-| 6   | **删掉过渡期双写**：`compositeState` / `postprocessMediaState` / `assetCollections` 三个重复字段，以及 v7 及更早的老恢复路径 | `src/store.ts`（导出侧注解 + 导入侧 `restoreTreeConfigBundle` 分支）                                   |
-| 7   | 配一份 `$schema`，导入前可选做一次 schema 校验                                                                               | `src/lib/treeConfigBundle.ts` + `docs/examples/`                                                       |
-| 8   | 映射层加**穷尽守卫**（用 `Record<keyof X, …>` 让漏字段编译报错），挡住「加字段忘改映射」                                     | `src/lib/treeConfigBundle.ts` + 测试                                                                   |
-| 9   | 把散在三处的结构描述改为指向本文                                                                                             | `docs/adr/0014-*.md` §一、`docs/architecture-constraints.md` §十、`src/lib/treeConfigBundle.ts` 头注释 |
-| 10  | `docs/README.md` 登记本文                                                                                                    | `docs/README.md`                                                                                       |
+| #   | 改动                                                                                                                                                   | 落点                                                                                                     |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| 1   | 配置从包内 `treeConfig` 字段拆成独立的一份 `config.json`                                                                                               | `src/store.ts`（导出/导入）、`src/lib/configSync.ts`                                                     |
+| 2   | `version`+`exportedAt` 收进 `format`，新增 `kind`/`appVersion`/`skippedNodes`                                                                          | `src/lib/treeConfigBundle.ts`                                                                            |
+| 3   | `root` → `defaults`、`nodes` → `tree`                                                                                                                  | 同上                                                                                                     |
+| 4   | 节点 `postprocess` → `overrides`；`watermarks` → `watermarkPresets`                                                                                    | 同上 + `src/features/projectTree/types.ts`                                                               |
+| 5   | `version` 8 → 9，`validateTreeConfigBundle` 的版本判定同步                                                                                             | 同上                                                                                                     |
+| 6   | **删掉过渡期双写**：`compositeState` / `postprocessMediaState` / `assetCollections` 三个重复字段，以及 v7 及更早的老恢复路径                           | `src/store.ts`（导出侧注解 + 导入侧 `restoreTreeConfigBundle` 分支）                                     |
+| 7   | 配一份 `$schema`，导入前可选做一次 schema 校验                                                                                                         | `src/lib/treeConfigBundle.ts` + `docs/examples/`                                                         |
+| 8   | 映射层加**穷尽守卫**（用 `Record<keyof X, …>` 让漏字段编译报错），挡住「加字段忘改映射」                                                               | `src/lib/treeConfigBundle.ts` + 测试                                                                     |
+| 9   | 把散在三处的结构描述改为指向本文                                                                                                                       | `docs/adr/0014-*.md` §一、`docs/architecture-constraints.md` §十、`src/lib/treeConfigBundle.ts` 头注释   |
+| 10  | `docs/README.md` 登记本文                                                                                                                              | `docs/README.md`                                                                                         |
+| 11  | ⚠️ **补掉「本机选图型水印素材跨机器会丢」的缺口**：导出前把 `layer.asset.kind === 'path'` 也迁成 `stored`（现在只迁 `dataUrl` / `project`，见 §十·C3） | `src/features/composite/lib/compositeAssetMigration.ts`、`src/features/composite/lib/compositeAssets.ts` |
 
 **验收标准（可测）**
 
@@ -451,6 +452,8 @@ defaults（全局默认）
 3. v8 包（含 `treeConfig`）导入时**明确报「版本不认识」并拒收**，不静默什么都不恢复。
 4. `format.skippedNodes` 等于回收站节点数；`unassignedWatermarks` 含缺归属的水印。
 5. 全量 `npm run verify` 全绿。
+6. **跨机器还原**：在一台干净机器上导入后，水印里「从本机磁盘选的图」**不再断图**
+   （第 11 项落地后），且 `composite-assets/` 里能查到它对应的条目。
 
 ---
 
@@ -465,3 +468,72 @@ defaults（全局默认）
 | **本机绝对路径之外的环境** | 机器名、盘符映射、用户目录                        | 换台机器就没意义，只会让导入方多出一堆指不到的条目。                                            |
 | **素材索引**               | `generatedAssets`                                 | 树属于配置，**素材索引不属于** —— 发过去只会让别人的素材库里多出指不到的条目。                  |
 | **内部实现细节**           | UI 时序（防抖 400ms、hover 延迟 150ms）、动画时长 | 纯粹是噪声，用户不会改，改坏只会制造新的静默点。                                                |
+
+---
+
+## 十、跨机器一致性（「A 机发布 → 全新 B 机拉取」能还原到什么程度）
+
+> 结论先行：**不能保证完全一致。** 但「中控台里改得动的那套配置」能一致。
+> 本节的作用是把「哪些地方一定不一样、为什么」写死，免得每次都要重新推一遍。
+
+### 10.1 能一致的部分
+
+项目树（层级 / 名称 / 顺序 / 颜色 / 置顶）、每个方向的参数（参与渠道 / 显式空水印 / 输出位置 /
+按渠道覆盖）、水印库（预设、归属 `productId`、LOGO、图层）、渠道与尺寸字典、命名模板与创作者、
+画面方向与适配、分发配置、启用范围与产出目标 —— 这些都在 `config.json` 里，**逐字段一致**。
+
+### 10.2 一定不一致的（设计如此，不是 bug）
+
+| #   | 差异                      | 为什么                                                                                                                                                                                                                            |
+| --- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | **API 密钥为空**          | 配置同步**不传** `includeSecrets`（`configSync.ts` 的 `publishConfigToSyncDir`），而 `sanitizeSettingsForBackup` 会把 `apiKey` / `profiles[].apiKey` / `agentProfiles[].apiKey` 全清空。放共享盘 = 谁都能拿到。**B 机需手工填。** |
+| A2  | **回收站里的节点**        | 不导出，只在 `format.skippedNodes` 里报个数。回收站里的东西在别人机器上没有意义。                                                                                                                                                 |
+| A3  | **工作区标签 / 会话草稿** | 在包里（`workspaceState`），但导入侧**不恢复** —— `replaceWorkspace` 要求 `importTasks === true` 且包里确实有任务，而配置包是 `importTasks: false`。                                                                              |
+| A4  | **纯 UI 偏好**            | 上次停在中控台哪个 tab（`controlConsoleSection`）、树的折叠状态（localStorage）**都不进包** —— 它们是「我这台机器上想怎么看」。                                                                                                   |
+
+### 10.3 值一致、但目标机器上「用不了」的（本机绝对路径）
+
+`outputDir` / `mediaOutputDirs` / 节点 `overrides.outputDir` / `byMedia.outputDirs` /
+`distribution.targetDir` / 设置里的 `customBackupPath` / 水印库的 `logoLibraryPath` 与
+`backgroundFolders` —— 都是**绝对路径**。
+
+包搬过去后，配置里照旧写着 `D:\交付\…`，但 B 机没这个盘就是没这个盘：产出会失败或写到别处。
+**只有 UNC 共享路径（`\\server\share\…`）才真正跨机器可用。**
+
+### 10.4 会真丢的：本机选图型的水印素材 ⚠️
+
+水印图层里引用的图片有 5 种形态（`CompositeV2ImageAssetRef`）：`stored` / `dataUrl` /
+`project` / `path` / `internal`。
+
+- 导出前的 `migrateLegacyCompositeAssets` 只迁 `dataUrl` 与 `project` 两种 → `stored`；
+- `collectCompositeAssetIds` **只收集 `stored`**（`compositeAssets.ts:76-87`）；
+- 而 `{ kind: 'path', path }` 由「**从本机磁盘选图**」直接写入（`PresetCanvasEditor.tsx:376`、
+  `PresetLayerPanel.tsx:121`），既不迁移也不收集。
+
+⇒ **这类图片不进包，B 机上断图。** 这是当前实现的一个真实缺口，已列入 §八 第 11 项。
+
+（LOGO 库不受影响：`projectLogos` 走 `assetId` → 打包在 `composite-assets/` 里。）
+
+### 10.5 时间戳与合并语义
+
+- 节点 `createdAt` / `updatedAt` 在包里没存，恢复时用 `now` 补齐（`toAssetCollections`）→ 数值不同，用户看不见。
+- 设置走 `mergeImportedSettings`：**干净的 B 机**（只有默认 profile）→ `hasOnlyDefaultProfiles` 为真 →
+  **整份采用**；**已经加过 API profile 的机器** → 走合并分支，只追加 `profiles` / `customProviders`，
+  其余字段保持本机值（`...current`）→ **不一致，且这是刻意的**。
+
+### 10.6 时机与来源
+
+- 发布是**手动**点「发布配置」→ 拿到的是**那一刻**的快照；发布之后改的配置不在包里。
+- 拉取取的是配置目录里**字典序最大的那份**（`listSyncDirConfigs` 排序后取第一个），
+  **不区分是谁发布的** —— 目录里有别人发过，你拉到的可能不是自己那份。
+
+### 10.7 要「完全一致」必须满足的前提
+
+1. B 机装**同一个大版本**的糖包（`format.version` 不认识就整包拒收）。
+2. 发布前确认配置目录里**只有你一份**（或确认最新那份就是你发的）。
+3. 发布完成后**不再改**配置。
+4. 所有路径类配置改用 **UNC 共享路径**，或每台机器建同样的目录；且配置目录要在主进程白名单里
+   持久化放行（R-31 / R-62，`local-settings.json` 的 `configSyncPath`）。
+5. 水印素材不要用「从本机磁盘选图」—— 或等 §八 第 11 项落地。
+6. API 密钥手工补。
+7. 接受回收站、UI 偏好、时间戳这三类不参与还原。

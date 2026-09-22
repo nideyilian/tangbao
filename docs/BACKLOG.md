@@ -4332,6 +4332,18 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 4. `format.skippedNodes` == 回收站节点数；`unassignedWatermarks` 含缺归属水印。
 5. 映射层加穷尽守卫（`Record<keyof X, …>` 让漏字段编译报错），并有反向验证。
 6. 全量 `npm run verify` 全绿。
+7. **跨机器还原**：干净机器上导入后，水印里「从本机磁盘选的图」不再断图（本轮新发现的缺口，见下）。
+
+**2026-09-22 追问补充：跨机器一致性（规范 §十）**
+
+杰哥追问「全新电脑装糖包 + 拉取最新配置，能否与上传时中控台完全一致」。逐条查证后**结论是否**，
+并把「哪些一定不一样、为什么」写成了规范 §十。其中**发现一个真实缺口**：
+
+- 水印图层的图片引用有 5 种形态，但导出前的 `migrateLegacyCompositeAssets` 只迁 `dataUrl` / `project`，
+  `collectCompositeAssetIds`（`compositeAssets.ts:76-87`）**只收集 `stored`**；
+- 而 `{ kind: 'path', path }`（用户在编辑器里**从本机磁盘选图**，`PresetCanvasEditor.tsx:376` /
+  `PresetLayerPanel.tsx:121`）既不迁移也不收集 ⇒ **这类图片不进包，换机器断图**；
+- ⇒ 已列为 §八 落地清单第 11 项 + 验收标准第 7 条，**按 v9 落地时一并修**（导出前把 `path` 也迁成 `stored`）。
 
 **状态**：`TODO` —— **设计已定稿（文档 + 示例 + schema 已落盘并通过正反向校验）；
 代码落地（§八 清单 10 项）等杰哥过目设计后再开工**。
