@@ -95,10 +95,12 @@ export interface RunTaskPostprocessInput {
   /**
    * 谁触发的这次产出：`auto` = 任务完成后自动跑，`manual` = 用户在素材库点了「跑后处理」。
    *
-   * 只影响一处判定：**方向级的「自动后处理」开关（`PP-SCOPE-002`）只拦自动触发**。
-   * 那个开关的语义是「这个方向参不参与自动产出」（见 `participationLabel.ts`），
-   * 拿它否决用户手动点的那一次会变成死循环 —— 提示让他「选中素材单独跑一次」，
-   * 而手动跑走同一条判定，照做还是被跳过（2026-09-21 报障）。
+   * 影响两处判定，都是「**自动才拦、手动放行**」：
+   * - **方向级的「自动后处理」开关**（`PP-SCOPE-002`）：那个开关的语义是「这个方向参不参与
+   *   自动产出」（见 `participationLabel.ts`），拿它否决用户手动点的那一次会变成死循环 ——
+   *   提示让他「选中素材单独跑一次」，而手动跑走同一条判定，照做还是被跳过（2026-09-21 报障）。
+   * - **启用范围**（`PP-SCOPE-001`，同样只在自动时判）：启用范围的定义就是「哪些方向参与自动
+   *   后处理」，所以它不该管用户手动选的那批目标（见下方产出目标来源处注释）。
    */
   source?: PostprocessRunSource
   /** 取源图像素数据；返回 null 表示这张图不可用（跳过并记 warning） */
@@ -246,20 +248,21 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     const collectionId = input.resolveImageCollectionId?.(imageId) ?? null
 
     /**
-     * 产出目标。两个来源，优先级不同：
+     * 产出目标。**手动与自动分开取，别合并**：
      *
-     * - **记住了**（`savedTargetCollectionIds` 非空）→ 按记住的那批方向产出，跨图统一，
-     *   自动与手动都照它跑。这正是「记住配置」的含义：用户把「这批图要投到哪几个方向」
-     *   显式定下来，之后一直复用，直到他再改。
+     * - **手动触发**（用户在素材库点了「跑后处理」）→ 记住的产出目标（`savedTargetCollectionIds`）
+     *   优先，其次归属方向，最后全局启用范围。「这批图要投到哪几个方向」是用户手动那一下
+     *   显式定下来的，之后一直复用，直到他再改。
+     * - **自动触发**（任务完成后自动跑）→ **不读记住的目标**，一律按归属方向（无归属才退回全局
+     *   启用范围）。产出目标是**手动场景**的概念：它掺进自动跑之后，用户在这里勾什么就会悄悄
+     *   改变自动产出的去向 —— 而自动产出是在他没看着的时候发生的（2026-09-22 杰哥明确「这个
+     *   只针对于手动后处理，不需要改自动后处理」）。
      * - **没记住** → 退回旧口径：有归属就用归属方向本身（「执行时无需手动选项目」的含义）；
      *   无归属（手工拖入、旧数据）才退回全局勾选的项目。
      */
+    const savedTargets = input.source === 'manual' ? baseConfig.savedTargetCollectionIds : []
     const targetIds =
-      baseConfig.savedTargetCollectionIds.length > 0
-        ? baseConfig.savedTargetCollectionIds
-        : collectionId
-          ? [collectionId]
-          : baseConfig.selectedCollectionIds
+      savedTargets.length > 0 ? savedTargets : collectionId ? [collectionId] : baseConfig.selectedCollectionIds
     const projects = resolvePostprocessProjectTargets(input.collections, targetIds)
     if (projects.length === 0) {
       reportIssue(result, { code: 'PP-TARGET-001', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
@@ -279,9 +282,15 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     const jobBuckets: Array<{ project: PostprocessProjectTarget; config: PostprocessMediaConfig }> = []
     for (const project of projects) {
       const targetId = project.collectionId
-      // 启用范围是硬开关，**每个目标都要过**。记住了一个后来又被取消启用的方向时，
-      // 这里跳过并说明是哪个方向，而不是照旧产出（否则「取消勾选」就形同虚设）。
-      if (!isCollectionWithinSelection(input.collections, targetId, baseConfig.selectedCollectionIds)) {
+      // 启用范围是「哪些方向参与**自动**后处理」的开关，所以**只拦自动触发**。
+      // 手动那一次是用户直接点的：他明确要求产到某个还没参与自动产出的方向（新开的产品先手动
+      // 投一版看看、临时补几个方向）是合理诉求，拿自动的开关否决它等于让他没法手动跨产品跑。
+      // 与下面 `PP-SCOPE-002` 同一个套路（那里也是 `input.source !== 'manual'`）。
+      // 自动触发仍逐个目标都要过：记住过的方向后来被取消启用时跳过并说明是哪个，而不是照旧产出。
+      if (
+        input.source !== 'manual' &&
+        !isCollectionWithinSelection(input.collections, targetId, baseConfig.selectedCollectionIds)
+      ) {
         reportIssue(
           result,
           {

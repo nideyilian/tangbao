@@ -3,10 +3,14 @@
 /**
  * 后处理执行体的行为契约。
  *
- * **当前覆盖**：触发来源（`source`）与方向级「自动后处理」开关的关系。
+ * **当前覆盖**：触发来源（`source`）与两处「自动才拦」判定的关系。
  * 背景（2026-09-21 报障）：那个开关的语义是「这个方向参不参与**自动**产出」，但执行体原先
  * 不区分来源，于是用户手动点「跑后处理」也被它拦下 —— 而提示里正写着「或选中素材单独跑一次」，
  * 照做还是被跳过，成了死循环。这条契约就是「手动点的那次不被一个管自动的开关否决」。
+ *
+ * 2026-09-22 追问同一条边界：**启用范围**（`selectedCollectionIds`）的定义也是「哪些方向参与
+ * 自动后处理」，所以它同样只拦自动触发；并且**「记住的产出目标」只有手动跑才读**，不掺进自动
+ * 产出（杰哥：「我这个只针对于手动后处理，不需要改自动后处理的」）。
  *
  * **未覆盖**：渲染链、写盘、分发（依赖 canvas 与主进程 fs）。那部分由 `outputRoots.test.ts`
  * 与本地预览覆盖。
@@ -133,12 +137,14 @@ describe('后处理执行体：方向级「自动后处理」开关只拦自动�
  * 背景（2026-09-22）：一批素材经常要同时投到多个产品 / 多个方向，而归属（`collectionIds` 里
  * 最深那条）只能表达「这张图属于哪个方向」——靠把素材挂到多个方向绕不过去（同级挂两个只有
  * 一个生效），还会改写素材的真实归属。用户点「记住配置」把「这批图要投到哪几个方向」定下来
- * （`savedTargetCollectionIds`），之后跑批一直复用，直到他再改。
+ * （`savedTargetCollectionIds`），之后手动跑一直复用，直到他再改。
  *
- * 这里守两件事：
+ * 这里守三件事：
  * ① **每个目标各用自己那一套参数**（输出目录 / 水印 / 渠道）—— 复用归属那一份会把后一个方向的
  *    文件静默写进前一个方向的目录，属于最难发现的一类错（看着正常但不能投）；
- * ② 启用范围对**每个目标**都要过，且方向级「自动后处理」开关只对归属方向生效。
+ * ② **手动跨产品照产**：记住的目标即使在启用范围之外也不拦（启用范围管的是自动后处理），
+ *    自动触发则照旧逐个目标过；
+ * ③ **自动跑不读这份清单**：自动产出的去向仍是图片归属方向，不被「记住配置」悄悄改掉。
  */
 describe('多目标产出：记住的产出目标', () => {
   beforeEach(() => {
@@ -192,18 +198,42 @@ describe('多目标产出：记住的产出目标', () => {
     expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id]))
   })
 
-  it('记住的目标里有一个不在启用范围内 → 只跳过它，并说明是哪个方向', async () => {
+  it('⭐ 手动跑：记住的目标跨出启用范围也照产（新开的产品先手动投一版）', async () => {
     usePostprocessMediaStore.setState({
-      // 只启用 A：B 是「记住过、后来又被取消勾选」的那种方向
+      // 只启用 A：B 是还没参与自动产出的方向
       selectedCollectionIds: [DIRECTION_A.id],
       savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
     })
 
-    const result = await run()
+    const result = await run({ source: 'manual' })
 
-    const scopeIssues = result.issues.filter((issue) => issue.code === 'PP-SCOPE-001')
-    expect(scopeIssues).toHaveLength(1)
-    expect(scopeIssues[0]?.detail).toContain('图标')
+    expect(codesOf(result.issues)).not.toContain('PP-SCOPE-001')
+    expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id, DIRECTION_B.id]))
+  })
+
+  it('自动跑：启用范围仍是硬开关，归属方向不在范围内 → 记 PP-SCOPE-001 并跳过（防回退）', async () => {
+    usePostprocessMediaStore.setState({
+      // 只启用 B：归属方向 A 反而在范围外
+      selectedCollectionIds: [DIRECTION_B.id],
+      savedTargetCollectionIds: [],
+    })
+
+    const result = await run({ source: 'auto' })
+
+    expect(codesOf(result.issues)).toContain('PP-SCOPE-001')
+  })
+
+  it('⭐ 自动跑不读「记住的产出目标」—— 那份清单只管手动点的那一次', async () => {
+    usePostprocessMediaStore.setState({
+      selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      // 用户手动那批只想投 B
+      savedTargetCollectionIds: [DIRECTION_B.id],
+    })
+
+    await run({ source: 'auto' })
+
+    // 自动跑仍按归属 A 产出，没有被「记住配置」改成 B
+    expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id]))
   })
 
   it('目标不是归属方向时，不被归属那个「自动后处理」开关牵连', async () => {
@@ -214,7 +244,7 @@ describe('多目标产出：记住的产出目标', () => {
     })
 
     const result = await run({
-      source: 'auto',
+      source: 'manual',
       params: { [DIRECTION_A.id]: { postprocess: { enabled: false } } },
     })
 

@@ -102,7 +102,7 @@ const ISSUE_TEMPLATES: Record<PostprocessIssueCode, IssueTemplate> = {
   },
   'PP-SCOPE-001': {
     message: '所属方向未启用后处理',
-    hint: '在项目树里勾选该方向（或它的上级），再重跑这一批。',
+    hint: '这个方向还没参与自动后处理。要长期产出，去项目树的「后处理」列勾选该方向（或它的上级）；只想产这一次，就选中素材手动跑一次（手动不受启用范围限制）。',
     severity: 'skipped',
   },
   'PP-SCOPE-002': {

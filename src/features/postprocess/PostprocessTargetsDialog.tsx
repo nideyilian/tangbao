@@ -6,18 +6,30 @@
  * 同级挂两个只有一个生效（归属取最深那条），而且挂载会改写素材的真实归属，越挂越乱。
  *
  * **与「项目树后处理列」的分工（别混）**：
- * - 树上的勾选 = **启用范围**（哪些方向允许跑），长期开关；
- * - 这里选的 = **产出目标**（这次产出到哪些），点「记住配置」后长期复用，直到再改。
- * 两者独立：目标里若有一个方向已被取消启用，跑的时候会跳过它并说明是哪个方向（`PP-SCOPE-001`）。
+ * - 树上的勾选 = **启用范围**（哪些方向参与*自动*后处理），长期开关；
+ * - 这里选的 = **产出目标**（手动跑这一次产出到哪些），点「记住配置」后长期复用，直到再改。
  *
- * **只列启用范围内的叶子节点**：没启用的方向选了也不会产出，列出来只会多一个
- * 「勾了却不产出」的隐形陷阱，所以从源头不提供。叶子才可选是因为命名段
- * `{direction}` 取的是路径末段 —— 勾一个带子节点的中间层，产出目标里的方向段是空的，
- * 用户在界面上推不出这个结果。
+ * 两者独立，且**这里可以选到启用范围之外的方向**：启用范围管的是自动后处理，手动跑那一次由
+ * 用户直接决定（见 `taskPostprocess.ts` 里 `source === 'manual'` 的分流）。这类叶子在界面上标一个
+ * 「未启用」提醒，但不拦着选 —— 卡住他反而没法干活（2026-09-22 杰哥：「我需要跨产品」）。
+ *
+ * **为什么是树而不是一层平铺清单**：产出目标天生是「跨产品线挑几个方向」，平铺成一长条既看不出
+ * 层级、也没法一次勾掉一整个产品。改成可展开的树之后，勾中间层 = 其下所有方向一起勾。
+ * 但**落盘的仍然只有叶子**：命名段 `{direction}` 取的是路径末段 —— 勾一个带子节点的中间层，
+ * 产出目标里的方向段会是空的，用户在界面上推不出这个结果。
  */
 
 import { useMemo, useState } from 'react'
-import { Button, Checkbox, Dialog, EmptyState, InfoIcon } from '../../design-system'
+import {
+  Button,
+  Checkbox,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  Dialog,
+  EmptyState,
+  IconButton,
+  InfoIcon,
+} from '../../design-system'
 import {
   buildPostprocessProjectTree,
   isCollectionWithinSelection,
@@ -40,32 +52,8 @@ import { usePostprocessGlobalConfig } from './usePostprocessGlobalConfig'
  */
 const SAMPLE_SOURCE = { width: 1280, height: 720 }
 
-interface TargetOption {
-  id: string
-  /** 完整路径（`产品线 / 产品 / 方向`）——只给方向名会认不出是哪条产品线下的 */
-  label: string
-}
-
-/** 收集可选目标：递归下探，只收**叶子**且落在启用范围内的那些。 */
-function collectOptions(
-  nodes: PostprocessProjectTreeNode[],
-  collections: Parameters<typeof isCollectionWithinSelection>[0],
-  enabledIds: string[],
-  prefix: string[] = [],
-): TargetOption[] {
-  const result: TargetOption[] = []
-  for (const node of nodes) {
-    const path = [...prefix, node.name]
-    if (node.children.length > 0) {
-      result.push(...collectOptions(node.children, collections, enabledIds, path))
-      continue
-    }
-    if (isCollectionWithinSelection(collections, node.id, enabledIds)) {
-      result.push({ id: node.id, label: path.join(' / ') })
-    }
-  }
-  return result
-}
+/** 每一层缩进的像素数。 */
+const INDENT_PER_DEPTH = 18
 
 interface Props {
   onClose: () => void
@@ -91,10 +79,33 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
    */
   const [draft, setDraft] = useState<string[]>(savedTargets)
 
-  const options = useMemo(
-    () => collectOptions(buildPostprocessProjectTree(collections), collections, enabledIds),
-    [collections, enabledIds],
-  )
+  /**
+   * 折叠的节点 id。**默认全展开**：产出目标就是来跨产品挑方向的，一进来全收着反而要一层层点开
+   * 才看得见有哪些可选；列表本身有滚动条兜底。折叠是纯界面态，不进 store、不落盘。
+   */
+  const [collapsed, setCollapsed] = useState<string[]>([])
+
+  const tree = useMemo(() => buildPostprocessProjectTree(collections), [collections])
+
+  /**
+   * 每个节点「勾它等于勾中哪些叶子」。**预计算一次**：渲染时每个节点都要问一次，
+   * 放在渲染里递归会让每次勾选都重算整棵树。
+   */
+  const leafIdsByNode = useMemo(() => {
+    const map = new Map<string, string[]>()
+    const walk = (nodes: PostprocessProjectTreeNode[]): string[] => {
+      for (const node of nodes) {
+        // 无子节点 = 叶子，它就是自己；有子节点则先递归到底，再把结果收上来
+        map.set(node.id, node.children.length > 0 ? walk(node.children) : [node.id])
+      }
+      return nodes.flatMap((node) => map.get(node.id) ?? [])
+    }
+    walk(tree)
+    return map
+  }, [tree])
+
+  /** 整棵树里一个方向都没有（用户还没建过项目树）—— 这与「方向存在但没启用」是两件事。 */
+  const hasAnyDirection = leafIdsByNode.size > 0
 
   const presetNames = useMemo(() => Object.fromEntries(presets.map((preset) => [preset.id, preset.name])), [presets])
 
@@ -112,8 +123,14 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
     return total
   }, [collections, params, draft, globalConfig, presetNames])
 
-  const toggle = (id: string) =>
-    setDraft((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+  const toggleCollapsed = (id: string) =>
+    setCollapsed((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+
+  /** 勾中间节点 = 其下所有方向一起勾；已经全勾上时再点就是一起取消。 */
+  const toggleLeaves = (ids: string[]) => {
+    const allChecked = ids.length > 0 && ids.every((id) => draft.includes(id))
+    setDraft((current) => (allChecked ? current.filter((id) => !ids.includes(id)) : [...new Set([...current, ...ids])]))
+  }
 
   const handleSave = () => {
     setSavedTargetCollectionIds(draft)
@@ -130,6 +147,52 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
     onClose()
   }
 
+  const renderNodes = (nodes: PostprocessProjectTreeNode[], depth: number) =>
+    nodes.map((node) => {
+      const leafIds = leafIdsByNode.get(node.id) ?? []
+      const checkedCount = leafIds.filter((id) => draft.includes(id)).length
+      const hasChildren = node.children.length > 0
+      const isOpen = !collapsed.includes(node.id)
+      /**
+       * 「未启用」只标叶子：启用范围管的是自动后处理，中间层说它没有意义（用户也没法据此做什么）。
+       * 标出来是为了让「勾了会不会自动也产出」这件事在界面上有答案，但**不拦着选**。
+       */
+      const outsideScope = !hasChildren && !isCollectionWithinSelection(collections, node.id, enabledIds)
+
+      return (
+        <div key={node.id}>
+          <div
+            className="flex items-center gap-1.5 border-b border-ds-border py-1.5 pr-3"
+            style={{ paddingLeft: depth * INDENT_PER_DEPTH + 8 }}
+          >
+            {hasChildren ? (
+              <IconButton
+                size="sm"
+                aria-label={isOpen ? `收起「${node.name}」` : `展开「${node.name}」`}
+                icon={isOpen ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}
+                onClick={() => toggleCollapsed(node.id)}
+              />
+            ) : (
+              // 与展开箭头等宽的空位，让同层的复选框左边缘对齐
+              <span className="w-6 shrink-0" aria-hidden="true" />
+            )}
+            <Checkbox
+              checked={leafIds.length > 0 && checkedCount === leafIds.length}
+              indeterminate={checkedCount > 0 && checkedCount < leafIds.length}
+              onChange={() => toggleLeaves(leafIds)}
+              label={node.name}
+            />
+            {/* 收起时看不到子级，用计数告诉用户「这条分支里已经挑了 N 个」 */}
+            {hasChildren && checkedCount > 0 ? (
+              <span className="shrink-0 text-xs text-ds-muted">已选 {checkedCount}</span>
+            ) : null}
+            {outsideScope ? <span className="shrink-0 text-xs text-ds-muted">未启用</span> : null}
+          </div>
+          {hasChildren && isOpen ? renderNodes(node.children, depth + 1) : null}
+        </div>
+      )
+    })
+
   return (
     <Dialog
       open
@@ -138,7 +201,7 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
       }}
       size="md"
       title="产出目标"
-      description="这批素材要产出到哪些方向。点「记住配置」后，之后每次跑后处理都按这份清单产出，直到你改了它。"
+      description="这批素材手动跑后处理时要产出到哪些方向，跨产品线和产品都能选。点「记住配置」后，之后每次手动跑都按这份清单产出，直到你改了它。自动后处理不受这里影响，仍按图片归属的方向产出。"
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           {savedTargets.length > 0 ? (
@@ -160,24 +223,16 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
       }
     >
       <div className="flex flex-col gap-3">
-        {options.length === 0 ? (
+        {!hasAnyDirection ? (
           <EmptyState
             icon={<InfoIcon size={20} />}
-            title="还没有可选的方向"
-            description="后处理只对「已经在项目树里启用的方向」生效。先到项目树的「后处理」列勾选要参与的方向，再回来选产出目标。"
+            title="项目树里还没有方向"
+            description="产出目标取自项目树。先到项目树建好「产品线 / 产品 / 方向」，再回来选。"
           />
         ) : (
           <>
             <div className="max-h-[45vh] overflow-y-auto rounded-ds-lg border border-ds-border">
-              {options.map((option) => (
-                <div key={option.id} className="border-b border-ds-border px-3 py-2 last:border-b-0">
-                  <Checkbox
-                    checked={draft.includes(option.id)}
-                    onChange={() => toggle(option.id)}
-                    label={option.label}
-                  />
-                </div>
-              ))}
+              {renderNodes(tree, 0)}
             </div>
             <p className="text-xs text-ds-muted">
               已选 {draft.length} 个方向 · 每张图约 {filesPerImage} 个文件

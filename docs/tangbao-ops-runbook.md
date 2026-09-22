@@ -1372,6 +1372,37 @@ expect(new Set(vi.mocked(resolveProjectPostprocessSlice).mock.calls.map((call) =
 - 把产出目标退回单元素 → **3 failed**（恰好是那 3 条，其余照过）
 - 把逐目标解析退回归属方向 → **1 failed**：`AssertionError: expected Set{'direction-a'} to equal Set{'direction-a','direction-b'}`
 
+### 5. ⭐ 一个字段同时被「自动」与「手动」两条路读时，怎么改才不互相污染（R-90）
+
+`PostprocessMediaConfig` 里的字段**往往不止一条触发路径在读**（`savedTargetCollectionIds` 原先的语义是
+「自动与手动都照它跑」）。这时任何一侧的需求都会顺带改另一侧的行为，而且**两侧都不报错** ——
+症状只是「另一条路的产出结果变了」。
+
+**改法一律是「按 `source` 分流，而不是改共享语义」**：
+
+```ts
+// taskPostprocess.ts —— 读点分流
+const savedTargets = input.source === 'manual' ? baseConfig.savedTargetCollectionIds : []
+// 门也分流（同一个函数里两处门的写法必须一致，第二处是 PP-SCOPE-002）
+if (input.source !== 'manual' && !isCollectionWithinSelection(…)) { … }
+```
+
+**动手前必做**：把该字段的**全部读点** grep 出来，逐个标注它属于哪条路（`grep -n "<字段名>" src`）。
+本次实测：`savedTargetCollectionIds` 的读点里只有 `taskPostprocess.ts` 的产出目标那处是「路相关的」，
+其余（落盘白名单 / 快照 / 归一化 / `usePostprocessGlobalConfig`）两条路共用、不该动。
+
+**守卫必须两侧都写**，只守一侧等于把另一侧的回退交给运气：
+
+| 守什么                       | 用例                                                                 |
+| ---------------------------- | -------------------------------------------------------------------- |
+| 手动侧拿到了新能力           | 「手动跑：记住的目标跨出启用范围也照产」，断言**不报** `PP-SCOPE-001` |
+| 自动侧没被顺手改掉（防回退） | 「自动跑不读记住的目标」，断言解析的仍是归属方向                     |
+| 自动侧原行为仍在（防回退）   | 「自动跑：归属方向不在范围内 → 记 `PP-SCOPE-001`」                   |
+
+**反向验证要改「闸门条件」本身**，改测试数据是测不出来的：
+① 去掉 `input.source !== 'manual'` → 手动那条红；② 把分流式还原成直读 → 自动那条红。
+两轮都必须**只有目标那条红**（本次实测两轮各 1 failed / 8 passed）。
+
 ---
 
 ## 二十一、判断一个 Tailwind 工具类「是不是真的生效了」（2026-09-22 定稿）

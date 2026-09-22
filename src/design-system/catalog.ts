@@ -1028,9 +1028,9 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/postprocess/PostprocessTargetsDialog.tsx',
     responsibility:
-      '产出目标弹窗（「记住配置」的落点）：勾选这批素材要产出到哪些方向（可跨产品多选，只列**启用范围内的叶子节点**）+ 逐目标估算产出文件数；确认后写入 `savedTargetCollectionIds`，此后每次跑批复用它，直到再改',
+      '产出目标弹窗（「记住配置」的落点）：一棵可展开的项目树（产品线→产品→方向，**跨产品、不受启用范围限制**；勾中间层 = 其下方向一起勾，落盘只有叶子）+ 逐目标估算产出文件数；确认后写入 `savedTargetCollectionIds`，此后**手动**跑批复用它，直到再改（自动后处理不读这份清单）',
     decision: 'compose',
-    targets: ['Dialog', 'Checkbox', 'Button', 'EmptyState'],
+    targets: ['Dialog', 'Checkbox', 'IconButton', 'Button', 'EmptyState'],
   },
   {
     module: 'src/features/projectTree/ProjectTreeWorkbench.tsx',

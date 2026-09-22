@@ -296,9 +296,10 @@ export interface PostprocessMediaConfig {
    * （`pickDeepestCollectionId`），同级挂两个只有一个生效、另一个**静默忽略**，
    * 而且挂载会改写素材的真实归属，越挂越乱。
    *
-   * ⚠️ 它**不是**「启用范围」：`selectedCollectionIds` 回答「哪些方向允许跑」，
-   * 这个字段回答「这次产出到哪些」。两者互相独立，判定也分开做
-   * （目标要逐个过启用范围，见 `taskPostprocess`）。
+   * ⚠️ 它**不是**「启用范围」：`selectedCollectionIds` 回答「哪些方向参与*自动*后处理」，
+   * 这个字段回答「**手动**跑这一次产出到哪些」。两者互相独立，判定也分开做：
+   * 手动触发不读启用范围（可以跨产品产到一个还没参与自动产出的方向），自动触发不读这个字段
+   * （去向仍是图片归属方向），见 `taskPostprocess` 里 `source` 的两处分流。
    */
   savedTargetCollectionIds: string[]
   /** 手选方向；null = 按源图尺寸自动判定 */

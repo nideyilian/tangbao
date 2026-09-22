@@ -54,10 +54,13 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   setSelectedCollectionIds: (ids: string[]) => void
   toggleSelectedCollection: (collectionId: string) => void
   /**
-   * 「记住配置」：把这次选定的产出目标固化下来，后续跑批一直复用它，直到再次修改。
+   * 「记住配置」：把这次选定的产出目标固化下来，后续**手动**跑批一直复用它，直到再次修改。
    *
-   * 传空数组 = 恢复「按图片归属方向产出」（与从没点过记住一致）。注意空数组表达的是
-   * 「不指定目标」，**不是**「什么都不产出」—— 产不产由启用范围（`selectedCollectionIds`）决定。
+   * **只作用于手动触发**（执行体按 `source === 'manual'` 取它；自动后处理不读）：
+   * 自动产出的去向仍是图片归属方向，不被这份清单悄悄改掉。
+   *
+   * 传空数组 = 恢复「按图片归属方向产出」（与从没点过记住一致）。空数组表达的是「不指定目标」，
+   * **不是**「什么都不产出」。
    */
   setSavedTargetCollectionIds: (ids: string[]) => void
   /** 清掉记住的产出目标（等价于 `setSavedTargetCollectionIds([])`，给界面一个语义明确的入口） */
@@ -588,8 +591,9 @@ export function selectPostprocessOutputPlan(
 /**
  * 后处理是否已具备运行条件：启用范围非空（至少勾了一个项目/方向）+ 至少能产出一个变体。
  *
- * 勾选是**启用范围**而不是产出目标——有归属的图片按归属方向产出，这里的 `selectedCollectionIds`
- * 只负责回答「有没有启用」以及「无归属的图往哪儿放」。
+ * 勾选是**启用范围**（哪些方向参与*自动*后处理）而不是产出目标——有归属的图片按归属方向产出，
+ * 这里的 `selectedCollectionIds` 只负责回答「有没有启用」以及「无归属的图往哪儿放」。
+ * 手动跑若要跨出这个范围，走的是「记住的产出目标」那条路（`savedTargetCollectionIds`）。
  */
 export function isPostprocessReady(
   config: PostprocessMediaConfig,
