@@ -46,8 +46,15 @@ export interface DataGridColumn<Row> {
   editor: DataGridEditorKind
   /** 固定列宽（px）。不给则按内容自适应。 */
   width?: number
-  /** 数字列右对齐更易比较。 */
-  align?: 'start' | 'end'
+  /**
+   * 对齐方式。默认 `start`（左）。
+   * - `end`：数字列，右对齐便于比较；
+   * - `center`：短标记列（如开关、单字状态），内容居中比贴左更稳。
+   *
+   * ⚠️ `center` 对 flex 内容（开关、带按钮的输入框）不生效于 `text-align`，
+   * 由 CSS 里 `.ds-data-grid__cell--center` 那组规则分开处理（见 styles.css）。
+   */
+  align?: 'start' | 'center' | 'end'
   placeholder?: string
   /**
    * 逐行不同的 placeholder（优先于 `placeholder`）。
@@ -415,6 +422,7 @@ export function DataGrid<Row extends object>({
                   'ds-data-grid__head-cell',
                   index === 0 && stickyFirstColumn && 'ds-data-grid__cell--sticky',
                   column.align === 'end' && 'ds-data-grid__head-cell--end',
+                  column.align === 'center' && 'ds-data-grid__head-cell--center',
                 )}
                 style={columnWidthStyle(column)}
                 title={column.help}
@@ -463,6 +471,7 @@ export function DataGrid<Row extends object>({
                         'ds-data-grid__cell',
                         index === 0 && stickyFirstColumn && 'ds-data-grid__cell--sticky',
                         column.align === 'end' && 'ds-data-grid__cell--end',
+                        column.align === 'center' && 'ds-data-grid__cell--center',
                       )}
                       style={columnWidthStyle(column)}
                     >

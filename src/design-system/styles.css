@@ -2749,8 +2749,8 @@
   border-right: 1px solid hsl(var(--ds-color-border));
   color: hsl(var(--ds-color-text-muted));
   font-weight: var(--ds-font-weight-semibold);
-  /* 左右 = 单元格内边距(4) + 单元格内容内边距(8)，表头文字才与列内容同一条竖线起 */
-  padding: var(--ds-space-1) var(--ds-space-3);
+  /* 左右 = 单元格内边距(8) + 单元格内容内边距(8)，表头文字才与列内容同一条竖线起 */
+  padding: var(--ds-space-1) var(--ds-space-4);
   text-align: left;
   white-space: nowrap;
 }
@@ -2787,7 +2787,11 @@
 .ds-data-grid__cell {
   border-bottom: 1px solid hsl(var(--ds-color-border));
   border-right: 1px solid hsl(var(--ds-color-border));
-  padding: 0 var(--ds-space-1);
+  /*
+   * 左右 8px（2026-09-22 杰哥反馈「尺寸组件、选择地址的按钮边距太小」后从 4 调回来）：
+   * 加上内容自带的 8px = 16px，与表头的 `--ds-space-4` 对齐；路径「选择」按钮也才有呼吸。
+   */
+  padding: 0 var(--ds-space-2);
   vertical-align: middle;
 }
 
@@ -2802,6 +2806,25 @@
 
 .ds-data-grid__cell--end {
   text-align: right;
+}
+
+/*
+ * 居中对齐（`align: 'center'`，2026-09-22 加）。
+ * 三类内容要分开说：文本吃 `text-align`；开关与带按钮的输入框是 flex 内容、只认 `justify-content`；
+ * 输入框里打字的位置又要单独 `text-align` —— 少说一类就会出现「表头居中、内容还贴左」。
+ */
+.ds-data-grid__head-cell--center,
+.ds-data-grid__cell--center {
+  text-align: center;
+}
+
+.ds-data-grid__cell--center .ds-data-grid__switch,
+.ds-data-grid__cell--center .ds-data-grid__editor-wrap {
+  justify-content: center;
+}
+
+.ds-data-grid__cell--center .ds-data-grid__editor {
+  text-align: center;
 }
 
 /* 冻结首列：不透明背景是硬要求（见头注 ①） */

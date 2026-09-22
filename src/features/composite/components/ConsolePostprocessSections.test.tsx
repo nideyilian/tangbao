@@ -392,6 +392,19 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度', 'E:/留档百度'])
   })
 
+  it('⭐ 只有「渠道名」与「参与产出」两列居中，其余列左对齐（2026-09-22 杰哥定的口径）', () => {
+    // 这两列内容短且是「标记」性质（名字 / 一个勾），居中比贴左更稳；
+    // 详细尺寸与导出位置是长内容，必须左对齐。改回全左或全中，这条会挂。
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+    const heads = container.querySelectorAll('table[aria-label="渠道与输出"] thead th')
+    const isCentered = (index: number) =>
+      (heads[index]!.className as string).includes('ds-data-grid__head-cell--center')
+    expect(isCentered(0)).toBe(true) // 渠道名
+    expect(isCentered(1)).toBe(false) // 详细尺寸
+    expect(isCentered(2)).toBe(true) // 参与产出
+    expect(isCentered(3)).toBe(false) // 导出位置
+  })
+
   it('⭐ 尺寸表一行一个渠道，详细尺寸是一组复选框（勾选 = 参与产出）', () => {
     // 2026-09-21 反馈：「详细尺寸使用复选框，尽可能排一行，放不下的排两行」。
     // 行 = 渠道，格子里横排复选框 —— 扫一眼就知道每个渠道配了哪几套、哪几套是开的。
@@ -409,12 +422,30 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(gdt.sizes.find((size) => size.id === 'gdt-1280x720')?.enabled).toBe(false)
   })
 
-  it('⭐ 详细尺寸排不下就折行：格子是 flex-wrap 容器，尺寸多的渠道自己折到第二行', () => {
+  it('⭐ 详细尺寸排成整齐的两列，尺寸多的渠道自己往下长（2026-09-22 由 flex-wrap 改 grid）', () => {
+    // 反馈原话：「两列尺寸这种对齐方式太乱了」。flex-wrap 下每行第二个 chip 的起点取决于
+    // 它左边那个 chip 有多宽 —— 逐行参差；grid 的列宽由该列最宽的 chip 定，两列各成一条竖线。
     render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     const vendorCell = container.querySelector<HTMLElement>('[data-testid="size-checks-vendor"]')!
-    expect(vendorCell.className).toContain('flex-wrap')
+    expect(vendorCell.className).toContain('grid-cols-2')
+
     const vendor = usePostprocessMediaStore.getState().media.find((item) => item.id === 'vendor')!
+    // 一个尺寸一个复选框，一个都不少
     expect(vendorCell.querySelectorAll('input[type="checkbox"]')).toHaveLength(vendor.sizes.length)
+
+    // 每格高度定死 24px（h-6）：折行时才一样高，也给「加尺寸」按钮一个能对齐的高度
+    expect(vendorCell.children[0]!.className).toContain('h-6')
+  })
+
+  it('⭐「加尺寸」按钮与尺寸格同高、且保持正方形（IconButton sm 默认 32px，比 chip 高一截）', () => {
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+    const cell = container.querySelector<HTMLElement>('[data-testid="size-checks-toutiao"]')!
+    const addSize = cell.querySelector<HTMLElement>('button[aria-label="给「头条」加一个尺寸"]')!
+    // 24px 见方：宽、高、min-height 三个都得覆盖 —— IconButton 的 sm 把它们都声明成了 32px，
+    // 少覆盖一个就会被 ds 基础类吃回去（RISK R-80），所以三条都要 `!` 且都要断言。
+    expect(addSize.className).toContain('!h-6')
+    expect(addSize.className).toContain('!w-6')
+    expect(addSize.className).toContain('!min-h-6')
   })
 
   it('⭐ 点尺寸名展开详细编辑：改宽高 = 换一套尺寸，主键跟着换', () => {

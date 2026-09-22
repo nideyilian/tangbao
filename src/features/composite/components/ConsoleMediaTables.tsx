@@ -269,6 +269,8 @@ export function ConsoleMediaTables({
         help: '所有方向共用：改一次所有方向都跟着变。同名渠道不允许重复。',
         editor: 'text',
         width: 140,
+        // 短标记列居中（2026-09-22 杰哥定）：渠道名与「参与产出」居中，其余列左对齐
+        align: 'center',
         getValue: (row) => row.channelName,
         spanRows: spanAt,
         validate: (value, row) => {
@@ -282,15 +284,24 @@ export function ConsoleMediaTables({
         header: '详细尺寸',
         help: '所有方向共用的一份规格：勾上才会产出这个尺寸。点尺寸名可改宽高、体积上限，或把它移到别的渠道。',
         editor: 'readonly',
-        width: 300,
+        // 320 而不是 300：两列各要放下「1080×1920 399KB」这种最宽的一格（约 135px）+ 内边距
+        width: 320,
         spanRows: spanAt,
         render: (row) => (
-          <span className="flex flex-wrap items-center gap-1.5 py-0.5" data-testid={`size-checks-${row.mediaId}`}>
-            {row.sizes.length === 0 && <span className="text-xs text-ds-muted dark:text-ds-muted">还没有尺寸</span>}
+          /*
+           * **两列网格**，不是 flex-wrap（2026-09-22 杰哥反馈「两列尺寸这种对齐方式太乱了」）：
+           * flex-wrap 下第二列的起点取决于它左边那个 chip 有多宽 —— 逐行参差，看着就是乱的；
+           * grid 的列宽由该列最宽的 chip 定，两列各自成一条竖线，扫起来才整齐。
+           */
+          <span className="grid grid-cols-2 gap-1.5" data-testid={`size-checks-${row.mediaId}`}>
+            {row.sizes.length === 0 && (
+              <span className="col-span-2 text-xs text-ds-muted dark:text-ds-muted">还没有尺寸</span>
+            )}
             {row.sizes.map((size) => (
               <span
                 key={size.id}
-                className="inline-flex items-center gap-1 rounded-ds-md border border-ds-border px-1.5 py-0.5"
+                /* 高度定死 24px：给「加尺寸」按钮一个能对齐的高度，也让折行时每格一样高 */
+                className="inline-flex h-6 items-center gap-1 rounded-ds-md border border-ds-border px-2"
               >
                 <Checkbox
                   checked={size.enabled}
@@ -312,12 +323,13 @@ export function ConsoleMediaTables({
               </span>
             ))}
             {/*
-             * 「加尺寸」贴着这一组的末尾：它是**这个渠道**的尺寸，就近加才对得上。
-             * （原尺寸表把「+」放在独立的操作列里，合并后那一列要放删渠道 / 删位置 / 加位置，
-             * 再塞第四个图标就认不出谁是谁了。）
+             * 「加尺寸」贴着这一组的末尾，且与 chip **同高**（24px 正方形）——
+             * `IconButton size="sm"` 是 32px（`--ds-control-sm`），比 chip 高一截，看着像浮在格子里。
+             * ⚠️ 必须带 `!` 前缀：ds 基础类声明过 height / min-height / width，不加会被它吃掉（R-80）。
              */}
             <IconButton
               size="sm"
+              className="!h-6 !w-6 !min-h-6"
               aria-label={`给「${row.channelName}」加一个尺寸`}
               title="加一个尺寸（默认 1024×1024，不做体积压缩）"
               icon={<PlusIcon className="h-3.5 w-3.5" />}
@@ -338,6 +350,7 @@ export function ConsoleMediaTables({
         help: `勾上这个渠道才产出变体。当前作用域：${participationScopeLabel}。纯净版是单独一项，在表下面。`,
         editor: 'switch',
         width: 88,
+        align: 'center',
         getValue: (row) => row.applied,
         spanRows: spanAt,
       },
