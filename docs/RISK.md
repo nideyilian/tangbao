@@ -147,6 +147,34 @@
 | R-88 | **⭐ 导入时「本地独有」的口径不一致：树保留、参数与水印却整份替换 ⇒ 自建方向还在、它的参数没了**。项目树走 `mergeImportedAssetLibrary`（同 id 覆盖 + **保留本地独有**），而节点参数走 `useProjectTreeParamsStore.setState({ params: toNodeParams(bundle) })`（**整表替换**）、水印库走 `mergeCompositeV2PersistedState` 的 `{ ...currentState, ...persisted }`（**整份替换**）。已有资料的同事拉一份配置后：树上自建的方向还在（界面看着都对），但那几个方向的**渠道选择 / 输出位置 / 水印引用被清空** ⇒ 退回「继承全局」，**产出结果悄悄变了且不报错**；自建的水印与 LOGO 则直接消失。 | 本机已有自建的方向或水印，再导入 / 拉取一份别人（或自己另一台机器）的配置 | **产出结果与导入前不一致，而界面上的树是"对"的**。判据：对比某个自建方向导入前后的参数，或看水印库数量有没有变少。**自查一句话**：这条数据的「本地独有」是保留还是替换？跟同链路的其它数据一致吗？ | ① **TB-101 已修**：统一成「同 id 以包为准 + 本地独有保留」（由 `localOnly` 开关决定去留），水印库新增按 id 合并的 `mergeCompositeV2Library`；② 用户可**逐模块**选覆盖范围，不必接受整份替换；③ 新增 `POSTPROCESS_FIELD_GROUP` 归属表（编译期闸门），防"分组口径"再走散 | **CLOSED**（2026-09-22 TB-101；全量 262 文件 / 3099 例绿） |
 | R-89 | **⭐ 导出全挂：主进程 ZIP 条目白名单漏了 v9 的 `config.json`，而失败文案把真因盖住了**。`electron/streaming-zip.ts` 的 `validArchivePath` 是**白名单**式校验，只放行 `images/` / `thumbnails/` / `composite-assets/` 三个目录；TB-100 把配置本体改成包内**根级**的 `config.json` 后没同步放行 ⇒ 导出时写第一个条目就被拒（`无效 ZIP 路径：config.json`），**发布配置 / 导出数据 / 导出备份一起失败**。更糟的是真因被吞了两层：`exportDataToPath` 的 catch 只把 `error.message` 丢进 toast、返回值里**没有 error 字段**，于是 `publishConfigToSyncDir` 只能编一句「写不进 X（确认这个目录可写）」—— 而该目录**明明可写**（同一次会话里 `writeJsonText` 实测能写进去），排查被彻底带偏。 | 任何带配置的导出（默认导出就带配置）；v9 之后必现 | 用户照着「确认这个目录可写」去查权限，白查；配置同步与备份整体不可用。**判据**：界面说「写不进 <目录>」，而你能往该目录写文件 | ① `ROOT_ARCHIVE_FILES` 放行根级信封文件；② `streaming-zip.test.ts` 用**渲染侧的 `TREE_CONFIG_ENTRY`** 写成对用例 —— 谁只改一边（常量或白名单）测试就红；③ `exportDataToPath` 回传 message，发布/导出照实报。**教训**：白名单式校验 + 新增条目 = 必须配成对守卫；错误文案自问一句「用户照这句话去查，能查到吗」 | **CLOSED**（2026-09-22；反向验证：拿掉白名单 → 守卫用例红，报错与线上真因一字不差） |
 | R-90 | **⭐ 一份配置被「自动」与「手动」两条触发路径共用 ⇒ 只针对一侧的需求会污染另一侧**。`savedTargetCollectionIds`（记住的产出目标）原先的语义是「自动与手动都照它跑」（`taskPostprocess.ts` 注释原文）。杰哥要的是「手动跑时能跨产品投到还没参与自动产出的方向」—— 若只把弹窗放开（放开后目标必然含未启用方向），**自动跑会连带把那些方向也当成目标**，再被 `PP-SCOPE-001` 逐条跳过：用户看到的是「自动后处理开始刷一堆跳过提示」，而他要改的只是手动那一次。反方向同理：启用范围（`selectedCollectionIds`）本是**自动**的路由开关，拿它拦手动就让「手动跑」这个动作失去意义（2026-09-21 的 `PP-SCOPE-002` 报障是同一形状）。 | 给某个字段 / 开关加「只针对手动」或「只针对自动」的需求时；或新增第二处判「要不要产出」的门 | **不报错，但另一条路的产出结果变了**。判据：把该字段的**全部读点**列出来，有没有一个读点处在另一条触发路径上？**自查一句话**：这个字段现在有几个人在读，各属于哪条路？ | ① **按 `source` 分流，而不是共享语义**：`savedTargets = source === 'manual' ? … : []`，两处门都写成 `input.source !== 'manual' && …`；② **两侧各一条守卫**（`taskPostprocess.test.ts`：「自动跑不读记住的目标」+「自动跑仍逐个过启用范围」）—— 只守一侧会让另一侧的回退无人察觉；③ 后续新增判定照这个格局走，见 `docs/architecture-constraints.md` §4.4.1 | **MITIGATED**（2026-09-22 TB-089 修订：分流 + 两侧守卫；反向验证轮 1 / 轮 2 各自精确命中 1 例） |
+| R-91 | **⭐ 「内存缓存窗口」被当成可见性判据 ⇒ 缓存外的数据静默消失，而库里其实一条没少**。桌面端启动 `hydrate()` 只把**最新 200 条**灌进 `assetsById`（`assetLibraryRepository.hydrate` 的 `limit: 200`），其余素材只活在 SQL 分页里；而 `resolveEffectiveAssets`（`query.ts:199`）旧写法是 `if (!live \|\| live.status !== asset.status) return false` —— **没缓存就剔除**。再叠两处：① `catalogPage` 是**组件局部 state**，切界面重挂载即归零，`AssetLibraryWorkspace.tsx:483` 于是整屏退回「只画内存那 200 条」；② `.catch(() => setCatalogPage(null))` 一次查询失败就静默清空、且 deps 未变不会再跑（只能重启）。实测本机 479 张 active 素材里 **279 张（58%）在窗口外** ⇒ 切一次界面少一半卡片，不报错、不留占位。 | 库内素材数 > 启动 hydrate 窗口（200）；或目录查询失败一次 | 顶部「全部素材 N 张」− 卡片视图速览条「X 张素材」的差值；切换一次界面看这个数是否跳 | 已缓解（TB-106）：`!live` 时以数据库分页结果为准保留；查询失败**不清分页快照**（有快照就留着 + 出「刷新失败 · 重试」，没快照才显示失败态）；新增 `catalogAwaitingFirstPage`，用「加载中」代替「换一份数据源」；重试令牌进 effect 依赖。**根治**是把分页快照提到 `features/assetLibrary/store.ts`（跨重挂载存活），未做 | MITIGATED（2026-09-22 TB-106） |
+
+> **2026-09-22 第二轮修订（同日 22:40，TB-106 续）**
+>
+> ① **「还没量到宽度」的连带坑已修**：`AssetBatchView.tsx` 的测量 effect 依赖里只有 `measure`
+> （`useCallback([])` 恒定）⇒ **一生只跑一次**；首帧若落在空态（两个 ref 都是 `null`，函数直接 return），
+> `ResizeObserver` **从此永不建立** ⇒ `layoutWidth` 恒为 0 ⇒ 卡片按 **1px** 渲染（「在 DOM 里但看不见」），
+> 而且不报错、不留占位。已把 `hasMeasurableContent` 加进依赖（空 → 非空必补一次测量），
+> 并让 `cardWidth` 在 `layoutWidth === 0` 时保持 0、由 `visibleItems` 拦住不渲染
+> （宁可空这一帧，也不要 1px 幻影卡片）。
+> 守卫用例：`AssetBatchView.test.tsx`「never renders 1px phantom cards while the layout width is unknown」；
+> **反向验证精确命中 1 条**（把 `cardWidth` 改回 `Math.max(1, …)` → 恰好那条红）。
+> ⚠️ 写这类用例**必须 `try/finally` 卸载 renderer**：本文件后续用例共用 `useAssetLibraryStore`，
+> 失败时漏掉 `unmount()` 会把「查看来源任务」那 3 条滚动用例一起带红，产生 3 条迷惑性连带失败
+> （本次实测踩到）。
+>
+> ② **查询失败自动补试**：目录查询失败后自动补试**一次**（600ms 退避，成功后计数归零），
+> 再失败才停在提示条 / 失败态等人工作 —— 瞬时 IPC 抖动不该让用户自己去找「重试」按钮。
+>
+> ③ **「内存陈旧时会把回收站里的图剔掉」经复核不成立，撤销该条警报**：
+> `resolveEffectiveAssets` 里 `live.status !== asset.status → 剔除` 只在「内存与库对同一素材状态不一致」时
+> 才有影响。本应用**单实例**，所有状态变更都经过 store（同时写内存与库），而直写库的批量路径
+> （导入 / 恢复 / 迁移）后面都跟 `hydrate()` 重灌内存 ⇒ **内存只可能比库新，不可能更旧**，
+> 「库说 trashed、内存还说 active」这条路径**不可达**。判据保留（用户刚回收时立即从活跃网格消失是预期行为）。
+>
+> ④ **未做，留待拍板**：启动 `hydrate()` 的 **200 条窗口**要不要全量化（`hydrateFull` 会拉长启动时间）；
+> 把分页快照提到 `features/assetLibrary/store.ts` 可彻底消掉「加载中」那一帧，但该文件挂着另一条写线的
+> 未提交改动，本轮**一个字节都没碰**（R-09 / R-79）。
 
 ---
 

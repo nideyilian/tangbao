@@ -503,7 +503,10 @@ function AssetGroupedView({
   // 任务卡片形式的列数与卡宽：随「显示大小」密度变化（紧凑 +1 列 / 大图 -1 列）
   const cardColumns = useMemo(() => getTaskCardColumns(layoutWidth, gridDensity), [gridDensity, layoutWidth])
   const cardWidth = useMemo(
-    () => (cardColumns > 0 ? Math.max(1, (layoutWidth - CARD_GAP * (cardColumns - 1)) / cardColumns) : 0),
+    // `layoutWidth === 0` = 还没量到容器宽度。此时**不能**退化成 `Math.max(1, 负数)` = 1px：
+    // 那会渲染出一排宽 1 像素、视觉上「不存在」的幻影卡片（TB-106）。保持 0，由 visibleItems 拦住。
+    () =>
+      cardColumns > 0 && layoutWidth > 0 ? Math.max(1, (layoutWidth - CARD_GAP * (cardColumns - 1)) / cardColumns) : 0,
     [cardColumns, layoutWidth],
   )
 
@@ -584,10 +587,12 @@ function AssetGroupedView({
     const min = viewport.top - VIRTUAL_OVERSCAN
     const max = viewport.top + viewport.height + VIRTUAL_OVERSCAN
     if (groupedViewStyle === 'cards') {
+      // 宽度还没量到（`cardWidth === 0`）：宁可这一帧什么都不画，也不要渲染一排 1px 宽的幻影卡片（TB-106）
+      if (cardWidth <= 0) return []
       return cardLayouts.filter((layout) => layout.top + layout.height >= min && layout.top <= max)
     }
     return blockLayouts.filter((block) => block.top + block.height >= min && block.top <= max)
-  }, [groupedViewStyle, cardLayouts, blockLayouts, viewport])
+  }, [cardLayouts, cardWidth, blockLayouts, groupedViewStyle, viewport])
 
   useEffect(() => {
     if (groups.length === 0) return
@@ -620,7 +625,19 @@ function AssetGroupedView({
     })
   }, [])
 
+  /**
+   * 「有东西可以测量了」——空态与非空态是**两棵不同的子树**（见下方空态提前 return），
+   * 所以它一变，`layoutRef` / `scrollRef` 就是新挂上的 DOM。
+   *
+   * 为什么必须进依赖：下面那个测量 effect 的依赖里只有 `measure`（`useCallback([])` 恒定），
+   * 也就是**一生只跑一次**。若首次挂载落在空态（两个 ref 都是 `null`），effect 会直接 return，
+   * `ResizeObserver` **从此永不建立** ⇒ `layoutWidth` 永远停在 0 ⇒ `cardWidth` 退化成 1px，
+   * 卡片全部「看不见」。空 → 非空的那一次切换必须补上测量与 observer（TB-106）。
+   */
+  const hasMeasurableContent = assets.length > 0 || groups.length > 0
+
   useLayoutEffect(() => {
+    if (!hasMeasurableContent) return
     const layoutElement = layoutRef.current
     const scrollElement = scrollRef.current
     if (!layoutElement || !scrollElement) return
@@ -629,7 +646,7 @@ function AssetGroupedView({
     observer.observe(layoutElement)
     observer.observe(scrollElement)
     return () => observer.disconnect()
-  }, [measure])
+  }, [hasMeasurableContent, measure])
 
   // 兜底：窗口尺寸变化（含 Electron 最大化/缩放）强制重新测量列数与视口高度。
   // 首帧若为空状态（无 layoutRef/scrollRef），上面的主 effect 会提前返回，

@@ -171,7 +171,11 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-function renderGrouped() {
+/**
+ * @param layoutWidth 布局容器的 `clientWidth`。传 0 模拟「还没量到宽度」
+ *   （空态 → 非空态切换、ResizeObserver 未建立时就是这个状态，见下方 TB-106 用例）。
+ */
+function renderGrouped(layoutWidth = 800) {
   let renderer: ReactTestRenderer
   act(() => {
     renderer = create(
@@ -181,7 +185,7 @@ function renderGrouped() {
           const props = element.props as Record<string, unknown>
           if (props['data-testid'] === 'asset-batch-view')
             return { clientHeight: 600, scrollTop: 0, scrollIntoView: vi.fn() }
-          if (props['data-testid'] === 'asset-grouped-layout') return { clientWidth: 800 }
+          if (props['data-testid'] === 'asset-grouped-layout') return { clientWidth: layoutWidth }
           // TaskCard 的 swipe 副作用会写 cardRef.current.style.transform
           return { scrollIntoView: vi.fn(), style: {} }
         },
@@ -212,6 +216,26 @@ function collectTextOf(root: unknown): string {
 function cardByGroupId(renderer: ReactTestRenderer, groupId: string) {
   return renderer.root.find((node) => node.props['data-group-id'] === groupId)
 }
+
+describe('AssetGroupedView（容器宽度还没量到）', () => {
+  it('never renders 1px phantom cards while the layout width is unknown（TB-106）', () => {
+    // `layoutWidth === 0` = 还没量到容器宽度：空态 → 非空态切换时测量 effect 可能不重跑、
+    // ResizeObserver 也没建起来（`layoutRef`/`scrollRef` 首帧为 null 直接 return）。
+    // 旧实现把它算成 `Math.max(1, (0 - 16) / 2)` = **1px**，卡片「在 DOM 里但看不见」——
+    // 用户看到的就是「任务卡片全没了」，而且不报错、不留占位。
+    const renderer = renderGrouped(0)
+    // 必须卸载（放 finally：断言失败也要卸）——本文件后续用例共用 `useAssetLibraryStore`，
+    // 留着挂载实例会串味：实测「查看来源任务」那 3 条滚动用例会跟着红（scrollIntoView 0 次 / 高亮丢失），
+    // 变成 3 条迷惑性的连带失败。
+    try {
+      const cards = renderer.root.findAll((node) => node.props['data-testid'] === 'asset-batch-card')
+      const phantom = cards.filter((card) => Number((card.props.style as { width?: number }).width ?? 0) <= 1)
+      expect(phantom).toHaveLength(0)
+    } finally {
+      act(() => renderer.unmount())
+    }
+  })
+})
 
 describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
   it('renders one task card per group (task / SOP batch) with the overview bar, no orphan cards', () => {

@@ -612,16 +612,29 @@ describe('resolveEffectiveAssets', () => {
     expect(resolveEffectiveAssets([snapshot], { a: live }, options)).toEqual([])
   })
 
-  it('drops assets absent from the in-memory state', () => {
+  it('keeps assets absent from the in-memory state（内存缓存窗口之外不能剔除）', () => {
+    // 桌面端启动只把最新 200 条灌进 assetsById（assetLibraryRepository.hydrate 的 limit），
+    // 其余素材只活在 SQL 分页里。旧实现「没缓存就剔除」会让窗口外的素材整批消失
+    // —— 实测本机 479 张 active 素材里 279 张在窗口外（TB-106）。
     const snapshot = makeAsset('a')
-    expect(resolveEffectiveAssets([snapshot], {}, options)).toEqual([])
+    expect(resolveEffectiveAssets([snapshot], {}, options).map((asset) => asset.id)).toEqual(['a'])
   })
 
   it('keeps snapshot objects when the asset is not in memory (defensive fallback)', () => {
-    // 与 drop 行为一致由调用方保证 live 完整性；这里验证不在 live 的素材被剔除
+    // 内存里只有 b：a 不在缓存窗口内，必须按数据库那一页保留（TB-106）。
+    // 旧断言的标题写的就是 keeps，断言却写成 drop —— 正好把 bug 钉成了「预期行为」。
     expect(
       resolveEffectiveAssets([makeAsset('a'), makeAsset('b')], { b: makeAsset('b') }, options).map((a) => a.id),
-    ).toEqual(['b'])
+    ).toEqual(['a', 'b'])
+  })
+
+  it('keeps a whole page when the in-memory cache window is narrower than the library（TB-106 回归）', () => {
+    // 真实规模：SQL 一页 120 条，而内存窗口只装得下最新 200 条 —— 翻页/切范围后
+    // 页里会出现大量「不在内存窗口内」的素材，它们必须照常显示，一条都不能少。
+    const page = Array.from({ length: 120 }, (_, index) => makeAsset(`p${index}`))
+    const live: Record<string, GeneratedAsset> = {}
+    for (const asset of page.slice(60)) live[asset.id] = asset
+    expect(resolveEffectiveAssets(page, live, options)).toHaveLength(120)
   })
 
   it('re-checks moved assets against the current scope (移出当前文件夹即剔除)', () => {

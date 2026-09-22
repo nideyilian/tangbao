@@ -197,8 +197,19 @@ export function resolveEffectiveAssets(
     .map((asset) => liveById[asset.id] ?? asset)
     .filter((asset) => {
       const live = liveById[asset.id]
-      // 本地已删除/回收（status 变化）：立即消失
-      if (!live || live.status !== asset.status) return false
+      /**
+       * 内存缓存里没有这条 → **以数据库分页结果为准，保留**（TB-106）。
+       *
+       * `liveById` 不是全量：桌面端启动只灌最新 200 条
+       * （`assetLibraryRepository.hydrate` 的 `limit: 200`），其余素材只活在 SQL 分页里。
+       * 旧实现写成「没缓存就剔除」，于是**缓存窗口之外的素材会被整批丢掉** ——
+       * 实测库里 479 张、窗口外 279 张，切一次界面（分页快照重建）就少掉一半卡片，
+       * 界面上没报错也没占位，看不出是「没加载」还是「真没有」。
+       * 数据库那一页本身已按范围 / 搜索 / 筛选查过，这里不需要再复检。
+       */
+      if (!live) return true
+      // 内存里有这条、但状态与数据库不同：用户刚删 / 刚回收 → 立即消失，不等重查
+      if (live.status !== asset.status) return false
       if (options.similarToAssetId) return true
       // 归属/标签/收藏等变化：按最新内存态 + 当前查询上下文复检，不再匹配即剔除
       return assetMatchesQueryState(live, options.collections, {

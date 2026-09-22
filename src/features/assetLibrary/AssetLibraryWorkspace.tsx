@@ -138,6 +138,34 @@ function AssetLibraryWorkspaceInner() {
     counts: AssetSidebarCounts
   } | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  /**
+   * 桌面目录查询的失败信息（TB-106）。
+   *
+   * 旧实现在 `.catch` 里 `setCatalogPage(null)`：**一次失败就把分页快照清空**，整屏退回
+   * 「只画内存缓存」——而内存缓存只有启动 hydrate 的窗口（最新 200 条），于是
+   * 失败 = 一批卡片静默消失；又因为 effect 依赖没变、**不会再重跑**，
+   * 只能重启或手动改一下范围才恢复（这正是「缺失依旧存在」的来源）。
+   *
+   * 现在的约定：失败**不清分页快照**（刷新失败不该让整屏卡片消失），只记录错误；
+   * 手头本来就没有快照（首帧 / 刚切范围）时，内容区显示失败态 + 「重试」。
+   */
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  /** 手动重试令牌：失败态点「重试」+1 → 驱动查询 effect 重跑（依赖数组里带上它）。 */
+  const [catalogRetryToken, setCatalogRetryToken] = useState(0)
+  /**
+   * 目录查询失败的**自动补试**（TB-106）。
+   *
+   * 瞬时抖动（主进程 / utility 进程刚重启、IPC 偶发超时）不该让用户自己去找「重试」按钮：
+   * 失败后自动补一次；再失败就停在提示条 / 失败态上等人工重试 —— **只补一次**，避免失败风暴。
+   */
+  const catalogAutoRetryCountRef = useRef(0)
+  const catalogAutoRetryTimerRef = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (catalogAutoRetryTimerRef.current !== null) window.clearTimeout(catalogAutoRetryTimerRef.current)
+    },
+    [],
+  )
   // 「素材索引补齐失败」提示条可关闭（2026-09-21 报障「提示关不掉」）：
   // 它由启动后台对账失败写入，一旦失败就常驻，而这条 JSX 原先**没有任何关闭入口**，
   // 只剩「重试」一条路——重试再失败就只能一直看着它。
@@ -333,6 +361,8 @@ function AssetLibraryWorkspaceInner() {
     if (prevQueryContextRef.current === queryContextKey) return
     prevQueryContextRef.current = queryContextKey
     setCatalogPage(null)
+    // 换上下文会重新查询：清掉上一次的失败标记，让内容区先显示「加载中」而不是残留的旧错误（TB-106）
+    setCatalogError(null)
   }, [queryContextKey])
 
   useEffect(() => {
@@ -345,6 +375,8 @@ function AssetLibraryWorkspaceInner() {
         .recommend({ similarToAssetId, limit: 50 })
         .then((items) => {
           if (!active) return
+          // 成功即清失败标记（与目录查询分支同款）：否则「重试成功」后旧错误还挂在提示条上
+          setCatalogError(null)
           const ranked = items.map((item) => item.asset)
           applyUpsertedAssets(ranked)
           prefetchImageThumbnails(
@@ -359,8 +391,9 @@ function AssetLibraryWorkspaceInner() {
             counts: queryCountsRef.current,
           })
         })
-        .catch(() => {
-          if (active) setCatalogPage(null)
+        .catch((error: unknown) => {
+          // 相似搜索失败：不进内存回退（结果集语义不同），交给内容区的失败态 + 重试（TB-106）
+          if (active) setCatalogError(error instanceof Error ? error.message : String(error))
         })
       return () => {
         active = false
@@ -378,6 +411,9 @@ function AssetLibraryWorkspaceInner() {
       })
       .then((page) => {
         if (!active) return
+        // 查询成功：清掉失败标记（失败态 / 「刷新失败」提示条随之收起），并把自动补试计数归零
+        setCatalogError(null)
+        catalogAutoRetryCountRef.current = 0
         applyUpsertedAssets(page.assets)
         prefetchImageThumbnails(
           page.assets.map((asset) => asset.imageId),
@@ -405,14 +441,30 @@ function AssetLibraryWorkspaceInner() {
           }
         })
       })
-      .catch(() => {
-        if (active) setCatalogPage(null)
+      .catch((error: unknown) => {
+        if (!active) return
+        // ★ 失败**不清分页快照**（TB-106）：旧实现 `setCatalogPage(null)` 会让整屏退回
+        //   「只画内存缓存那 200 条」，一批卡片静默消失；而且 deps 没变、effect 不会再跑，
+        //   只能重启才恢复。现在：有快照就留着（卡片不消失，只出一条「刷新失败」+ 重试），
+        //   没快照（首帧 / 刚切范围）就由内容区显示失败态 + 重试。
+        setCatalogError(error instanceof Error ? error.message : String(error))
+        // 自动补试一次（只一次）：瞬时抖动不该让用户自己去点「重试」。
+        // 再失败就停在提示条 / 失败态上 —— 反复自动重试会把一次故障放大成失败风暴。
+        if (catalogAutoRetryCountRef.current < 1) {
+          catalogAutoRetryCountRef.current += 1
+          if (catalogAutoRetryTimerRef.current !== null) window.clearTimeout(catalogAutoRetryTimerRef.current)
+          catalogAutoRetryTimerRef.current = window.setTimeout(() => {
+            catalogAutoRetryTimerRef.current = null
+            setCatalogRetryToken((token) => token + 1)
+          }, 600)
+        }
       })
     return () => {
       active = false
     }
   }, [
     applyUpsertedAssets,
+    catalogRetryToken,
     collections,
     debouncedMutationVersion,
     deferredQuery,
@@ -502,6 +554,16 @@ function AssetLibraryWorkspaceInner() {
     queryScope,
     similarToAssetId,
   ])
+  /**
+   * 桌面端「分页快照还没到手」（TB-106）。
+   *
+   * 这时候**不再退回只画内存缓存那一份列表**（旧行为）：内存缓存只是启动 hydrate 的窗口
+   * —— 桌面端只灌最新 200 条，库里素材更多时窗口外的卡片会整批消失，而且界面上看不出
+   * 是「还没加载」还是「真没有」。宁可显式说一句「加载中」，也不给一份不完整的列表。
+   *
+   * 收藏夹模式与无桌面目录（浏览器回退）本来就没有分页快照，不适用这里。
+   */
+  const catalogAwaitingFirstPage = desktopCatalog && !filterFavorite && !catalogPage
   const collectionNames = useMemo(
     () => new Map(collections.map((collection) => [collection.id, collection.name])),
     [collections],
@@ -823,7 +885,47 @@ function AssetLibraryWorkspaceInner() {
               />
             </div>
           )}
-          {inFavoritesOverview ? (
+          {/* 目录刷新失败、但手头还有旧快照：**卡片照旧显示**，只出一条可重试的提示（TB-106）。
+              旧实现是清空快照 → 整屏卡片消失，用户只会以为「图丢了」。 */}
+          {catalogError && !catalogAwaitingFirstPage && (
+            <div
+              role="alert"
+              data-testid="asset-catalog-error-notice"
+              className="flex shrink-0 items-center gap-3 border-b border-ds-danger/35 bg-ds-danger-subtle px-8 py-1.5 text-xs text-ds-danger dark:border-ds-danger/20 dark:bg-ds-danger/10 dark:text-ds-danger"
+            >
+              <span className="min-w-0 flex-1 truncate">素材列表刷新失败：{catalogError}</span>
+              <button
+                type="button"
+                className="min-h-ds-control-lg shrink-0 rounded-ds-md px-3 font-medium hover:bg-ds-danger-subtle dark:hover:bg-ds-danger/15"
+                onClick={() => setCatalogRetryToken((token) => token + 1)}
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {catalogAwaitingFirstPage ? (
+            /* 分页快照还没到手：宁可显式说「加载中」，也不拿「内存缓存那一份」当整屏数据源（TB-106） */
+            <div
+              role="status"
+              data-testid="asset-catalog-pending"
+              className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-sm text-ds-muted"
+            >
+              {catalogError ? (
+                <>
+                  <span className="text-center text-ds-danger">素材列表加载失败：{catalogError}</span>
+                  <button
+                    type="button"
+                    className="min-h-ds-control-lg rounded-ds-md border border-ds-border px-4 text-ds-text hover:bg-ds-muted/20"
+                    onClick={() => setCatalogRetryToken((token) => token + 1)}
+                  >
+                    重试
+                  </button>
+                </>
+              ) : (
+                '素材列表加载中…'
+              )}
+            </div>
+          ) : inFavoritesOverview ? (
             /* 收藏夹概览：嵌入素材库内容区（侧栏与顶部工具栏保持不变），搜索框过滤收藏夹名 */
             <FavoriteCollectionsView searchQueryOverride={query} />
           ) : groupBy !== 'none' ? (
