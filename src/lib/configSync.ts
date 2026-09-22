@@ -12,7 +12,13 @@
  */
 
 import { getConfigSyncPath, getLocalSavePath } from './localSave'
-import { exportDataToPath, importDataFromPath } from '../store'
+import {
+  collectTreeConfigPresets,
+  flattenTreeConfigNodes,
+  validateTreeConfigBundle,
+  TREE_CONFIG_ENTRY,
+} from './treeConfigBundle'
+import { exportDataToPath, importDataFromPath, type ImportScope } from '../store'
 
 /** 发布出来的包名前缀。改它要连着 `parseSyncFileName` 与文档一起改。 */
 export const CONFIG_SYNC_FILE_PREFIX = 'tangbao-config-'
@@ -96,11 +102,59 @@ export async function publishConfigToSyncDir(): Promise<ConfigSyncResult> {
 }
 
 /**
+ * 拉取前的**轻预览**：只读包里的 `config.json`，用来告诉用户"会发生什么"。
+ *
+ * 为什么值得多读一次：拉取会覆盖本机配置，而"我自建的方向参数怎么没了"是**事后才察觉**的。
+ * 提前把「包里有几个节点、几套水印」和本机有了几个自建的摆出来，成本很低、拦住的疑问很多。
+ * 读不到就返回 `null` —— **预览失败不该阻断拉取**。
+ */
+export interface ConfigSyncPreview {
+  fileName: string
+  /** 包里的树节点数（方向 / 产品 / 产品线都算） */
+  incomingNodes: number
+  /** 包里引用的水印预设数（含未归属的） */
+  incomingWatermarks: number
+  /** 包里的节点 id —— 调用方拿它跟本机比，算出"哪些是本机自建的" */
+  incomingNodeIds: string[]
+  /** 包里的水印预设 id，同上 */
+  incomingWatermarkIds: string[]
+}
+
+export async function previewLatestConfigFromSyncDir(): Promise<ConfigSyncPreview | null> {
+  const api = getFsApi()
+  if (!api?.readZipEntry || !api?.pathJoin) return null
+  const dir = await getConfigSyncPath()
+  if (!dir) return null
+  const latest = (await listSyncDirConfigs())[0]
+  if (!latest) return null
+  try {
+    const filePath = await api.pathJoin(dir, latest)
+    const result = await api.readZipEntry(filePath, TREE_CONFIG_ENTRY)
+    if (!result.success) return null
+    const parsed = JSON.parse(new TextDecoder().decode(result.bytes)) as unknown
+    const validated = validateTreeConfigBundle(parsed)
+    if (!validated.ok) return null
+    const nodes = flattenTreeConfigNodes(validated.bundle.tree)
+    const watermarks = collectTreeConfigPresets(validated.bundle)
+    return {
+      fileName: latest,
+      incomingNodes: nodes.length,
+      incomingWatermarks: watermarks.length,
+      incomingNodeIds: nodes.map((node) => node.id),
+      incomingWatermarkIds: watermarks.map((preset) => preset.id),
+    }
+  } catch {
+    // 预览是"锦上添花"：读不了就当没有，拉取本身照旧走
+    return null
+  }
+}
+
+/**
  * 拉取配置目录里最新的那份，覆盖本机配置。
  *
  * 备份失败**直接中止**：没有备份的覆盖是不可回退的，宁可这次不拉。
  */
-export async function pullLatestConfigFromSyncDir(): Promise<ConfigSyncResult> {
+export async function pullLatestConfigFromSyncDir(scope?: Partial<ImportScope>): Promise<ConfigSyncResult> {
   const api = getFsApi()
   if (!api?.readDirEntries) return { ok: false, message: '当前环境不支持（需要在桌面客户端里操作）' }
   const dir = await getConfigSyncPath()
@@ -119,6 +173,9 @@ export async function pullLatestConfigFromSyncDir(): Promise<ConfigSyncResult> {
     importTasks: false,
     importAssets: false,
     importImages: false,
+    // 覆盖范围由调用方给（默认「不覆盖应用设置」见 `IMPORT_SCOPE_CONFIG_SYNC`）——
+    // 拉别人发布的**工作配置**，不该顺手把这台机器的主题与偏好也换掉。
+    scope,
   })
   if (!ok) return { ok: false, message: `拉取失败：${latest} 读不了或内容不完整（本机配置未变）` }
   return { ok: true, message: `已拉取 ${latest}；本机原配置备份在 ${backupPath}` }

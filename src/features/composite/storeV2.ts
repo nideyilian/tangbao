@@ -305,6 +305,42 @@ export function replaceCompositeV2PersistedState(snapshot: CompositeV2PersistedS
   useCompositeV2Store.setState(getCompositeV2PersistedState(merged))
 }
 
+/**
+ * 按覆盖范围合并水印库：**同 id 以包为准，本地独有的按 `localOnly` 决定去留**。
+ *
+ * 为什么不直接 `replaceCompositeV2PersistedState`：那是**整份替换** —— 一次拉取就会把
+ * 本地自己建的水印抹掉。而项目树那边一直是「保留本地独有」（ADR-0014 §七 的取舍），
+ * 两者口径曾经不一致，结果是**最坏的那种**：「树还在，挂在树上的水印没了」——
+ * 界面上看着都对，产出却变了，还不报错。
+ */
+export function mergeCompositeV2Library(snapshot: CompositeV2PersistedSnapshot, localOnly: 'keep' | 'drop'): void {
+  // 「完全以发布方为准」那档：整份替换就对了（本地独有的随它一起去）
+  if (localOnly === 'drop') {
+    replaceCompositeV2PersistedState(snapshot)
+    return
+  }
+
+  const current = useCompositeV2Store.getState()
+  const incomingPresetIds = new Set(snapshot.presets.map((preset) => preset.id))
+  const incomingLogoIds = new Set(snapshot.projectLogos.map((logo) => logo.id))
+  const localOnlyPresets = (current.presets ?? []).filter((preset) => !incomingPresetIds.has(preset.id))
+  const localOnlyLogos = (current.projectLogos ?? []).filter((logo) => !incomingLogoIds.has(logo.id))
+  if (localOnlyPresets.length === 0 && localOnlyLogos.length === 0) {
+    replaceCompositeV2PersistedState(snapshot)
+    return
+  }
+
+  replaceCompositeV2PersistedState({
+    ...snapshot,
+    // 包里的在前（保持发布方那份的顺序），本地独有的接在后面。**顺序即产出顺序** ——
+    // 把本地的插到中间，会让"同样的配置每次跑出不同顺序"。
+    presets: [...snapshot.presets, ...localOnlyPresets],
+    projectLogos: [...snapshot.projectLogos, ...localOnlyLogos],
+    // `logoOrder` 是 id 列表：包里的顺序 + 本地独有的（它们原来是什么顺序就什么顺序）
+    logoOrder: [...snapshot.logoOrder, ...localOnlyLogos.map((logo) => logo.id)],
+  })
+}
+
 export function createCompositeV2Store(options: CreateCompositeV2StoreOptions = {}) {
   return createStore<CompositeV2StoreState>()(createCompositeV2StoreInitializer(options))
 }

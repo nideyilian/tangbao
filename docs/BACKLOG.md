@@ -4379,3 +4379,72 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 **状态**：`DONE`（2026-09-22）。
 
 **为什么当初分成两步**：这是核心链路（store 导出/导入 + 配置同步），先让设计可评审比直接改代码省返工。
+
+---
+
+## TB-101 导入 / 拉取时的覆盖范围（谁能覆盖谁、本地自建怎么办，2026-09-22 阿伟）
+
+**需求**（杰哥原话链）：「对于已有资料的用户在导入时，该如何解决重复的、或者有更新数据的情况呢」→
+我给了三种统一口径 → 杰哥：**「能否做成选择哪些覆盖，哪些不覆盖呢」** → 过目线框后「可以，开工」。
+
+**诊断（实测，逐项查的合并语义）**
+
+| 数据 | 原语义 | 对已有资料的同事 |
+| ---- | ------ | ---------------- |
+| 项目树 `collections` | 同 id 覆盖 + **保留本地独有** | ✅ 合理 |
+| **节点参数** | **整表替换** | ❌ 自建方向的参数被清空 |
+| **水印预设 / LOGO** | **整份替换** | ❌ 自建水印全消失 |
+| 全局产出配置 | 整份替换 | ⚠️ 本机调好的被覆盖 |
+| 应用设置 | 干净机器整份采用；否则只追加 profile | ⚠️ 不一致 |
+| 素材库 / 任务 / 收藏夹 | 字段级合并 / 按 id / 追加去重 | ✅ |
+
+**⭐ 最坏组合**：树保留了自建方向（界面上看着都在），但那几个方向的**渠道选择 / 输出位置 /
+水印引用被清空** ⇒ **产出结果悄悄变了，且不报错**。ADR-0014 §七 只对「节点保留还是删掉」做了裁决，
+同一条链路上的参数与水印没跟着统一。
+
+**做法**
+
+- **语义**：*勾了才用包里的，没勾的这一块完全不动。* 粒度停在**模块级**（5 项）——
+  再细会勾出「引用了不存在的东西」（方向参数引用节点 id、水印按产品 id 归属、渠道选择引用渠道 id）。
+- **「本地自建怎么办」单独一个开关**（保留 / 删除）：它回答的是「包里没有的要不要删」，
+  与「包里的要不要进来」是两个问题，合成一个控件会让人算不清。
+  **删除 = 移进回收站**（不是彻底删 —— 拉配置可反悔，走 `deleteCollection` 那条路是不可逆的）。
+- **产出配置按字段分组拼**：`POSTPROCESS_FIELD_GROUP`（`Record<keyof PostprocessMediaConfig, …>`，
+  **加字段忘归类编译即红**），合并是纯函数 `applyPostprocessScope`。
+- **预览**：拉取面板展开时读一次包内 `config.json`，显示「这份包含 N 个节点、M 套水印；
+  你本机还有 K 项是这份里没有的」。读不到就不显示，不阻断。
+- **默认值分场景**：拉取配置不勾「应用设置」；导入自己的备份全勾。
+
+**验收标准（可测）**
+
+1. `scope` 里没勾的模块，导入后**本机对应数据一个字没变**（逐块断言）。
+2. `localOnly: 'keep'` → 本地自建的节点与水印都还在；`'drop'` → 节点被移进回收站（`trashedAt` 非空）。
+3. 水印库按 id 合并：同 id 以包为准，本地独有的保留（且排在包里的之后 —— **顺序即产出顺序**）。
+4. 只勾「渠道与尺寸」时，命名模板 / 输出位置**不受影响**（反向验证：改成无条件覆盖 → 用例必须红）。
+5. 全量 `npm run verify` 全绿。
+
+**验收证据（2026-09-22）**
+
+- 全量 `vitest run` **262 文件 / 3099 例全绿**（本轮 +3）；`tsc -b` / `tsc -p electron` 双端零错；
+  `eslint .` 与 `prettier --check` 干净。
+- 新增用例：`treeConfigBundle.test.ts` 13 → **16**（覆盖范围三分支 / 水印选型同组 / 引用节点 id 同组）；
+  `catalog.test.ts` 通过（新组件 `ImportScopeFields.tsx` 已登记）。
+- **反向验证（实做，精确命中）**：把 `if (enabled[group])` 改成无条件覆盖 ⇒ 只挂
+  「⭐ 覆盖范围：勾了的组用包里的，没勾的组一个字都不动」，报错
+  `expected 'D:/包里输出' to be 'D:/本机输出'`，其余 15 例照过。
+- ⚠️ **未经渲染验证**（本机离屏渲染受限）：拉取面板与导入区的实际观感请杰哥在应用里过目。
+
+**改到的文件**
+
+| 文件 | 改动 |
+| ---- | ---- |
+| `src/store.ts` | `ImportScope` 模型与两套默认值、`resolveImportScope`、按范围分流的 `restoreTreeConfigBundle`、`mergePostprocessConfig` |
+| `src/lib/treeConfigBundle.ts` | 纯函数 `applyPostprocessScope`（按字段分组拼） |
+| `src/lib/postprocessMedia.ts` | `POSTPROCESS_FIELD_GROUP` 归属表（编译期闸门） |
+| `src/features/composite/storeV2.ts` | `mergeCompositeV2Library`（水印库按 id 合并，原先只有整份替换） |
+| `src/lib/assetLibraryRepository.ts` | `mergeImportedAssetLibrary` 支持 `dropLocalOnlyCollections`（移回收站） |
+| `src/lib/configSync.ts` | `pullLatestConfigFromSyncDir(scope)` + `previewLatestConfigFromSyncDir()` |
+| `src/components/ImportScopeFields.tsx` | 新增：范围勾选组（拉取与导入共用一份） |
+| `src/components/SettingsModal.tsx` | 拉取面板（含预览）与导入区的范围入口 |
+
+**状态**：`DONE`（2026-09-22）。

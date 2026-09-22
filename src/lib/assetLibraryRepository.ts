@@ -768,8 +768,22 @@ function mergeAsset(existing: GeneratedAsset | undefined, imported: GeneratedAss
   })
 }
 
+export interface MergeImportedAssetLibraryOptions {
+  /**
+   * 把「包里没有的本地节点」移进回收站（`localOnly: 'drop'` 那档）。
+   *
+   * **移回收站而不是彻底删**：拉取配置是可反悔的操作。走 `deleteCollection` 那条路
+   * 会把自己建的方向**不可逆**地删掉（它不经回收站），代价与"树长得更一致"完全不成比例。
+   * 回收站可恢复，而且回收站里的节点**不会被下次导出带出去**。
+   */
+  dropLocalOnlyCollections?: boolean
+}
+
 /** 将备份中的素材库按稳定 id 合并，保留本地标记、来源与衍生关系。 */
-export async function mergeImportedAssetLibrary(imported: AssetLibrarySnapshot): Promise<AssetLibrarySnapshot> {
+export async function mergeImportedAssetLibrary(
+  imported: AssetLibrarySnapshot,
+  options: MergeImportedAssetLibraryOptions = {},
+): Promise<AssetLibrarySnapshot> {
   const current = await hydrateFull()
   const collections = new Map(current.collections.map((collection) => [collection.id, collection]))
   const tags = new Map(current.tags.map((tag) => [tag.id, tag]))
@@ -777,6 +791,16 @@ export async function mergeImportedAssetLibrary(imported: AssetLibrarySnapshot):
   const tombstones = new Map(current.tombstones.map((tombstone) => [tombstone.imageId, tombstone]))
 
   for (const collection of imported.collections) collections.set(collection.id, collection)
+
+  if (options.dropLocalOnlyCollections) {
+    const incomingIds = new Set(imported.collections.map((collection) => collection.id))
+    const trashedAt = Date.now()
+    // 迭代中会改这个 Map，先拷一份键值对出来
+    for (const [id, collection] of [...collections]) {
+      if (incomingIds.has(id) || collection.trashedAt) continue
+      collections.set(id, { ...collection, trashedAt })
+    }
+  }
   for (const tag of imported.tags) tags.set(tag.id, tag)
   for (const asset of imported.assets) assets.set(asset.id, mergeAsset(assets.get(asset.id), asset))
   for (const tombstone of imported.tombstones) {

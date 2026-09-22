@@ -8,6 +8,9 @@ import {
   importData,
   importDataFromPath,
   clearData,
+  IMPORT_SCOPE_ALL,
+  IMPORT_SCOPE_CONFIG_SYNC,
+  type ImportScope,
   type SettingsTab,
   cleanupAllOrphanedImages,
   getErrorToastMessage,
@@ -69,7 +72,13 @@ import {
   setConfigSyncPath as persistConfigSyncPath,
   pickDirectory,
 } from '../lib/localSave'
-import { listSyncDirConfigs, publishConfigToSyncDir, pullLatestConfigFromSyncDir } from '../lib/configSync'
+import {
+  listSyncDirConfigs,
+  previewLatestConfigFromSyncDir,
+  publishConfigToSyncDir,
+  pullLatestConfigFromSyncDir,
+  type ConfigSyncPreview,
+} from '../lib/configSync'
 import { useAutoUpdate } from '../hooks/useAutoUpdate'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { formatUpdateReleaseNotes } from '../lib/updateReleaseNotes'
@@ -93,6 +102,7 @@ import { runLibraryIntegrityCheck, type LibraryIntegrityReport } from '../lib/li
 import { exportProjectTreeCopiesToFolder } from '../lib/assetProjectExport'
 import Select from './Select'
 import { Checkbox } from './Checkbox'
+import { ImportScopeFields } from './ImportScopeFields'
 import ViewportTooltip from './ViewportTooltip'
 import LegacyDataImportModal from './LegacyDataImportModal'
 import {
@@ -969,6 +979,12 @@ export default function SettingsModal() {
   const [includeBackupSecrets, setIncludeBackupSecrets] = useState(true)
   const [importConfig, setImportConfig] = useState(true)
   const [importTasks, setImportTasks] = useState(true)
+  /**
+   * 导入时的**覆盖范围**。默认全勾 —— 导入自己的备份，目的就是把这台机器恢复成包里的样子。
+   * 拿到别人发的包、只想借用一部分时，再展开调（见设置页的入口）。
+   */
+  const [importScope, setImportScope] = useState<ImportScope>(IMPORT_SCOPE_ALL)
+  const [showImportScope, setShowImportScope] = useState(false)
   const [importImages, setImportImages] = useState(true)
   const [importAssets, setImportAssets] = useState(true)
   /**
@@ -980,6 +996,27 @@ export default function SettingsModal() {
   const [configSyncPath, setConfigSyncPathState] = useState('')
   const [configSyncStatus, setConfigSyncStatus] = useState('')
   const [isConfigSyncing, setIsConfigSyncing] = useState(false)
+  /** 拉取前的「覆盖范围」面板：默认收起 —— 拉取会覆盖本机配置，值得多一步确认。 */
+  const [showPullScope, setShowPullScope] = useState(false)
+  const [pullScope, setPullScope] = useState<ImportScope>(IMPORT_SCOPE_CONFIG_SYNC)
+  /** 展开面板时顺手算一次：这份包有什么、其中多少是本机自建的。算不出来就不显示。 */
+  const [pullPreview, setPullPreview] = useState<{ preview: ConfigSyncPreview; localOnlyCount: number } | null>(null)
+
+  const loadPullPreview = useCallback(async () => {
+    const preview = await previewLatestConfigFromSyncDir()
+    if (!preview) {
+      setPullPreview(null)
+      return
+    }
+    const { useAssetLibraryStore } = await import('../features/assetLibrary/store')
+    const { useCompositeV2Store } = await import('../features/composite/storeV2')
+    const incomingNodes = new Set(preview.incomingNodeIds)
+    const incomingPresets = new Set(preview.incomingWatermarkIds)
+    const localOnlyCount =
+      useAssetLibraryStore.getState().collections.filter((node) => !incomingNodes.has(node.id)).length +
+      useCompositeV2Store.getState().presets.filter((preset) => !incomingPresets.has(preset.id)).length
+    setPullPreview({ preview, localOnlyCount })
+  }, [])
 
   useEffect(() => {
     if (!showSettings) return
@@ -1901,7 +1938,13 @@ export default function SettingsModal() {
     if (file) {
       setIsImportingData(true)
       try {
-        const imported = await importData(file, { importConfig, importTasks, importImages, importAssets })
+        const imported = await importData(file, {
+          importConfig,
+          importTasks,
+          importImages,
+          importAssets,
+          scope: importScope,
+        })
         if (imported) {
           const nextDraft = normalizeSettings(useStore.getState().settings)
           setDraft(nextDraft)
@@ -1927,7 +1970,13 @@ export default function SettingsModal() {
         // 用户取消选择或对话框打开失败，不清空状态
         return
       }
-      const imported = await importDataFromPath(filePath, { importConfig, importTasks, importImages, importAssets })
+      const imported = await importDataFromPath(filePath, {
+        importConfig,
+        importTasks,
+        importImages,
+        importAssets,
+        scope: importScope,
+      })
       if (imported) {
         const nextDraft = normalizeSettings(useStore.getState().settings)
         setDraft(nextDraft)
@@ -4324,22 +4373,52 @@ export default function SettingsModal() {
                         {isConfigSyncing ? '处理中...' : '发布配置'}
                       </button>
                       <button
-                        onClick={async () => {
-                          setIsConfigSyncing(true)
+                        onClick={() => {
                           setConfigSyncStatus('')
-                          try {
-                            const result = await pullLatestConfigFromSyncDir()
-                            setConfigSyncStatus(result.message)
-                          } finally {
-                            setIsConfigSyncing(false)
-                          }
+                          const next = !showPullScope
+                          setShowPullScope(next)
+                          if (next) void loadPullPreview()
                         }}
                         disabled={isConfigSyncing}
                         className="flex-1 rounded-ds-lg border border-ds-border px-4 py-2.5 text-sm font-medium text-ds-muted transition-colors hover:text-ds-text disabled:opacity-50"
                       >
-                        拉取最新
+                        {showPullScope ? '取消' : '拉取最新'}
                       </button>
                     </div>
+                    {showPullScope && (
+                      <div className="space-y-3 rounded-ds-lg border border-ds-border bg-ds-surface p-3 dark:border-ds-border dark:bg-ds-surface">
+                        <div className="text-xs text-ds-muted">
+                          拉取以发布方那份为准：下面勾了的才覆盖，没勾的这一块保持本机原样。拉取前会自动备份本机配置。
+                        </div>
+                        <ImportScopeFields value={pullScope} onChange={setPullScope} disabled={isConfigSyncing} />
+                        {pullPreview && (
+                          <div className="rounded-ds-lg bg-ds-surface px-3 py-2 text-xs text-ds-muted dark:bg-ds-surface">
+                            这份包含 {pullPreview.preview.incomingNodes} 个节点、
+                            {pullPreview.preview.incomingWatermarks} 套水印。
+                            {pullPreview.localOnlyCount > 0
+                              ? `你本机还有 ${pullPreview.localOnlyCount} 项是这份里没有的 —— 不勾上面最后一项就会保留。`
+                              : '本机没有额外的自建内容。'}
+                          </div>
+                        )}
+                        <button
+                          onClick={async () => {
+                            setIsConfigSyncing(true)
+                            setConfigSyncStatus('')
+                            try {
+                              const result = await pullLatestConfigFromSyncDir(pullScope)
+                              setConfigSyncStatus(result.message)
+                              if (result.ok) setShowPullScope(false)
+                            } finally {
+                              setIsConfigSyncing(false)
+                            }
+                          }}
+                          disabled={isConfigSyncing}
+                          className="w-full rounded-ds-lg border border-ds-border px-4 py-2 text-sm font-medium text-ds-text transition-colors hover:bg-ds-subtle disabled:opacity-50"
+                        >
+                          确认拉取
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="rounded-ds-xl border border-ds-border bg-ds-surface p-4 dark:border-ds-border dark:bg-ds-surface space-y-4 shadow-sm">
@@ -4435,6 +4514,25 @@ export default function SettingsModal() {
                       <Checkbox checked={importTasks} onChange={setImportTasks} label="包含任务和预览图" />
                       <Checkbox checked={importImages} onChange={setImportImages} label="包含原始图片" />
                       <Checkbox checked={importAssets} onChange={setImportAssets} label="包含素材库元数据" />
+                    </div>
+                    {/* 覆盖范围：只在导入「配置」时才谈得上，所以跟着 importConfig 显示与禁用 */}
+                    <div className="space-y-3">
+                      <button
+                        onClick={() => setShowImportScope((open) => !open)}
+                        disabled={!importConfig}
+                        className="text-xs font-medium text-ds-muted transition-colors hover:text-ds-text disabled:opacity-50"
+                      >
+                        {showImportScope ? '收起配置覆盖范围' : '配置覆盖范围（默认全部覆盖）'}
+                      </button>
+                      {showImportScope && importConfig && (
+                        <div className="space-y-3 rounded-ds-lg border border-ds-border bg-ds-surface p-3 dark:border-ds-border dark:bg-ds-surface">
+                          <div className="text-xs text-ds-muted">
+                            勾了的才用包里的，没勾的这一块保持本机原样。导入自己的备份时保持全勾即可；只借用别人包里的
+                            一部分时才需要调。
+                          </div>
+                          <ImportScopeFields value={importScope} onChange={setImportScope} disabled={isImportingData} />
+                        </div>
+                      )}
                     </div>
                     <button
                       onClick={() => (isElectronEnv() ? void handleImportNative() : importInputRef.current?.click())}

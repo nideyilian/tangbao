@@ -608,6 +608,12 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Menu', 'Kbd'],
   },
   {
+    module: 'src/components/ImportScopeFields.tsx',
+    responsibility: '导入 / 拉取配置时的覆盖范围勾选组（两个入口共用同一份，避免默认值跑偏）',
+    decision: 'compose',
+    targets: ['Checkbox'],
+  },
+  {
     module: 'src/components/InputBar.tsx',
     responsibility: '主提示词输入、参数和批量动作工作台',
     decision: 'retain',

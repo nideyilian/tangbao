@@ -41,7 +41,13 @@ import type {
   CompositeV2ProjectLogo,
 } from '../features/composite/lib/compositeV2Types'
 import type { ProjectNodeKind, ProjectNodeParams } from '../features/projectTree/types'
-import type { PostprocessMedia, PostprocessMediaConfig, PostprocessNodeOverride } from './postprocessMedia'
+import {
+  POSTPROCESS_FIELD_GROUP,
+  type PostprocessFieldGroup,
+  type PostprocessMedia,
+  type PostprocessMediaConfig,
+  type PostprocessNodeOverride,
+} from './postprocessMedia'
 
 /** 包结构版本。**结构变化才 +1**；纯新增可选字段不 bump（缺字段回落旧行为即可）。 */
 export const TREE_CONFIG_VERSION = 9
@@ -447,6 +453,29 @@ export function toCompositeV2State(bundle: TreeConfigBundle): CompositeV2Persist
 /** 包里的全局默认层 + 渠道字典 → `PostprocessMediaConfig`（恢复侧最后一步：挂渠道与输出位置）。 */
 export function toPostprocessMediaConfig(bundle: TreeConfigBundle): PostprocessMediaConfig {
   return fromTreeConfigDefaults(bundle.defaults)
+}
+
+/**
+ * 按覆盖范围把包里的全局产出配置叠到本机那份上：**勾了的组用包里的，没勾的组保持本机原样**。
+ *
+ * 必须**按字段拼**而不是整份替换 —— 「渠道与尺寸」与「全局产出配置」住在**同一个对象**里
+ * （`PostprocessMediaConfig`），整份替换会让只想换渠道的人连命名模板一起被换掉。
+ * 某个字段归哪一组由 `POSTPROCESS_FIELD_GROUP` 决定（那张表漏一个字段就编译报错）。
+ *
+ * 做成纯函数是为了好测：它没有副作用，也不认识 store。
+ */
+export function applyPostprocessScope(
+  current: PostprocessMediaConfig,
+  incoming: PostprocessMediaConfig,
+  enabled: Record<PostprocessFieldGroup, boolean>,
+): PostprocessMediaConfig {
+  const merged: Record<string, unknown> = { ...current }
+  for (const [field, group] of Object.entries(POSTPROCESS_FIELD_GROUP) as Array<
+    [keyof PostprocessMediaConfig, PostprocessFieldGroup]
+  >) {
+    if (enabled[group]) merged[field] = incoming[field]
+  }
+  return merged as unknown as PostprocessMediaConfig
 }
 
 /** 结构体检：包能不能用。恢复前先过一遍，别拿半个包去覆盖用户的配置。 */

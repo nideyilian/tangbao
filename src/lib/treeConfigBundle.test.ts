@@ -13,7 +13,9 @@ import type { AssetCollection } from '../types'
 import type { CompositeV2Preset } from '../features/composite/lib/compositeV2Types'
 import type { ProjectNodeParams } from '../features/projectTree/types'
 import { createDefaultPostprocessMediaConfig } from '../storePostprocessMedia'
+import type { PostprocessMediaConfig } from './postprocessMedia'
 import {
+  applyPostprocessScope,
   buildTreeConfigBundle,
   collectTreeConfigPresets,
   flattenTreeConfigNodes,
@@ -312,5 +314,98 @@ describe('配置包 v9：以树为骨架', () => {
     expect(result.bundle.watermarkLibrary.logos).toEqual([])
     expect(result.bundle.watermarkLibrary.logoOrder).toEqual([])
     expect(result.bundle.watermarkLibrary.libraryPath).toBe('')
+  })
+
+  it('⭐ 覆盖范围：勾了的组用包里的，没勾的组一个字都不动', () => {
+    const incoming: PostprocessMediaConfig = {
+      ...createDefaultPostprocessMediaConfig(),
+      media: [{ id: 'pkg', name: '包里的渠道', sizes: [] }],
+      mediaOutputDirs: { pkg: ['D:/包里'] },
+      selectedMediaIds: ['pkg'],
+      outputDir: 'D:/包里输出',
+      namePattern: '包里-{seq}',
+      watermarkPresetIds: ['wm-pkg'],
+      selectedCollectionIds: ['pkg-node'],
+      savedTargetCollectionIds: ['pkg-node'],
+    }
+    const current: PostprocessMediaConfig = {
+      ...createDefaultPostprocessMediaConfig(),
+      media: [{ id: 'local', name: '本机渠道', sizes: [] }],
+      outputDir: 'D:/本机输出',
+      namePattern: '本机-{seq}',
+      watermarkPresetIds: ['wm-local'],
+      selectedCollectionIds: ['local-node'],
+      savedTargetCollectionIds: [],
+    }
+
+    // 只勾「渠道与尺寸」→ 只有归这一组的字段换掉，其余保持本机
+    const onlyChannels = applyPostprocessScope(current, incoming, {
+      channels: true,
+      watermarks: false,
+      tree: false,
+      postprocess: false,
+    })
+    expect(onlyChannels.media.map((item) => item.id)).toEqual(['pkg'])
+    expect(onlyChannels.selectedMediaIds).toEqual(['pkg'])
+    expect(onlyChannels.mediaOutputDirs).toEqual({ pkg: ['D:/包里'] })
+    expect(onlyChannels.outputDir).toBe('D:/本机输出')
+    expect(onlyChannels.namePattern).toBe('本机-{seq}')
+    expect(onlyChannels.watermarkPresetIds).toEqual(['wm-local'])
+    expect(onlyChannels.selectedCollectionIds).toEqual(['local-node'])
+
+    // 只勾「全局产出配置」→ 渠道与水印选型都留在本机
+    const onlyPostprocess = applyPostprocessScope(current, incoming, {
+      channels: false,
+      watermarks: false,
+      tree: false,
+      postprocess: true,
+    })
+    expect(onlyPostprocess.outputDir).toBe('D:/包里输出')
+    expect(onlyPostprocess.namePattern).toBe('包里-{seq}')
+    expect(onlyPostprocess.media.map((item) => item.id)).toEqual(['local'])
+    expect(onlyPostprocess.watermarkPresetIds).toEqual(['wm-local'])
+  })
+
+  it('⭐ 水印选型跟着水印库同进同退（不然会指向一个不存在的预设）', () => {
+    const incoming: PostprocessMediaConfig = {
+      ...createDefaultPostprocessMediaConfig(),
+      watermarkPresetIds: ['wm-pkg'],
+    }
+    const current: PostprocessMediaConfig = {
+      ...createDefaultPostprocessMediaConfig(),
+      watermarkPresetIds: ['wm-local'],
+    }
+
+    const merged = applyPostprocessScope(current, incoming, {
+      channels: false,
+      watermarks: true,
+      tree: false,
+      postprocess: false,
+    })
+    expect(merged.watermarkPresetIds).toEqual(['wm-pkg'])
+  })
+
+  it('⭐ 启用范围与产出目标跟着项目树同组（它们引用的是节点 id）', () => {
+    const incoming: PostprocessMediaConfig = {
+      ...createDefaultPostprocessMediaConfig(),
+      selectedCollectionIds: ['pkg-node'],
+      savedTargetCollectionIds: ['pkg-node'],
+    }
+    const current: PostprocessMediaConfig = {
+      ...createDefaultPostprocessMediaConfig(),
+      selectedCollectionIds: ['local-node'],
+      savedTargetCollectionIds: ['local-node'],
+    }
+
+    const merged = applyPostprocessScope(current, incoming, {
+      channels: false,
+      watermarks: false,
+      tree: true,
+      postprocess: false,
+    })
+    expect(merged.selectedCollectionIds).toEqual(['pkg-node'])
+    expect(merged.savedTargetCollectionIds).toEqual(['pkg-node'])
+    // 输出位置这类不引用节点的字段不该被牵连
+    expect(merged.outputDir).toBe(current.outputDir)
   })
 })

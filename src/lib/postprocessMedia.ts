@@ -347,6 +347,38 @@ export interface PostprocessMediaConfig {
 }
 
 /**
+ * 每个字段属于「哪个模块」—— 导入 / 拉取时按模块勾选覆盖范围要靠它。
+ *
+ * **这是一道编译期闸门**：类型写成 `Record<keyof PostprocessMediaConfig, …>`，
+ * 于是给配置加了字段却忘了归类，**编译就红**。忘了归类的后果是
+ * 「这个字段永远跟着本机走（或永远被覆盖）」，而**没有人会察觉** —— 属于静默不一致。
+ *
+ * 归属判据是**引用关系**，不是字段名：
+ * - `channels`：渠道与尺寸字典，以及引用渠道 id 的那几项（默认投哪些渠道、按渠道的导出位置）；
+ * - `watermarks`：引用水印预设 id 的项 —— 它要跟水印库**同进同退**，
+ *   否则会出现「导入了新水印选型、水印库却没跟着来」⇒ 指向不存在的预设；
+ * - `tree`：引用**节点 id** 的项（启用范围、产出目标）；
+ * - `postprocess`：其余（输出位置 / 命名 / 画面 / 分发）—— 它们不引用任何东西，可以独立覆盖。
+ */
+export type PostprocessFieldGroup = 'channels' | 'watermarks' | 'tree' | 'postprocess'
+
+export const POSTPROCESS_FIELD_GROUP: Record<keyof PostprocessMediaConfig, PostprocessFieldGroup> = {
+  media: 'channels',
+  mediaOutputDirs: 'channels',
+  selectedMediaIds: 'channels',
+  watermarkPresetIds: 'watermarks',
+  selectedCollectionIds: 'tree',
+  savedTargetCollectionIds: 'tree',
+  outputDir: 'postprocess',
+  namePattern: 'postprocess',
+  creator: 'postprocess',
+  fitMode: 'postprocess',
+  direction: 'postprocess',
+  autoCompanionClean: 'postprocess',
+  distribution: 'postprocess',
+}
+
+/**
  * 按媒体（渠道）细分的覆盖。
  *
  * 只开放「同一个方向在不同渠道上确实不一样」的两项：

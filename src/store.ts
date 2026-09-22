@@ -12,6 +12,7 @@ import {
 } from './storePostprocessMedia'
 import { isRecord } from './lib/typeGuards'
 import {
+  applyPostprocessScope,
   buildTreeConfigBundle,
   toAssetCollections,
   toCompositeV2State,
@@ -21,6 +22,8 @@ import {
   TREE_CONFIG_ENTRY,
   type TreeConfigBundle,
 } from './lib/treeConfigBundle'
+// 只引类型：`postprocessMedia` 是纯逻辑模块，不反向依赖 store，静态引它安全。
+import type { PostprocessMediaConfig } from './lib/postprocessMedia'
 // 只引类型：执行体在 `scheduleTaskPostprocess` 里动态 import。
 // 静态 import 会把 features/postprocess → features/composite 整条链拉进 store.ts 的模块图，
 // 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
@@ -11944,20 +11947,49 @@ async function snapshotTreeConfigBundle(exportedAt: number): Promise<TreeConfigB
  * 节点参数则是**整表替换**：参数是"这份配置"的一部分，留着本地的旧值会出现
  * 「界面显示的是新树、产出用的却是旧参数」这种最难查的不一致。
  */
-async function restoreTreeConfigBundle(bundle: TreeConfigBundle): Promise<void> {
-  await mergeImportedAssetLibrary({
-    assets: [],
-    collections: toAssetCollections(bundle),
-    tags: [],
-    tombstones: [],
-  })
-  await useAssetLibraryStore.getState().hydrate()
-  useProjectTreeParamsStore.setState({ params: toNodeParams(bundle) })
-  // 水印库（库级配置 + 全部预设，含未归属的）也在这里落地 —— v9 起树是**唯一入口**，
-  // 不再有并排的 `compositeState` 那条路。资源（LOGO 图）必须已经落库，见 `restoreCompositeAssets`。
-  const { replaceCompositeV2PersistedState } = await import('./features/composite/storeV2')
-  replaceCompositeV2PersistedState(toCompositeV2State(bundle))
-  restorePostprocessMediaConfig(toPostprocessMediaConfig(bundle))
+/**
+ * 按覆盖范围拼产出配置（分组逻辑在 `applyPostprocessScope` 里，是个好测的纯函数）。
+ * 这里只负责把两份配置取出来、把 scope 翻译成「哪几组要覆盖」。
+ */
+function mergePostprocessConfig(bundle: TreeConfigBundle, scope: ImportScope): PostprocessMediaConfig {
+  return applyPostprocessScope(
+    getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
+    toPostprocessMediaConfig(bundle),
+    {
+      channels: scope.channels,
+      watermarks: scope.watermarks,
+      tree: scope.tree,
+      postprocess: scope.postprocess,
+    },
+  )
+}
+
+async function restoreTreeConfigBundle(bundle: TreeConfigBundle, scope: ImportScope): Promise<void> {
+  // ① 立树 + 灌参数。两者**同进同退** —— 树没被覆盖却灌了参数，就会出现
+  //    「节点的参数挂在一棵不属于这份包的树上」这种对不上的状态。
+  if (scope.tree) {
+    await mergeImportedAssetLibrary(
+      {
+        assets: [],
+        collections: toAssetCollections(bundle),
+        tags: [],
+        tombstones: [],
+      },
+      { dropLocalOnlyCollections: scope.localOnly === 'drop' },
+    )
+    await useAssetLibraryStore.getState().hydrate()
+    useProjectTreeParamsStore.setState({ params: toNodeParams(bundle) })
+  }
+
+  // ② 水印库（库级配置 + 全部预设，含未归属的）。v9 起树是**唯一入口**，不再有并排的
+  //    `compositeState` 那条路。资源（LOGO 图）必须已经落库，见 `restoreCompositeAssets`。
+  if (scope.watermarks) {
+    const { mergeCompositeV2Library } = await import('./features/composite/storeV2')
+    mergeCompositeV2Library(toCompositeV2State(bundle), scope.localOnly)
+  }
+
+  // ③ 产出配置：按字段归属分组拼，只勾了「渠道与尺寸」就不该顺手换掉命名模板。
+  restorePostprocessMediaConfig(mergePostprocessConfig(bundle, scope))
 }
 
 export async function exportData(
@@ -12333,12 +12365,64 @@ export async function exportDataToPath(
   }
 }
 
+/**
+ * 导入 / 拉取时的**覆盖范围**：勾了才用包里的，没勾的这一块**完全不动**。
+ *
+ * 粒度刻意停在这一层（模块级）：方向参数引用节点 id、水印按产品 id 归属、
+ * 渠道选择引用渠道 id —— 允许再细的自由组合，就会勾出「引用了不存在的东西」，
+ * 那比"多覆盖了一点"更难排查。
+ */
+export interface ImportScope {
+  /** 项目树（产品线 / 产品 / 方向）与各节点的参数 */
+  tree: boolean
+  /** 水印库（预设 + LOGO 列表） */
+  watermarks: boolean
+  /** 渠道与尺寸（含「默认投哪些渠道」与按渠道的导出位置） */
+  channels: boolean
+  /** 全局产出配置（输出位置 / 命名模板 / 画面适配 / 分发） */
+  postprocess: boolean
+  /** 应用设置（主题与本机偏好） */
+  settings: boolean
+  /**
+   * 本地自建的方向与水印怎么办。
+   *
+   * 它回答的问题与上面五个**不同**：上面是「包里的要不要进来」，这个是「包里没有的要不要删」。
+   * 塞进同一个控件会让人算不清自己到底选了什么。
+   */
+  localOnly: 'keep' | 'drop'
+}
+
+/** 全勾：导入自己导出的备份时的默认 —— 目的就是把这台机器恢复成包里的样子。 */
+export const IMPORT_SCOPE_ALL: ImportScope = {
+  tree: true,
+  watermarks: true,
+  channels: true,
+  postprocess: true,
+  settings: true,
+  localOnly: 'keep',
+}
+
+/**
+ * 拉取别人发布的配置时的默认：**不覆盖应用设置**。
+ *
+ * 主题与各种本机偏好是「我这台机器想怎么用」，不该被一份工作配置顺手改掉。
+ * 本地自建的东西默认**保留** —— 拉一次配置就把自己加的方向抹掉，用户下次就不敢拉了。
+ */
+export const IMPORT_SCOPE_CONFIG_SYNC: ImportScope = { ...IMPORT_SCOPE_ALL, settings: false }
+
+/** 把可能不全的 scope 补成完整的一份。 */
+export function resolveImportScope(scope?: Partial<ImportScope>): ImportScope {
+  return { ...IMPORT_SCOPE_ALL, ...(scope ?? {}) }
+}
+
 /** 导入选项 */
 export interface ImportOptions {
   importConfig?: boolean
   importTasks?: boolean
   importImages?: boolean
   importAssets?: boolean
+  /** 覆盖范围。不给 = 全勾（既有调用方的行为不变）。 */
+  scope?: Partial<ImportScope>
 }
 
 /**
@@ -12819,17 +12903,22 @@ async function importBackupTail(
   }
 
   if (options.importConfig) {
+    const scope = resolveImportScope(options.scope)
     // v9：配置本体只从包内 `config.json` 来。到不了这里（老包 / 缺条目 / 结构不对）就是不可用包 ——
     // **不做猜测性解析**，宁可这次不导入，也别拿半个包覆盖用户已经调好的配置。
     const treeBundle = validateTreeConfigBundle(configBundle)
     if (!treeBundle.ok) throw new Error(`配置包不可用：${treeBundle.reason}`)
     // 顺序不可交换：资源先落库 → 立树 → 灌参数 → 放水印库 → 挂渠道与输出位置。
     // 反了会出现「引用了不存在的水印 / 渠道」，而这类错误要到产出那一刻才炸，极难自查。
-    await restoreCompositeAssets(data, treeBundle.bundle, Object.fromEntries(state.compositeFiles))
-    await restoreTreeConfigBundle(treeBundle.bundle)
+    // 资源跟着 `watermarks` 走：没勾水印库就不需要它们的二进制。
+    if (scope.watermarks) {
+      await restoreCompositeAssets(data, treeBundle.bundle, Object.fromEntries(state.compositeFiles))
+    }
+    await restoreTreeConfigBundle(treeBundle.bundle, scope)
     const mainState = useStore.getState()
 
-    if (data.settings) {
+    // 应用设置按范围来：没勾就**一点不碰** —— 拉一份工作配置，不该顺手改掉别人的主题与偏好。
+    if (data.settings && scope.settings) {
       mainState.setSettings(mergeImportedSettings(mainState.settings, data.settings))
     }
 
