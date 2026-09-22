@@ -115,7 +115,8 @@ export interface DataGridProps<Row extends object> {
   virtualizeThreshold?: number
 }
 
-const DEFAULT_ROW_HEIGHT = 34
+/** 默认行高。与 `.ds-data-grid__row` 的 CSS fallback 必须一致（两边写两个值迟早会飘）。 */
+const DEFAULT_ROW_HEIGHT = 30
 /** 可视区上下各多渲染几行，滚动时不会出现空白带。 */
 const OVERSCAN_ROWS = 6
 const DEFAULT_VIRTUALIZE_THRESHOLD = 200

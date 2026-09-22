@@ -2728,9 +2728,14 @@
 }
 
 .ds-data-grid {
+  /*
+   * 表格内的控件比表单标准矮一档（32 → 28px）：这是**密集数据面**，行高优先于控件手感
+   * （2026-09-22 杰哥要求「整体尺寸缩小」）。字号同样从 sm(13px) 降到 xs(12px)。
+   */
+  --ds-data-grid-control-height: calc(var(--ds-control-sm) - var(--ds-space-1));
   border-collapse: separate;
   border-spacing: 0;
-  font-size: var(--ds-font-size-sm);
+  font-size: var(--ds-font-size-xs);
   width: 100%;
 }
 
@@ -2740,9 +2745,12 @@
   z-index: var(--ds-z-sticky);
   background-color: hsl(var(--ds-color-surface-subtle));
   border-bottom: 1px solid hsl(var(--ds-color-border-strong));
+  /* 竖线：列与列之间画出来才有 Excel 那种网格感（原先只有横线） */
+  border-right: 1px solid hsl(var(--ds-color-border));
   color: hsl(var(--ds-color-text-muted));
   font-weight: var(--ds-font-weight-semibold);
-  padding: var(--ds-space-2) var(--ds-space-3);
+  /* 左右 = 单元格内边距(4) + 单元格内容内边距(8)，表头文字才与列内容同一条竖线起 */
+  padding: var(--ds-space-1) var(--ds-space-3);
   text-align: left;
   white-space: nowrap;
 }
@@ -2773,13 +2781,23 @@
 }
 
 .ds-data-grid__row {
-  height: var(--ds-data-grid-row-height, 34px);
+  height: var(--ds-data-grid-row-height, 30px);
 }
 
 .ds-data-grid__cell {
   border-bottom: 1px solid hsl(var(--ds-color-border));
-  padding: 0 var(--ds-space-2);
+  border-right: 1px solid hsl(var(--ds-color-border));
+  padding: 0 var(--ds-space-1);
   vertical-align: middle;
+}
+
+/*
+ * 最后一列不画右边线：容器外框已经有一条，两条叠起来看着是 2px 的粗边（Excel 也没有这一条）。
+ * 表头与单元格都要说 —— 少说一个就会在表头那格留一条悬空的竖线。
+ */
+.ds-data-grid__head-cell:last-child,
+.ds-data-grid__cell:last-child {
+  border-right: none;
 }
 
 .ds-data-grid__cell--end {
@@ -2823,7 +2841,7 @@
 .ds-data-grid__editor.ds-input {
   background-color: transparent;
   border-color: transparent;
-  height: var(--ds-control-sm);
+  height: var(--ds-data-grid-control-height);
   min-width: 0;
   padding: 0 var(--ds-space-2);
   width: 100%;
@@ -2844,9 +2862,15 @@
   padding: 0 var(--ds-space-2);
 }
 
+/*
+ * 单元格内容**一律左对齐**（2026-09-22 杰哥要求）：居中会让这一列看起来自成一套，
+ * 而且与表头文字对不齐。（只有显式声明 `align: 'end'` 的列才右对齐。）
+ * 内边距与 `__readonly` / `__editor` 同一份 —— 差这一份，勾选框就会比表头文字偏右 8px。
+ */
 .ds-data-grid__switch {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
+  padding: 0 var(--ds-space-2);
 }
 
 /* 路径列的选择按钮：只在需要时占位，平时不抢视觉 */
@@ -2858,7 +2882,7 @@
   cursor: pointer;
   flex: none;
   font-size: var(--ds-font-size-xs);
-  height: var(--ds-control-sm);
+  height: var(--ds-data-grid-control-height);
   padding: 0 var(--ds-space-2);
 }
 
