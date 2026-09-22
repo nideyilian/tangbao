@@ -2788,10 +2788,14 @@
   border-bottom: 1px solid hsl(var(--ds-color-border));
   border-right: 1px solid hsl(var(--ds-color-border));
   /*
-   * 左右 8px（2026-09-22 杰哥反馈「尺寸组件、选择地址的按钮边距太小」后从 4 调回来）：
+   * 上下 16px（2026-09-22 杰哥反馈「尺寸组件跟表格上下的间距基本为 0」）。
+   * 行高不再由 `--ds-data-grid-row-height` 定，而是被内容撑开 —— 那个变量现在是**最小行高**（30px），
+   * 保证没有内容的行也不会塌成一条线。
+   *
+   * 左右 8px（同日反馈「尺寸组件、选择地址的按钮边距太小」后从 4 调回来）：
    * 加上内容自带的 8px = 16px，与表头的 `--ds-space-4` 对齐；路径「选择」按钮也才有呼吸。
    */
-  padding: 0 var(--ds-space-2);
+  padding: var(--ds-space-4) var(--ds-space-2);
   vertical-align: middle;
 }
 
