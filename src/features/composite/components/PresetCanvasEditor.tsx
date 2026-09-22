@@ -113,7 +113,14 @@ export function PresetCanvasEditor(props: Props) {
   const [internalSelectedLayerId, setInternalSelectedLayerId] = useState('')
   const [backgroundDataUrl, setBackgroundDataUrl] = useState('')
   const [editingTextLayerId, setEditingTextLayerId] = useState('')
-  const [editingStartText, setEditingStartText] = useState('')
+  /**
+   * 画布上编辑文字时的**本地草稿**（2026-09-22 改）。
+   *
+   * 原先每敲一个字就 `updateLayer` 写一次 store —— `preset.updatedAt` 跟着变，渲染 effect 与
+   * overlay 缓存全部失效，**整张画布（含其他图层）跟着重画**，用户看到的就是「输文字时别的层在动」。
+   * 现在编辑期间**一个字都不写 store**，提交（失焦 / Ctrl+Enter）时才写一次；取消直接丢掉草稿。
+   */
+  const [editingText, setEditingText] = useState('')
   const [editingScale, setEditingScale] = useState(1)
   const [scale, setScale] = useState<number | 'fit'>('fit')
   const [fitScale, setFitScale] = useState(1)
@@ -132,6 +139,15 @@ export function PresetCanvasEditor(props: Props) {
     preset?.layers.find(
       (layer): layer is CompositeV2TextLayer => layer.id === editingTextLayerId && layer.type === 'text',
     ) ?? null
+
+  /**
+   * 编辑草稿 fit 之后的图层：**只给输入框定尺寸/位置用，不写回 store**。
+   * 文字变长时输入框得跟着长 —— 它带着 `overflow-hidden`，尺寸不更新就会被裁掉半截字。
+   */
+  const editingTextPreviewLayer = useMemo(
+    () => (editingTextLayer ? fitCompositeTextLayer({ ...editingTextLayer, text: editingText }) : null),
+    [editingTextLayer, editingText],
+  )
 
   function selectLayer(layerId: string) {
     setInternalSelectedLayerId(layerId)
@@ -321,7 +337,7 @@ export function PresetCanvasEditor(props: Props) {
     event.stopPropagation()
     dragRef.current = null
     selectLayer(layer.id)
-    setEditingStartText(layer.text)
+    setEditingText(layer.text)
     const host = event.currentTarget.parentElement?.getBoundingClientRect()
     setEditingScale(host?.width ? host.width / preset!.baseCanvas.width : 1)
     setEditingTextLayerId(layer.id)
@@ -372,13 +388,19 @@ export function PresetCanvasEditor(props: Props) {
   }
 
   function finishTextEdit() {
+    // 编辑期间一个字都没写 store，所以提交就是「把草稿写一次」；
+    // 没改动就不写 —— 少一次 updatedAt 变动，就少一次整张画布重绘
+    if (editingTextLayer && editingText !== editingTextLayer.text) {
+      updateLayer(editingTextLayer.id, { text: editingText })
+    }
     setEditingTextLayerId('')
-    setEditingStartText('')
+    setEditingText('')
   }
 
   function cancelTextEdit() {
-    if (editingTextLayer) updateLayer(editingTextLayer.id, { text: editingStartText })
-    finishTextEdit()
+    // 编辑期间没写过 store，所以取消 = 直接关掉输入框（不需要回滚）
+    setEditingTextLayerId('')
+    setEditingText('')
   }
 
   function handlePointerMove(event: React.PointerEvent) {
@@ -466,9 +488,10 @@ export function PresetCanvasEditor(props: Props) {
                 <textarea
                   autoFocus
                   aria-label={`Edit text ${editingTextLayer.name}`}
-                  value={editingTextLayer.text}
+                  value={editingText}
                   onPointerDown={(event) => event.stopPropagation()}
-                  onChange={(event) => updateLayer(editingTextLayer.id, { text: event.target.value })}
+                  // 只改本地草稿：编辑期间不写 store，其他图层一个字节都不动（见 `editingText` 的注释）
+                  onChange={(event) => setEditingText(event.target.value)}
                   onBlur={finishTextEdit}
                   onKeyDown={(event) => {
                     if (event.key === 'Escape') {
@@ -481,7 +504,8 @@ export function PresetCanvasEditor(props: Props) {
                   }}
                   className="absolute z-30 resize-none overflow-hidden border border-ds-primary bg-ds-surface/90 text-ds-text outline-none ring-2 ring-ds-focus/50"
                   style={{
-                    ...getLayerStyle(editingTextLayer, preset),
+                    // 用**草稿**的尺寸给输入框定位/定尺：文字变长时框跟着长（store 里那份没动）
+                    ...getLayerStyle(editingTextPreviewLayer ?? editingTextLayer, preset),
                     fontFamily: editingTextLayer.fontFamily,
                     fontSize: `${Math.max(10, editingTextLayer.fontSize * editingScale)}px`,
                     fontWeight: editingTextLayer.fontWeight,

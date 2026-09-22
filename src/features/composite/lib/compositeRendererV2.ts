@@ -15,6 +15,7 @@ import {
   resolveIdentifierLayer,
   resolveLayerText,
 } from './compositeIdentifier'
+import { wrapCompositeTextLine } from './compositeTextLayout'
 import type {
   CompositeV2IdentifierConfig,
   CompositeV2MediaLayer,
@@ -308,7 +309,16 @@ async function drawLayer(
      * 多段文案的水印默认**每段都贴**。所以给「卖点」这种不该带标识的文案留了出口：
      * 该层 `withIdentifier: false` 时跳过（2026-09-22 加，缺省仍然带）。
      */
-    const lines = resolveLayerText(layer, identifier).split('\n')
+    const limit = Math.max(1, rect.width - padding * 2)
+    /*
+     * 超宽的行**折行**，不交给 canvas 压扁（`fillText` 的第 4 参是横向压缩、不是换行）。
+     * 会超宽是因为框宽（`rect.width`）是按**不含标识符**的文字算的，而这里要画的是含标识的 ——
+     * 见 `wrapCompositeTextLine` 的注释（2026-09-22「文字被拉伸变形」的根因）。
+     */
+    const measureWidth = (text: string) => ctx.measureText(text).width
+    const lines = resolveLayerText(layer, identifier)
+      .split('\n')
+      .flatMap((line) => wrapCompositeTextLine(line, limit, measureWidth))
     const textX =
       layer.align === 'left' ? -rect.width / 2 + padding : layer.align === 'right' ? rect.width / 2 - padding : 0
     lines.forEach((line, index) => {
@@ -317,9 +327,9 @@ async function drawLayer(
         ctx.strokeStyle = layer.stroke.color || '#000000'
         ctx.lineWidth = metrics.strokeWidth
         ctx.lineJoin = 'round'
-        ctx.strokeText(line, textX, y, Math.max(1, rect.width - padding * 2))
+        ctx.strokeText(line, textX, y, limit)
       }
-      ctx.fillText(line, textX, y, Math.max(1, rect.width - padding * 2))
+      ctx.fillText(line, textX, y, limit)
     })
   }
   ctx.restore()
