@@ -529,7 +529,16 @@ defaults（全局默认）
 | 素材库送入 / 预设导入                            | `dataUrl` → 导出前迁 `stored` | ✅ 不丢   |
 | **编辑器里的「替换图片素材」→ 从本机磁盘选**     | `path`                        | ❌ **丢** |
 
-（LOGO 库本身不受影响：`projectLogos` 走 `assetId` → 打包在 `composite-assets/` 里。）
+**为什么 LOGO 库不用额外处理**（2026-09-22 杰哥问「把 LOGO 库固定持久化是不是就行」）：
+
+LOGO **一导入就立刻落库** —— `importLogoFiles`（`PresetManagementTab.tsx:363-393`）先
+`storeCompositeBlobs(blobs)` 拿到 `assetId`，再 `addProjectLogos({ id, name, assetId })`；
+而 `collectCompositeAssetIds` 会收集**所有**带 `assetId` 的 `projectLogos` ⇒ **每一张 LOGO 都进包**。
+从库插图到水印也是写成 `{ kind: 'stored', assetId }`（`PresetManagementTab.tsx:997-1005` 的 `onPickAsset`），
+拿不到 `assetId` 时**直接不插入**。
+
+⇒ **LOGO 库天然跨机器安全，不需要任何"额外固定"。** 真正要处理的是上表第三行那类
+（编辑器里从本机磁盘直选的图），与"用不用库"无关。
 
 #### B. 字体（不会乱位置，但会变字形）⚠️
 
