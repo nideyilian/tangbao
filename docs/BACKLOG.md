@@ -3878,3 +3878,60 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 | `controlConsoleSections.test.ts` · `CompositeWorkspace.test.tsx` · `ConsolePostprocessSections.test.tsx` · `PostprocessSettingsModal.test.tsx` | 分区 id 与表格 aria-label 的断言更新 + 新增 2 例            |
 | `src/design-system/catalog.ts`                                                                                          | `ChannelSection` 新增登记；撤掉两条已删文件；表格本体职责描述更新         |
 | `docs/adr/0015-*` · `docs/RISK.md`（R-82） · `design-system/tangbao/pages/postprocess.md` · `docs/tangbao-ops-runbook.md` | 决策 / 风险 / 界面说明 / 配方同步                                        |
+
+## TB-094 文字水印不再「自己换行」：框宽只用来定位，不再当排版约束（2026-09-22 阿伟）
+
+**现象**（杰哥 2026-09-22 报障 + 截图）：一套合规水印「具体活动或商品优惠以活动页面或商品详情页信息为准」
+**没设换行却自己断成两行**，末字「准」被推到第二行。杰哥的判断「宽度被自动固定了」是对的 —— 就是框宽在断行。
+
+**根因**（查的是**真实落盘数据**，不是推测 —— 从 `%APPDATA%\tangbao\Local Storage\leveldb` 里挖的预设）：
+
+| 事实               | 实测值                                                                       |
+| ------------------ | ---------------------------------------------------------------------------- |
+| 该层框宽 / padding | `position.width = 448` / padding 8 ⇒ 框内可用 **432**                        |
+| 框宽是什么         | **历史数据**（旧版文本层的框是手拖的 / 铺满画布的），不是当前文案的自动适应结果 |
+| 要画的字           | `★`（标识符前缀，`storeV2.identifier`）+ 23 字 = **24 字 × 18px = 432**，**正好卡在边界** |
+| 结果               | 超出一丁点（★ 的实际字宽 / 浮点误差）→ 折行逻辑把末字推到第二行               |
+
+⚠️ 这是**上一条修复（`c4399ad`）带出来的**：那次为了让带标识的长文案不再被 `fillText(maxWidth)` 压扁，
+改成了逐字折行 —— 压扁治好了，但折行把「差一像素」放大成「差一行」。**两次都是拿「框宽」当硬约束。**
+
+**决策**：框宽**只用来定位**（对齐锚点 + padding），排版只看文案自己的换行符。
+
+- `fillText` / `strokeText` **不传 maxWidth**（canvas 收 maxWidth 是横向压缩，不是换行）；
+- 删掉 `wrapCompositeTextLine`（已无调用方）；
+- 溢出按 `align` 向外长：`right` 保持右边缘不动、往左溢出，`center` 两边对称 —— 水印这几行本来就贴边对齐。
+
+**为什么不「让框架跟着字长」**：框是**持久化数据**、还要乘以目标尺寸的缩放比，而标识符是**运行时派生值**
+（不写回预设，见 ADR-0006）—— 改框就得在导出 / 复制 / 撤销时反复处理「这段是不是用户自己写的」。
+渲染时按文案自然宽画、框只定锚点，是唯一不用把派生值写进预设的做法。
+
+**验收标准（可测）**
+
+- 24 字文案 + `★` 前缀（框内宽正好 432）⇒ **只调用一次 `fillText`**，且**不传 maxWidth**；
+- 手动敲的 `\n` **仍生效**（两行画两次）；
+- 右对齐时文字右边缘 = 框右边缘 − padding（溢出方向不漂移）。
+
+**状态**：**已完成**（2026-09-22）。
+
+**验收证据（2026-09-22）**
+
+- 新增 2 例守卫（`compositeRendererV2.test.ts`）：用**记录调用的假 ctx** 驱动 `drawLayer` 验证
+  （jsdom 没有 canvas 实现，这也是 `drawLayer` 为此导出的原因）。
+- **反向验证**（两条都精确命中，且**只**挂新守卫）：
+  1. 把逐字折行塞回去 → 「整行只画一次」失败：`expected [ { …(4) }, …(1) ] to have a length of 1 but got 2`；
+  2. 把 `maxWidth` 塞回去 → 同一例失败：`expected 432 to be undefined` —— **432 正是上表算出的框内宽**，
+     与数据推出的结论逐位对上。
+- 全量：`261 文件 / 3053 例全绿`（删掉 5 例折行用例、新增 2 例守卫）。
+  `tsc -b` / `tsc -p electron/tsconfig.json` / `eslint .`（零 warning）/ `prettier --check` 全绿。
+- ⚠️ **未经渲染验证**：本机离屏渲染被环境拦死（用户级记忆有记录）；杰哥在运行中的应用里过目（dev 已 HMR）。
+
+**改到的文件**
+
+| 文件                                              | 改动                                                                     |
+| ------------------------------------------------- | ------------------------------------------------------------------------ |
+| `features/composite/lib/compositeRendererV2.ts`   | 文本分支：删掉折行与 maxWidth（框宽只用于 `textX` 定位）；`drawLayer` 导出供测试 |
+| `features/composite/lib/compositeTextLayout.ts`   | 删除 `wrapCompositeTextLine`；`measureCompositeTextBox` 头注写明「这是框、不是排版约束」及两个原因 |
+| `features/composite/lib/compositeRendererV2.test.ts` | 新增假 ctx 工具 + 2 例守卫                                            |
+| `features/composite/lib/compositeTextLayout.test.ts` | 删掉 5 例折行用例（函数已删）                                          |
+| `docs/RISK.md`（R-83） · `docs/adr/0006-*`        | 风险登记 + ADR 补「标识符不进框，所以框宽不能断行」                        |

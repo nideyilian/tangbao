@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { measureCompositeTextBox, wrapCompositeTextLine } from './compositeTextLayout'
+import { measureCompositeTextBox } from './compositeTextLayout'
 import type { CompositeV2TextLayer } from './compositeV2Types'
 
 function textLayer(patch: Partial<CompositeV2TextLayer> = {}): CompositeV2TextLayer {
@@ -46,40 +46,5 @@ describe('composite text layout', () => {
       width: 46,
       height: 60,
     })
-  })
-})
-
-/**
- * 折行：2026-09-22「部分文字被拉伸变形」的修复。
- *
- * 原先超宽的行直接交给 `fillText` 的第 4 参（maxWidth）——**那是横向压扁、不是换行**，
- * 于是带长标识符的那一层整段字被压成瘦字。折行只是多占一行，字的比例不变。
- */
-describe('文字折行（wrapCompositeTextLine）', () => {
-  const measure = (text: string) => [...text].length * 10
-
-  it('放得下就原样一行', () => {
-    expect(wrapCompositeTextLine('限时秒杀', 100, measure)).toEqual(['限时秒杀'])
-  })
-
-  it('⭐ 超宽时折行，且每行都不超过可用宽度', () => {
-    const rows = wrapCompositeTextLine('本素材纯属广告创意', 50, measure)
-    // 每行最多 5 字（5×10 = 50 正好放得下，第 6 字才换行）
-    expect(rows).toEqual(['本素材纯属', '广告创意'])
-    for (const row of rows) expect(measure(row)).toBeLessThanOrEqual(50)
-  })
-
-  it('⭐ 折行只切行、不改字：拼回去必须等于原文（防丢字 / 防变形）', () => {
-    const text = '★投保条件0~70岁 | 大病小病均可保障(责任内)'
-    expect(wrapCompositeTextLine(text, 60, measure).join('')).toBe(text)
-  })
-
-  it('空行与非法宽度都原样返回，调用方不必再分支', () => {
-    expect(wrapCompositeTextLine('', 50, measure)).toEqual([''])
-    expect(wrapCompositeTextLine('限时秒杀', 0, measure)).toEqual(['限时秒杀'])
-  })
-
-  it('单个字符就超宽时也不推出空行（否则那个字会被画到空气里）', () => {
-    expect(wrapCompositeTextLine('宽宽宽', 5, measure)).toEqual(['宽', '宽', '宽'])
   })
 })

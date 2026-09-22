@@ -15,7 +15,6 @@ import {
   resolveIdentifierLayer,
   resolveLayerText,
 } from './compositeIdentifier'
-import { wrapCompositeTextLine } from './compositeTextLayout'
 import type {
   CompositeV2IdentifierConfig,
   CompositeV2MediaLayer,
@@ -253,7 +252,15 @@ function applyShadow(
   ctx.shadowBlur = layer.shadow.blur * scale
 }
 
-async function drawLayer(
+/**
+ * 画一个图层 —— `renderOverlayAt` 唯一的绘制入口。
+ *
+ * ⚠️ **导出是为了可测**：文字图层「一行文案到底画几次、传不传 maxWidth」这两件事只有拿到
+ * ctx 才验得了，而 jsdom 没有 canvas 实现，`compositeRendererV2.test.ts` 用一份记录调用的
+ * 假 ctx 驱动这里（2026-09-22 那两次文字报障都是在这两点上栽的）。生产代码请走
+ * `renderCompositeV2ToCanvas`。
+ */
+export async function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: CompositeV2TextLayer | CompositeV2MediaLayer,
   preset: CompositeV2Preset,
@@ -309,16 +316,22 @@ async function drawLayer(
      * 多段文案的水印默认**每段都贴**。所以给「卖点」这种不该带标识的文案留了出口：
      * 该层 `withIdentifier: false` 时跳过（2026-09-22 加，缺省仍然带）。
      */
-    const limit = Math.max(1, rect.width - padding * 2)
     /*
-     * 超宽的行**折行**，不交给 canvas 压扁（`fillText` 的第 4 参是横向压缩、不是换行）。
-     * 会超宽是因为框宽（`rect.width`）是按**不含标识符**的文字算的，而这里要画的是含标识的 ——
-     * 见 `wrapCompositeTextLine` 的注释（2026-09-22「文字被拉伸变形」的根因）。
+     * ⛔ 框宽（`rect.width`）**只用来定位**（对齐锚点 + padding），绝不用来排版。
+     * 排版的唯一依据是文案自己的换行符 —— 2026-09-22 两天内栽了两次，两条路都堵死：
+     *
+     * - **不传 `fillText` 的第 4 参（maxWidth）**：那不是「放不下就换行」，而是**横向压扁**
+     *   （报障「部分文字出现被拉伸变形」）。
+     * - **不自己折行**：框宽是**历史数据** —— 旧版文本层的框是手拖/铺满画布的
+     *   （库里 `preset-compliance-06` 是 1160 宽的框配 19 字文案），而且它**永远算不进
+     *   渲染时才叠加的标识符**（`preset-compliance-04`：框内宽 432 = 23 字 ×18px，
+     *   叠加 `★` 前缀后正好 24 字 = 432，卡在边界上超出一丁点 → 末字被推到第二行，
+     *   就是「我没设换行它自己换行」）。拿一个对不上的数去断行，只会把差一像素变成差一行。
+     *
+     * 溢出怎么办：字比框宽时按 `align` 向外长 —— `right` 保持右边缘不动、往左溢出，
+     * `center` 两边对称溢出。水印里这几行本来就贴边对齐，这样正是想要的。
      */
-    const measureWidth = (text: string) => ctx.measureText(text).width
-    const lines = resolveLayerText(layer, identifier)
-      .split('\n')
-      .flatMap((line) => wrapCompositeTextLine(line, limit, measureWidth))
+    const lines = resolveLayerText(layer, identifier).split('\n')
     const textX =
       layer.align === 'left' ? -rect.width / 2 + padding : layer.align === 'right' ? rect.width / 2 - padding : 0
     lines.forEach((line, index) => {
@@ -327,9 +340,9 @@ async function drawLayer(
         ctx.strokeStyle = layer.stroke.color || '#000000'
         ctx.lineWidth = metrics.strokeWidth
         ctx.lineJoin = 'round'
-        ctx.strokeText(line, textX, y, limit)
+        ctx.strokeText(line, textX, y)
       }
-      ctx.fillText(line, textX, y, limit)
+      ctx.fillText(line, textX, y)
     })
   }
   ctx.restore()
