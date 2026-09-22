@@ -1,13 +1,20 @@
+/* @vitest-environment jsdom */
+
 /**
  * 中控台左栏「项目树」的行为测试。
  *
- * 锁三组事：
+ * 锁四组事：
  *
  * 1. ⭐ **树只有一棵**（2026-09-21 的回归断言）—— 上一版把「配置维度」挂成树的一级，
  *    于是每个能按方向配的维度各挂一棵完整的作用域树，展开两个组就是两棵一模一样的
  *    方向树。这里直接数节点行：每个集合在树上只出现一次。
  * 2. **树管「改谁」**：点节点 / 点「全局默认」→ `onValueChange`。
  * 3. **树管增删改查**：新增业务线、在某节点下新增、改名、删除（删除走确认弹窗）。
+ * 4. **折叠状态持久化**（2026-09-22）：存档语义是「记折起来的那些」（见
+ *    `usePersistedCollapsedIds` 头注）—— 恢复 / 实时写回 / 失效 id 清理 / 坏存档降级。
+ *
+ * ⚠️ 用 jsdom 环境是因为持久化要真的 `window.localStorage`（`vitest.setup.ts` 装了
+ * 内存版 polyfill）；node 环境下 `getBrowserStorage()` 返回 null，持久化相关断言全都测不到。
  */
 
 import { act, create } from 'react-test-renderer'
@@ -49,6 +56,8 @@ function seedStores() {
   deleteCollection.mockClear()
   restoreCollection.mockClear()
   moveCollectionsToPosition.mockClear()
+  // 折叠状态的存档要逐例清空，否则上一条用例写的状态会串到下一条
+  window.localStorage.clear()
   useStore.setState({ confirmDialog: null })
   useAssetLibraryStore.setState({
     collections: [
@@ -145,6 +154,17 @@ function dragEvent(clientY: number, payload: string[] = ['product-a']) {
 function indentOf(renderer: ReturnType<typeof create>, name: string): string | undefined {
   const row = nodeRows(renderer).find((item) => collectText(item.props.children).includes(name))
   return (row?.props.className as string | undefined)?.split(/\s+/).find((cls) => cls.startsWith('pl-'))
+}
+
+/**
+ * 折叠状态的存档键。**这是跨版本契约**：改了它，老用户机器上那份折叠状态就再也读不到，
+ * 所以这里写死字面量（实现里改了 key 就会立刻红）。
+ */
+const COLLAPSED_KEY = 'tangbao.console-tree-collapsed'
+
+/** 存档里现在写着什么 */
+function storedCollapsed(): string[] {
+  return JSON.parse(window.localStorage.getItem(COLLAPSED_KEY) ?? '[]')
 }
 
 /** 在输入框里打字并回车 */
@@ -439,5 +459,69 @@ describe('ConsoleAssetTree（项目树：一棵树管整个框架）', () => {
     const renderer = renderTree()
     expect(indentOf(renderer, '第三层')).toBe('pl-11')
     expect(indentOf(renderer, '第四层')).toBe('pl-14')
+  })
+
+  // ===== 折叠状态持久化（2026-09-22）=====
+  //
+  // 存档语义：记「被折起来的」节点 id（见 `usePersistedCollapsedIds` 头注）。
+
+  it('⭐ 挂载时从存档恢复：关掉应用再打开，折着的还是折着的', () => {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(['product-a']))
+    const renderer = renderTree()
+    expect(treeText(renderer)).toContain('产品A')
+    expect(treeText(renderer)).not.toContain('月亮')
+  })
+
+  it('收起 / 展开都实时写进存档', () => {
+    const renderer = renderTree()
+    clickByAriaLabel(renderer, '收起 产品A')
+    expect(storedCollapsed()).toEqual(['product-a'])
+    clickByAriaLabel(renderer, '展开 产品A')
+    expect(storedCollapsed()).toEqual([])
+  })
+
+  it('存档坏掉（不是合法 JSON / 不是数组）时退回「全展开」，不抛错', () => {
+    window.localStorage.setItem(COLLAPSED_KEY, '{ 这不是数组')
+    const renderer = renderTree()
+    expect(treeText(renderer)).toContain('月亮')
+    expect(treeText(renderer)).toContain('太阳')
+  })
+
+  it('⭐ 存档里已被删掉的节点 id 会被清掉（不无限累积）', () => {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(['product-a', 'deleted-long-ago']))
+    renderTree()
+    // 挂载后的第一次写回就清干净了，不用等用户再折一次
+    expect(storedCollapsed()).toEqual(['product-a'])
+  })
+
+  it('新增子级会把父级摊开并写进存档（折着的父级要展开，否则新建的看不见）', async () => {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(['product-a']))
+    const renderer = renderTree()
+    expect(storedCollapsed()).toEqual(['product-a'])
+
+    clickByAriaLabel(renderer, '在 产品A 下新增')
+    await typeAndSubmit(renderer, '新方向')
+    // 摊开 = 从折叠存档里删掉
+    expect(storedCollapsed()).toEqual([])
+  })
+
+  it('重命名不改 id ⇒ 折叠状态照旧（存档按 id 记，不按名字记）', async () => {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(['product-a']))
+    const renderer = renderTree()
+    clickByAriaLabel(renderer, '重命名 产品A')
+    await typeAndSubmit(renderer, '产品A（改）')
+    expect(storedCollapsed()).toEqual(['product-a'])
+  })
+
+  it('⭐ 搜索态仍然强制全展开（折着的节点也得能被搜出来）', () => {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(['product-a']))
+    const renderer = renderTree()
+    expect(treeText(renderer)).not.toContain('月亮')
+
+    const search = renderer.root.find((node) => node.type === 'input' && node.props.type === 'search')
+    act(() => {
+      ;(search.props.onChange as (event: { target: { value: string } }) => void)({ target: { value: '月亮' } })
+    })
+    expect(treeText(renderer)).toContain('月亮')
   })
 })

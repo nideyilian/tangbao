@@ -37,6 +37,16 @@
  * 2. **「全局默认」既不能拖也不能当落点**。它不是真节点（是全局基线的虚拟项，不在
  *    `collections` 里），底下放不了东西。
  *
+ * ## 折叠状态是持久化的（2026-09-22）
+ *
+ * 展开 / 收起记在 localStorage（键 `tangbao.console-tree-collapsed`），重进应用还在。
+ * **记的是「被折起来的」节点 id**，不是展开的 —— 树默认全展开，只有记折叠的才能做到
+ * 「新增节点自动展开」、且存档体积只跟折叠了几个有关（与树的大小无关）。
+ * 实现见 `usePersistedCollapsedIds`（与画廊左侧栏 / SOP 分组树共用一份）。
+ *
+ * ⚠️ 搜索框有字时仍然**强制全展开**（`searching ||`），别把这层去掉 ——
+ * 「搜到了却折着看不见」等于没搜。
+ *
  * ## 前身教训（2026-09-21 上午，别再犯）
  *
  * 曾把「配置维度」挂成树的一级，做成「维度 → 作用域」两级树。结果**每个能按方向配的
@@ -56,6 +66,7 @@ import {
   parseCollectionDragIds,
   type CollectionDropZone,
 } from '../../../lib/assetSidebarUtils'
+import { usePersistedCollapsedIds } from '../../../hooks/usePersistedCollapsedIds'
 import { buildPostprocessProjectTree, flattenPostprocessProjectTree } from '../../../lib/postprocessProjectTree'
 import type { PostprocessProjectTreeNode } from '../../../lib/postprocessProjectTree'
 import { useStore } from '../../../store'
@@ -96,6 +107,9 @@ const DROP_ZONE_HIGHLIGHT: Record<CollectionDropZone, string> = {
 /** 落到树下面空白区（= 变成业务线）在落点表里的键。不是真实节点 id，故带双下划线。 */
 const ROOT_DROP_KEY = '__root__'
 
+/** 折叠状态的本地存储键（纯 UI 偏好，与画廊侧栏 / SOP 分组树各自一档，互不影响）。 */
+const CONSOLE_TREE_COLLAPSED_STORAGE_KEY = 'tangbao.console-tree-collapsed'
+
 export function ConsoleAssetTree({ value, onValueChange }: Props) {
   const collections = useAssetLibraryStore((state) => state.collections)
   const createCollection = useAssetLibraryStore((state) => state.createCollection)
@@ -129,10 +143,19 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
     () => new Set(flatNodes.filter((node) => node.children.length > 0).map((node) => node.id)),
     [flatNodes],
   )
-  /** 默认全展开——灵境的树就是全展开形态，配置工作不需要先点一串箭头 */
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(
-    () => new Set(flatNodes.filter((node) => node.children.length > 0).map((node) => node.id)),
-  )
+  /**
+   * 折叠状态 —— 记的是**被折起来**的节点 id，本地持久化，重进应用还在。
+   *
+   * 为什么不记「展开的」：树默认全展开（灵境的树就是全展开形态，配置工作不需要
+   * 先点一串箭头），记展开就得把每个有子节点的 id 都写进去，而且**新增节点会掉出
+   * 集合（默认收起）**。记折叠的则天然全展开 + 新增自动展开 + 存档体积只跟
+   * 「折了几个」有关，与树的大小无关。详见 `usePersistedCollapsedIds` 的头注。
+   *
+   * 有效 id 传**全量 collections**（含回收站里的）：回收站节点仍算存在，
+   * 这样从回收站恢复回来时折叠状态还在。
+   */
+  const allCollectionIds = useMemo(() => new Set(collections.map((item) => item.id)), [collections])
+  const [collapsedIds, setCollapsedIds] = usePersistedCollapsedIds(CONSOLE_TREE_COLLAPSED_STORAGE_KEY, allCollectionIds)
 
   /**
    * 搜索过滤：命中节点与其**祖先链**保留，其余剪掉；搜索态下视为全展开
@@ -155,11 +178,22 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
   /** 回收站视图是平铺列表（回收节点在数据源里已被放到根上），把树摊平即可 */
   const trashedFlat = useMemo(() => flattenPostprocessProjectTree(visibleTree), [visibleTree])
 
+  /** 展开 = 从折叠集合里删掉；收起 = 加进去（集合语义与从前的「展开集合」相反，别写反）。 */
   const toggleExpand = (nodeId: string) => {
-    setExpandedIds((current) => {
+    setCollapsedIds((current) => {
       const next = new Set(current)
       if (next.has(nodeId)) next.delete(nodeId)
       else next.add(nodeId)
+      return next
+    })
+  }
+
+  /** 摊开某个节点（已经是展开态时原样返回，免得白写一次盘）。 */
+  const expandNode = (nodeId: string) => {
+    setCollapsedIds((current) => {
+      if (!current.has(nodeId)) return current
+      const next = new Set(current)
+      next.delete(nodeId)
       return next
     })
   }
@@ -256,7 +290,7 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
     }
     const zone = getCollectionDropZone(event)
     // 落进去之后自动展开新父级，否则东西掉进折叠的节点里，看着像没生效
-    if (zone === 'into') setExpandedIds((current) => new Set(current).add(nodeId))
+    if (zone === 'into') expandNode(nodeId)
     void moveCollectionsToPosition(
       ids,
       zone === 'into' ? { kind: 'into', parentId: nodeId } : { kind: zone, siblingId: nodeId },
@@ -339,9 +373,7 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
         showToast('同级已有同名节点', 'error')
         return
       }
-      if (target.parentId) {
-        setExpandedIds((current) => new Set(current).add(target.parentId!))
-      }
+      if (target.parentId) expandNode(target.parentId)
       onValueChange(created.id)
     } catch {
       showToast('创建失败，请重试', 'error')
@@ -417,7 +449,7 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
   const renderNodes = (nodes: PostprocessProjectTreeNode[]) => (
     <>
       {nodes.map((node) => {
-        const expanded = searching || expandedIds.has(node.id)
+        const expanded = searching || !collapsedIds.has(node.id)
         const hasChildren = searching || parentIds.has(node.id)
         const selected = value === node.id
         const renaming = editing?.kind === 'rename' && editing.id === node.id

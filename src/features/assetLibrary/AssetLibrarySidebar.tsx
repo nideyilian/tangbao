@@ -43,6 +43,7 @@ import {
   XIcon,
 } from '../../design-system/icons'
 import { cn } from '../../lib/shadcn'
+import { usePersistedCollapsedIds } from '../../hooks/usePersistedCollapsedIds'
 import { useStore } from '../../store'
 import type { AssetCollection, GeneratedAsset } from '../../types'
 import type { AssetSidebarCounts } from './query'
@@ -93,17 +94,6 @@ function loadStoredSidebarWidth(): number | null {
     return Number.isFinite(value) ? clampSidebarWidth(value) : null
   } catch {
     return null
-  }
-}
-
-function loadCollapsedIds(storageKey: string): Set<string> {
-  if (typeof window === 'undefined') return new Set()
-  try {
-    const raw = window.localStorage.getItem(storageKey)
-    const parsed: unknown = raw ? JSON.parse(raw) : []
-    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [])
-  } catch {
-    return new Set()
   }
 }
 
@@ -1547,8 +1537,11 @@ function AssetLibrarySidebar({
     setCreatingParentId(folderEditRequest.parentId)
     setFolderEditRequest(null)
   }, [folderEditRequest, setFolderEditRequest])
-  const [collapsedCollectionIds, setCollapsedCollectionIds] = useState<Set<string>>(() =>
-    loadCollapsedIds(COLLAPSED_COLLECTIONS_STORAGE_KEY),
+  /** 折叠存档要按「当前还存在的集合 id」筛一遍（含回收站里的：恢复回来折叠状态还在）。 */
+  const allCollectionIds = useMemo(() => new Set(collections.map((item) => item.id)), [collections])
+  const [collapsedCollectionIds, setCollapsedCollectionIds] = usePersistedCollapsedIds(
+    COLLAPSED_COLLECTIONS_STORAGE_KEY,
+    allCollectionIds,
   )
   const [projectsExpanded, setProjectsExpanded] = useState(true)
   const [smartFiltersExpanded, setSmartFiltersExpanded] = useState(true)
@@ -1703,14 +1696,7 @@ function AssetLibrarySidebar({
     if (imported === 0) useStore.getState().showToast('没有可导入的图片', 'error')
   }
 
-  // 折叠状态持久化（localStorage，纯 UI 偏好）
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(COLLAPSED_COLLECTIONS_STORAGE_KEY, JSON.stringify([...collapsedCollectionIds]))
-    } catch {
-      /* ignore */
-    }
-  }, [collapsedCollectionIds])
+  // 折叠状态的持久化在 `usePersistedCollapsedIds` 里（三棵树共用一份，别在这儿再写一份）
 
   // 宽度拖拽结果持久化 + 应用到 CSS 变量
   useEffect(() => {

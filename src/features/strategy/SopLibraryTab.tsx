@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { usePersistedCollapsedIds } from '../../hooks/usePersistedCollapsedIds'
 import {
   Badge,
   Button,
@@ -53,17 +54,6 @@ const SOP_GROUP_INDENT = 14
 function hasSavableContent(item: SopLibraryItem): boolean {
   if (isCampaignRecipeSop(item)) return true
   return Boolean(item.content.trim())
-}
-
-function loadCollapsedGroupIds(): Set<string> {
-  try {
-    const raw = window.localStorage.getItem(SOP_GROUP_COLLAPSED_STORAGE_KEY)
-    if (!raw) return new Set()
-    const parsed: unknown = JSON.parse(raw)
-    return Array.isArray(parsed) ? new Set(parsed.filter((id): id is string => typeof id === 'string')) : new Set()
-  } catch {
-    return new Set()
-  }
 }
 
 export type SopLibraryTabProps = {
@@ -166,17 +156,14 @@ export default function SopLibraryTab({
   const showToast = useStore((state) => state.showToast)
   const [editorMenuOpen, setEditorMenuOpen] = useState(false)
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => loadCollapsedGroupIds())
+  /** 折叠存档按「当前还存在的分组 id」筛一遍（删掉的分组不会在存档里累积）。 */
+  const allGroupIds = useMemo(() => new Set(groups.map((group) => group.id)), [groups])
+  // 折叠状态的持久化在 `usePersistedCollapsedIds` 里（三棵树共用一份，别在这儿再写一份）
+  const [collapsedGroupIds, setCollapsedGroupIds] = usePersistedCollapsedIds(
+    SOP_GROUP_COLLAPSED_STORAGE_KEY,
+    allGroupIds,
+  )
   const editorMenuRef = useRef<HTMLDivElement>(null)
-
-  // 折叠状态持久化（纯 UI 偏好，不进业务数据）
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SOP_GROUP_COLLAPSED_STORAGE_KEY, JSON.stringify([...collapsedGroupIds]))
-    } catch {
-      /* 忽略写入失败（隐私模式等） */
-    }
-  }, [collapsedGroupIds])
 
   /** 分组树按展开状态展平成行列表；折叠的分组整棵子树跳过。 */
   const groupTreeRows = useMemo(
