@@ -5,6 +5,7 @@
  * 1. **预设里有能出字的文字层** → 按位置把标识符贴到文案上（开头 / 结尾 / 两侧）。
  *    ⚠️ 这是**逐层**的：多文案水印默认每段都贴，除非那一层 `withIdentifier: false`
  *    （2026-09-22 加 —— 多文案水印里「卖点」这种文案不该带标识）。
+ *    竖排文案（一个字一行）另有一条例外：标识符**自己占一行**，不跟首字并排，见 `applyIdentifierToText`。
  * 2. **一个能出字的文字层都没有** → 退化成一个左下角的独立文字层，只写标识符本身。
  * 3. 「这一层贴不贴」由 `layerWantsIdentifier` **一处**判定 —— 图层界面的勾选框与渲染器
  *    读的是同一份判据，不各写一次。
@@ -59,10 +60,36 @@ export function isIdentifierEnabled(identifier?: CompositeV2IdentifierConfig | n
 }
 
 /**
+ * 这段文案是不是**竖排**写法（一个字一行）。
+ *
+ * 产品里**没有「文字方向」参数** —— 竖排是靠用户逐字换行排出来的（2026-09-22 报障的现场：
+ * 合规水印「该活动存在时效性，具体优惠以实际为准」就是十几行、每行一个字）。
+ * 所以「这一层是不是竖排」只能从文案形状判断，而这个判据很稳：
+ * **横排文案不会每行都只占一个字符**（「优惠\n限时」这种两行两字的极少，且那样排本来就
+ * 更接近竖排，当作竖排处理不违和）。
+ *
+ * 用 `Array.from` 数**字符**而不是 `.length` 数码元：emoji 是代理对，`'👍'.length === 2`
+ * 会被当成两个字，判据就把它当横排了。
+ *
+ * 空行会让整段判为「不是竖排」—— 这是刻意的兜底方向：判错成横排只是维持既有行为，
+ * 判错成竖排会让标识符凭空多占一行。
+ */
+export function isVerticalText(text: string): boolean {
+  const lines = text.split('\n')
+  if (lines.length < 2) return false
+  return lines.every((line) => Array.from(line).length === 1)
+}
+
+/**
  * 把标识符贴到一段文案上。
  *
  * 多行文案只贴**整段**的首尾（首行前 / 末行后），不是逐行都贴——「文案开头、文案结尾」
  * 说的是整段，逐行贴会把多行水印变得像列表。
+ *
+ * ⚠️ **竖排例外**（2026-09-22 杰哥报障）：竖排时每一行就是**一个字的格子**，把标识符贴到
+ * 首行前面会让它与首字并排 —— 现场是 `★该` 挤在同一排、看着像「★ 被排到了文案左边」。
+ * 竖排的「上 / 下」对应横排的「前 / 后」，所以这里换成 `unshift` / `push` 让它**自己占一格**，
+ * 位置关系才与横排一致（`★` 独占第一格 = 文案上方）。
  */
 export function applyIdentifierToText(text: string, identifier?: CompositeV2IdentifierConfig | null): string {
   if (!isIdentifierEnabled(identifier)) return text
@@ -71,6 +98,11 @@ export function applyIdentifierToText(text: string, identifier?: CompositeV2Iden
   const atSuffix = identifier!.placement === 'suffix' || identifier!.placement === 'both'
   if (!atPrefix && !atSuffix) return text
   const lines = text.split('\n')
+  if (isVerticalText(text)) {
+    if (atPrefix) lines.unshift(value)
+    if (atSuffix) lines.push(value)
+    return lines.join('\n')
+  }
   if (atPrefix) lines[0] = value + (lines[0] ?? '')
   if (atSuffix) lines[lines.length - 1] = (lines[lines.length - 1] ?? '') + value
   return lines.join('\n')

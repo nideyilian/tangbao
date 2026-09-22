@@ -6,6 +6,7 @@ import {
   getIdentifierSignature,
   hasRenderableTextLayer,
   isIdentifierEnabled,
+  isVerticalText,
   layerWantsIdentifier,
   normalizeIdentifier,
   resolveIdentifierLayer,
@@ -86,6 +87,32 @@ describe('水印标识符 · 文案附加', () => {
 
   it('未启用时原样返回', () => {
     expect(applyIdentifierToText('限时秒杀', createDefaultIdentifier())).toBe('限时秒杀')
+  })
+
+  it('⭐ 竖排文案（一个字一行）：标识符自己占一格，不与首字并排（2026-09-22 报障）', () => {
+    // 现场：合规水印竖排成十几行，★ 贴在首行 → 画出来是「★该」并排，看着像 ★ 被排到了文案左边。
+    // 竖排的「上/下」对应横排的「前/后」，所以标识符该**独占第一格**（= 文案上方）。
+    const vertical = '该\n活\n动\n存\n在'
+    expect(applyIdentifierToText(vertical, { text: '★', placement: 'prefix' })).toBe('★\n该\n活\n动\n存\n在')
+    expect(applyIdentifierToText(vertical, { text: '★', placement: 'suffix' })).toBe('该\n活\n动\n存\n在\n★')
+    expect(applyIdentifierToText(vertical, { text: '★', placement: 'both' })).toBe('★\n该\n活\n动\n存\n在\n★')
+  })
+
+  it('⭐ 横排一字不动：单行仍贴同一行、多行仍只贴整段首尾', () => {
+    // 竖排改的是「怎么占格」，不是「贴不贴」——横排这两条必须原样（TB-094 刚修过这块的排版）
+    expect(applyIdentifierToText('限时秒杀', { text: '★', placement: 'prefix' })).toBe('★限时秒杀')
+    expect(applyIdentifierToText('第一行\n第二行', { text: '★', placement: 'both' })).toBe('★第一行\n第二行★')
+  })
+
+  it('竖排判据的边界：两行两字不算、含空行一律当横排、emoji 按字符数算', () => {
+    expect(isVerticalText('该\n活')).toBe(true)
+    // 横排文案不会每行只有一个字；「优惠\n限时」是正常的两行短文案，不能当竖排
+    expect(isVerticalText('优惠\n限时')).toBe(false)
+    // 空行的兜底方向：判成横排只是维持既有行为，判成竖排会让标识符凭空多占一格
+    expect(isVerticalText('该\n\n活')).toBe(false)
+    expect(isVerticalText('单行')).toBe(false)
+    // emoji 是代理对（`'👍'.length === 2`），按码元数会把竖排判丢
+    expect(isVerticalText('👍\n🎉')).toBe(true)
   })
 })
 
