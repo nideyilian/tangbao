@@ -30,9 +30,10 @@
   后加载、特异性同为单类）。修法：工具类加 `!`，**别改加载顺序** → **runbook §21 / R-80**。
 - **改 `.bat` 必须 GBK(936) + CRLF 且不要 `chcp 65001`**；改法是编辑
   `scripts/start.bat.utf8-source.txt` 再跑 `node scripts/build-start-bat.mjs` → **runbook §18 / R-61**。
-- `npm run verify` ≈ 3–4 分钟；**改完源码必须 `npx prettier --write`**。`format:check` 范围：
-  `src/**/*.{ts,tsx,css}` + `electron/**/*.ts` + 根目录 `*.{js,json,md}`；**`docs/**` 不在门禁里**
-  → 喂 `--write` 会重排整篇表格、造出几百行无关 diff ⇒ **别把 docs 丢进去**（runbook §6）。
+- **改完源码必须 `npx prettier --write`**；**碰 `.tsx` 的改动提交前必须跑全量测试**：design-system
+  合规棘轮（裸 `rounded-*` 等）**只对新增敏感**，定向用例覆盖不到 —— 抄一段存量写法就 +1 直接红
+  （2026-09-22 实踩）。`format:check` 范围：`src/**` + `electron/**/*.ts` + 根目录 `*.{js,json,md}`；
+  **`docs/**` 不在门禁里** → 别喂 `--write`（会重排整篇表格、造几百行无关 diff）。verify ≈ 3–4 分钟。
 - `release.yml` **勿**改回 `--publish always`（exe 超时）。
 
 ## 铁律（数据安全级 —— 违反会不可逆丢数据）
