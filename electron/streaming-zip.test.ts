@@ -3,6 +3,7 @@ import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { strFromU8, unzipSync } from 'fflate'
+import { TREE_CONFIG_ENTRY } from '../src/lib/treeConfigBundle'
 import { writeStreamingZip } from './streaming-zip'
 
 const dirs: string[] = []
@@ -100,5 +101,29 @@ describe('writeStreamingZip', () => {
 
     expect(result.success).toBe(false)
     expect(existsSync(destinationPath)).toBe(false)
+  })
+
+  /**
+   * 成对守卫：包内**根级**的配置本体必须写得进去。
+   *
+   * v9 把配置拆成包内独立一份 `config.json` 时，主进程这条白名单没跟着放行，
+   * 结果是「发布配置 / 导出数据」在写第一个条目时就被拒 —— 而它一直没被测出来，
+   * 因为当时的用例只覆盖了三个资源目录。这条用例刻意用渲染侧的常量，
+   * 谁改了 `TREE_CONFIG_ENTRY` 却忘了同步白名单（或反过来），这里就会红。
+   */
+  it('writes the root-level config entry (pairs with TREE_CONFIG_ENTRY)', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'stream-zip-'))
+    dirs.push(dir)
+    const destinationPath = path.join(dir, 'backup.zip')
+
+    expect(
+      await writeStreamingZip({
+        destinationPath,
+        manifestJson: '{}',
+        entries: [{ archivePath: TREE_CONFIG_ENTRY, data: new Uint8Array([7, 8]) }],
+      }),
+    ).toEqual({ success: true })
+
+    expect([...unzipSync(readFileSync(destinationPath))[TREE_CONFIG_ENTRY]]).toEqual([7, 8])
   })
 })

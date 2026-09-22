@@ -13,9 +13,25 @@ export type StreamingZipRequest = {
   entries: StreamingZipEntry[]
 }
 
+/**
+ * 包内**直属于根目录**的信封文件（不带目录前缀的那几个）。
+ *
+ * `config.json` 必须与 `src/lib/treeConfigBundle.ts` 的 `TREE_CONFIG_ENTRY` 保持一致。
+ * 这里刻意不做跨端 import（主进程与渲染侧是两个 tsconfig 项目），改由
+ * `streaming-zip.test.ts` 里那条成对用例守同步 —— 谁只改了一边，测试就会红。
+ *
+ * ⚠️ 这里曾经**只**放行三个资源目录。v9 把配置拆成包内独立一份 `config.json` 后，
+ * 导出会在写第一个条目时就被拒，表现是「发布配置 / 导出数据」全部失败，
+ * 而错误又被上层吞成一句与本因无关的提示（见 R-89）。
+ */
+const ROOT_ARCHIVE_FILES = new Set(['config.json'])
+
 function validArchivePath(value: string) {
   return (
-    (value.startsWith('images/') || value.startsWith('thumbnails/') || value.startsWith('composite-assets/')) &&
+    (ROOT_ARCHIVE_FILES.has(value) ||
+      value.startsWith('images/') ||
+      value.startsWith('thumbnails/') ||
+      value.startsWith('composite-assets/')) &&
     !value.includes('\\') &&
     !value.split('/').includes('..')
   )

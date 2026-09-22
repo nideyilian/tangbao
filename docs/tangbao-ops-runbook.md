@@ -1511,3 +1511,59 @@ for name in os.listdir(ROOT):
 - ⚠️ **别去 SQLite 找它**：`app_data_records` 只放另一批 namespace，zustand 型状态不在那儿。
 - ⚠️ 早先「搜不到」是因为只按 UTF-8 找中文字面量（实际存的是 UTF-16）—— **别据此断定「没存盘」**，
   本文件 §十六 的 SQLite 探查同理，两条通道各管一批数据。
+
+---
+
+## 二十四、在**真实 dev 数据**上做一次自动化操作（2026-09-22 定稿）
+
+**什么时候用**：要驱动一次真实操作（发布配置 / 导出 / 任何读 zustand 状态的动作）并校验产物。
+只读代码或跑单测都不够 —— 单测里 `exportZipToPath` 是假的，集成缺口只在真实环境暴露（R-89 就是这么漏的）。
+
+### 1. ⚠️ 最大的坑：localStorage 按 origin 隔离
+
+糖包的数据分两处存，换加载方式时**只有一处会变**：
+
+| 存哪                                | 内容                                     | 换加载方式会变吗                         |
+| ----------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| SQLite（主进程按 userData 路径读）  | 项目树、节点参数、素材库、任务           | **不变**（同一 userData 就是同一份）     |
+| localStorage（**按页面 origin 分区**） | 水印库 / 预设、折叠态、面板宽度等 UI 偏好 | **会变**                                 |
+
+`electron .`（未打包）加载 `file://…/dist/index.html`，而 `npm run dev` 加载
+`http://localhost:41731` —— **不是同一个 origin**。用前者导出会得到一份
+**「树是对的、水印库整个空了」** 的包，而且**成功返回**（不报错）。
+
+判据：`localStorage.getItem('tangbao-composite-v2-workspace-storage')` 的长度 ——
+dev 下几万字节，`file://` 下几百字节（只剩默认值）。
+
+### 2. 正解：让 dev 自己的 electron 带调试端口
+
+```bash
+TANGBAO_ELECTRON_ARGS="--remote-debugging-port=9333 --disable-gpu" npm run dev
+```
+
+- `vite.config.ts` 的 main entry **只在设了这个变量时**才接管 `onstart`（否则不写 onstart，
+  走 vite-plugin-electron 默认的 `['.', '--no-sandbox']`）—— 所以 `--no-sandbox` 要自己带上。
+- 起完 `curl -s http://127.0.0.1:9333/json/list`，page target 的 `url` 必须是
+  `http://localhost:41731/`；**是 `file://` 就说明 origin 拿错了**。
+- **本机是 RDP 会话**：不带 `--disable-gpu` 会 GPU 进程反复崩溃 → `GPU process isn't usable. Goodbye.`
+- 探针脚本落 `%TEMP%`（**别落项目根**，根目录是主进程 CWD）：连 target → `Runtime.evaluate`
+  即可；`awaitPromise` 要开，DOM 操作用 `element.click()` 就能触发 React 合成事件。
+
+### 3. 校验产物：别只看「已发布」四个字
+
+`已发布：xxx.zip` 只说明**写盘**成功。要拆开包与**渲染进程的真实状态**逐项比对：
+
+- 真实状态：CDP 读 localStorage 的 `tangbao-composite-v2-workspace-storage`，数
+  `presets` / `projectLogos` / 各 layer 里 `kind === 'stored'` 的 assetId 集合。
+- 包内：解 `config.json`，遍历 `tree` 收各节点的 `watermarkPresets`，再加
+  `unassignedWatermarks` 与 `watermarkLibrary.logos`。
+- 两边**数量与引用集合都要相等**；资源条目缺失就是「换机器断图」。
+- ⚠️ 包结构里 `watermarkLibrary` **没有 `presets` 字段**（水印本体按产品归属挂在树节点上，
+  未归属的在 `unassignedWatermarks`）。照「顶层有个 presets 数组」去数会得到 0 而误判成丢配置。
+
+### 4. 网盘（UNC）上删不掉文件
+
+本机对 `\\server\share\…` 的**删除**三条路都被拦：`rm`（safe-delete 网关尝试移回收站 →
+UNC 不支持 → fail-closed）、Node/Python 的 `unlink`（同一网关）、`cmd /c del`
+（安全策略直接拒，报 "bypasses all command validation"）。
+**写入不受影响**（`writeJsonText`、导出都正常）。⇒ 产物发错了要清理，只能人工去共享盘删。

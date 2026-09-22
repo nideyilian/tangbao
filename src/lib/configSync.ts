@@ -98,7 +98,12 @@ export async function publishConfigToSyncDir(): Promise<ConfigSyncResult> {
     exportAssets: false,
     exportImages: false,
   })
-  if (!result.success) return { ok: false, message: `发布失败：写不进 ${dir}（确认这个目录可写）` }
+  // 失败原因照实报。目录不可写只是其中一种可能（还可能被主进程路径白名单拦、
+  // 或被 ZIP 条目校验拒掉）—— 一律说成"确认这个目录可写"，会让用户对着一个明明
+  // 打得开的目录反复检查，真因彻底查不到（R-89 就是这么被带偏的）。
+  if (!result.success) {
+    return { ok: false, message: `发布失败：${result.error ?? '未知原因'}（目标目录 ${dir}）` }
+  }
   return { ok: true, message: `已发布：${fileName}` }
 }
 

@@ -12220,7 +12220,7 @@ export async function exportDataToPath(
   filePath: string,
   options: ExportOptions = { exportConfig: true, exportTasks: true, exportAssets: true, exportImages: false },
   behavior: ExportDataToPathBehavior = {},
-): Promise<{ success: boolean; omittedCount: number }> {
+): Promise<{ success: boolean; omittedCount: number; error?: string }> {
   try {
     if (!isElectronEnv()) throw new Error('当前环境不支持流式导出')
     await ensureImageStorageMigrated()
@@ -12358,10 +12358,15 @@ export async function exportDataToPath(
     if (!result.success) throw new Error(result.error || '导出失败')
     return { success: true, omittedCount }
   } catch (error) {
+    // 失败原因必须回传：调用方（发布配置 / 导出数据）要根据它说清"到底为什么没成"。
+    // 此前只把原因丢进 toast 就返回 `success: false`，上层只能编一句通用文案 ——
+    // 实例：ZIP 条目白名单漏了 `config.json` 时，界面显示「确认这个目录可写」，
+    // 而目录明明可写，真因被彻底带偏（R-89）。
+    const message = error instanceof Error ? error.message : String(error)
     if (behavior.showErrorToast !== false) {
-      useStore.getState().showToast(`导出失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+      useStore.getState().showToast(`导出失败：${message}`, 'error')
     }
-    return { success: false, omittedCount: 0 }
+    return { success: false, omittedCount: 0, error: message }
   }
 }
 

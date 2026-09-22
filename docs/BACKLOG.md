@@ -4460,3 +4460,49 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 | `src/components/SettingsModal.tsx` | 拉取面板（含预览）与导入区的范围入口 |
 
 **状态**：`DONE`（2026-09-22）。
+
+---
+
+## TB-102 修复「导出全挂」+ 让失败文案与真因对齐（2026-09-22 阿伟）
+
+**怎么发现的**：杰哥要「发布最新配置到网盘」，走真实链路时界面报
+「发布失败：写不进 `\\192.168.202.11\…`（确认这个目录可写）」—— 而那个目录**明明可写**
+（同一次会话里 `writeJsonText` 实测能写进去）。顺这条追下去，真因是 R-89。
+
+**诊断（诚实记一笔：这个缺口是 TB-100 引入的）**
+
+- `electron/streaming-zip.ts` 的 `validArchivePath` 是**白名单**式校验，只放行
+  `images/` / `thumbnails/` / `composite-assets/`；TB-100 把配置本体改成**包内根级**的
+  `config.json` 后没同步放行 ⇒ 导出时写第一个条目就被拒（`无效 ZIP 路径：config.json`），
+  **发布配置 / 导出数据 / 导出备份一起失败**。
+- **为什么没测出来**：`streaming-zip.test.ts` 只覆盖了三个资源目录，**没有一条用例覆盖包内根级文件**。
+- **为什么报错查不到**：真因被吞了两层 —— `exportDataToPath` 的 catch 把 message 只丢进 toast、
+  返回值**没有 error 字段**，`publishConfigToSyncDir` 只能编一句「确认这个目录可写」。
+
+**改法**
+
+| 文件                            | 改动                                                                       |
+| ------------------------------- | -------------------------------------------------------------------------- |
+| `electron/streaming-zip.ts`     | `ROOT_ARCHIVE_FILES` 放行根级信封文件（`config.json`）                     |
+| `electron/streaming-zip.test.ts` | **成对守卫**：用渲染侧 `TREE_CONFIG_ENTRY` 写用例 —— 改一边不改另一边就红 |
+| `src/store.ts`                  | `exportDataToPath` 回传 `error`（此前只有 toast 里才有真因）               |
+| `src/lib/configSync.ts`         | 发布失败照实报 `result.error`，不再编通用文案                              |
+| `vite.config.ts`                | 新增 `TANGBAO_ELECTRON_ARGS`（默认不注入 `onstart`，行为逐字不变）         |
+| `docs/tangbao-ops-runbook.md`   | 新增 §二十四：在真实 dev 数据上做自动化的配方                              |
+| `docs/RISK.md`                  | 登记 R-89（CLOSED）                                                        |
+
+**验收证据（2026-09-22）**
+
+- 全量 `npm run verify` **262 文件 / 3100 例全绿**（+1 = 新增守卫）；eslint / prettier 干净。
+- **反向验证**：把 `config.json` 从白名单拿掉 → **只有**守卫用例红，报错
+  `无效 ZIP 路径：config.json`（与线上真因**一字不差**），其余 5 例照过。
+- **端到端实做**：在 dev 实例（`http://localhost:41731`，水印库所在的那个 origin）发布
+  `tangbao-config-20260922-171903.zip`，拆包与渲染进程真实状态**逐项比对一致**：
+  树 82 / 预设 28 + 未归属 1 = 29 / LOGO 27 / 库内资源 28 且**缺图 0** / 渠道 4 / 尺寸 16 /
+  `globalFitMode = crop-fill` / 含 identifier / 不含 API Key / 双写字段全清。
+
+**遗留**：网盘目录里留了一份作废的 `tangbao-config-20260922-171523.zip`（我在 `file://` origin
+下发的**空水印包**）和两个探测文件 —— 本机**无法删除 UNC 上的文件**（safe-delete 网关 + `cmd` 被拦），
+需人工清理。它比正式那份旧，**不会被「拉取最新」选中**（按文件名字典序取最大）。
+
+**状态**：`DONE`（2026-09-22）。版本处理见下：v0.3.3 已发布**且含此缺口**。

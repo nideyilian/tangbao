@@ -26,6 +26,19 @@ if (nodeMajor < MIN_NODE_MAJOR) {
   )
 }
 
+/**
+ * 给 dev 的 electron 追加启动参数（可选，默认空）。
+ *
+ * 用途：需要**在真实 dev 数据上**做自动化检查时（水印库只存在 dev 那个 origin 的
+ * localStorage 里，用 `electron .` 加载 `file://` 是读不到的），设
+ * `TANGBAO_ELECTRON_ARGS="--remote-debugging-port=9333"` 再 `npm run dev`，
+ * 即可用 CDP 驱动这个实例。
+ *
+ * 不设时**不注入 onstart**，走 vite-plugin-electron 的默认参数
+ * （`['.', '--no-sandbox']`）—— 行为与原先逐字一致。
+ */
+const electronExtraArgs = (process.env.TANGBAO_ELECTRON_ARGS ?? '').split(' ').filter(Boolean)
+
 function loadDevProxyConfig() {
   try {
     return normalizeDevProxyConfig(JSON.parse(readFileSync('./dev-proxy.config.json', 'utf-8')) as unknown)
@@ -45,6 +58,15 @@ export default defineConfig(({ command }) => {
       electron([
         {
           entry: 'electron/main.ts',
+          // 只有显式设了 TANGBAO_ELECTRON_ARGS 才接管启动参数；否则不写 onstart，
+          // 完全走插件默认（`['.', '--no-sandbox']），避免与插件升级后的默认值漂移。
+          ...(electronExtraArgs.length > 0
+            ? {
+                onstart(args: { startup: (argv?: string[]) => void }) {
+                  args.startup(['.', '--no-sandbox', ...electronExtraArgs])
+                },
+              }
+            : {}),
           vite: {
             build: {
               outDir: 'dist-electron',
