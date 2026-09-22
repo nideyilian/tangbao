@@ -354,8 +354,14 @@ export function ConsoleAssetTree({ value, onValueChange }: Props) {
       <div className="shrink-0 space-y-2 px-3 pt-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-ds-text dark:text-ds-text">项目树</h2>
-          <Button variant="ghost" size="sm" onClick={() => startCreate(null)}>
-            <PlusIcon className="h-3.5 w-3.5" />
+          {/* 图标走 `leadingIcon`：塞进 children 时 Tailwind preflight 的 `svg { display: block }`
+              会把图标顶成单独一行，文字被挤到第二行（图标压在「业务线」上方）。 */}
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<PlusIcon className="h-3.5 w-3.5" />}
+            onClick={() => startCreate(null)}
+          >
             业务线
           </Button>
         </div>

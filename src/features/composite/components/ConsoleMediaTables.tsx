@@ -379,7 +379,12 @@ export function ConsoleMediaTables({ selectedMediaIds, onToggleSelected, partici
           emptyTitle="媒体表为空"
           emptyDescription="没有可产出的渠道。在下面加一个，或恢复内置媒体表。"
         />
-        <div className="flex items-center gap-2">
+        {/*
+         * 底对齐：输入框和「添加渠道」都是同一个 40px 控件，底边对齐才不会差半个标签行。
+         * 原先 `items-center` 把按钮居中在一个「空 label 仍占 8px 字段内间距」的 48px 盒子里
+         * —— 按钮比输入框高 4px（2026-09-22 对齐排查）。用 `flex-end` 对空/非空 label 都成立。
+         */}
+        <Inline gap={2} align="flex-end">
           <TextField
             label=""
             aria-label="新渠道名称"
@@ -391,11 +396,15 @@ export function ConsoleMediaTables({ selectedMediaIds, onToggleSelected, partici
               if (event.key === 'Enter') handleAddChannel()
             }}
           />
-          <Button variant="secondary" disabled={!newChannelName.trim()} onClick={handleAddChannel}>
-            <PlusIcon className="h-3.5 w-3.5" />
+          <Button
+            variant="secondary"
+            disabled={!newChannelName.trim()}
+            leadingIcon={<PlusIcon className="h-3.5 w-3.5" />}
+            onClick={handleAddChannel}
+          >
             添加渠道
           </Button>
-        </div>
+        </Inline>
       </section>
 
       <section className="space-y-3">
@@ -482,7 +491,18 @@ function SizeEditor({ channelId, channelName, size, channels, onApply, onDelete,
         </Button>
       </Inline>
 
-      <Inline gap={3} align="flex-end">
+      {/*
+       * 字段行：**顶对齐**（2026-09-22 对齐修正）。
+       *
+       * 原先 `align="flex-end"`（底对齐）会让「带说明文字的字段」整体抬高一个标签行：
+       * 渠道 / 体积上限 有 helperText，宽 / 高 没有 → 实测（截图量测，缩放 0.756）
+       * 标签低 20px、控件低 20px，一屏里出现**两条基线**；而且 宽 一旦进校验错误
+       * （多一行红字）整行会再往上跳一次 —— 属「状态一变就对不齐」。
+       *
+       * 顶对齐后：所有标签一条线、所有控件一条线（控件高度都是 `--ds-control-lg`），
+       * 说明 / 错误文字各自往下挂，谁也不牵动谁。
+       */}
+      <Inline gap={3} align="flex-start" data-testid="size-editor-fields">
         <SelectField
           label="渠道"
           aria-label="尺寸所属渠道"
@@ -517,24 +537,38 @@ function SizeEditor({ channelId, channelName, size, channels, onApply, onDelete,
           helperText="0 = 不做体积压缩"
           onChange={(event) => setMaxSizeKb(event.target.value)}
         />
-        <Button
-          variant="secondary"
-          disabled={invalid}
-          onClick={() =>
-            onApply({
-              channelId: draftChannelId,
-              width: widthValue,
-              height: heightValue,
-              maxSizeKb: Number.isFinite(maxKbValue) && maxKbValue > 0 ? Math.trunc(maxKbValue) : 0,
-            })
-          }
-        >
-          应用
-        </Button>
-        <Button variant="ghost" onClick={onDelete}>
-          <TrashIcon className="h-3.5 w-3.5" />
-          删除尺寸
-        </Button>
+        {/*
+         * 操作区要跟**控件**那条线对齐，而不是标签线 —— 所以借 `.ds-field` 的标签槽占位：
+         * 同一个 class、同一份 token（标签 13px × 1.25 + 字段内间距 8px），不写死像素，
+         * 以后改字号或字段间距，按钮会自己跟着走。`invisible` 只占位不显形（保住布局盒），
+         * `aria-hidden` 让读屏跳过这行占位文字。
+         */}
+        <div className="ds-field" data-testid="size-editor-actions">
+          <span className="ds-field__label invisible" aria-hidden="true">
+            操作
+          </span>
+          <Inline gap={2}>
+            <Button
+              variant="secondary"
+              disabled={invalid}
+              onClick={() =>
+                onApply({
+                  channelId: draftChannelId,
+                  width: widthValue,
+                  height: heightValue,
+                  maxSizeKb: Number.isFinite(maxKbValue) && maxKbValue > 0 ? Math.trunc(maxKbValue) : 0,
+                })
+              }
+            >
+              应用
+            </Button>
+            {/* 图标必须走 `leadingIcon`：塞进 children 的话，Tailwind preflight 的
+                `svg { display: block }` 会把图标顶成单独一行，文字被挤到第二行（图标压在文字上方）。 */}
+            <Button variant="ghost" leadingIcon={<TrashIcon className="h-3.5 w-3.5" />} onClick={onDelete}>
+              删除尺寸
+            </Button>
+          </Inline>
+        </div>
       </Inline>
     </Stack>
   )

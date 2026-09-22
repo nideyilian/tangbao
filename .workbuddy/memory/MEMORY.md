@@ -31,11 +31,18 @@
 - **探针脚本一律写 `%TEMP%`，禁止落项目根**：根目录是 Electron 主进程 CWD，会被加载进主进程
   （本轮 `probe-api.cjs` 就因 `path.join(process.env.APPDATA,…)` 抛 `ERR_INVALID_ARG_TYPE`
   弹了「main process error」窗）。
+- **⭐ 样式「没生效也没报错」先怀疑级联，不是先读组件**：`design-system/styles.css` 在 `index.css`
+  之后加载、特异性同为单类 → **ds 基础类声明过的属性（`position`/`min-height`/`padding`…）会静默
+  吃掉 Tailwind 工具类**：元素不消失不报错，只是把后面兄弟挤开再平移上去压住它（2026-09-22
+  弹窗 × 压正文）。修法：工具类加 `!`（`!absolute`/`!fixed`/`!min-h-…`），**别改全局加载顺序**；
+  合规守卫已加（缺 `!` 即红）→ **runbook §21 / R-80**。
 - **改 `.bat` 必须 GBK(936) + CRLF，且不要 `chcp 65001`** —— 缺一条就满屏
   `'xxx' 不是内部或外部命令`。**改法：编辑 `scripts/start.bat.utf8-source.txt` 再跑
   `node scripts/build-start-bat.mjs`**，别手改 GBK 文件 → **runbook §18 / R-61**。
 - `npm run verify` ≈ 3–4 分钟（tsc 双端 + lint + format + 全量测试）。
-- **改完源码必须 `npx prettier --write`**，否则 `format:check` 会挂（连 `AGENTS.md` 也要过 prettier）。
+- **改完源码必须 `npx prettier --write`**。`format:check` 的实际范围（2026-09-22 核实）：
+  `src/**/*.{ts,tsx,css}` + `electron/**/*.ts` + **根目录** `*.{js,json,md}`（所以 `AGENTS.md` 要过）；
+  **`docs/**` 不在门禁里**（改文档不必跑，但跑了无害）。
 - `release.yml` **勿**改回 `--publish always`（exe 超时）。
 
 ## 铁律（数据安全级 —— 违反会不可逆丢数据）

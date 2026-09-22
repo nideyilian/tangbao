@@ -130,6 +130,52 @@ function findSwallowedPositionUtilities(path: string, src: string): string[] {
   return violations
 }
 
+// ===== Button 里的图标必须走 `leadingIcon`（2026-09-22） =====
+//
+// Tailwind preflight 给 `svg` 设了 `display: block`（`img,svg,video,…{display:block}`），
+// 于是「把图标当 children 传」的写法会在 button 的文字 span 里**换行**：
+// 图标独占一行、文字被挤到第二行，视觉上就是「图标压在文字上方」。
+// 设计系统的 `Button` 早就留了 `leadingIcon` 槽位（flex 兄弟节点 + gap，天然同行）。
+//
+// 2026-09-22 实测三处（中控台资产树的「业务线」、渠道表的「添加渠道」、尺寸面板的「删除尺寸」），
+// 都是这个写法；已在运行中的应用里截图确认「图标 + 文字」分成了两行。
+const ICON_TAG = /Icon$/
+
+function findIconChildButtons(path: string, src: string): string[] {
+  if (!path.endsWith('.tsx')) return []
+  const display = normalizeKey(path)
+  const violations: string[] = []
+  const file = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxElement(node)) {
+      const tag = node.openingElement.tagName.getText(file).split('.').pop() ?? ''
+      if (tag === 'Button') {
+        const iconKids = node.children
+          .filter(
+            (child): child is ts.JsxElement | ts.JsxSelfClosingElement =>
+              ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child),
+          )
+          .map(
+            (child) =>
+              (ts.isJsxElement(child) ? child.openingElement : child).tagName.getText(file).split('.').pop() ?? '',
+          )
+          .filter((name) => ICON_TAG.test(name))
+        if (iconKids.length > 0) {
+          const { line } = file.getLineAndCharacterOfPosition(node.getStart(file))
+          violations.push(
+            `${display}:${line + 1} <Button> 把图标当 children（${iconKids.join(',')}）→ 改用 leadingIcon`,
+          )
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+
+  return violations
+}
+
 describe('UI 合规回归', () => {
   it('不使用 transition-all（MASTER 6.1：只声明实际变化的属性）', () => {
     const violations = entries
@@ -147,6 +193,11 @@ describe('UI 合规回归', () => {
 
   it('设计系统组件的定位工具类必须加 ! 前缀（styles.css 的 position: relative 会连带吃掉它）', () => {
     const violations = entries.flatMap(([path, src]) => findSwallowedPositionUtilities(path, src))
+    expect(violations).toEqual([])
+  })
+
+  it('Button 里的图标走 leadingIcon（preflight 的 svg{display:block} 会让它另起一行压住文字）', () => {
+    const violations = entries.flatMap(([path, src]) => findIconChildButtons(path, src))
     expect(violations).toEqual([])
   })
 

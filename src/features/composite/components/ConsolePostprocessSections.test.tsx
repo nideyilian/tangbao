@@ -365,6 +365,43 @@ describe('中控台 · 渠道与尺寸分区（表格化，TB-060）', () => {
     expect(ids).not.toContain('gdt-1280x720')
   })
 
+  it('⭐ 尺寸编辑面板的字段行：标签一条线、控件一条线、操作区跟控件同行（2026-09-22 对齐修正）', () => {
+    // 报障：面板里「渠道 / 体积上限」比「宽 / 高」高出一个标签行（底对齐 + 只有部分字段有说明文字），
+    // 且「删除尺寸」的图标被 preflight 的 `svg{display:block}` 顶到文字上方单独成行。
+    // 这里钉住三件事：① 字段行是顶对齐；② 操作区用 `.ds-field` 的标签槽对齐到控件那条线；
+    // ③ 图标走 `leadingIcon`（直接挂在 button 下，而不是塞进文字 span 里）。
+    render(<MediaSection scope={GLOBAL_NODE_ID} />)
+    act(() => container.querySelector<HTMLElement>('[data-testid="edit-size-gdt-1280x720"]')!.click())
+
+    const row = container.querySelector<HTMLElement>('[data-testid="size-editor-fields"]')!
+    // 底对齐（flex-end）就是错位成因：带说明文字的字段会被整体顶高
+    expect(row.style.alignItems).toBe('flex-start')
+
+    // 操作区：与字段同构（label 槽 + 控件槽），这样才能跟输入框落在同一条控件线上
+    const actions = container.querySelector<HTMLElement>('[data-testid="size-editor-actions"]')!
+    expect(actions.className).toContain('ds-field')
+    const spacer = actions.querySelector<HTMLElement>('.ds-field__label')!
+    expect(spacer.className).toContain('invisible') // 占位不显形（visibility 保住布局盒）
+    expect(spacer.getAttribute('aria-hidden')).toBe('true') // 读屏不该念这行占位字
+
+    // 图标必须是 button 的直接子节点（leadingIcon 的渲染形态）；塞进 children 时它会被包在文字 span 里
+    const deleteButton = [...actions.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('删除尺寸'),
+    )!
+    expect(deleteButton.querySelector(':scope > svg')).not.toBeNull()
+    expect(deleteButton.querySelector('span > svg')).toBeNull()
+
+    // 同一条线上的两个按钮（应用 / 删除尺寸）都在操作区里，不会被拆到下一行
+    expect(actions.querySelectorAll('button')).toHaveLength(2)
+
+    // 「添加渠道」同一个坑（图标当 children）：一并钉住
+    const addChannel = [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('添加渠道'),
+    )!
+    expect(addChannel.querySelector(':scope > svg')).not.toBeNull()
+    expect(addChannel.querySelector('span > svg')).toBeNull()
+  })
+
   it('尺寸行的「+」是图标按钮：加尺寸就近加在这个渠道上', () => {
     render(<MediaSection scope={GLOBAL_NODE_ID} />)
     clickByAriaLabel('给「头条」加一个尺寸')

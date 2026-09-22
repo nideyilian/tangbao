@@ -1415,3 +1415,63 @@ expect(new Set(vi.mocked(resolveProjectPostprocessSlice).mock.calls.map((call) =
 - 反向验证（本轮实做）：把 3 处 `!` 去掉 → 合规用例报 `expected […(3)] to deeply equal []`
   且逐条列出那 3 个文件；ConfirmDialog 用例报 `expected 'absolute right-4 top-4' to contain '!absolute'`；
   恢复后 14/14 全绿。
+
+---
+
+## 二十二、表单行的对齐口径（2026-09-22 定稿，含「不写死像素」的槽位对齐法）
+
+**背景**：尺寸编辑面板报障「对齐乱」。实测出两类**隐形变量**，都不报错、测试也不红，
+只能靠量测或截图发现（登记为 R-81）。
+
+### 1. 字段行一律**顶对齐**，不要用底对齐凑
+
+```
+<Inline gap={3} align="flex-start">   ← 字段行
+  <TextField label="宽"  … />          ← label / 控件 / error 各自往下挂
+  <TextField label="体积上限 KB" helperText="0 = 不做体积压缩" … />
+```
+
+- **为什么不能底对齐（`flex-end`）**：只有部分字段带 `helperText` / `error` 时，它们整体高出一个
+  标签行 → 底对齐会把「有说明的」顶上去，一屏出现两条基线。
+  实测差 20 截图 px ≈ **26 CSS px** = 标签行 16.25px（13px × 1.25）+ 字段内间距 8px（`--ds-space-2`）。
+- **状态相关**：`宽` 一输非整数就多一行红字 → 底对齐下**整行会跳**。顶对齐下只有那一格变高。
+- `items-center` 同理不稳：`label=""` 的空字段仍占 8px 内间距，按钮会被居中成「高 4px」的样子。
+
+### 2. 行尾的操作按钮怎么跟「控件」对齐（不写死像素）
+
+操作区不是字段，没有 label / helper —— 直接塞进字段行会出现「按钮对着标签线」。
+借 `.ds-field` 自己的槽位占位即可（同一份 class、同一份 token，改字号/间距会自动跟着走）：
+
+```tsx
+<div className="ds-field">
+  <span className="ds-field__label invisible" aria-hidden="true">操作</span>
+  <Inline gap={2}>
+    <Button variant="secondary">应用</Button>
+    <Button variant="ghost" leadingIcon={<TrashIcon className="h-3.5 w-3.5" />}>删除尺寸</Button>
+  </Inline>
+</div>
+```
+
+`invisible` 只占位不显形（用 `visibility` 保住布局盒，`hidden`/`display:none` 会失效），
+`aria-hidden` 让读屏跳过占位文字。
+
+### 3. 图标必须走 `leadingIcon`（否则图标压住文字）
+
+Tailwind preflight：`img,svg,video,canvas,audio,iframe,embed,object{display:block}`。
+所以把 `<PlusIcon />` 当 children 塞进 `<Button>` 时，它**必然换行**：
+
+```tsx
+<Button><PlusIcon className="h-3.5 w-3.5" />业务线</Button>   ❌ 图标一行、文字一行
+<Button leadingIcon={<PlusIcon className="h-3.5 w-3.5" />}>业务线</Button>   ✅
+```
+
+**报障排查口径**：按钮看着「变高了一点点」「图标和文字不在一行」→ 先看 DOM 里
+`span > svg` 还是 `button > svg`。全仓已由 `compliance.test.ts` 的 AST 规则守住。
+
+### 4. 量测手法（不靠肉眼，别猜）
+
+报障截图能直接量：截图里的 px ÷ 缩放比 = CSS px。缩放比用**已知宽度的控件**反推
+（例如 `w-40` = 160px 的 SelectField 量出来 121px → 缩放 0.756）。
+本文所述「差 20px」就是这么来的。运行中的应用可以截图抽查（见 `.workbuddy/memory/MEMORY.md`
+的「正在运行的 GUI 窗口可以抽查」一条；`PrintWindow` 抓**可能拿到过时的位图**，
+用 `ImageGrab.grab()` 全屏抓更可信）。

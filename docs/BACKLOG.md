@@ -3702,3 +3702,58 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 - **新增守卫**：`compliance.test.ts`「设计系统组件的定位工具类必须加 ! 前缀」（AST + 文本双扫）；
   `ConfirmDialog.test.tsx` 补 `!absolute` 断言（原先只断言「存在 + 点得动」，正是这样漏掉的）。
 - ⚠️ **未做渲染验证**（本机离屏渲染限制）：修复前的表现由杰哥截图确证、修复后请杰哥在应用里过目一次。
+
+---
+
+## TB-091 尺寸编辑面板对齐修正：字段行两套基线 + 图标压文字（2026-09-22 阿伟）
+
+**背景**（杰哥报障 + 截图）：「编辑尺寸」面板（中控台 → 渠道与尺寸 → 点尺寸名展开）对齐乱，
+要求按设计规范逐一排查各尺寸编辑模块并修正对齐 / 间距 / 位置。
+
+**实测差异**（在杰哥给的截图上量测，该截图缩放 0.756：1 截图 px ≈ 1.32 CSS px）
+
+| 现象                     | 量测                                                            | 成因                                                                 |
+| ------------------------ | --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 标签出现**两条基线**     | 渠道 / 体积上限 标签 y 47–57；宽 / 高 标签 y 67–76 → 差 20px（≈26 CSS px，正好一个标签行高 + 字段内间距） | 行用 `align="flex-end"`（底对齐），而只有 渠道 / 体积上限 有 `helperText` → 它们整体被顶高 |
+| 输入框同样两条基线       | 渠道 / 体积上限 输入框 y 64–94；宽 / 高 y 84–113 → 差 20px       | 同上（底边对齐，顶部自然错开）                                        |
+| 「应用」落在两套基线之间 | 应用底边与 宽 / 高 齐，但比 渠道 / 体积上限 低 20px              | 同上                                                                 |
+| 「删除尺寸」图标压在文字上 | 图标单独一行、文字在第二行                                      | `<Button>` 把图标当 children + Tailwind preflight 的 `svg{display:block}` |
+| 「添加渠道」比输入框高 4px | 按钮 40px 居中在一个 48px 盒里（空 label 仍占 8px 字段内间距）    | 行用 `items-center`                                                  |
+| **状态一变就跳**         | 宽 输入非正整数 → 多一行红字 → 底对齐让整行上移                  | `flex-end` 的派生问题（「各状态对齐」的关键一条）                     |
+
+**改动（4 个文件）**
+
+1. `ConsoleMediaTables.tsx` · SizeEditor 字段行 `align="flex-end"` → `align="flex-start"`：标签一条线、控件一条线
+   （控件高度都是 `--ds-control-lg`），说明 / 错误文字各自往下挂。
+2. 同处新增**操作区容器**：`<div className="ds-field">` + `<span className="ds-field__label invisible" aria-hidden>操作</span>`
+   —— 借字段自己的标签槽占位，操作按钮就落在**控件那条线**上（同一份 class / token，不写死像素；
+   以后改字号或字段间距会自己跟着走）。`invisible` 只占位不显形、`aria-hidden` 让读屏跳过。
+3. 「删除尺寸」/「添加渠道」/ 资产树「业务线」三个按钮的图标改走 `leadingIcon`（不再当 children）。
+4. 「添加渠道」行 `items-center` → `Inline align="flex-end"`（对空 / 非空 label 都成立）。
+
+**守卫（防复发）**
+
+- `compliance.test.ts` 新增「Button 里的图标走 leadingIcon」（AST 扫全仓 `*Icon` 当 children）——
+  存量 3 处已清零，再写即红。
+- `ConsolePostprocessSections.test.tsx` 新增一条用例，钉住：字段行 `alignItems === 'flex-start'`、
+  操作区含 `.ds-field` + `invisible` + `aria-hidden` 占位槽、删除尺寸图标是 `button > svg`（不是 `span > svg`）。
+
+**验收证据（2026-09-22）**
+
+- 定向用例 **36 文件 / 540 例全绿**（`src/features/composite` + `src/design-system`），新增 1 例 + 1 条合规规则。
+- `tsc -b` / eslint / prettier 零错。
+- **反向验证（三处修复逐一关闭，均精确命中）**：字段行改回 `flex-end` → `expected 'flex-end' to be 'flex-start'`；
+  占位槽去掉 `invisible` → `expected 'ds-field__label' to contain 'invisible'`；
+  图标改回 children → `expected null not to be null`。三次都是 1 failed / 28 passed。
+  新增合规规则同样反向验证：把资产树按钮改回 children → 恰好 1 条违规，点名 `ConsoleAssetTree.tsx:359`。
+- **渲染验证（部分）**：在运行中的 dev 应用里截图确认「项目树 + 业务线」按钮由「图标 / 文字分两行」
+  变为**一行**（`leadingIcon` 生效）。⚠️ 字段行的对齐修正**未做渲染验证**（需要点开面板，而应用当时有人在用），
+  其正确性由 `.ds-field` 的同槽位保证（标签 13px × 1.25 + 字段内间距 8px），请杰哥打开面板过目一次。
+
+**查到但没动的差异（等杰哥定）**
+
+- 4 处字段用 `label=""` 靠 placeholder + `aria-label` 顶替**可见标签**（COMPONENTS 2.3 TextField 强制「可见 label」）。
+  标签文案属内容决定，没自己编。
+- 行内微间距用 6px / 2px（`gap-1.5` / `py-0.5`）不在 MASTER 4.4 的 4px 基准上 —— 但全仓 **34 个文件**都在这么用，
+  属既有风格，单独改这一处只会制造不一致。
+- 面板内边距 12 / 8px（紧凑行内编辑器的取舍），低于「卡片内边距优先 16 / 20 / 24px」。
