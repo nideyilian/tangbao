@@ -12097,6 +12097,10 @@ export async function exportData(
       manifest.defaultFavoriteCollectionId = defaultFavoriteCollectionId
       // v8：以树为骨架的配置快照（树 + 每个节点自己的参数 + 挂在产品下的水印库 + 根上的渠道字典）
       manifest.treeConfig = await snapshotTreeConfigBundle(exportedAt)
+      // 树结构在 v8 里已经进 `treeConfig`，这里**再写一份**是为了过渡期的老版本（≤0.3.2）：
+      // 它只认 `assetCollections`。树属于配置（"树就是根"），所以跟着 exportConfig 走，
+      // 不跟着 exportAssets —— 否则「只发配置」会把树落下，而「发配置」顺带把我的素材索引也发出去。
+      manifest.assetCollections = useAssetLibraryStore.getState().collections
       // ⚠️ 过渡期**双写**：≤0.3.2 的老版本不认识 `treeConfig`，只认下面这几个字段。
       // 只写新字段的话，老版本导入这份包会**静默什么都不恢复**。全员升级后才可删。
       manifest.compositeState = compositeBackup!.compositeState
@@ -12230,6 +12234,10 @@ export async function exportDataToPath(
             defaultFavoriteCollectionId: state.defaultFavoriteCollectionId,
             // v8：以树为骨架的配置快照（见 `snapshotTreeConfigBundle`）
             treeConfig: treeBundle,
+            // 树也跟着 `exportConfig` 走（"树就是根"）：v8 里它已在 treeConfig 中，这里再写一份
+            // 给过渡期的老版本（≤0.3.2 只认 `assetCollections`）。不跟着 exportAssets 是因为
+            // 「只发配置」不该把我的素材索引（generatedAssets）一起发出去。
+            assetCollections: useAssetLibraryStore.getState().collections,
             // ⚠️ 过渡期**双写**：≤0.3.2 的老版本不认识 `treeConfig`，只认下面这几个字段。
             // 只写新字段的话，老版本导入这份包会**静默什么都不恢复**。全员升级后才可删。
             compositeState: compositeBackup!.compositeState,

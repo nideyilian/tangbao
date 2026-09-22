@@ -783,7 +783,7 @@ export function PresetManagementTab() {
             </p>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto space-y-0.5 px-2 pb-2">
+        <div className="flex-1 overflow-y-auto space-y-1.5 px-2 pb-2">
           {!hasProduct && (
             <p className="px-2 py-3 text-xs text-ds-muted">
               水印库按产品分开管理。在左侧项目树里选中一个产品（或它下面的方向），这里就会列出那个产品自己的水印。
@@ -797,54 +797,67 @@ export function PresetManagementTab() {
           {visiblePresets.map((preset) => (
             <div
               key={preset.id}
-              className={`group relative rounded-md px-2 py-1.5 transition-colors ${preset.id === store.selectedPreviewPresetId ? 'bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary' : 'hover:bg-ds-subtle dark:hover:bg-ds-subtle'}`}
+              data-testid={`preset-row-${preset.id}`}
+              className={`group relative rounded-md px-2 py-2 transition-colors ${preset.id === store.selectedPreviewPresetId ? 'bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10 dark:text-ds-primary' : 'hover:bg-ds-subtle dark:hover:bg-ds-subtle'}`}
             >
+              {/* 重命名时套一层与常态卡等高的外壳，否则一进编辑整列会跳一下 */}
               {editingPresetId === preset.id ? (
-                <input
-                  autoFocus
-                  value={editingPresetName}
-                  onChange={(e) => setEditingPresetName(e.target.value)}
-                  onBlur={finishPresetRename}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      finishPresetRename()
-                    }
-                    if (e.key === 'Escape') {
-                      setEditingPresetId('')
-                      setEditingPresetName('')
-                    }
-                  }}
-                  className="w-full rounded border border-ds-primary/35 bg-ds-surface px-2 py-0.5 text-ds-sm text-ds-text outline-none dark:bg-ds-scrim dark:text-ds-text-subtle"
-                />
-              ) : (
-                <div className="flex items-center gap-2">
-                  {/* 勾选 = **当前范围启用这套水印**（2026-09-21 改版后的唯一归属入口）。
-                      原先它兼着「选几个再拖到归属树上」的批量语义，归属树退役后拖拽目标
-                      已不存在，勾选框回归它本来的意思。
-                      库按产品隔离后，能出现在这里的只有当前作用域那个产品的水印
-                      （见 `libraryPresets`），所以「勾 A 产品的水印」在物理上就不可能落到 B 产品上。 */}
-                  <Checkbox
-                    checked={isPresetEnabled(preset.id)}
-                    disabled={!hasProduct}
-                    onChange={() => togglePresetEnabled(preset.id)}
-                    aria-label={`${isPresetEnabled(preset.id) ? '停用' : '启用'}「${preset.name}」${mediaScope ? `（${mediaName}）` : ''}`}
-                    title={`写进：${scopeName} · ${mediaScope ? mediaName : '通用'}`}
-                    className="shrink-0"
+                <div className="flex min-h-11 items-center">
+                  <input
+                    autoFocus
+                    value={editingPresetName}
+                    onChange={(e) => setEditingPresetName(e.target.value)}
+                    onBlur={finishPresetRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        finishPresetRename()
+                      }
+                      if (e.key === 'Escape') {
+                        setEditingPresetId('')
+                        setEditingPresetName('')
+                      }
+                    }}
+                    className="w-full rounded border border-ds-primary/35 bg-ds-surface px-2 py-1 text-ds-sm text-ds-text outline-none dark:bg-ds-scrim dark:text-ds-text-subtle"
                   />
-                  <button
-                    type="button"
-                    aria-pressed={preset.id === store.selectedPreviewPresetId}
-                    onClick={() => store.setSelectedPreviewPresetId(preset.id)}
-                    onDoubleClick={() => beginPresetRename(preset.id, preset.name)}
-                    className="flex min-w-0 flex-1 items-center justify-between text-left"
-                  >
-                    <div className="truncate font-medium text-ds-sm">{preset.name}</div>
-                    <div className="ml-2 shrink-0 text-xs opacity-70">
+                </div>
+              ) : (
+                <>
+                  {/* 上栏：勾选框 + 名字。名字**独占整行** —— 卡片内所有东西挤在一行时，
+                      名字一长就把右边的规格与操作挤得贴着跑，一列扫下来没有任何一条竖线可对。 */}
+                  <div className="flex items-center gap-2">
+                    {/* 勾选 = **当前范围启用这套水印**（2026-09-21 改版后的唯一归属入口）。
+                        原先它兼着「选几个再拖到归属树上」的批量语义，归属树退役后拖拽目标
+                        已不存在，勾选框回归它本来的意思。
+                        库按产品隔离后，能出现在这里的只有当前作用域那个产品的水印
+                        （见 `libraryPresets`），所以「勾 A 产品的水印」在物理上就不可能落到 B 产品上。 */}
+                    <Checkbox
+                      checked={isPresetEnabled(preset.id)}
+                      disabled={!hasProduct}
+                      onChange={() => togglePresetEnabled(preset.id)}
+                      aria-label={`${isPresetEnabled(preset.id) ? '停用' : '启用'}「${preset.name}」${mediaScope ? `（${mediaName}）` : ''}`}
+                      title={`写进：${scopeName} · ${mediaScope ? mediaName : '通用'}`}
+                      className="shrink-0"
+                    />
+                    <button
+                      type="button"
+                      aria-pressed={preset.id === store.selectedPreviewPresetId}
+                      onClick={() => store.setSelectedPreviewPresetId(preset.id)}
+                      onDoubleClick={() => beginPresetRename(preset.id, preset.name)}
+                      className="flex min-w-0 flex-1 items-center text-left"
+                    >
+                      <span className="truncate font-medium text-ds-sm">{preset.name}</span>
+                    </button>
+                  </div>
+                  {/* 下栏：左规格、右操作，中间留白。操作按钮**每张卡都常驻**（不再只在选中时
+                      出现）：库里套数一多，「想删某一套还得先点选它」要多点一步，而且按钮会
+                      出现在名字右边跟着名字长度漂移。常驻后落成固定的一列，闭着眼也点不错。
+                      颜色默认走 muted、hover 才上色 —— 一列红蓝图标会把名字压得看不见。
+                      缩进 pl-6 与上栏名字左缘对齐，勾选框单独管「启用/停用」，不掺进信息栏。 */}
+                  <div className="mt-1.5 flex items-center justify-between gap-2 pl-6">
+                    <span className="shrink-0 text-xs text-ds-muted">
                       {preset.layers.length}层 · {preset.baseCanvas.width}x{preset.baseCanvas.height}
-                    </div>
-                  </button>
-                  {preset.id === store.selectedPreviewPresetId && (
+                    </span>
                     <div className="flex shrink-0 items-center gap-0.5">
                       {/* 跨产品复制：单套的入口。整库走头部那个图标按钮 */}
                       <button
@@ -863,18 +876,18 @@ export function PresetManagementTab() {
                       </button>
                       <button
                         type="button"
-                        title="复制为新预设"
+                        title={`复制「${preset.name}」为新预设`}
                         onClick={() => {
                           store.duplicatePreset(preset.id)
                           useStore.getState().showToast(`已复制为新预设「${preset.name}」`, 'success')
                         }}
-                        className="cursor-pointer p-1 text-ds-primary hover:bg-ds-primary-subtle rounded-md dark:text-ds-primary dark:hover:bg-ds-primary/20"
+                        className="cursor-pointer rounded-md p-1 text-ds-muted hover:bg-ds-primary-subtle hover:text-ds-primary dark:text-ds-muted dark:hover:bg-ds-primary/20 dark:hover:text-ds-primary"
                       >
                         <Copy className="h-3.5 w-3.5" />
                       </button>
                       <button
                         type="button"
-                        title="删除预设"
+                        title={`删除预设「${preset.name}」`}
                         onClick={() =>
                           openConfirmDialog({
                             title: '删除预设？',
@@ -887,13 +900,13 @@ export function PresetManagementTab() {
                             },
                           })
                         }
-                        className="cursor-pointer p-1 text-ds-danger hover:bg-ds-danger-subtle rounded-md dark:text-ds-danger dark:hover:bg-ds-danger/20"
+                        className="cursor-pointer rounded-md p-1 text-ds-muted hover:bg-ds-danger-subtle hover:text-ds-danger dark:text-ds-muted dark:hover:bg-ds-danger/20 dark:hover:text-ds-danger"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
-                  )}
-                </div>
+                  </div>
+                </>
               )}
             </div>
           ))}

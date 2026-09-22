@@ -1,22 +1,21 @@
 # 糖包（TANGBAO）
 
-> **本文件是索引与铁律，不是知识本体。** 超过 10KB 就说明内容放错了层。
-> 2026-09-17 从豆泡拆出（历史 `D:\AAA\DOUPAO\.workbuddy\memory\`）；
-> 2026-09-18 分层重构：细节迁出到下表各文件，本文件只留指针与不可违的铁律。
+> **本文件是索引与铁律，不是知识本体。** 超过 10KB 就是内容放错了层。
+> 2026-09-17 从豆泡拆出；2026-09-18 分层重构；2026-09-22 压缩（细节一律去下表各文件）。
 
 ## 文档地图（先看这里）
 
-| 要什么                                                           | 去哪                                     |
-| ---------------------------------------------------------------- | ---------------------------------------- |
-| 现在交付什么、什么算完                                           | `docs/ROADMAP.md`                        |
-| 在做什么、卡在哪                                                 | `docs/BACKLOG.md`                        |
-| 为什么不那么做                                                   | `docs/adr/`                              |
-| 哪些坑不能踩（R/P/Q 分级）                                       | `docs/RISK.md`                           |
-| **哪些设计勿改回**                                               | `docs/architecture-constraints.md`       |
-| 操作配方（持久化/验收/抓报错/推 GitHub/写 localStorage/改 .bat） | `docs/tangbao-ops-runbook.md`            |
-| 哪份文档还算数                                                   | `docs/README.md`                         |
-| AI 开工/收工规范                                                 | `AGENTS.md` 的「项目管理（开工前必读）」 |
-| 过程记录                                                         | 同日 `YYYY-MM-DD.md`                     |
+| 要什么                                     | 去哪                                     |
+| ------------------------------------------ | ---------------------------------------- |
+| 现在交付什么、什么算完                     | `docs/ROADMAP.md`                        |
+| 在做什么、卡在哪                           | `docs/BACKLOG.md`                        |
+| 为什么不那么做                             | `docs/adr/`                              |
+| 哪些坑不能踩（R/P/Q 分级）                 | `docs/RISK.md`                           |
+| **哪些设计勿改回**                         | `docs/architecture-constraints.md`       |
+| 操作配方（持久化/验收/抓报错/推 GitHub 等） | `docs/tangbao-ops-runbook.md`            |
+| 哪份文档还算数                             | `docs/README.md`                         |
+| AI 开工/收工规范                           | `AGENTS.md` 的「项目管理（开工前必读）」 |
+| 过程记录                                   | 同日 `YYYY-MM-DD.md`                     |
 
 ## 身份 · 构建 · 发布
 
@@ -25,24 +24,22 @@
 - 状态落盘 = SQLite `local-saves/db/asset-kernel.sqlite` 的 `app_data_records`。
 - 糖包 = 主线，豆泡 = 维护；两仓**无共享 git 历史** → 只能 `fetch` + `cherry-pick`。
 - **`vite build` 必须 Node 24**（Node 22 报 `DatabaseSync` 未导出）。
-- **⭐ 本机 `node` 默认是 v22，跑任何 npm 脚本都会回落 v22 → 必须显式提到 v24**（R-59）。
-  正确跑法、`vite --version` 不加载配置这个坑、`timeout` 杀不掉 electron 这个坑
-  → **runbook §18.4**。`start.bat` 已内建版本探测，双击即可。
-- **探针脚本一律写 `%TEMP%`，禁止落项目根**：根目录是 Electron 主进程 CWD，会被加载进主进程
-  （本轮 `probe-api.cjs` 就因 `path.join(process.env.APPDATA,…)` 抛 `ERR_INVALID_ARG_TYPE`
-  弹了「main process error」窗）。
+- **⭐ 本机 `node` 默认 v22，跑任何 npm 脚本都会回落 v22 → 必须显式提到 v24**（R-59）。
+  正确跑法、`vite --version` 不加载配置、`timeout` 杀不掉 electron → **runbook §18.4**。
+  `start.bat` 已内建版本探测，双击即可。
+- **探针脚本一律写 `%TEMP%`，禁止落项目根**：根目录是主进程 CWD，会被加载进主进程
+  （曾因 `path.join(process.env.APPDATA,…)` 抛 `ERR_INVALID_ARG_TYPE` 弹「main process error」）。
 - **⭐ 样式「没生效也没报错」先怀疑级联，不是先读组件**：`design-system/styles.css` 在 `index.css`
   之后加载、特异性同为单类 → **ds 基础类声明过的属性（`position`/`min-height`/`padding`…）会静默
-  吃掉 Tailwind 工具类**：元素不消失不报错，只是把后面兄弟挤开再平移上去压住它（2026-09-22
-  弹窗 × 压正文）。修法：工具类加 `!`（`!absolute`/`!fixed`/`!min-h-…`），**别改全局加载顺序**；
-  合规守卫已加（缺 `!` 即红）→ **runbook §21 / R-80**。
-- **改 `.bat` 必须 GBK(936) + CRLF，且不要 `chcp 65001`** —— 缺一条就满屏
-  `'xxx' 不是内部或外部命令`。**改法：编辑 `scripts/start.bat.utf8-source.txt` 再跑
-  `node scripts/build-start-bat.mjs`**，别手改 GBK 文件 → **runbook §18 / R-61**。
+  吃掉 Tailwind 工具类**：不消失不报错，只是把后面兄弟挤开再平移上去压住它（2026-09-22 弹窗 × 压正文）。
+  修法：工具类加 `!`（`!absolute`/`!min-h-…`），**别改全局加载顺序**；合规守卫已加（缺 `!` 即红）
+  → **runbook §21 / R-80**。
+- **改 `.bat` 必须 GBK(936) + CRLF，且不要 `chcp 65001`**，否则满屏 `'xxx' 不是内部或外部命令`。
+  **改法：编辑 `scripts/start.bat.utf8-source.txt` 再跑 `node scripts/build-start-bat.mjs`**
+  → **runbook §18 / R-61**。
 - `npm run verify` ≈ 3–4 分钟（tsc 双端 + lint + format + 全量测试）。
-- **改完源码必须 `npx prettier --write`**。`format:check` 的实际范围（2026-09-22 核实）：
-  `src/**/*.{ts,tsx,css}` + `electron/**/*.ts` + **根目录** `*.{js,json,md}`（所以 `AGENTS.md` 要过）；
-  **`docs/**` 不在门禁里**（改文档不必跑，但跑了无害）。
+- **改完源码必须 `npx prettier --write`**。`format:check` 范围（2026-09-22 核实）：
+  `src/**/*.{ts,tsx,css}` + `electron/**/*.ts` + 根目录 `*.{js,json,md}`；**`docs/**` 不在门禁里**。
 - `release.yml` **勿**改回 `--publish always`（exe 超时）。
 
 ## 铁律（数据安全级 —— 违反会不可逆丢数据）
@@ -64,8 +61,6 @@
 
 **以下条目的完整内容一律在 `docs/architecture-constraints.md`，此处只留索引，别在这里补细节。**
 
-**完整内容一律在 `docs/architecture-constraints.md`，此处只留关键词，别在这里补细节。**
-
 | 关键词                                                                  | 去哪                                       |
 | ----------------------------------------------------------------------- | ------------------------------------------ |
 | 性能基线 · 整图字节优先 · rAF 帧探针验收                                | 一章                                       |
@@ -84,34 +79,28 @@
 | 配色/主题 · hex 换算与可辨阈值 · `return null ≠ 卸载` · 主题切换链路    | **runbook §19 / §10 / R-37 / R-38 / R-39** |
 | **水印库按产品隔离**（预设带 `productId`；产品线/全局两层不给库）       | **ADR-0012 / TB-067**                      |
 
-## 排查手法（写在这里 —— 是方法论，不是架构事实）
+## 排查手法（方法论，不是架构事实）
 
 - **抓渲染进程报错**：`ELECTRON_ENABLE_LOGGING=1 npm run dev`。
+- **⭐ 报障排查第一步：拿界面原文字符串去 `grep`**（实例：`导出位置不可用` → `outputRoots.ts:47`
+  一击命中）。比读文档 / 猜链路快一个数量级。
 - **`npm run dev` / `mock:api` 必须出沙箱**：默认沙箱会**无声回收监听端口的进程（~40s）**，
-  症状 = 「窗口刚起来就自己消失」。对照实验：纯 `sleep` 后台任务能活满，Node 监听服务 40s 就没，
-  且无报错、无 Crashpad 转储 → 起这两个服务要 `dangerouslyDisableSandbox: true`。
+  症状 = 「窗口刚起来就自己消失」；无报错、无 Crashpad 转储 → 要 `dangerouslyDisableSandbox: true`。
 - **窗口「点什么都没反应」先看是不是错误页**：`location.href === 'chrome-error://chromewebdata/'`
-  ⇒ 界面根本没加载（dev server 已死，**窗口不会自恢复**）；
-  正常时 `Get-Process electron | Select MainWindowTitle` = `糖包`。
+  ⇒ 界面根本没加载（dev server 已死，**窗口不会自恢复**）。
 - **门禁假象**：`noUnusedLocals/Parameters` 关着、`no-unused-vars` 仅 warn → 死 import 零告警
-  （存量 116 处，见 `BACKLOG.md` TB-021）。
-- **⭐ 同仓并行两条写线时怎么收口（2026-09-21 实踩）**：中途发现工作区冒出我没碰过的文件
-  （`Toast.test.tsx` 的 **mtime 就在一分钟前** ⇒ 有人正在写，光看文件名只知道「改过」）→
-  ① **不要跑全量 `npm run verify`**（工作区混着对方 WIP，绿/红都不可信，就是 R-74 的成因），
-  改跑定向用例 + 逐条 `tsc`/`lint`/`format:check`；② 提交只 `git add` 自己那批文件；
-  ③ **一个字节都别碰对方的文件**（哪怕 HEAD 被它改红了也先报告 —— 对方往往自己会修，
-  你顺手改就是白做 + 撞车）；④ **任务号会撞**（对方同期也编了 TB-072）→ 开工前在 BACKLOG 占号。
-- **⭐ 报障排查第一步：拿界面原文字符串去 `grep`**。比读文档/猜链路快一个数量级
-  （实例：`导出位置不可用` → `outputRoots.ts:47` 一击命中，2026-09-20）。
+  （存量 116 处，见 TB-021）。
+- **⭐ 同仓并行两条写线时怎么收口（2026-09-21 实踩）**：发现工作区冒出没碰过的文件（看 mtime 判断
+  是否正在被写）→ ① 不跑全量 `verify`（混着对方 WIP，绿/红都不可信，即 R-74 成因），改跑定向用例
+  + 逐条 `tsc`/`lint`/`format:check`；② 只 `git add` 自己那批；③ **一个字节都别碰对方的文件**；
+  ④ 任务号会撞 → 开工前在 BACKLOG 占号。
 - **⭐ IPC handler 里 `catch (err) { console.error(...); return false }` 是可诊断性缺陷**：
-  渲染侧只拿到布尔值，**失败原因永久丢失**，真因往往就在被 catch 掉的那个异常里。
-  排查「功能完全不可用但没报权限错」时优先怀疑它（实例：`fs:ensure-dir` 吞掉
-  `assertAllowedPath` 的 `Path is outside allowed application directories` → R-62）。
+  渲染侧只拿到布尔值，**失败原因永久丢失**。排查「功能完全不可用但没报权限错」时优先怀疑它
+  （实例：`fs:ensure-dir` 吞掉 `assertAllowedPath` 的报错 → R-62）。
 - **⭐ 主进程 IPC 路径白名单会打死「导出到业务盘」**（`electron/ipc-handlers.ts` 的
   `getAllowedRoots` / `assertAllowedPath`）：**只放行 桌面/文档/下载/图片/userData +
-  `localSettings.localSavePath` + `sessionAllowedRoots`**；`D:\…` `E:\…` `C:\Users\Public\…`
-  一律拒绝。两处不对称：① 只有 `fs:select-directory` 对话框选过才 `addAllowedRoot`，
-  **手输同路径无效**；② `sessionAllowedRoots` 是**内存 Set，重启清空**。
-  ⇒ 任何「导出/写到自定义目录」的功能，先想这一层（R-31 旧、R-62 新）。
-- **写失败文案必须与真因对齐**：写「请检查路径是否可达」会把排查带偏（路径明明打得开，
-  真因是不在白名单里）。自问一句「用户照这句话去查，能不能查到」。
+  `localSettings.localSavePath` + `sessionAllowedRoots`**。两处不对称：① 只有 `fs:select-directory`
+  对话框选过才 `addAllowedRoot`，**手输同路径无效**；② `sessionAllowedRoots` 是**内存 Set，重启清空**
+  ⇒ 任何「导出/写到自定义目录」的功能先想这一层（R-31 / R-62）。
+- **写失败文案必须与真因对齐**：写「请检查路径是否可达」会把排查带偏（路径明明打得开，真因是不在白名单）。
+  自问一句「用户照这句话去查，能不能查到」。

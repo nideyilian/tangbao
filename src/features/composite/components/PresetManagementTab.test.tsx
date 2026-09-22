@@ -374,6 +374,27 @@ describe('PresetManagementTab', () => {
     expect(renderer!.root.findAll((node) => node.props['data-layout'] === 'preset-unassigned')).toHaveLength(0)
   })
 
+  it('每张卡的操作按钮都常驻：没选中那一套也能直接复制 / 删除它', () => {
+    seedScope()
+    useCompositeV2Store.setState({
+      presets: [productPreset('preset-a', 'Alpha Preset'), productPreset('preset-b', 'Beta Preset')],
+      selectedPreviewPresetId: 'preset-a',
+    })
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<PresetManagementTab />)
+    })
+    mountedRenderers.push(renderer!)
+
+    // 选中态在 preset-a，preset-b 那一行的按钮照样在。
+    // 改回「只在选中行渲染按钮」的话这里会直接抛错 —— 卡片改成两栏长条后，
+    // 按钮必须落在固定的位置，「想删某一套还得先点选它」是这次要消掉的别扭。
+    const rowB = renderer!.root.findByProps({ 'data-testid': 'preset-row-preset-b' })
+    expect(rowB.findByProps({ title: '删除预设「Beta Preset」' })).toBeTruthy()
+    expect(rowB.findByProps({ title: '复制「Beta Preset」为新预设' })).toBeTruthy()
+    expect(rowB.findByProps({ 'data-testid': 'preset-copy-one' })).toBeTruthy()
+  })
+
   it('deletes a preset from the library and falls back to a valid preview selection', () => {
     const presetA = productPreset('preset-a', 'Alpha Preset')
     const presetB = productPreset('preset-b', 'Beta Preset')
@@ -389,7 +410,8 @@ describe('PresetManagementTab', () => {
     })
     mountedRenderers.push(renderer!)
 
-    const deleteButton = renderer!.root.findByProps({ title: '删除预设' })
+    // 删除按钮现在每张卡都常驻，标题里带上预设名才能精确定位到 preset-b 那一行
+    const deleteButton = renderer!.root.findByProps({ title: '删除预设「Beta Preset」' })
 
     act(() => {
       deleteButton.props.onClick()
@@ -699,8 +721,14 @@ describe('PresetManagementTab', () => {
    * **不自动启用** —— 不动任何节点的水印清单。目标候选里不出现当前产品。
    */
   describe('复制水印到其他产品', () => {
-    /** 点开「复制到…」并选中目标产品，返回渲染器。 */
-    function openCopyDialog(entryTestId: string) {
+    /**
+     * 点开「复制到…」并选中目标产品，返回渲染器。
+     *
+     * `rowPresetId` 给「单套」入口用：行内操作按钮**每张卡都常驻**之后，同一个 testid 在
+     * 列表里会出现多次，必须落到具体那一行去找，否则拿到的是第一行那套水印。
+     * 「整库」入口在头部、全局唯一，不传即可。
+     */
+    function openCopyDialog(entryTestId: string, rowPresetId?: string) {
       seedScope()
       useCompositeV2Store.setState({
         presets: [productPreset('preset-a', '合规水印头部'), productPreset('preset-b', '角标')],
@@ -713,8 +741,11 @@ describe('PresetManagementTab', () => {
       })
       mountedRenderers.push(renderer!)
 
+      const scope = rowPresetId
+        ? renderer!.root.findByProps({ 'data-testid': `preset-row-${rowPresetId}` })
+        : renderer!.root
       act(() => {
-        renderer!.root.findByProps({ 'data-testid': entryTestId }).props.onClick()
+        scope.findByProps({ 'data-testid': entryTestId }).props.onClick()
       })
       return renderer!
     }
@@ -733,7 +764,7 @@ describe('PresetManagementTab', () => {
       useProjectTreeParamsStore.setState({
         params: { [PRODUCT_ID]: { postprocess: { watermarkPresetIds: ['preset-a'] } } },
       })
-      const renderer = openCopyDialog('preset-copy-one')
+      const renderer = openCopyDialog('preset-copy-one', 'preset-a')
 
       clickButton(renderer, '电池')
       act(() => {
