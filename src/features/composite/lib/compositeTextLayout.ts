@@ -1,6 +1,21 @@
+import { isVerticalText } from './compositeIdentifier'
 import type { CompositeV2TextLayer } from './compositeV2Types'
 
 export type CompositeTextLineMeasurer = (line: string) => number
+
+/**
+ * 竖排时要排的**列**（一行 = 一列）。
+ *
+ * 「一个字一行」是竖排的**另一种写法** —— 在这个参数出现之前，用户只能这么排竖排
+ * （一个字敲一个回车）。这里先把它折成一段：否则那些换行会被当成「换列」，
+ * 把一个字一行的文案排成**横着的一排字**。
+ *
+ * 渲染与测量读的是**同一个**函数：两处各写一遍折叠规则，迟早出现「框按折后的算、
+ * 字按折前的画」这种对不上的偏差。
+ */
+export function resolveVerticalColumns(text: string): string[] {
+  return (isVerticalText(text) ? text.replace(/\n/g, '') : text).split('\n')
+}
 
 /**
  * 文字层的框 = 文案的**自然尺寸 + padding**（也叫「自动适应」），改文字后由
@@ -21,8 +36,24 @@ export function measureCompositeTextBox(
   layer: CompositeV2TextLayer,
   measureLine: CompositeTextLineMeasurer = (line) => measureLineWithCanvas(layer, line),
 ) {
-  const lines = layer.text.split('\n')
   const padding = Number.isFinite(layer.padding) ? Math.max(0, layer.padding) : 5
+  /*
+   * 竖排：宽高与横排**逐项对调** —— 宽 = 列数 × 列距（`lineHeight` 在竖排里是列距），
+   * 高 = 最长那列的字数与字距之和。
+   *
+   * 字宽按 `fontSize` 近似（汉字等宽）：框只用来定位，不值得为它逐字 measure 一遍。
+   */
+  if (layer.orientation === 'vertical') {
+    const columns = resolveVerticalColumns(layer.text)
+    const longest = Math.max(...columns.map((column) => Array.from(column).length), 1)
+    const contentWidth = columns.length * layer.fontSize * layer.lineHeight
+    const contentHeight = longest * layer.fontSize + Math.max(0, longest - 1) * layer.letterSpacing
+    return {
+      width: Math.max(1, Math.ceil(contentWidth + padding * 2)),
+      height: Math.max(1, Math.ceil(contentHeight + padding * 2)),
+    }
+  }
+  const lines = layer.text.split('\n')
   const contentWidth = Math.max(
     ...lines.map((line) => measureLine(line) + Math.max(0, [...line].length - 1) * layer.letterSpacing),
     0,

@@ -153,4 +153,76 @@ describe('composite renderer v2', () => {
 
     expect(drawn.map((item) => item.text)).toEqual(['第一行', '第二行'])
   })
+
+  /*
+   * 竖排（`orientation: 'vertical'`）：一列一行地画、列内逐字向下。
+   *
+   * 上面两条守卫继续管横排；这里钉竖排的三个口径 —— 换行 = 换列、「一字一行」的老写法
+   * 先折成一段（不折就会被当成换列，排成横着的一排）、标识符成为第一格。
+   */
+  it('⭐ 竖排：逐字向下画，同列 x 相同、y 递增，且不传 maxWidth', async () => {
+    const { ctx, drawn } = recordingContext(18)
+    await drawLayer(
+      ctx,
+      complianceTextLayer({ orientation: 'vertical', text: '该活动' }),
+      createDefaultCompositeV2Preset(),
+      {
+        width: 1280,
+        height: 720,
+      },
+    )
+
+    expect(drawn.map((item) => item.text)).toEqual(['该', '活', '动'])
+    expect(new Set(drawn.map((item) => item.x)).size).toBe(1)
+    expect(drawn[1]!.y).toBeGreaterThan(drawn[0]!.y)
+    expect(drawn[2]!.y).toBeGreaterThan(drawn[1]!.y)
+    // 竖排同样不传 maxWidth：那是横向压缩，不是换行
+    expect(drawn.every((item) => item.maxWidth === undefined)).toBe(true)
+  })
+
+  it('⭐ 竖排 +「一字一行」的老写法：折成一列，且用竖排的字距（不是横排的行距）', async () => {
+    const preset = createDefaultCompositeV2Preset()
+    const target = { width: 1280, height: 720 }
+    const { ctx, drawn } = recordingContext(18)
+    await drawLayer(ctx, complianceTextLayer({ orientation: 'vertical', text: '该\n活\n动' }), preset, target)
+
+    expect(drawn.map((item) => item.text)).toEqual(['该', '活', '动'])
+    // 折成一列（不折的话三个换行会被当成三列，x 各不相同）
+    expect(new Set(drawn.map((item) => item.x)).size).toBe(1)
+    /*
+     * ⚠️ 步进必须按**竖排**算：`fontSize + 字距`（横排那里是 `fontSize × 行高`）。
+     * 少了这一条，「一字一行」横排与竖排**画出完全一样的三个字**，这条守卫就会在
+     * 竖排分支被整个删掉时依然全绿（探针没打中目标）。
+     */
+    const metrics = getScaledTextMetrics(18, 0, preset.baseCanvas, target)
+    expect(drawn[1]!.y - drawn[0]!.y).toBeCloseTo(metrics.fontSize)
+  })
+
+  it('竖排 + 整段换行 = 换列：两列的 x 不同', async () => {
+    const { ctx, drawn } = recordingContext(18)
+    await drawLayer(
+      ctx,
+      complianceTextLayer({ orientation: 'vertical', text: '该活动\n存在' }),
+      createDefaultCompositeV2Preset(),
+      { width: 1280, height: 720 },
+    )
+
+    expect(drawn.map((item) => item.text)).toEqual(['该', '活', '动', '存', '在'])
+    expect(new Set(drawn.map((item) => item.x)).size).toBe(2)
+  })
+
+  it('⭐ 竖排 + 标识符：★ 成为第一格（在文案上方），不与首字并排', async () => {
+    const { ctx, drawn } = recordingContext(18)
+    await drawLayer(
+      ctx,
+      complianceTextLayer({ orientation: 'vertical', text: '该活动' }),
+      createDefaultCompositeV2Preset(),
+      { width: 1280, height: 720 },
+      { text: '★', placement: 'prefix' },
+    )
+
+    expect(drawn.map((item) => item.text)).toEqual(['★', '该', '活', '动'])
+    expect(new Set(drawn.map((item) => item.x)).size).toBe(1)
+    expect(drawn[0]!.y).toBeLessThan(drawn[1]!.y)
+  })
 })

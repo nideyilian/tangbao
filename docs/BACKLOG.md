@@ -4065,3 +4065,56 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
 | `features/composite/lib/compositeIdentifier.test.ts` | 新增 3 例（竖排三态 / 横排不变 / 判据边界）                      |
 | `docs/adr/0006-*`                                  | 补一条：竖排时标识符占独立一格，判据与理由                        |
 
+---
+
+## TB-097 文字层支持竖排：加「方向」参数（2026-09-22 阿伟）
+
+**需求**（杰哥 2026-09-22 拍板）：TB-096 修好了「竖排时标识符挤在首字旁边」，但竖向文案当时只能
+**一个字敲一个换行**排出来 —— 改一个字就要把后面所有字往后挪。杰哥确认：做成参数。
+
+**决策与理由见 `docs/adr/0016-text-orientation.md`**（含被否决的两个方案：布尔开关、自动折列）。
+
+**改法**
+
+| 面        | 改动                                                                                                                                   |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 类型      | `CompositeV2TextLayer.orientation?: 'horizontal' \| 'vertical'`，**只有显式 `'vertical'` 才是竖排** ⇒ 老数据缺省横排，**无需迁移、无需改导入导出** |
+| 渲染      | 竖排：换行符 = 换列、列内逐字向下；`lineHeight` 当**列距**、`letterSpacing` 当**列内字距**；多列以对齐锚点为中心摊开；并把 `ctx.letterSpacing` 清 `0px`（canvas 的字距只作用于水平方向，不清会被算两次） |
+| 列的切分  | `resolveVerticalColumns`：**「一个字一行」的老写法先折成一段** —— 不折就会被当成换列、排成横着的一排；渲染与测量**共用**这一个函数 |
+| 框        | `measureCompositeTextBox` 竖排时与横排**逐项对调**（宽 = 列数 × 列距、高 = 最长列），锚点才对得上；**仍然只是框**，不参与折列        |
+| 面板      | 图层面板「内容」组加「方向」下拉（横排 / 竖排）；切换时 `updateLayer` 里统一走 `fitCompositeTextLayer`，框立刻变「窄而高」            |
+
+**验收标准（可测）**
+
+- 竖排「该活动」⇒ `fillText` 三次（逐字）、同列 x 相同、y 递增、不传 maxWidth；
+- 竖排 +「一字一行」⇒ 折成一列，且**步进 = fontSize + 字距**（不是横排的 fontSize × 行高）；
+- 竖排 + 整段换行 ⇒ 换列（两列的 x 不同）；
+- 竖排 + 标识符 prefix ⇒ ★ 是第一格（y 最小）；
+- 框：竖排「ABCDEF」⇒ 34×130（1 列 6 字）；「A\nB\nC」⇒ 34×70（折成 1 列 3 字）；「AB\nCD」⇒ 58×50（2 列）；
+- 横排三条守卫（单行 / 多行 / both）**逐字节不变**。
+
+**验证**
+
+- **反向验证（逐条看挂在哪）**：
+  - 关掉渲染器的竖排分支 ⇒ **精确挂 4 例**（竖排逐字 / 老写法 / 换列 / 标识符第一格）；
+  - 关掉 measure 的竖排分支 ⇒ **精确挂 3 例**。
+  - ⚠️ 过程中抓出一条**空守卫**：「一字一行 + 竖排」那条最初只断言「3 次 fillText + x 相同」，
+    而横排渲染同一文案**输出逐字段相同** ⇒ 短路竖排分支时它居然全绿。已补「y 步进 = fontSize + 字距」
+    这条**只有竖排路径才给得出**的判据，重跑 4/4 命中 —— 这是 **R-85** 的现场。
+- 全量：`261 文件 / 3070 例全绿`（新增 7 例：渲染 4 + 框 3）。tsc 双端 / eslint / prettier 全绿。
+- ⚠️ **未经渲染验证**（本机离屏渲染被环境拦死）：竖排的实际观感（列距 / 字距 / 与画面的贴合）
+  由杰哥在运行应用里过目 —— 面板里把任一层「方向」切到竖排即可。
+
+**改到的文件**
+
+| 文件                                                      | 改动                                                                     |
+| --------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `features/composite/lib/compositeV2Types.ts`              | 新增 `CompositeV2TextOrientation` + 文字层的 `orientation` 字段（含口径注释） |
+| `features/composite/lib/compositeTextLayout.ts`           | 新增 `resolveVerticalColumns`；`measureCompositeTextBox` 加竖排分支      |
+| `features/composite/lib/compositeRendererV2.ts`           | 文本绘制加竖排分支；抽出 `paint`（描边 + 填充，横竖两处共用）            |
+| `features/composite/components/PresetLayerPanel.tsx`      | 「内容」组加「方向」下拉                                                 |
+| `features/composite/lib/compositeRendererV2.test.ts`      | 新增 4 例（逐字向下 / 老写法折列 + 字距 / 换列 / 标识符第一格）           |
+| `features/composite/lib/compositeTextLayout.test.ts`      | 新增 3 例（框对调 / 老写法折列 / 换列）                                   |
+| `docs/adr/0016-text-orientation.md` · `docs/adr/README.md` | 新 ADR + 索引（**顺带补上遗漏的 0014 索引行**）                          |
+| `docs/RISK.md`（R-85）                                     | 风险登记：空守卫 —— 两条路径产出同一份输出                              |
+

@@ -94,6 +94,8 @@ export type CompositeV2LogoLayer = CompositeV2MediaLayer & {
   type: 'logo'
 }
 
+export type CompositeV2TextOrientation = 'horizontal' | 'vertical'
+
 export type CompositeV2TextLayer = CompositeV2LayerBase & {
   type: 'text'
   text: string
@@ -105,6 +107,22 @@ export type CompositeV2TextLayer = CompositeV2LayerBase & {
   lineHeight: number
   letterSpacing: number
   padding: number
+  /**
+   * 文字方向。**缺省 / 任何不是 `'vertical'` 的值都按横排**。
+   *
+   * 为什么需要它（2026-09-22 杰哥报障）：竖排文案原先只能**一个字敲一个换行**排出来 ——
+   * 改一个字就要把后面所有字往后挪，很容易排歪；而且换行在排版上是「换行」，
+   * 标识符会与首字并排（那次报障「★ 排到了文案左边」）。
+   *
+   * 口径与 `withIdentifier` 一样是**正向判定 + 缺省即老行为**：老数据没有这个字段 ⇒ 横排，
+   * 升级前后渲染结果不变；导入的脏值（拼错的字符串）也自动当横排，不需要额外归一化。
+   *
+   * 竖排的语义（与横排逐项对称，见 `resolveVerticalColumns`）：
+   * - **换行符 = 换列**，列内逐字向下；
+   * - `lineHeight` = **列距**、`letterSpacing` = 列内的字间距；
+   * - 「一个字一行」的老写法先折成一段再排，因此两种写法渲染结果一致。
+   */
+  orientation?: CompositeV2TextOrientation
   /**
    * 这一层要不要带水印标识符（署名）。**缺省 = 带**。
    *

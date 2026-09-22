@@ -15,6 +15,7 @@ import {
   resolveIdentifierLayer,
   resolveLayerText,
 } from './compositeIdentifier'
+import { resolveVerticalColumns } from './compositeTextLayout'
 import type {
   CompositeV2IdentifierConfig,
   CompositeV2MediaLayer,
@@ -331,19 +332,52 @@ export async function drawLayer(
      * 溢出怎么办：字比框宽时按 `align` 向外长 —— `right` 保持右边缘不动、往左溢出，
      * `center` 两边对称溢出。水印里这几行本来就贴边对齐，这样正是想要的。
      */
-    const lines = resolveLayerText(layer, identifier).split('\n')
     const textX =
       layer.align === 'left' ? -rect.width / 2 + padding : layer.align === 'right' ? rect.width / 2 - padding : 0
-    lines.forEach((line, index) => {
-      const y = (index - (lines.length - 1) / 2) * metrics.fontSize * layer.lineHeight
+
+    /** 画一笔（描边 + 填充）。横排按整行画、竖排按单字画，这一对调用两处都要，所以收在这里。 */
+    const paint = (text: string, x: number, y: number) => {
       if (layer.stroke?.enabled && metrics.strokeWidth > 0) {
         ctx.strokeStyle = layer.stroke.color || '#000000'
         ctx.lineWidth = metrics.strokeWidth
         ctx.lineJoin = 'round'
-        ctx.strokeText(line, textX, y)
+        ctx.strokeText(text, x, y)
       }
-      ctx.fillText(line, textX, y)
-    })
+      ctx.fillText(text, x, y)
+    }
+
+    const rawText = resolveLayerText(layer, identifier)
+    if (layer.orientation === 'vertical') {
+      /*
+       * 竖排：**一列一行地画，列内逐字**（换行符 = 换列，见 `resolveVerticalColumns`）。
+       *
+       * 三个与横排**逐项对称**的口径，改一边就要改另一边：
+       * - `lineHeight` 在这里是**列距**、`letterSpacing` 是列内的**字间距**；
+       * - canvas 的 `letterSpacing` 只作用于**水平方向** → 竖排必须自己把它加进 y 步进，
+       *   并把它清回 `0px`（不清的话同一个值会被算两次）；
+       * - 多列以对齐锚点为中心往两边排（与横排的多行「以框中心上下摊开」同构），
+       *   所以 `align` 仍读作「这一块贴框的哪一边」。
+       *
+       * ⚠️ **不做自动折列**：折列要拿框高当约束，而框是历史数据（见上面那段）；
+       * 换列只认用户自己敲的换行符。
+       */
+      ;(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = '0px'
+      const columns = resolveVerticalColumns(rawText)
+      const charStep = metrics.fontSize + layer.letterSpacing * scale
+      const columnStep = metrics.fontSize * layer.lineHeight
+      columns.forEach((column, columnIndex) => {
+        const x = textX + (columnIndex - (columns.length - 1) / 2) * columnStep
+        const chars = Array.from(column)
+        chars.forEach((char, charIndex) => {
+          paint(char, x, (charIndex - (chars.length - 1) / 2) * charStep)
+        })
+      })
+    } else {
+      const lines = rawText.split('\n')
+      lines.forEach((line, index) => {
+        paint(line, textX, (index - (lines.length - 1) / 2) * metrics.fontSize * layer.lineHeight)
+      })
+    }
   }
   ctx.restore()
 }

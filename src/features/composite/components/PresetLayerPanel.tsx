@@ -365,6 +365,30 @@ export function PresetLayerPanel({ preset, selectedLayerId, onSelectLayer, onUpd
                             })}
                           </div>
                         </div>
+                        {/*
+                         * 方向：竖排时**换行符 = 换列**、行高 = 列距、字距 = 列内字距
+                         * （见 `CompositeV2TextLayer.orientation`）。
+                         *
+                         * 用下拉而不是「竖排」开关：开关的「未勾选」与「老数据没有这个字段」
+                         * 长得一模一样，容易被读成「被谁关掉了」；下拉里两个值都是明确的选择。
+                         * 切到竖排会自动重算框（`updateLayer` 里统一走 `fitCompositeTextLayer`），
+                         * 所以竖排的框立刻变成「窄而高」，锚点也才对得上。
+                         */}
+                        <label className={`${labelClass} w-20`} title="竖排：换行符换列、行高当列距">
+                          方向
+                          <select
+                            value={selectedLayer.orientation === 'vertical' ? 'vertical' : 'horizontal'}
+                            onChange={(event) =>
+                              updateLayer(selectedLayer.id, {
+                                orientation: event.target.value === 'vertical' ? 'vertical' : 'horizontal',
+                              })
+                            }
+                            className={`${fieldClass} cursor-pointer`}
+                          >
+                            <option value="horizontal">横排</option>
+                            <option value="vertical">竖排</option>
+                          </select>
+                        </label>
                       </div>
                     ) : (
                       <div className="flex items-end gap-2">
