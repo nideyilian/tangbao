@@ -83,6 +83,16 @@
     }
   },
 
+  "watermarkLibrary": {
+    "logos": [{ "id": "logo-vacuum-01", "name": "扫地机LOGO.png", "assetId": "asset-7c1f9a20" }],
+    "logoOrder": ["logo-vacuum-01"],
+    "libraryPath": "",
+    "globalFitMode": "crop-fill",
+    "identifier": { "text": " · @糖包", "placement": "suffix" },
+    "backgroundFolders": [],
+    "recursiveBackgrounds": false
+  },
+
   "tree": [
     {
       "id": "line-home",

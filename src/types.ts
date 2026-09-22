@@ -1,10 +1,7 @@
 // ===== 设置 =====
 
-import type { CompositeV2PersistedSnapshot } from './features/composite/lib/compositeV2Types'
 import type { AssistantActionPreferences } from './features/assistantActions/types'
 import type { SopCampaignRecipeConfig, SopExecutionMode } from './features/strategy/types'
-import type { PostprocessMediaConfig } from './lib/postprocessMedia'
-import type { TreeConfigBundle } from './lib/treeConfigBundle'
 
 export type ApiMode = 'images' | 'responses'
 export type AgentApiConfigMode = 'native' | 'hybrid'
@@ -1288,20 +1285,19 @@ export interface ExportData {
       thumbnailVersion?: number
     }
   >
-  /**
-   * 配置包 v8：**以项目树为骨架**的中控台配置快照（见 `src/lib/treeConfigBundle.ts`）。
-   *
-   * 导入侧见到它就优先走新路径（树 + 节点参数 + 水印 + 渠道一起恢复）；见不到
-   * （v7 及更早的包）照旧走下面那几个老字段。**两条路都留着**，老备份不作废。
-   */
-  treeConfig?: TreeConfigBundle
-  compositeState?: CompositeV2PersistedSnapshot
-  /**
-   * 后处理编排配置（媒体表 + 上次选择 + 命名模板）。
-   * 旧备份无此字段时按 `createDefaultPostprocessMediaConfig()` 恢复，不报错。
-   */
-  postprocessMediaState?: PostprocessMediaConfig
+  /** 工作区标签。配置包不带任务（`importTasks: false`），所以拉取配置时不会恢复它。 */
   workspaceState?: WorkspaceBackupState
+  /**
+   * 水印资源（LOGO 图等）的**文件索引**：`assetId → 包内路径`。
+   *
+   * 与 `imageFiles` / `thumbnailFiles` 同类 —— 回答的是「包里有哪些文件」，
+   * 不是「配置长什么样」。**配置本体不在 manifest 里**，而是包内独立的一份 `config.json`
+   * （见 `src/lib/treeConfigBundle.ts` 的 `TREE_CONFIG_ENTRY`）。
+   *
+   * ⚠️ v8 及更早把配置塞在 `manifest` 的 `treeConfig` / `compositeState` /
+   * `postprocessMediaState` 三个字段里（过渡期双写）。v9 起这三个字段**全部删掉**，
+   * 老包导入时整包拒收 —— 不受向后兼容约束（糖包尚未交付他人使用）。
+   */
   compositeAssetFiles?: Record<
     string,
     {

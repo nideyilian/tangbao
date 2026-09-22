@@ -130,6 +130,45 @@
       }
     },
 
+    "watermarkLibrary": {
+      "type": "object",
+      "description": "水印库的库级配置（全局一份，不属于任何树节点）。预设本体按 productId 挂在树上，见 tree[].watermarkPresets。",
+      "additionalProperties": false,
+      "properties": {
+        "logos": {
+          "type": "array",
+          "description": "LOGO 列表。图片按 assetId 落库并随包打包 —— 导入后不会断图。",
+          "items": { "$ref": "#/definitions/projectLogo" }
+        },
+        "logoOrder": {
+          "type": "array",
+          "description": "LOGO 的展示顺序（元素是 logos[].id）。",
+          "items": { "type": "string" }
+        },
+        "libraryPath": {
+          "type": "string",
+          "default": "",
+          "description": "LOGO 库文件夹。本机路径，换机器不保证可用。"
+        },
+        "globalFitMode": {
+          "type": "string",
+          "enum": ["crop-fill", "contain-blur", "stretch"],
+          "default": "crop-fill",
+          "description": "水印画布的适配方式。与后处理的 fitMode 不是同一个。"
+        },
+        "identifier": { "$ref": "#/definitions/identifier" },
+        "backgroundFolders": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "背景图文件夹。本机路径。"
+        },
+        "recursiveBackgrounds": {
+          "type": "boolean",
+          "description": "背景图是否递归扫子目录。"
+        }
+      }
+    },
+
     "tree": {
       "type": "array",
       "description": "项目树，第一层是产品线。每个节点自带的 overrides 覆盖 defaults 里的同名项；没写 = 继续向上继承。",
@@ -145,6 +184,39 @@
   },
 
   "definitions": {
+    "projectLogo": {
+      "type": "object",
+      "description": "LOGO 库中的一张 LOGO。图片本体按 assetId 存在库里，不在这里内联。",
+      "required": ["id", "name", "assetId"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "LOGO 项 id，被 logoOrder 引用。" },
+        "name": { "type": "string", "description": "LOGO 显示名。" },
+        "assetId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "图片在库中的 id；导出时按它打包进包内资源目录。"
+        }
+      }
+    },
+
+    "identifier": {
+      "type": "object",
+      "description": "水印标识符（署名）。预设回答「整套水印长什么样」，它回答「往文案上贴的署名」。",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "标识符原文；前后空格有意保留（用户可能就想要「文案 · @小王」这种带间隔的效果）。"
+        },
+        "placement": {
+          "type": "string",
+          "enum": ["prefix", "suffix", "both"],
+          "description": "贴在文案的哪一侧：开头 / 结尾 / 两侧都贴。"
+        }
+      }
+    },
+
     "channel": {
       "type": "object",
       "description": "一个投放渠道及其可用尺寸。",

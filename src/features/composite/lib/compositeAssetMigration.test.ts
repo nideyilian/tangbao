@@ -55,6 +55,48 @@ describe('composite asset migration', () => {
 
     expect(store.getState().projectLogos).toBe(before)
   })
+
+  it('⭐ 把「从本机磁盘选图」的图层迁进库（不然配置包搬走就断图）', async () => {
+    const store = createCompositeV2Store()
+    const preset = store.getState().presets[0]!
+    store.setState({
+      presets: [{ ...preset, layers: [mediaLayer('layer-path', { kind: 'path', path: 'D:/素材/角标.png' })] }],
+    })
+    const storeAssets = vi.fn(async (blobs: Blob[]) => blobs.map((_, index) => `asset-${index}`))
+    const readImageDataUrl = vi.fn(async (path: string) =>
+      path === 'D:/素材/角标.png' ? 'data:image/png;base64,Yw==' : null,
+    )
+
+    const count = await migrateLegacyCompositeAssets({
+      getState: store.getState,
+      setState: (patch) => store.setState(patch),
+      storeAssets,
+      readImageDataUrl,
+    })
+
+    expect(count).toBe(1)
+    expect(readImageDataUrl).toHaveBeenCalledWith('D:/素材/角标.png')
+    // 落成了库里那份 —— 新电脑上没有 `D:/素材/角标.png` 也不会断图
+    expect(store.getState().presets[0]!.layers[0]).toMatchObject({ asset: { kind: 'stored', assetId: 'asset-0' } })
+  })
+
+  it('读不到那张图时原样保留（不假装迁移成功）', async () => {
+    const store = createCompositeV2Store()
+    const preset = store.getState().presets[0]!
+    const asset: CompositeV2ImageAssetRef = { kind: 'path', path: 'D:/已经不在了/角标.png' }
+    store.setState({ presets: [{ ...preset, layers: [mediaLayer('layer-path', asset)] }] })
+
+    const count = await migrateLegacyCompositeAssets({
+      getState: store.getState,
+      setState: (patch) => store.setState(patch),
+      storeAssets: async () => [],
+      readImageDataUrl: async () => null,
+    })
+
+    // 它仍然跨不了机器，但至少没把用户已经配好的东西改坏（改成 stored 却指不到资源更糟）
+    expect(count).toBe(0)
+    expect((store.getState().presets[0]!.layers[0] as { asset: unknown }).asset).toEqual(asset)
+  })
 })
 
 function mediaLayer(id: string, asset: CompositeV2ImageAssetRef): CompositeV2Layer {

@@ -8,7 +8,17 @@ export type BackupImportSelection = {
   importAssets?: boolean
 }
 
-const CURRENT_BACKUP_VERSION = 7
+/**
+ * 导入认得的**包结构**最高版本（`manifest.json` 的 `version`）。
+ *
+ * ⚠️ **必须与导出侧写死的版本同步** —— `exportData`（浏览器）与 `exportDataToPath`（桌面）
+ * 各写一处，这里再写一处，三处任一漏改都会让「导出 → 导入」整条链路断掉。
+ *
+ * 2026-09-22 的实例：`feat(config): 配置包 v8` 把导出侧提到 8，这里却停在 7，
+ * 于是**导出的每一个包都被自己拒收**（"备份版本 8 高于当前支持的版本 7"），
+ * 配置同步因此形同虚设 —— 而当时没有任何「导出 → 导入」的 round-trip 用例，一直没被发现（R-87）。
+ */
+const CURRENT_BACKUP_VERSION = 9
 
 function assertArchivePath(path: string): void {
   const normalized = path.replace(/\\/g, '/')

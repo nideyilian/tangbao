@@ -4348,7 +4348,34 @@ userData + `localSettings.localSavePath` + `sessionAllowedRoots`（内存态、�
   `PresetLayerPanel.tsx:121`）既不迁移也不收集 ⇒ **这类图片不进包，换机器断图**；
 - ⇒ 已列为 §八 落地清单第 11 项 + 验收标准第 7 条，**按 v9 落地时一并修**（导出前把 `path` 也迁成 `stored`）。
 
-**状态**：`TODO` —— **设计已定稿（文档 + 示例 + schema 已落盘并通过正反向校验）；
-代码落地（§八 清单 10 项）等杰哥过目设计后再开工**。
+**落地记录（2026-09-22，§八 清单 12 项已全部完成）**
 
-**为什么分成两步**：这是核心链路（store 导出/导入 + 配置同步），先让设计可评审比直接改代码省返工。
+| 文件                                                     | 改动                                                                                                                                                                                                 |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/treeConfigBundle.ts`                            | v9 结构（`format` / `defaults` / `watermarkLibrary` / `tree`）、`TREE_CONFIG_ENTRY`、`toCompositeV2State`、**映射穷尽闸门**（`Record<keyof PostprocessMediaConfig, …>`：漏字段编译报错）、校验口径与可读报错 |
+| `src/store.ts`                                           | 导出两处写包内 `config.json`；**删过渡期双写**（`treeConfig` / `compositeState` / `postprocessMediaState` / 配置通道的 `assetCollections`）与 v7 老恢复路径；`restoreCompositeAssets`（资源先落库）+ `restoreTreeConfigBundle` 恢复水印库；两个导入入口收 `config.json`；包版本 8 → 9 |
+| `src/types.ts`                                           | `ExportData` 删三个双写字段；`compositeAssetFiles` 的说明改成「文件索引」（与 `imageFiles` 同类）                                                                                                     |
+| `src/lib/backupImport.ts`                                | `CURRENT_BACKUP_VERSION` 7 → 9（**R-87**，见下）                                                                                                                                                     |
+| `src/features/composite/lib/compositeAssetMigration.ts`  | **第 11 项**：`path` 型（从本机磁盘选图）在导出前读进来落库成 `stored`；读不到则原样保留（不假装成功）                                                                                                |
+| `docs/config-spec.md` / `docs/examples/*`                | 新增 `watermarkLibrary` 一节、§十 跨机器一致性、§八 改动账、§七「两个版本号别混」；示例与 schema 同步 `watermarkLibrary`                                                                              |
+| 测试                                                     | `treeConfigBundle.test.ts` 重写为 v9 契约（13 例）；`store.test.ts` 断言改到包内 `config.json`；`compositeAssetMigration.test.ts` +2 例；`backupImport.test.ts` +1 例守版本同步                        |
+
+**顺带修掉一个既有 bug（R-87，P 级 → 已 CLOSED）**
+
+`exportData` / `exportDataToPath` 写 `version: 8`（`7decde3`「配置包 v8」引入），而导入侧上限
+`CURRENT_BACKUP_VERSION` 停在 `7` ⇒ **导出的每个包都被自己拒收**（"备份版本 8 高于当前支持的版本 7"）。
+「发布配置 / 拉取最新」因此形同虚设 —— 配置同步失效的根因不在同步本身，而在包根本进不来。
+**两边各自的用例都是绿的**，因为从来没有「导出 → 导入」的 round-trip。已统一到 9 并补守卫用例。
+
+**验收证据（2026-09-22）**
+
+- 全量 `vitest run` **262 文件 / 3096 例全绿**；`tsc -b` 与 `tsc -p electron/tsconfig.json --noEmit` **双端零错误**。
+- **反向验证 2 轮，均精确命中**：
+  1. 映射表删掉 `media` 一个键 ⇒ `tsc` 报 `Property 'media' is missing … but required in type 'Record<keyof PostprocessMediaConfig, …>'`；
+  2. 去掉 `hasLegacyCompositeAssets` 的 `path` 判断 ⇒ 只挂「⭐ 把「从本机磁盘选图」的图层迁进库」一条（`expected +0 to be 1`），其余 3 例照过。
+- ⚠️ **未经渲染验证**（本机离屏渲染受限）：本次改的是导出/导入链路，界面观感不受影响；
+  但**建议发一次包、在另一台机器（或清空 userData 后）拉一次**做端到端确认。
+
+**状态**：`DONE`（2026-09-22）。
+
+**为什么当初分成两步**：这是核心链路（store 导出/导入 + 配置同步），先让设计可评审比直接改代码省返工。

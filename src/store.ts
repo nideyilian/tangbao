@@ -14,9 +14,11 @@ import { isRecord } from './lib/typeGuards'
 import {
   buildTreeConfigBundle,
   toAssetCollections,
+  toCompositeV2State,
   toNodeParams,
   toPostprocessMediaConfig,
   validateTreeConfigBundle,
+  TREE_CONFIG_ENTRY,
   type TreeConfigBundle,
 } from './lib/treeConfigBundle'
 // 只引类型：执行体在 `scheduleTaskPostprocess` 里动态 import。
@@ -11733,6 +11735,12 @@ async function buildCompositeBackup() {
   await migrateLegacyCompositeAssets({
     getState: useCompositeV2Store.getState,
     setState: (patch) => useCompositeV2Store.setState(patch),
+    // 「从本机磁盘选图」写进图层的图**只记了磁盘上的位置**，不落库就跨不了机器。
+    // 导出前把它读进来落库 —— 否则配置包搬过去就是断图（规范 §十 10.4·A）。
+    readImageDataUrl: async (path) => {
+      const payload = await window.electronAPI?.readImageFile(path)
+      return payload?.dataUrl ?? null
+    },
   })
   const compositeState = getCompositeV2PersistedState(useCompositeV2Store.getState())
   const ids = collectCompositeAssetIds(compositeState)
@@ -11853,14 +11861,24 @@ async function createBrowserZipSink(fileName: string): Promise<BrowserZipSink | 
   }
 }
 
-async function restoreCompositeBackup(data: ExportData, unzipped: Record<string, Uint8Array>): Promise<void> {
-  if (!data.compositeState) return
+/**
+ * 把包里的水印资源（LOGO 图等）落库。
+ *
+ * v9 起「配置长什么样」全部由 `config.json` 负责（`restoreTreeConfigBundle` 会走
+ * `toCompositeV2State` 重建水印库状态），这里只管**二进制资源**。
+ *
+ * 必须先落库、再恢复状态 —— 顺序反了就是「引用了还不存在的图」，
+ * 而这类错误要到渲染那一刻才炸。
+ */
+async function restoreCompositeAssets(
+  data: ExportData,
+  bundle: TreeConfigBundle,
+  unzipped: Record<string, Uint8Array>,
+): Promise<void> {
+  const { collectCompositeAssetIds } = await import('./features/composite/lib/compositeAssets')
+  const ids = collectCompositeAssetIds(toCompositeV2State(bundle))
+  if (ids.length === 0) return
 
-  const [{ collectCompositeAssetIds }, { replaceCompositeV2PersistedState }] = await Promise.all([
-    import('./features/composite/lib/compositeAssets'),
-    import('./features/composite/storeV2'),
-  ])
-  const ids = collectCompositeAssetIds(data.compositeState)
   const assets = ids.map((id) => {
     const info = data.compositeAssetFiles?.[id]
     if (!info) throw new Error(`后期处理资源 ${id} 缺少备份索引`)
@@ -11876,7 +11894,6 @@ async function restoreCompositeBackup(data: ExportData, unzipped: Record<string,
   })
 
   await putCompositeAssets(assets)
-  replaceCompositeV2PersistedState(data.compositeState)
 }
 
 /** 导出数据为 ZIP */
@@ -11889,16 +11906,29 @@ async function restoreCompositeBackup(data: ExportData, unzipped: Record<string,
 async function snapshotTreeConfigBundle(exportedAt: number): Promise<TreeConfigBundle> {
   // composite store 只能动态 import：静态引它会在模块初始化期与 composite 侧互相等，
   // 结果是 `useCompositeV2Store` 拿到 undefined（store.ts 顶部那条注释记的就是这个坑）。
-  const { useCompositeV2Store } = await import('./features/composite/storeV2')
+  const { useCompositeV2Store, getCompositeV2PersistedState } = await import('./features/composite/storeV2')
   const collections = useAssetLibraryStore.getState().collections
+  const composite = getCompositeV2PersistedState(useCompositeV2Store.getState())
   return buildTreeConfigBundle({
     collections,
     nodeParams: useProjectTreeParamsStore.getState().params,
-    presets: useCompositeV2Store.getState().presets,
+    presets: composite.presets,
+    // 水印库的**库级**那半（LOGO 列表与顺序、标识符、水印全局适配、背景文件夹）。
+    // v9 起「树是唯一入口」，它必须进包 —— 否则删掉并排的 `compositeState` 就是静默丢掉这些字段。
+    watermarkLibrary: {
+      logos: composite.projectLogos,
+      logoOrder: composite.logoOrder,
+      libraryPath: composite.logoLibraryPath,
+      globalFitMode: composite.globalFitMode,
+      ...(composite.identifier ? { identifier: composite.identifier } : {}),
+      ...(composite.backgroundFolders ? { backgroundFolders: composite.backgroundFolders } : {}),
+      ...(composite.recursiveBackgrounds === undefined ? {} : { recursiveBackgrounds: composite.recursiveBackgrounds }),
+    },
     postprocess: getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
     // 层级复用中控台表格那套口径，免得"包里的层级"与"界面标的层级"变成两套说法
     resolveKind: (collectionId) =>
       resolveProjectNodeKind(resolveProjectNodeIdChain(collections, collectionId).length - 1),
+    appVersion: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : undefined,
     exportedAt: new Date(exportedAt).toISOString(),
   })
 }
@@ -11923,6 +11953,10 @@ async function restoreTreeConfigBundle(bundle: TreeConfigBundle): Promise<void> 
   })
   await useAssetLibraryStore.getState().hydrate()
   useProjectTreeParamsStore.setState({ params: toNodeParams(bundle) })
+  // 水印库（库级配置 + 全部预设，含未归属的）也在这里落地 —— v9 起树是**唯一入口**，
+  // 不再有并排的 `compositeState` 那条路。资源（LOGO 图）必须已经落库，见 `restoreCompositeAssets`。
+  const { replaceCompositeV2PersistedState } = await import('./features/composite/storeV2')
+  replaceCompositeV2PersistedState(toCompositeV2State(bundle))
   restorePostprocessMediaConfig(toPostprocessMediaConfig(bundle))
 }
 
@@ -12081,7 +12115,7 @@ export async function exportData(
     const omittedOriginalImageCount = missingOriginalImageIds.size
 
     const manifest: ExportData = {
-      version: 8,
+      version: 9,
       exportedAt: new Date(exportedAt).toISOString(),
       // 档位标记（TB-042）：含任务或图片即完整包，否则为精简包。
       // ⚠️ 旧备份没有这个字段，导入侧必须把「缺字段」当 full（见 types.ts ExportData.profile 注释）。
@@ -12091,27 +12125,23 @@ export async function exportData(
       ...(imageIds.length > 0 ? { imageRefs } : {}),
     }
 
+    let configBundle: TreeConfigBundle | undefined
     if (options.exportConfig) {
       manifest.settings = sanitizeSettingsForBackup(settings, options.includeSecrets === true)
       manifest.favoriteCollections = favoriteCollections
       manifest.defaultFavoriteCollectionId = defaultFavoriteCollectionId
-      // v8：以树为骨架的配置快照（树 + 每个节点自己的参数 + 挂在产品下的水印库 + 根上的渠道字典）
-      manifest.treeConfig = await snapshotTreeConfigBundle(exportedAt)
-      // 树结构在 v8 里已经进 `treeConfig`，这里**再写一份**是为了过渡期的老版本（≤0.3.2）：
-      // 它只认 `assetCollections`。树属于配置（"树就是根"），所以跟着 exportConfig 走，
-      // 不跟着 exportAssets —— 否则「只发配置」会把树落下，而「发配置」顺带把我的素材索引也发出去。
-      manifest.assetCollections = useAssetLibraryStore.getState().collections
-      // ⚠️ 过渡期**双写**：≤0.3.2 的老版本不认识 `treeConfig`，只认下面这几个字段。
-      // 只写新字段的话，老版本导入这份包会**静默什么都不恢复**。全员升级后才可删。
-      manifest.compositeState = compositeBackup!.compositeState
+      // 水印资源（LOGO 图）的**文件索引**留在 manifest 里：它和 `imageFiles` / `thumbnailFiles` 同类，
+      // 回答的是「包里有哪些文件」，不是「配置长什么样」。
       manifest.compositeAssetFiles = compositeBackup!.compositeAssetFiles
-      manifest.postprocessMediaState = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
       manifest.workspaceState = createWorkspaceBackupState(
         state.workspaceTabs,
         state.workspaceTabGroups,
         state.activeWorkspaceTabId,
         options.exportTasks === true,
       )
+      // v9：配置本体写成包内**独立一份 `config.json`**（见下），不再塞进 manifest ——
+      // 「树就是根」之后它自带全部中控台配置，标志是 `format.version`。
+      configBundle = await snapshotTreeConfigBundle(exportedAt)
     }
     if (options.exportTasks) {
       manifest.tasks = tasks
@@ -12130,6 +12160,13 @@ export async function exportData(
       manifest.imageFiles = imageFiles
     }
 
+    // 配置本体在 manifest 之前写。顺序只为可读性 —— 读取侧按**固定路径**取，
+    // 找不到就是老包（v8 及更早把配置塞在 manifest.treeConfig 里），整包拒收。
+    if (configBundle) {
+      const configEntry = new ZipDeflate(TREE_CONFIG_ENTRY, { level: 6 })
+      zip.add(configEntry)
+      configEntry.push(strToU8(JSON.stringify(configBundle, null, 2)), true)
+    }
     const manifestEntry = new ZipDeflate('manifest.json', { level: 6 })
     zip.add(manifestEntry)
     manifestEntry.push(strToU8(JSON.stringify(manifest, null, 2)), true)
@@ -12219,7 +12256,7 @@ export async function exportDataToPath(
       }
     }
     const manifest: ExportData = {
-      version: 8,
+      version: 9,
       exportedAt: new Date(exportedAt).toISOString(),
       // 档位标记（TB-042）：含任务或图片即完整包，否则为精简包。
       // ⚠️ 旧备份没有这个字段，导入侧必须把「缺字段」当 full（见 types.ts ExportData.profile 注释）。
@@ -12232,17 +12269,9 @@ export async function exportDataToPath(
             settings: sanitizeSettingsForBackup(state.settings, options.includeSecrets === true),
             favoriteCollections: state.favoriteCollections,
             defaultFavoriteCollectionId: state.defaultFavoriteCollectionId,
-            // v8：以树为骨架的配置快照（见 `snapshotTreeConfigBundle`）
-            treeConfig: treeBundle,
-            // 树也跟着 `exportConfig` 走（"树就是根"）：v8 里它已在 treeConfig 中，这里再写一份
-            // 给过渡期的老版本（≤0.3.2 只认 `assetCollections`）。不跟着 exportAssets 是因为
-            // 「只发配置」不该把我的素材索引（generatedAssets）一起发出去。
-            assetCollections: useAssetLibraryStore.getState().collections,
-            // ⚠️ 过渡期**双写**：≤0.3.2 的老版本不认识 `treeConfig`，只认下面这几个字段。
-            // 只写新字段的话，老版本导入这份包会**静默什么都不恢复**。全员升级后才可删。
-            compositeState: compositeBackup!.compositeState,
+            // 水印资源（LOGO 图）的**文件索引**留在这里：与 `imageFiles` / `thumbnailFiles` 同类，
+            // 回答的是「包里有哪些文件」，不是「配置长什么样」。配置本体见包内 `config.json`。
             compositeAssetFiles: compositeBackup!.compositeAssetFiles,
-            postprocessMediaState: getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()),
             workspaceState: createWorkspaceBackupState(
               state.workspaceTabs,
               state.workspaceTabGroups,
@@ -12274,6 +12303,9 @@ export async function exportDataToPath(
       destinationPath: filePath,
       manifestJson: JSON.stringify(manifest, null, 2),
       entries: [
+        // 配置本体（v9）：包内独立一份 `config.json` —— 人可读、可手改、可整份替换。
+        // manifest 只管「包里有哪些文件」，配置内容不放在它里面。
+        ...(treeBundle ? [{ archivePath: TREE_CONFIG_ENTRY, data: strToU8(JSON.stringify(treeBundle, null, 2)) }] : []),
         ...entries.map((entry) => ({
           sourcePath: entry.sourcePath,
           archivePath: entry.archivePath,
@@ -12321,6 +12353,14 @@ interface ImportExtractionState {
   pendingThumbnails: StoredImageThumbnail[]
   processingChain: Promise<void>
   processingError: unknown
+  /**
+   * 包内 `config.json`（`TREE_CONFIG_ENTRY`）解析后的原始内容。
+   *
+   * 提取阶段顺手收下来，是因为两个入口（浏览器流式 Unzip / 桌面 IPC 逐条读）
+   * 都要在写库前拿到它 —— 让各自去补一遍读取，迟早有一处漏掉。
+   * 老包（v8 及更早把配置塞在 `manifest.treeConfig` 里）拿不到 → `undefined`，导入侧据此拒收。
+   */
+  configBundle: unknown
 }
 
 function createImportExtractionState(availableImageIds: Iterable<string> = []): ImportExtractionState {
@@ -12332,6 +12372,21 @@ function createImportExtractionState(availableImageIds: Iterable<string> = []): 
     pendingThumbnails: [],
     processingChain: Promise.resolve(),
     processingError: null,
+    configBundle: undefined,
+  }
+}
+
+/**
+ * 解析包内 `config.json` 的字节。
+ *
+ * 坏 JSON **不在这里抛** —— 交给 `validateTreeConfigBundle` 给出「配置包不是一个对象」
+ * 这种可读原因，让用户看到的是「配置包不可用」而不是 `Unexpected token <`。
+ */
+function parseConfigEntry(bytes: Uint8Array): unknown {
+  try {
+    return JSON.parse(strFromU8(bytes))
+  } catch {
+    return undefined
   }
 }
 
@@ -12486,6 +12541,11 @@ export async function importDataFromPath(
         state.compositeFiles.set(info.path, bytes)
       }
     }
+    // 配置本体（v9）：包内独立一份 `config.json`。读不到就是老包（v8 及更早塞在 manifest 里），
+    // 交给 `validateTreeConfigBundle` 给出「版本不认识」并拒收 —— 不做猜测性解析。
+    if (options.importConfig && paths.has(TREE_CONFIG_ENTRY)) {
+      state.configBundle = parseConfigEntry(await readEntry(TREE_CONFIG_ENTRY))
+    }
     await settleImportExtraction(state)
 
     const reconciledBackup =
@@ -12495,7 +12555,7 @@ export async function importDataFromPath(
     const data = reconciledBackup.data
     // 写库阶段没有事务回滚：先落一份「导入前快照」作为安全网（尽力而为，失败不阻断导入）
     await createPreImportSafetySnapshot()
-    await importBackupTail(data, state, replaceWorkspace, options)
+    await importBackupTail(data, state, replaceWorkspace, options, state.configBundle)
     const missingImageCount = Object.keys(data.imageRefs ?? data.imageFiles ?? {}).filter(
       (id) => !state.availableImageIds.has(id),
     ).length
@@ -12593,6 +12653,20 @@ export async function importData(
         file.start()
         return
       }
+      if (options.importConfig && name === TREE_CONFIG_ENTRY) {
+        const chunks: Uint8Array[] = []
+        file.ondata = (err, data, final) => {
+          if (err) {
+            state.processingError = err
+            return
+          }
+          if (data) chunks.push(data)
+          if (final) state.configBundle = parseConfigEntry(concatBytes(chunks))
+        }
+        file.start()
+        return
+      }
+
       // 其余条目跳过（不解压）
     })
     unzip.register(UnzipInflate)
@@ -12607,7 +12681,7 @@ export async function importData(
     const data = reconciledBackup.data
     // 写库阶段没有事务回滚：先落一份「导入前快照」作为安全网（尽力而为，失败不阻断导入）
     await createPreImportSafetySnapshot()
-    await importBackupTail(data, state, replaceWorkspace, options)
+    await importBackupTail(data, state, replaceWorkspace, options, state.configBundle)
     const missingImageCount = Object.keys(data.imageRefs ?? data.imageFiles ?? {}).filter(
       (id) => !state.availableImageIds.has(id),
     ).length
@@ -12662,6 +12736,8 @@ async function importBackupTail(
   state: ImportExtractionState,
   replaceWorkspace: boolean,
   options: ImportOptions,
+  /** 包内 `config.json`（`TREE_CONFIG_ENTRY`）的原始内容；老包没有它 → undefined */
+  configBundle: unknown,
 ): Promise<void> {
   const importedTasks: TaskRecord[] = []
   if (options.importTasks) {
@@ -12743,13 +12819,14 @@ async function importBackupTail(
   }
 
   if (options.importConfig) {
-    await restoreCompositeBackup(data, Object.fromEntries(state.compositeFiles))
-    // v8：包里带 `treeConfig` 时优先走「树为骨架」的恢复 —— 树 + 每个节点的参数 + 渠道一起落地；
-    // 水印库仍由上面的 `restoreCompositeBackup` 负责（过渡期双写，见导出侧注释）。
-    const treeBundle = validateTreeConfigBundle(data.treeConfig)
-    if (treeBundle.ok) await restoreTreeConfigBundle(treeBundle.bundle)
-    // 旧备份（v7 及更早）没有 treeConfig：按老字段恢复；无 postprocessMediaState 时按默认配置，不覆盖成空
-    else restorePostprocessMediaConfig(data.postprocessMediaState)
+    // v9：配置本体只从包内 `config.json` 来。到不了这里（老包 / 缺条目 / 结构不对）就是不可用包 ——
+    // **不做猜测性解析**，宁可这次不导入，也别拿半个包覆盖用户已经调好的配置。
+    const treeBundle = validateTreeConfigBundle(configBundle)
+    if (!treeBundle.ok) throw new Error(`配置包不可用：${treeBundle.reason}`)
+    // 顺序不可交换：资源先落库 → 立树 → 灌参数 → 放水印库 → 挂渠道与输出位置。
+    // 反了会出现「引用了不存在的水印 / 渠道」，而这类错误要到产出那一刻才炸，极难自查。
+    await restoreCompositeAssets(data, treeBundle.bundle, Object.fromEntries(state.compositeFiles))
+    await restoreTreeConfigBundle(treeBundle.bundle)
     const mainState = useStore.getState()
 
     if (data.settings) {

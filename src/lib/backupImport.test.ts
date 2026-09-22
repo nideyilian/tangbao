@@ -14,7 +14,7 @@ describe('validateBackupArchive', () => {
   it('rejects unsupported future versions', () => {
     expect(() =>
       validateBackupArchive(
-        manifest({ version: 8 }),
+        manifest({ version: 10 }),
         {},
         {
           importImages: true,
@@ -22,7 +22,23 @@ describe('validateBackupArchive', () => {
           importConfig: true,
         },
       ),
-    ).toThrow('备份版本 8 高于当前支持的版本 7')
+    ).toThrow('备份版本 10 高于当前支持的版本 9')
+  })
+
+  it('⭐ 接受本版本自己导出的包（导出与导入的版本必须同步，R-87）', () => {
+    // 这条守的是「导出侧写死的版本」与「这里的上限」必须同步 —— 它们一旦不同步，
+    // 「导出 → 导入」整条链路就断，而两边各自的用例都还是绿的（2026-09-22 就是这么漏的）。
+    expect(() =>
+      validateBackupArchive(
+        manifest({ version: 9 }),
+        {},
+        {
+          importImages: false,
+          importTasks: false,
+          importConfig: false,
+        },
+      ),
+    ).not.toThrow()
   })
 
   it('accepts version 7 backups', () => {

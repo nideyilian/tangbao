@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, unzipSync, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
+import { buildTreeConfigBundle, TREE_CONFIG_ENTRY, type TreeConfigBundle } from './lib/treeConfigBundle'
 import { createDefaultScheduleRows } from './lib/schedule'
 import {
   createDefaultFalProfile,
@@ -377,7 +378,7 @@ import {
   showPostprocessIssuesDialog,
   useStore,
 } from './store'
-import { usePostprocessMediaStore } from './storePostprocessMedia'
+import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from './storePostprocessMedia'
 
 // 有用例会把 `state.showToast` 换成 `vi.fn()`（store 是单例，换完就回不去了）。
 // 「提示关掉后不再重播」那组用例测的是**真实实现**，所以在这里先留一份引用。
@@ -521,7 +522,10 @@ describe('data export', () => {
       expect(exportedBlob, JSON.stringify(showToast.mock.calls)).toBeDefined()
       const archive = unzipSync(new Uint8Array(await exportedBlob!.arrayBuffer()))
       const manifest = JSON.parse(new TextDecoder().decode(archive['manifest.json'])) as ExportData
-      expect(manifest.compositeState?.projectLogos).toContainEqual({
+      // v9：配置本体在包内**独立一份** `config.json`，不再塞进 manifest
+      const config = JSON.parse(new TextDecoder().decode(archive[TREE_CONFIG_ENTRY])) as TreeConfigBundle
+      expect(config.format.version).toBe(9)
+      expect(config.watermarkLibrary.logos).toContainEqual({
         id: 'logo-a',
         name: 'Logo A',
         assetId,
@@ -539,10 +543,12 @@ describe('data export', () => {
       })
       const fullArchive = unzipSync(new Uint8Array(await exportedBlob!.arrayBuffer()))
       const fullManifest = JSON.parse(new TextDecoder().decode(fullArchive['manifest.json'])) as ExportData
-      expect(fullManifest.version).toBe(8)
-      // v8：以树为骨架的配置快照必须随包走 —— 少了它，拿到别的机器上就是「树在、参数空」
-      expect(fullManifest.treeConfig?.version).toBe(8)
-      expect(fullManifest.treeConfig?.root.channels.length).toBeGreaterThan(0)
+      expect(fullManifest.version).toBe(9)
+      // v9：以树为骨架的配置快照必须随包走 —— 少了它，拿到别的机器上就是「树在、参数空」。
+      // 它现在住在包内**独立一份** `config.json` 里。
+      const fullConfig = JSON.parse(new TextDecoder().decode(fullArchive[TREE_CONFIG_ENTRY])) as TreeConfigBundle
+      expect(fullConfig.format.version).toBe(9)
+      expect(fullConfig.defaults.channels.length).toBeGreaterThan(0)
       expect(fullManifest.includesOriginalImages).toBe(false)
       expect(fullManifest.imageFiles).toBeUndefined()
       expect(fullManifest.imageRefs?.['input-a']).toMatchObject({ available: false })
@@ -3118,8 +3124,7 @@ describe('data import', () => {
   })
 
   it('restores composite assets before replacing the composite store snapshot', async () => {
-    const { createCompositeV2StoreState, getCompositeV2PersistedState, useCompositeV2Store } =
-      await import('./features/composite/storeV2')
+    const { useCompositeV2Store } = await import('./features/composite/storeV2')
     useCompositeV2Store.persist.setOptions({
       storage: {
         getItem: () => null,
@@ -3130,18 +3135,27 @@ describe('data import', () => {
     const assetId = 'composite-asset-a'
     const assetPath = `composite-assets/${assetId}.png`
     const assetBytes = new Uint8Array([1, 2, 3, 4])
-    const snapshot = {
-      ...getCompositeV2PersistedState(createCompositeV2StoreState() as ReturnType<typeof useCompositeV2Store.getState>),
-      projectLogos: [{ id: 'logo-a', name: 'Logo A', assetId }],
-    }
+    // v9：配置本体在包内**独立一份** `config.json`，水印资源（LOGO 图）按 assetId 打包。
+    // 这个用例守的是**顺序**：资源必须先落库，状态才引用得上 —— 反了就是「引用了还不存在的图」。
+    const config = buildTreeConfigBundle({
+      collections: [],
+      nodeParams: {},
+      presets: [],
+      watermarkLibrary: {
+        logos: [{ id: 'logo-a', name: 'Logo A', assetId }],
+        logoOrder: ['logo-a'],
+        libraryPath: '',
+        globalFitMode: 'crop-fill',
+      },
+      postprocess: createDefaultPostprocessMediaConfig(),
+    })
     useCompositeV2Store.setState({ projectLogos: [] })
 
     const imported = await importData(
       importFile(
         {
-          version: 3,
+          version: 9,
           exportedAt: new Date(0).toISOString(),
-          compositeState: snapshot,
           compositeAssetFiles: {
             [assetId]: {
               path: assetPath,
@@ -3150,7 +3164,7 @@ describe('data import', () => {
             },
           },
         },
-        { [assetPath]: assetBytes },
+        { [assetPath]: assetBytes, [TREE_CONFIG_ENTRY]: strToU8(JSON.stringify(config)) },
       ),
       { importConfig: true, importTasks: false },
     )
@@ -3210,7 +3224,7 @@ describe('data import', () => {
     expect(useStore.getState().workspaceTabs).toEqual([localTab])
   })
 
-  it('keeps merge semantics for task-only v5 imports and full v4 imports', async () => {
+  it('keeps merge semantics for task-only imports and full imports（含配置的完整包）', async () => {
     await clearTasks()
     const localTask = task({ id: 'local-task' })
     const localTab = workspaceTab({ id: 'local-tab', tasks: [localTask] })
@@ -3236,18 +3250,35 @@ describe('data import', () => {
       { importConfig: false, importTasks: true, importImages: false },
     )
 
-    const legacy = await importData(
-      importFile({
-        version: 4,
-        exportedAt: new Date(0).toISOString(),
-        tasks: [task({ id: 'legacy-import' })],
-        imageFiles: {},
-      }),
+    // v9：老包（v8 及更早把配置塞在 manifest 里）导入时**整包拒收**，不受向后兼容约束。
+    // 这条用例的意图是「任务永远是合并、不替换」，所以用**本版本自己导出的形态**当载体。
+    const full = await importData(
+      importFile(
+        {
+          version: 9,
+          exportedAt: new Date(0).toISOString(),
+          tasks: [task({ id: 'legacy-import' })],
+          imageFiles: {},
+        },
+        {
+          [TREE_CONFIG_ENTRY]: strToU8(
+            JSON.stringify(
+              buildTreeConfigBundle({
+                collections: [],
+                nodeParams: {},
+                presets: [],
+                watermarkLibrary: { logos: [], logoOrder: [], libraryPath: '', globalFitMode: 'crop-fill' },
+                postprocess: createDefaultPostprocessMediaConfig(),
+              }),
+            ),
+          ),
+        },
+      ),
       { importConfig: true, importTasks: true, importImages: false },
     )
 
     expect(taskOnly).toBe(true)
-    expect(legacy).toBe(true)
+    expect(full).toBe(true)
     expect((await getAllTasks()).map((item) => item.id)).toEqual(['local-task', 'task-only-import', 'legacy-import'])
     expect(useStore.getState().workspaceTabs).toEqual([localTab])
   })

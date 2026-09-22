@@ -6,6 +6,16 @@ type MigrationDeps = {
   getState: () => CompositeV2StoreState
   setState: (patch: Partial<CompositeV2StoreState>) => void
   storeAssets?: typeof storeCompositeBlobs
+  /**
+   * 把本机文件读成 dataUrl（读不到返回 `null`）。
+   *
+   * 只有 `path` 型资源需要它 —— 那是「从本机磁盘选图」直接写进图层的形态，
+   * 只记住了盘上的位置，**换台机器就读不到**，导出前必须读进来落库。
+   *
+   * 用注入而不是在模块里直接调 `window.electronAPI`：这个模块要保持能在非 Electron
+   * 环境下跑（测试说给假实现就给假实现）。
+   */
+  readImageDataUrl?: (path: string) => Promise<string | null>
 }
 
 export function hasLegacyCompositeAssets(state: Pick<CompositeV2StoreState, 'projectLogos' | 'presets'>): boolean {
@@ -13,7 +23,10 @@ export function hasLegacyCompositeAssets(state: Pick<CompositeV2StoreState, 'pro
   return state.presets.some((preset) =>
     preset.layers.some((layer) => {
       if (layer.type !== 'image' && layer.type !== 'logo') return false
-      return layer.asset?.kind === 'dataUrl' || layer.asset?.kind === 'project'
+      const kind = layer.asset?.kind
+      // `path` 也算：它只记了本机磁盘上的位置，配置包搬到别的机器上就是断图。
+      // 导出前那一步（`buildCompositeBackup`）会把它读进来落库成 `stored`。
+      return kind === 'dataUrl' || kind === 'project' || kind === 'path'
     }),
   )
 }
@@ -27,13 +40,31 @@ export async function migrateLegacyCompositeAssets(deps: MigrationDeps): Promise
     if (value && !dataUrls.includes(value)) dataUrls.push(value)
   }
   snapshot.projectLogos.forEach((logo) => addDataUrl(logo.dataUrl))
+  /** 「从本机磁盘选图」写进来的绝对路径；读得到就迁成 `stored`，读不到保持原样。 */
+  const paths: string[] = []
   snapshot.presets.forEach((preset) =>
     preset.layers.forEach((layer) => {
-      if ((layer.type === 'image' || layer.type === 'logo') && layer.asset?.kind === 'dataUrl') {
-        addDataUrl(layer.asset.dataUrl)
+      if (layer.type !== 'image' && layer.type !== 'logo') return
+      if (layer.asset?.kind === 'dataUrl') addDataUrl(layer.asset.dataUrl)
+      if (layer.asset?.kind === 'path' && layer.asset.path && !paths.includes(layer.asset.path)) {
+        paths.push(layer.asset.path)
       }
     }),
   )
+
+  // path → dataUrl：读不到（文件不在本机 / 没权限）就跳过 —— 保留 `path` 原样，
+  // 至少不把用户已经配好的东西改坏，只是它仍然跨不了机器。
+  const dataUrlByPath = new Map<string, string>()
+  for (const path of paths) {
+    try {
+      const dataUrl = await deps.readImageDataUrl?.(path)
+      if (!dataUrl) continue
+      dataUrlByPath.set(path, dataUrl)
+      addDataUrl(dataUrl)
+    } catch {
+      // 单个文件读失败不该拖垮整次迁移：导出继续，只是这张图这次不进包
+    }
+  }
 
   const blobs = await Promise.all(dataUrls.map(dataUrlToCompositeBlob))
   const ids = await (deps.storeAssets ?? storeCompositeBlobs)(blobs)
@@ -60,7 +91,7 @@ export async function migrateLegacyCompositeAssets(deps: MigrationDeps): Promise
     ...preset,
     layers: preset.layers.map((layer) => {
       if (layer.type !== 'image' && layer.type !== 'logo') return layer
-      const asset = migrateAssetRef(layer.asset, assetIdByDataUrl, assetByProjectId)
+      const asset = migrateAssetRef(layer.asset, assetIdByDataUrl, assetByProjectId, dataUrlByPath)
       return asset === layer.asset ? layer : { ...layer, asset }
     }),
   }))
@@ -73,6 +104,7 @@ function migrateAssetRef(
   asset: CompositeV2ImageAssetRef | null,
   assetIdByDataUrl: Map<string, string>,
   assetByProjectId: Map<string, { assetId: string; name: string }>,
+  dataUrlByPath: Map<string, string>,
 ): CompositeV2ImageAssetRef | null {
   if (!asset) return asset
   if (asset.kind === 'dataUrl') {
@@ -82,6 +114,12 @@ function migrateAssetRef(
   if (asset.kind === 'project') {
     const resolved = assetByProjectId.get(asset.id)
     return resolved ? { kind: 'stored', ...resolved } : asset
+  }
+  // 「从本机磁盘选图」的形态：读到了才算迁得动，读不到就原样留着（不假装成功）
+  if (asset.kind === 'path') {
+    const dataUrl = dataUrlByPath.get(asset.path)
+    const assetId = dataUrl ? assetIdByDataUrl.get(dataUrl) : undefined
+    return assetId ? { kind: 'stored', assetId } : asset
   }
   return asset
 }

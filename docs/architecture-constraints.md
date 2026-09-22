@@ -317,9 +317,9 @@ prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步�
 [adr/0014](adr/0014-tree-rooted-config-bundle.md)）
 
 > **字段级细节一律以 [`config-spec.md`](config-spec.md)（配置规范）为准** —— 本文只说
-> 「哪些设计勿改回」。注意规范已重设计到 **v9**（配置拆成包内独立一份 `config.json`、
-> `root`→`defaults`、`nodes`→`tree`、删掉过渡期双写），**当前代码仍是 v8**，
-> 落地清单见规范 §八 / TB-100。
+> 「哪些设计勿改回」。规范描述的 **v9 已落地**（TB-100）：配置是包内**独立一份 `config.json`**、
+> `root`→`defaults`、`nodes`→`tree`、节点 `postprocess`→`overrides`、`watermarks`→`watermarkPresets`，
+> 并**删掉了过渡期双写**（`compositeState` / `postprocessMediaState` / `assetCollections`）。
 
 - **包结构**：根节点 = 渠道与尺寸字典 + 默认输出位置 / 命名模板 / 分发排期；
   产品节点 = 水印库（按 `CompositeV2Preset.productId` 归属，含 LOGO 图）；
@@ -328,9 +328,13 @@ prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步�
   反了会出现「引用了不存在的水印 / 渠道」，而这类错误要到产出那一刻才炸。
 - **树跟着「包含配置」走**，不再挂在「包含素材库元数据」下；同时**不要**顺带把素材索引
   （`generatedAssets`）发出去 —— 别人导入后素材库里会多出一堆指不到的条目。
-- **过渡期双写**：v8 包同时写 `treeConfig`（新）与 `compositeState` / `postprocessMediaState` /
-  `assetCollections`（旧）。**别提前删旧字段** —— ≤0.3.2 不认识 `treeConfig`，
-  只写新字段会让老版本导入后**静默什么都不恢复**。
+- **过渡期双写已删除（v9 / TB-100）**：v8 曾经同时写 `treeConfig`（新）与 `compositeState` /
+  `postprocessMediaState` / `assetCollections`（旧），为的是让 ≤0.3.2 的老版本也能导入。
+  配置同步上线前该系统已全线升级，于是按「不受向后兼容约束」**一次删干净**；同时补上了
+  `watermarkLibrary`（水印库的**库级**字段：LOGO 列表与顺序、标识符、水印全局适配、背景文件夹）——
+  它们原先搭的是 `compositeState` 那条并排的路，删掉它就等于静默丢这些字段。
+  ⇒ **别再把它加回来**。老包导入时**整包拒收**（报「配置包版本不认识：v8（本机只认 v9）」），
+  不做猜测性解析。包结构版本与配置格式版本是两个数，别混（见规范 §七 / R-87）。
 - **两处静默丢配置的高发点**，改导出/导入时必须逐条过：
   ① 没归属到任何产品的水印要进 `unassignedWatermarks`；
   ② 回收站里的节点不导出，但要在 `trashedSkipped` 里**报个数**。
