@@ -458,6 +458,13 @@ export function farthestPointSample(
   // 远层用的是完整 window（全部已选点），所以「远窗口」实际是无界的。
   // 保留该选项仅为 API 兼容，改它不影响结果；详见 docs/RISK.md 的配方卡引擎条目。
   void (options.windowFar ?? 80)
+  // ⚠️ 这两个总槽下限**故意不按维度数收敛**（低维模板上它们必然不可达，判据恒真）。
+  //
+  // 看着像缺陷，其实不是：恒真 + 跑满预算 + best-so-far 择优 ≈「有限预算内最大化与窗口的
+  // 最小差异」，实测（4 维 30 条 × 8 个种子）多样性**优于**把下限收敛之后的结果
+  // （20.0 vs 18.4~18.8 个不同歌名包、重复对子 12.3 vs 14.0~16.0），而代价只有 2.4ms/批。
+  // 收敛后只要「达到下限」就退出，即「够用就行」，反而更容易反复选中同一个内容槽。
+  // **不要再给它加 clamp** —— 完整对照数据见 docs/RISK.md R-94（2026-09-23 一度改过又回退）。
   const minTotalNear = options.minTotalNear ?? 7
   const minDomNear = options.minDomNear ?? 2
   const minTotalFar = options.minTotalFar ?? 6
