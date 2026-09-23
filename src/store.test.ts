@@ -376,6 +376,7 @@ import {
   resolveImageDisplaySrc,
   runManualPostprocess,
   showPostprocessIssuesDialog,
+  isAutoPostprocessEnabled,
   useStore,
 } from './store'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from './storePostprocessMedia'
@@ -5503,14 +5504,35 @@ describe('手动后处理入口', () => {
     expect(showToast).toHaveBeenCalledWith('请先选择要跑后处理的素材', 'error')
   })
 
-  it('后处理未启用时不产出，并说明去哪里启用', async () => {
+  /**
+   * 手动跑**不受「自动后处理」总开关约束**（2026-09-23 立的契约）。
+   *
+   * 这条原先守的是「启用范围为空 → 提示去项目树勾选」。那层白名单撤掉之后，需要守住的
+   * 变成了这一条：总开关关着（默认就是关）也不许拦手动那一下 —— 否则「自动关着、需要时
+   * 手动补一版」这条正常用法就没法走了。
+   */
+  it('总开关关着，手动跑照样开跑（不报「未启用」）', async () => {
     const showToast = vi.fn()
-    useStore.setState({ showToast })
-    usePostprocessMediaStore.setState({ selectedCollectionIds: [] })
+    useStore.setState({ showToast, settings: { ...useStore.getState().settings, autoPostprocess: false } })
 
     await runManualPostprocess(['image-a'])
 
-    expect(showToast).toHaveBeenCalledWith('后处理未启用：请先在项目树里勾选启用范围', 'error')
+    expect(showToast).not.toHaveBeenCalledWith('后处理未启用：请先在项目树里勾选启用范围', 'error')
+    expect(showToast).toHaveBeenCalled()
+  })
+
+  /**
+   * 总开关的「缺省 = 关」语义（2026-09-23）。
+   *
+   * 这条挡的是一种很容易被顺手改坏的回退：判定写成 `Boolean(x)` 或 `x !== false` 之后，
+   * **从没碰过这个开关**的用户（`undefined`）会在升级后开始自动产出 —— 表现是「后台偷偷往
+   * 磁盘写文件，而界面上什么都没开」。所以两侧都要守：自动侧是这条，手动侧见上一条。
+   */
+  it('总开关缺省即关：undefined 与 false 都算关，只有显式 true 才算开', () => {
+    expect(isAutoPostprocessEnabled({})).toBe(false)
+    expect(isAutoPostprocessEnabled({ autoPostprocess: undefined })).toBe(false)
+    expect(isAutoPostprocessEnabled({ autoPostprocess: false })).toBe(false)
+    expect(isAutoPostprocessEnabled({ autoPostprocess: true })).toBe(true)
   })
 
   /**

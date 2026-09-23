@@ -7,7 +7,8 @@
  *
  * 两个刻意的口径：
  * 1. **按作用域取值**：节点作用域用该节点继承后的配置展开（水印归属按渠道解析），
- *    全局作用域用全局基线 + 已启用的产出范围展开；
+ *    全局作用域用全局基线 + **全部方向**展开（2026-09-23 起不再有「启用范围」白名单，
+ *    所有方向都参与自动产出，要不要变体由各自的方向级开关决定）；
  * 2. **源图尺寸是估算的**：中控台不绑定任何一次生成，所以用一个示例尺寸（1280×720）。
  *    `direction` 为「跟随尺寸」时实际比例由图片自身决定，界面上明写这一点，
  *    不然用户会拿推算结果去对账。
@@ -41,26 +42,38 @@ interface Props {
 export function PostprocessOutputPreview({ scope }: Props) {
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
-  const selectedCollectionIds = usePostprocessMediaStore((state) => state.selectedCollectionIds)
   const watermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
   const presets = useCompositeV2Store((state) => state.presets)
   const globalConfig = usePostprocessGlobalConfig()
 
   const isGlobal = isGlobalScope(scope)
+
+  /**
+   * 全局作用域下要展开哪些方向：**树上全部叶子节点**（没有子节点的）。
+   *
+   * 取叶子而不是整份 `collections`：中间层（产品线 / 产品）同样会被
+   * `resolvePostprocessProjectTargets` 解成一个目标，于是预览里会冒出「方向名空着」的行。
+   */
+  const allDirectionIds = useMemo(() => {
+    const active = collections.filter((item) => !item.trashedAt)
+    const parentIds = new Set(active.map((item) => item.parentId).filter(Boolean))
+    return active.filter((item) => !parentIds.has(item.id)).map((item) => item.id)
+  }, [collections])
+
   const config = useMemo(
     () => resolveProjectPostprocessSlice(collections, params, isGlobal ? null : scope, globalConfig).config,
     [collections, params, isGlobal, scope, globalConfig],
   )
 
-  /** 产出目标：全局层用「已启用的范围」，节点层就是它自己 */
+  /** 产出目标：全局层用**全部方向**（树上的叶子节点），节点层就是它自己。 */
   const targets = useMemo(() => {
-    const ids = isGlobal ? selectedCollectionIds : [scope]
+    const ids = isGlobal ? allDirectionIds : [scope]
     return resolvePostprocessProjectTargets(collections, ids).map((target) => ({
       ...target,
       watermarkPresetIds: resolveNodeWatermarkBinding(collections, params, target.collectionId, watermarkPresetIds)
         .presetIds,
     }))
-  }, [collections, params, isGlobal, scope, selectedCollectionIds, watermarkPresetIds])
+  }, [collections, params, isGlobal, scope, allDirectionIds, watermarkPresetIds])
 
   // 水印预设名进文件名（`{preset}` 占位符）：查不到就退回 id，宁可看见 id 也不出现空段
   const presetNames = useMemo(() => Object.fromEntries(presets.map((preset) => [preset.id, preset.name])), [presets])
@@ -99,7 +112,7 @@ export function PostprocessOutputPreview({ scope }: Props) {
         <Alert tone="warning">有 {plan.skippedMediaIds.length} 个已勾选的渠道在媒体表里找不到，已跳过。</Alert>
       )}
       {isGlobal && targets.length === 0 && (
-        <p className="text-xs text-ds-muted">还没有启用任何方向。在项目树的「后处理」列勾选后会在这里展开。</p>
+        <p className="text-xs text-ds-muted">项目树里还没有方向，所以在全局作用域下没什么可展开。</p>
       )}
       {plan.units.length === 0 ? (
         <p className="text-xs text-ds-muted">当前配置产不出文件，请检查渠道勾选、尺寸与画面方向。</p>

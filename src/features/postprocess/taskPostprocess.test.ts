@@ -8,9 +8,12 @@
  * 不区分来源，于是用户手动点「跑后处理」也被它拦下 —— 而提示里正写着「或选中素材单独跑一次」，
  * 照做还是被跳过，成了死循环。这条契约就是「手动点的那次不被一个管自动的开关否决」。
  *
- * 2026-09-22 追问同一条边界：**启用范围**（`selectedCollectionIds`）的定义也是「哪些方向参与
- * 自动后处理」，所以它同样只拦自动触发；并且**「记住的产出目标」只有手动跑才读**，不掺进自动
- * 产出（杰哥：「我这个只针对于手动后处理，不需要改自动后处理的」）。
+ * 2026-09-22 追问同一条边界：**「记住的产出目标」只有手动跑才读**，不掺进自动产出
+ * （杰哥：「我这个只针对于手动后处理，不需要改自动后处理的」）。
+ *
+ * 2026-09-23：原先还有第二层「启用范围」（`selectedCollectionIds` + `PP-SCOPE-001`），
+ * 它已整体撤掉（用户诉求：图都要后处理，区别只是自动还是手动）。自动侧现在只剩
+ * **方向级开关**这一处判定，所以本文件守的是「手动不被它拦、自动照拦」这一对。
  *
  * **未覆盖**：渲染链、写盘、分发（依赖 canvas 与主进程 fs）。那部分由 `outputRoots.test.ts`
  * 与本地预览覆盖。
@@ -216,29 +219,17 @@ describe('多目标产出：记住的产出目标', () => {
     expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id]))
   })
 
-  it('⭐ 手动跑：记住的目标跨出启用范围也照产（新开的产品先手动投一版）', async () => {
+  it('⭐ 手动跑：记住的目标跨出归属方向，且不被归属那个方向级开关拦住', async () => {
     usePostprocessMediaStore.setState({
-      // 只启用 A：B 是还没参与自动产出的方向
       selectedCollectionIds: [DIRECTION_A.id],
       savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
     })
 
+    // fixture 的 `params` 把归属方向 A 的方向级开关关着 —— 手动跑不该受它影响
     const result = await run({ source: 'manual' })
 
-    expect(codesOf(result.issues)).not.toContain('PP-SCOPE-001')
+    expect(codesOf(result.issues)).not.toContain('PP-SCOPE-002')
     expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id, DIRECTION_B.id]))
-  })
-
-  it('自动跑：启用范围仍是硬开关，归属方向不在范围内 → 记 PP-SCOPE-001 并跳过（防回退）', async () => {
-    usePostprocessMediaStore.setState({
-      // 只启用 B：归属方向 A 反而在范围外
-      selectedCollectionIds: [DIRECTION_B.id],
-      savedTargetCollectionIds: [],
-    })
-
-    const result = await run({ source: 'auto' })
-
-    expect(codesOf(result.issues)).toContain('PP-SCOPE-001')
   })
 
   it('⭐ 自动跑不读「记住的产出目标」—— 那份清单只管手动点的那一次', async () => {

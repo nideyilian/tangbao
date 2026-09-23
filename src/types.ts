@@ -147,6 +147,17 @@ export interface AppSettings {
   reuseTaskApiProfileTemporarily: boolean
   alwaysShowRetryButton: boolean
   taskCompletionNotification: boolean
+  /**
+   * 生成任务完成后是否自动跑后处理。**默认关**（`undefined` 与 `false` 同义）。
+   *
+   * 自动后处理是「用户没看着的时候往磁盘写文件」的后台行为，所以必须由用户明确打开 ——
+   * 早先它由「项目树里勾了哪些方向」隐式决定，用户以为没启用、实际每批都在跑，
+   * 于是收获一屏「已跳过」的记录（2026-09-23）。
+   *
+   * 打开之后**所有方向都参与**：还要不要产出变体由方向级的「自动后处理」开关决定
+   * （`PostprocessNodeOverride.enabled`，默认继承即开）。手动「跑后处理」不受本开关约束。
+   */
+  autoPostprocess?: boolean
   enterSubmit: boolean
   referenceImageEditAction: ReferenceImageEditAction
   zipDownloadRoutes: ZipDownloadRoute[]

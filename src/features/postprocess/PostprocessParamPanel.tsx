@@ -38,7 +38,6 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert,
   AspectRatio,
   Badge,
   Button,
@@ -57,14 +56,13 @@ import {
 import ChannelOutputDirs from './ChannelOutputDirs'
 import { normalizeOutputDirList, resolvePostprocessOutputDirs } from '../../lib/postprocessMedia'
 import type { PostprocessMediaConfig, PostprocessNodeOverride } from '../../lib/postprocessMedia'
-import { isCollectionWithinSelection, resolveCollectionPath } from '../../lib/postprocessProjectTree'
+import { resolveCollectionPath } from '../../lib/postprocessProjectTree'
 import { useStore } from '../../store'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useCompositeV2Store } from '../composite/storeV2'
 import { renderCompositeV2ToCanvas } from '../composite/lib/compositeRendererV2'
 import type { CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useJumpToControlConsole } from '../composite/lib/useJumpToControlConsole'
-import { useJumpToProjectTree } from '../projectTree/useJumpToProjectTree'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { resolveNodeWatermarkBinding } from '../projectTree/params'
 import {
@@ -83,15 +81,6 @@ interface Props {
   selectedNodeId: string
   /** 全局基线配置（由宿主组装）—— 这里只作为**继承来源** */
   globalConfig: PostprocessMediaConfig
-  /** 勾选的启用范围（判断该节点是否真的会产出） */
-  enabledScopeIds: string[]
-  /**
-   * 请宿主关闭弹窗。
-   *
-   * 用在「跳到别处」的动作上（目前是「去项目树启用」）：不关的话后处理弹窗会留在原地，
-   * 叠在刚打开的项目树工作台上，用户得先关一层才能操作。
-   */
-  onRequestClose: () => void
 }
 
 /**
@@ -189,18 +178,12 @@ function FieldRow({
   )
 }
 
-export default function PostprocessParamPanel({
-  selectedNodeId,
-  globalConfig,
-  enabledScopeIds,
-  onRequestClose,
-}: Props) {
+export default function PostprocessParamPanel({ selectedNodeId, globalConfig }: Props) {
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
   const setPostprocessOverride = useProjectTreeParamsStore((state) => state.setPostprocessOverride)
   const clearNodeParams = useProjectTreeParamsStore((state) => state.clearNodeParams)
   const showToast = useStore((state) => state.showToast)
-  const jumpToProjectTree = useJumpToProjectTree()
 
   const media = globalConfig.media
 
@@ -232,11 +215,6 @@ export default function PostprocessParamPanel({
   const depth = useMemo(
     () => Math.max(0, resolveProjectNodeIdChain(collections, selectedNodeId).length - 1),
     [collections, selectedNodeId],
-  )
-
-  const inEnabledScope = useMemo(
-    () => isCollectionWithinSelection(collections, selectedNodeId, enabledScopeIds),
-    [collections, selectedNodeId, enabledScopeIds],
   )
 
   /**
@@ -349,21 +327,13 @@ export default function PostprocessParamPanel({
           // 放进撑满宽度的控件列会把开关甩到最右、中间留一大片空。
           // `ml-auto` 把它推到行尾（整行式布局里没有 spacer，靠它占剩余空间）。
           // `aria-label` 给无障碍名称（可见的字段名在左侧标签位里，不在 `<label>` 内）。
-          // 文案走 formatParticipationLabel：不在启用范围时必须能读出「未生效」，
-          // 否则它会与上方那句「不会产出渠道变体」的警告互相打脸。
-          // 同时**刻意不置灰**：范围外仍然允许改这个值（先把参数配好，等方向进了范围即生效），
-          // 既有契约也是「开关随时可写」，把交互拿掉等于单方面改契约。
-          // `title` 负责解释它当前为什么不影响产出。
-          <div
-            className="ml-auto w-fit"
-            title={
-              inEnabledScope ? undefined : '这个方向不在后处理的启用范围内，开关值当前不影响产出；请先到项目树启用'
-            }
-          >
+          // 文案只说这个开关现在是开还是关（2026-09-23 起不再有「未生效」这一档：
+          // 那档来自已撤掉的「启用范围」白名单）。
+          <div className="ml-auto w-fit">
             <Switch
               checked={enabled}
               onCheckedChange={(next) => apply({ enabled: next })}
-              label={formatParticipationLabel(enabled, inEnabledScope)}
+              label={formatParticipationLabel(enabled)}
               aria-label={field.label}
             />
           </div>
@@ -442,30 +412,6 @@ export default function PostprocessParamPanel({
             </Button>
           )}
         </Inline>
-
-        {/*
-         * 未启用范围：**必须给出真的能到那儿的入口**（MASTER §5.6 同一口径）。
-         * 启用范围的唯一编辑点是项目树的「后处理」列 —— 只写一句「请在项目树里勾选」，
-         * 用户只能自己回素材库、点「项目树」、再在几十行里翻出这个方向。
-         */}
-        {!inEnabledScope && (
-          <Stack gap={2}>
-            <Alert tone="warning">未启用后处理，不会产出变体。</Alert>
-            <Inline gap={2} justify="flex-end">
-              <Button
-                variant="secondary"
-                size="sm"
-                title="打开项目树的「后处理」列，把这个方向（或它的上级）勾上"
-                onClick={() => {
-                  onRequestClose()
-                  jumpToProjectTree(selectedNodeId)
-                }}
-              >
-                去项目树启用
-              </Button>
-            </Inline>
-          </Stack>
-        )}
       </Stack>
 
       {/*

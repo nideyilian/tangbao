@@ -32,7 +32,6 @@ import { useAssetLibraryStore, type AssetGridDensity, type AssetGroupBy } from '
 import { COLOR_LABEL_OPTIONS } from './colorLabels'
 import { pinnedFilterKey, pinnedFilterLabel } from './pinnedFilters'
 import FilterControlStrip from './FilterControlStrip'
-import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
 import { runManualPostprocess, useStore } from '../../store'
 import {
   useAnyDirectionPostprocessBusy,
@@ -230,8 +229,6 @@ function AssetLibraryToolbar({
       )}
 
       {isCollectionScope && <IncludeSubcollectionsSwitch />}
-
-      <ProjectTreeEntryButton />
 
       <PostprocessTargetsEntryButton />
 
@@ -869,27 +866,6 @@ function FavoriteToggleButton() {
         </button>
       </Badge>
     </div>
-  )
-}
-
-/**
- * 「项目树」入口：打开统一的产品线 → 产品 → 方向 管理表格（结构与参数一处改、全局生效）。
- *
- * 开关状态放在应用 store 而不是本地 state（2026-09-20）：**别处要把用户送到这儿**——
- * 「后处理」弹窗里「这个方向不在启用范围内，去项目树的『后处理』列勾选」那条提示，
- * 原来只能干说一句。改成读 store 后，那个按钮点一下就能真的打开这张表。
- */
-function ProjectTreeEntryButton() {
-  const open = useStore((state) => state.projectTreeWorkbench.open)
-  const openProjectTreeWorkbench = useStore((state) => state.openProjectTreeWorkbench)
-  const closeProjectTreeWorkbench = useStore((state) => state.closeProjectTreeWorkbench)
-  return (
-    <>
-      <Button variant="ghost" size="sm" onClick={() => openProjectTreeWorkbench()}>
-        项目树
-      </Button>
-      {open && <ProjectTreeWorkbench onClose={closeProjectTreeWorkbench} />}
-    </>
   )
 }
 

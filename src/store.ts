@@ -38,7 +38,7 @@ import {
   issuesToWarnings,
   type PostprocessIssue,
 } from './features/postprocess/postprocessIssue'
-import type { PostprocessRunSource } from './features/postprocess/postprocessRun'
+import { isAutoDisabledOnlySkip, type PostprocessRunSource } from './features/postprocess/postprocessRun'
 // 方向拆分相关：`directionTargets` 只依赖纯类型（无副作用模块），`postprocessDirectionGate`
 // 只依赖 runtimeStore —— 两者都不会把 features/composite 拉进 store.ts 的模块图（见上面那条注释）。
 import { groupImageIdsByTargetDirection } from './features/postprocess/directionTargets'
@@ -892,6 +892,18 @@ async function markImagesPostprocessed(imageIds: string[]): Promise<void> {
 }
 
 /**
+ * 自动后处理总开关是否开着（`AppSettings.autoPostprocess`）。
+ *
+ * **`undefined` 与 `false` 同义 = 关**。这条「默认关」的语义必须钉死在**一处** ——
+ * 闸门、设置面板、输入栏的状态显示都读它。各写一遍 `=== true` 或 `Boolean(x)` 迟早分叉，
+ * 而分叉的表现是「用户以为关着，后台照旧往磁盘写」。
+ * 抽成函数同时也是为了让它可测（`scheduleTaskPostprocess` 要跑完整条生成链才到得了）。
+ */
+export function isAutoPostprocessEnabled(settings: Pick<AppSettings, 'autoPostprocess'>): boolean {
+  return settings.autoPostprocess === true
+}
+
+/**
  * 任务完成后按后处理配置产出各渠道变体。
  *
  * 幂等三闸：内存键（同会话防并发重入）、任务的 `postprocessOutputs`（跨重启）、
@@ -903,10 +915,16 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
   const imageIds = (task.outputImages ?? []).filter(Boolean)
   if (imageIds.length === 0) return
 
-  const config = usePostprocessMediaStore.getState()
-  // 勾选项 = 后处理的**启用范围**（不是产出目标——产出目标由图片归属决定）。
-  // 一个都没勾就是不启用：不看树上有多少参数，否则「没勾却照跑」会与输入栏的「未启用」自相矛盾。
-  if (config.selectedCollectionIds.length === 0) return
+  /**
+   * 总开关：**默认关**（2026-09-23）。
+   *
+   * 自动后处理是「用户没看着的时候往磁盘写文件」的后台行为，得由用户明确打开。
+   * 原来这里判的是「项目树里的启用范围非空」—— 那个条件藏在另一处配置里，用户以为没启用、
+   * 实际每个任务完成都在跑，然后因为某个方向没被勾上而留一屏「已跳过」记录（杰哥报障）。
+   * 闸门提到开关上之后，界面说什么就是什么：**开关关着 = 后台一次都不跑**。
+   * 手动「跑后处理」不受它约束（用户明确点的那一次必须有下文）。
+   */
+  if (!isAutoPostprocessEnabled(useStore.getState().settings)) return
 
   const produced = new Set((task.postprocessOutputs ?? []).map((item) => item.rawImageId))
   const result = await executePostprocessImageIds(imageIds, {
@@ -934,7 +952,6 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
       return true
     },
   })
-  if (!result) return
 
   if (result.outputs.length > 0) {
     const latest = useStore.getState().tasks.find((item) => item.id === taskId)
@@ -1196,7 +1213,12 @@ async function authorizeHistoryOutputDirs(): Promise<void> {
  * 手动跑的「记住配置」可以一批跨方向，按归属拆会拆不干净。
  *
  * 不碰任务记录：自动触发要写回 `postprocessOutputs`，手动触发没有任务可写，
- * 把写回塞进来会让两边的幂等语义互相污染。返回 null = 后处理没启用（调用方据此提示）。
+ * 把写回塞进来会让两边的幂等语义互相污染。
+ *
+ * **不再有「没启用」这个返回值**（2026-09-23）：原先启用范围为空就返回 `null`、调用方据此
+ * 提示「请先勾选启用范围」。那层白名单撤掉后，「能不能跑」只剩两个真实约束 ——
+ * 自动侧的总开关（在 `scheduleTaskPostprocess` 里判）与方向级开关（执行体内判），
+ * 调用方不需要再看一个笼统的「未启用」。
  */
 async function executePostprocessImageIds(
   imageIds: string[],
@@ -1216,10 +1238,7 @@ async function executePostprocessImageIds(
      */
     claimImage?: (directionId: string, imageId: string) => boolean
   },
-): Promise<TaskPostprocessResult | null> {
-  // 启用范围为空 = 没启用。与输入栏的「未启用」显示保持一致，不看树上有多少参数。
-  if (usePostprocessMediaStore.getState().selectedCollectionIds.length === 0) return null
-
+): Promise<TaskPostprocessResult> {
   const batchId = `${options.source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
   /**
@@ -1404,6 +1423,21 @@ async function executePostprocessImageIds(
         producedFiles: result.outputs.length,
         diagnostics: result.diagnostics,
       })
+      /**
+       * 零产出、且原因只有「这个方向关了自动后处理」时**不留档**（2026-09-23）。
+       *
+       * 这类结果是**配置使然**，不是事件：用户自己把那个开关关掉了，每张图跑完再记一条
+       * 「已跳过」只是拿他自己配的事实刷屏，而且点开也没有任何可做的事
+       * （杰哥报障「不要有提示跳过的提醒」）。判定收在 `isAutoDisabledOnlySkip` ——
+       * 取消与「源图读不到」这类跳过**照旧留档**，它们都指向「有东西本该产出却没产出」。
+       *
+       * 连记录一起撤掉（而不是只跳过落历史）：工具栏那个状态入口读的就是这份内存记录，
+       * 留着它按钮上仍然挂着「已跳过 N」。
+       */
+      if (result.outputs.length === 0 && isAutoDisabledOnlySkip(result.issues)) {
+        useRuntimeStore.getState().dismissPostprocessRun(runId)
+        return result
+      }
       // 收尾之后落一条方向级历史（TB-115）：实时进度归 runtimeStore（内存态），长期留档归
       // 历史 store（落盘）—— 同一份数据的两个生命周期，而不是两处各自记账
       recordDirectionPostprocessHistory({
@@ -1530,10 +1564,6 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
 
   try {
     const result = await executePostprocessImageIds(ids, { waitForOwnership: false, source: 'manual' })
-    if (!result) {
-      useStore.getState().showToast('后处理未启用：请先在项目树里勾选启用范围', 'error')
-      return
-    }
     reportPostprocessResult(result, { successPrefix: '手动后处理完成', source: 'manual' })
     // 素材侧亮「已使用」（TB-105）：手动跑没有任务记录可写，这行是它**唯一**的落库点 ——
     // 少了它，手动产出的图在素材库里永远显示成「没跑过」。
@@ -3068,21 +3098,6 @@ interface AppState {
    */
   controlConsoleSection: ControlConsoleSectionId
   setControlConsoleSection: (section: ControlConsoleSectionId) => void
-  /**
-   * 项目树工作台的打开状态（唯一真相源，`null` = 关着）。
-   *
-   * 它原本是资产库工具栏里的局部 state，于是**别处没法把用户送过去** ——
-   * 「后处理」弹窗那条「这个方向不在启用范围内，请到项目树的『后处理』列勾选」
-   * 就只能干说一句、让人自己去翻（这正是杰哥 2026-09-20 报的那条）。
-   *
-   * `focusId`：跳过去时要让人一眼看到的那一行（工作台用它预填搜索关键词）。
-   * 与 `open` 放在同一个值里，避免出现「开着但带着上一次的焦点」这种不一致。
-   *
-   * 刻意**不落盘**（`getPersistedState` 是白名单）：它是「这一次跳转」的意图，不是偏好。
-   */
-  projectTreeWorkbench: { open: boolean; focusId: string | null }
-  openProjectTreeWorkbench: (focusId?: string | null) => void
-  closeProjectTreeWorkbench: () => void
   // 设置
   settings: AppSettings
   setSettings: (s: Partial<AppSettings>) => void
@@ -3770,9 +3785,6 @@ export const useStore = create<AppState>()(
       appMode: 'gallery',
       controlConsoleSection: DEFAULT_CONTROL_CONSOLE_SECTION,
       setControlConsoleSection: (controlConsoleSection) => set({ controlConsoleSection }),
-      projectTreeWorkbench: { open: false, focusId: null },
-      openProjectTreeWorkbench: (focusId = null) => set({ projectTreeWorkbench: { open: true, focusId } }),
-      closeProjectTreeWorkbench: () => set({ projectTreeWorkbench: { open: false, focusId: null } }),
       setAppMode: (appMode) => {
         if (appMode === 'gallery') {
           const state = get()

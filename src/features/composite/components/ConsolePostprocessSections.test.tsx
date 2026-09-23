@@ -232,12 +232,14 @@ describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名
     expect(fileNames.some((name) => name.endsWith('-2.jpg'))).toBe(false)
   })
 
-  it('产出预览跟随作用域：全局层没启用方向时给提示，节点层按该节点照常展开', () => {
-    // 全局层：产出目标来自「已启用的范围」，一条都没启用时就没有可展开的目标
-    expect(render(<ChannelSection scope={GLOBAL_NODE_ID} />)).toContain('还没有启用任何方向')
-    // 节点层：作用域本身就是产出目标，不需要「启用范围」也能展开出归属路径
+  it('产出预览跟随作用域：全局层展开全部方向（不再依赖启用范围），节点层按该节点展开', () => {
+    // 2026-09-23：撤掉「启用范围」白名单之后，全局层不再看任何勾选 —— 树上的方向全都在列，
+    // 旧的那句「还没有启用任何方向」也随之消失（它的触发条件已经不存在了）
+    const globalBody = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+    expect(globalBody).not.toContain('还没有启用任何方向')
+    expect(globalBody).toContain('智能客服 / 机器人 / 竖版展示')
+    // 节点层：作用域本身就是产出目标
     const nodeBody = render(<ChannelSection scope="direction-a" />)
-    expect(nodeBody).not.toContain('还没有启用任何方向')
     expect(nodeBody).toContain('智能客服 / 机器人 / 竖版展示')
   })
 

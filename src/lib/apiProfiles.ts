@@ -789,6 +789,9 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     alwaysShowRetryButton: typeof record.alwaysShowRetryButton === 'boolean' ? record.alwaysShowRetryButton : false,
     taskCompletionNotification:
       typeof record.taskCompletionNotification === 'boolean' ? record.taskCompletionNotification : false,
+    // 自动后处理总开关：默认关。旧存档没有这个字段 → 拿到 false，
+    // 与「用户从没开过」一致；**不做任何折算**，所以不必 bump 设置版本。
+    autoPostprocess: record.autoPostprocess === true,
     enterSubmit: typeof record.enterSubmit === 'boolean' ? record.enterSubmit : false,
     referenceImageEditAction: normalizeReferenceImageEditAction(record.referenceImageEditAction),
     zipDownloadRoutes: normalizeZipDownloadRoutes(record.zipDownloadRoutes),
@@ -1193,6 +1196,7 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   reuseTaskApiProfileTemporarily: false,
   alwaysShowRetryButton: false,
   taskCompletionNotification: false,
+  autoPostprocess: false,
   enterSubmit: false,
   referenceImageEditAction: 'ask',
   zipDownloadRoutes: DEFAULT_ZIP_DOWNLOAD_ROUTES,

@@ -287,6 +287,22 @@ export function countPostprocessIssues(run: PostprocessRun): { errors: number; s
 }
 
 /**
+ * 这次**不值得留档**吗：给出的原因只有「这个方向关了自动后处理」。
+ *
+ * 用来回答「零产出的这条 run 该不该在进度面板与方向历史里留下一条」（见 `store.ts` 的调用处）。
+ *
+ * ⚠️ **不能按 `severity === 'skipped'` 一刀切** —— 跳过型里混着必须留的两类：
+ * - `PP-CANCEL-001` 用户主动停的（严重度刻意是 skipped）：产物已经落盘，「停在哪了」正是他要看的；
+ * - `PP-SRC-001` 源图读不到：指向真的缺数据，静默掉等于把问题藏起来。
+ * 所以这里只认这一个码。它之所以特殊，是因为**开关是用户自己关的**：他当然知道关着，
+ * 每批再照原样记一条「已跳过」只是拿他自己配的事实刷屏
+ * （2026-09-23 杰哥报障「不要有提示跳过的提醒」）。
+ */
+export function isAutoDisabledOnlySkip(issues: readonly PostprocessIssue[]): boolean {
+  return issues.length > 0 && issues.every((issue) => issue.code === 'PP-SCOPE-002')
+}
+
+/**
  * 一行结论（toast / 卡片副标题）。
  *
  * 与 `reportPostprocessResult` 的老文案保持同一形状（「后处理完成：产出 N 个文件」），

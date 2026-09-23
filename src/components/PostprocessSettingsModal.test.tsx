@@ -140,8 +140,6 @@ beforeEach(() => {
   useStore.setState({
     appMode: 'gallery',
     controlConsoleSection: DEFAULT_CONTROL_CONSOLE_SECTION,
-    // 项目树工作台是一次性意图：不重置会让「跳过去要带上焦点」那条用例污染别的用例
-    projectTreeWorkbench: { open: false, focusId: null },
   })
   useCompositeV2Store.setState({
     presets: [
@@ -217,14 +215,6 @@ describe('PostprocessSettingsModal — 作用范围跟随全局上下文指针',
     })
     const body = render()
     expect(body).toContain('还没有选中方向')
-  })
-
-  it('已启用的节点缺失时给出跳过提示', () => {
-    pointScopeAt('direction-a')
-    act(() => {
-      usePostprocessMediaStore.setState({ selectedCollectionIds: ['ghost-project'] })
-    })
-    expect(render()).toContain('有 1 个已启用的节点不存在或已删除')
   })
 })
 
@@ -477,29 +467,6 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     // 指路只在同一行右侧的按钮上（「去中控台配水印」），字段说明不再复述一遍
     expect(body.match(/水印归属」树/g)?.length ?? 0).toBe(0)
   })
-
-  it('⭐ 顶部「不在启用范围」的提示能真的跳到项目树那一行', () => {
-    // 场景：这个方向没在项目树的「后处理」列勾选 → 参数照常保存，但图片不产出变体。
-    // 原先只写一句「请在项目树里勾选」，用户得自己回素材库、点「项目树」、再翻几十行。
-    render()
-    expect(panelText()).toContain('未启用后处理')
-
-    act(() => findButton('去项目树启用').click())
-
-    const workbench = useStore.getState().projectTreeWorkbench
-    expect(workbench.open).toBe(true)
-    // 必须带上焦点节点：工作台用它预填搜索，否则跳过去还是要自己找那一行
-    expect(workbench.focusId).toBe('direction-a')
-    // 工作台挂在资产库工具栏里 —— 不切模式的话它根本不渲染，等于跳了个寂寞
-    expect(useStore.getState().appMode).toBe('gallery')
-  })
-
-  it('不在启用范围内的方向给出警告（启用范围在项目树里勾）', () => {
-    act(() => {
-      usePostprocessMediaStore.setState({ selectedCollectionIds: [] })
-    })
-    expect(render()).toContain('未启用后处理')
-  })
 })
 
 describe('PostprocessSettingsModal — 底部产出数', () => {
@@ -507,14 +474,9 @@ describe('PostprocessSettingsModal — 底部产出数', () => {
 
   it('算的是当前方向的产出数', () => {
     act(() => {
-      usePostprocessMediaStore.setState({ selectedCollectionIds: ['direction-a'] })
       usePostprocessMediaStore.getState().toggleSelectedMedia('gdt')
     })
     expect(render()).toContain('每张原图产出')
-  })
-
-  it('没有启用任何范围时指路到项目树，而不是显示产出数', () => {
-    expect(render()).toContain('未启用后处理。')
   })
 })
 

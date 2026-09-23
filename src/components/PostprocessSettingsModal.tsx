@@ -23,14 +23,14 @@
  *
  * ## 其他
  *
- * - **启用范围（哪些项目参与自动后处理）不在这个弹窗里配置** —— 入口在项目树工作区的
- *   「后处理」列。这里只在节点不在启用范围内时给一句警告。
+ * - **「自动后处理」总开关不在这个弹窗里** —— 它在应用设置里（默认关，见 `AppSettings.autoPostprocess`）。
+ *   本弹窗只回答「这个方向怎么产出」。
  * - 外壳交给设计系统的 `Dialog`：遮罩、ESC、焦点陷阱、滚动锁与焦点回归都由它统一接管
  *   （走 `overlayManager` 的 overlay 栈，多层弹窗时只响应最上层）。
  */
 
 import { useMemo } from 'react'
-import { Alert, Button, Dialog, DialogPane, DialogWorkspace, EmptyState, SelectField, Stack } from '../design-system'
+import { Button, Dialog, DialogPane, DialogWorkspace, EmptyState, SelectField, Stack } from '../design-system'
 import { useAssetLibraryStore } from '../features/assetLibrary/store'
 import PostprocessParamPanel from '../features/postprocess/PostprocessParamPanel'
 import { usePostprocessGlobalConfig } from '../features/postprocess/usePostprocessGlobalConfig'
@@ -44,7 +44,6 @@ import {
 import { PROJECT_NODE_KIND_LABELS } from '../features/projectTree/types'
 import {
   buildPostprocessProjectTree,
-  findMissingProjectCollectionIds,
   flattenPostprocessProjectTree,
   resolvePostprocessProjectTargets,
 } from '../lib/postprocessProjectTree'
@@ -90,7 +89,6 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
    * 以及算当前方向的产出数。全局本身的编辑入口在中控台。
    */
   const globalConfig = usePostprocessGlobalConfig()
-  const selectedCollectionIds = globalConfig.selectedCollectionIds
   const watermarkPresetIds = globalConfig.watermarkPresetIds
 
   const collections = useAssetLibraryStore((state) => state.collections)
@@ -113,11 +111,6 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
   /** 项目树：作用范围下拉的选项来源，与中控台的资产树读同一份 collections。 */
   const projectTree = useMemo(() => buildPostprocessProjectTree(collections), [collections])
   const flatNodes = useMemo(() => flattenPostprocessProjectTree(projectTree), [projectTree])
-
-  const missingProjectIds = useMemo(
-    () => findMissingProjectCollectionIds(collections, selectedCollectionIds),
-    [collections, selectedCollectionIds],
-  )
 
   /**
    * 产出数：**只算当前方向**。
@@ -144,8 +137,6 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
    */
   const statusLine = (() => {
     if (!selectedNodeId) return ''
-    // 短句：这里只报状态，不写「怎么修」——「怎么修」是上面那条 Alert 的按钮。
-    if (selectedCollectionIds.length === 0) return '未启用后处理。'
     if (unitCount === 0) return '产不出变体：检查中控台的渠道与尺寸。'
     return `每张原图产出 ${unitCount} 个文件。`
   })()
@@ -210,9 +201,6 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
                 value={selectedNodeId ?? ''}
                 onChange={(event) => setCollectionContextScope(event.target.value || null)}
               />
-              {missingProjectIds.length > 0 && (
-                <Alert tone="warning">有 {missingProjectIds.length} 个已启用的节点不存在或已删除，将被跳过。</Alert>
-              )}
             </Stack>
 
             {/*
@@ -225,13 +213,7 @@ export default function PostprocessSettingsModal({ sourceSize, onClose }: Props)
             <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto border-t border-ds-border pt-5 pr-1">
               {selectedNodeId ? (
                 <Stack gap={6}>
-                  <PostprocessParamPanel
-                    selectedNodeId={selectedNodeId}
-                    globalConfig={globalConfig}
-                    enabledScopeIds={selectedCollectionIds}
-                    // 「去项目树启用」要离开这里：不关的话弹窗会叠在刚打开的项目树工作台上
-                    onRequestClose={onClose}
-                  />
+                  <PostprocessParamPanel selectedNodeId={selectedNodeId} globalConfig={globalConfig} />
                   {/* 状态（MASTER §5.9 里的 Status 层）：只在面板之后出现一次，footer 不重复 */}
                   <p className="text-xs text-ds-muted">{statusLine}</p>
                 </Stack>

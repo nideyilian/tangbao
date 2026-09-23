@@ -20,7 +20,7 @@ import {
   saveCompositeImage,
 } from '../../lib/localSave'
 import { PURE_MEDIA_ID, type PostprocessMediaConfig, type PostprocessProjectTarget } from '../../lib/postprocessMedia'
-import { isCollectionWithinSelection, resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
+import { resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
 import {
   runPostprocessDistribution,
   toBaseDate,
@@ -237,12 +237,16 @@ function reportIssue(acc: PostprocessAccumulator, input: PostprocessIssueInput, 
  * 归属由调用方通过 `resolveImageCollectionId` 注入（取自素材的 `collectionIds`），
  * 所以正常流程下用户不需要在任何面板里再勾一次项目。
  *
- * 勾选（`selectedCollectionIds`）在这套模型里是**启用范围**而不是产出目标：
- * 图片归属方向被勾选（或它任一祖先被勾选）才产出，否则跳过。
- * 没有这一步，一棵几十个方向的树上只要图归档到哪儿就产出到哪儿，磁盘会先炸。
+ * **参与与否只看方向级开关**（`PostprocessNodeOverride.enabled`，沿继承链解析，默认开）。
  *
- * 提前返回的两种情形都不算失败：非 Electron、没有输出源图。
- * 「启用范围为空」时同样直接返回——没启用就不产出，与输入栏的「未启用」显示保持一致。
+ * 2026-09-23 起**不再有「启用范围」这一层**：那份白名单的语义是「哪些方向参与*自动*后处理」，
+ * 但没被勾上的方向每批都会产生一条 `PP-SCOPE-001` 跳过记录 —— 而批量出图的用户真实的诉求是
+ * 「这些图本来都要后处理，区别只是自动跑还是手动跑」。现在「自动 vs 手动」由设置里的
+ * 总开关（`settings.autoPostprocess`）承担，方向级开关管「这个方向要不要变体」。
+ *
+ * `selectedCollectionIds` 因此只剩一个用途：**无归属的图（手工拖入 / 旧数据）产出到哪**。
+ *
+ * 提前返回的情形都不算失败：非 Electron、没有输出源图。
  */
 export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promise<TaskPostprocessResult> {
   const result = emptyAccumulator()
@@ -265,7 +269,6 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     useProjectTreeParamsStore.getState().promotedGlobals,
   )
   const params = input.projectParams ?? {}
-  if (baseConfig.selectedCollectionIds.length === 0) return toResult(result)
 
   const api = typeof window !== 'undefined' ? window.electronAPI : undefined
   if (!api) {
@@ -387,30 +390,6 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     const jobBuckets: Array<{ project: PostprocessProjectTarget; config: PostprocessMediaConfig }> = []
     for (const project of projects) {
       const targetId = project.collectionId
-      // 启用范围是「哪些方向参与**自动**后处理」的开关，所以**只拦自动触发**。
-      // 手动那一次是用户直接点的：他明确要求产到某个还没参与自动产出的方向（新开的产品先手动
-      // 投一版看看、临时补几个方向）是合理诉求，拿自动的开关否决它等于让他没法手动跨产品跑。
-      // 与下面 `PP-SCOPE-002` 同一个套路（那里也是 `input.source !== 'manual'`）。
-      // 自动触发仍逐个目标都要过：记住过的方向后来被取消启用时跳过并说明是哪个，而不是照旧产出。
-      if (
-        input.source !== 'manual' &&
-        !isCollectionWithinSelection(input.collections, targetId, baseConfig.selectedCollectionIds)
-      ) {
-        reportIssue(
-          result,
-          {
-            code: 'PP-SCOPE-001',
-            stage: 'prepare',
-            sourceImageId: imageId,
-            sourceIndex: index,
-            // 多目标下「是哪个方向没启用」是必要线索（去重键含 detail，若干方向各报一条）
-            detail: `目标方向：${[project.line, project.product, project.direction].filter(Boolean).join(' / ') || targetId}`,
-          },
-          true,
-        )
-        continue
-      }
-
       const slice = resolveProjectPostprocessSlice(input.collections, params, targetId, baseConfig)
       // 方向级「自动后处理」开关只拦自动触发（理由见 `RunTaskPostprocessInput.source`），
       // 且只对**归属方向**判：其余目标是用户明确记住的，不该被「归属方向参不参与自动产出」牵连。

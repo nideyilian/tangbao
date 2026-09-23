@@ -32,7 +32,6 @@ import {
 } from '../../design-system'
 import {
   buildPostprocessProjectTree,
-  isCollectionWithinSelection,
   resolvePostprocessProjectTargets,
   type PostprocessProjectTreeNode,
 } from '../../lib/postprocessProjectTree'
@@ -64,7 +63,6 @@ interface Props {
 export default function PostprocessTargetsDialog({ onClose, assetCount }: Props) {
   const collections = useAssetLibraryStore((state) => state.collections)
   const params = useProjectTreeParamsStore((state) => state.params)
-  const enabledIds = usePostprocessMediaStore((state) => state.selectedCollectionIds)
   const savedTargets = usePostprocessMediaStore((state) => state.savedTargetCollectionIds)
   const setSavedTargetCollectionIds = usePostprocessMediaStore((state) => state.setSavedTargetCollectionIds)
   const clearSavedTargetCollectionIds = usePostprocessMediaStore((state) => state.clearSavedTargetCollectionIds)
@@ -153,11 +151,6 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
       const checkedCount = leafIds.filter((id) => draft.includes(id)).length
       const hasChildren = node.children.length > 0
       const isOpen = !collapsed.includes(node.id)
-      /**
-       * 「未启用」只标叶子：启用范围管的是自动后处理，中间层说它没有意义（用户也没法据此做什么）。
-       * 标出来是为了让「勾了会不会自动也产出」这件事在界面上有答案，但**不拦着选**。
-       */
-      const outsideScope = !hasChildren && !isCollectionWithinSelection(collections, node.id, enabledIds)
 
       return (
         <div key={node.id}>
@@ -186,7 +179,6 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
             {hasChildren && checkedCount > 0 ? (
               <span className="shrink-0 text-xs text-ds-muted">已选 {checkedCount}</span>
             ) : null}
-            {outsideScope ? <span className="shrink-0 text-xs text-ds-muted">未启用</span> : null}
           </div>
           {hasChildren && isOpen ? renderNodes(node.children, depth + 1) : null}
         </div>

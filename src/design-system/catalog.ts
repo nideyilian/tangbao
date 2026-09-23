@@ -1040,18 +1040,6 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Dialog', 'Checkbox', 'IconButton', 'Button', 'EmptyState'],
   },
   {
-    module: 'src/features/projectTree/ProjectTreeWorkbench.tsx',
-    responsibility: '统一项目树工作台（产品线→产品→方向 的增删改查与参数入口）',
-    decision: 'compose',
-    targets: ['Dialog', 'Button', 'TextField', 'SelectField'],
-  },
-  {
-    module: 'src/features/projectTree/ProjectTreeTable.tsx',
-    responsibility: '统一项目树表格（展平行 + 层级徽章 + 行内重命名）',
-    decision: 'compose',
-    targets: ['Table', 'IconButton', 'Button', 'TextField', 'EmptyState'],
-  },
-  {
     module: 'src/features/postprocess/PostprocessParamPanel.tsx',
     responsibility:
       '后处理参数详情面板（唯一编辑区）：按 paramSchema 渲染字段与继承状态，三组只用 1px 分隔线分段、不渲染卡片标题；参与方式整行，水印是「文案 + 按渠道 tab + 跳转入口」一行 + 下方 16:9 预览',

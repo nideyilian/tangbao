@@ -405,16 +405,15 @@ describe('产出计划', () => {
     expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual(['gdt'])
   })
 
-  it('isPostprocessReady 要求至少勾一个项目，且勾了项目后有可产出单元', () => {
+  it('isPostprocessReady 只看渠道与可产出单元（不再要求勾项目）', () => {
     const store = usePostprocessMediaStore.getState()
     store.setSelectedMediaIds(['gdt'])
-    expect(isPostprocessReady(usePostprocessMediaStore.getState())).toBe(false)
-
-    usePostprocessMediaStore.getState().setSelectedCollectionIds(['builtin-product-a'])
+    // 一个方向都没勾也照样算「具备运行条件」：2026-09-23 撤掉了「启用范围」那层白名单，
+    // 方向参不参与改由方向级开关决定（默认开），跑不跑由设置里的总开关决定。
     expect(isPostprocessReady(usePostprocessMediaStore.getState())).toBe(true)
     expect(isPostprocessReady(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })).toBe(true)
 
-    // 只勾了不存在的媒体（悬空 id）→ 有项目也产不出东西
+    // 只勾了不存在的媒体（悬空 id）→ 有配置也产不出东西
     usePostprocessMediaStore.getState().setSelectedMediaIds(['ghost'])
     expect(isPostprocessReady(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })).toBe(false)
   })

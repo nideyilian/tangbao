@@ -699,7 +699,6 @@ export default function InputBar() {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
   // 后处理编排的启用状态：只订阅计数（原始值），避免面板改媒体表时连带重渲染输入栏
-  const postprocessProjectCount = usePostprocessMediaStore((s) => s.selectedCollectionIds.length)
   const postprocessMediaCount = usePostprocessMediaStore((s) => s.selectedMediaIds.length)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
@@ -3450,15 +3449,17 @@ export default function InputBar() {
         <button
           type="button"
           onClick={() => setShowPostprocessSettings(true)}
-          title="后处理：勾选的方向自动产出各渠道变体，参数与目录按图片所在方向取值"
+          title={
+            settings.autoPostprocess
+              ? '自动后处理：已开。生成任务完成后按图片所在方向自动产出各渠道变体（参数与目录按方向取值）；总开关在设置里'
+              : '自动后处理：已关。生成完不会自动产出变体，需要时在素材库选中素材手动跑；要开就在设置里打开'
+          }
           className={pillClass}
         >
           <ImagesIcon className="h-3.5 w-3.5 shrink-0 text-ds-muted" />
           <span className="text-ds-muted">后处理</span>
           <span className={valueClass}>
-            {postprocessProjectCount > 0
-              ? `已启用 ${postprocessProjectCount} 处 · ${postprocessMediaCount} 媒体`
-              : '未启用'}
+            {settings.autoPostprocess ? `自动已开 · ${postprocessMediaCount} 媒体` : '自动关'}
           </span>
         </button>
         {!gallerySopModeActive && (

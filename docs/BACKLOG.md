@@ -16,6 +16,7 @@
 | TB-110 | 顶栏设计规范统一（高度/圆角/组件/左基线）      | DONE  | 主写线 | 2026-09-23 |
 | TB-111 | 配方卡导入兼容「一键衍生」模板            | DONE  | 主写线 | 2026-09-23 |
 | TB-112 | 后处理按产出方向拆成独立运行实例          | DONE  | 主写线 | 2026-09-23 |
+| TB-116 | 撤「启用范围」白名单 + 总开关（默认关）+ 删旧项目树 | DONE  | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -37,6 +38,63 @@
 ---
 
 ## M1 · 后处理与水体系统一
+
+### TB-116 撤掉「启用范围」白名单 + 加「自动后处理」总开关（默认关）+ 删旧项目树
+
+- **来源**：杰哥 2026-09-23 连续三条报障与裁决
+  1. 「为什么一直有这种提醒我跳过的提醒，我的程序默认就是不自动后处理的啊」（附「已跳过 ×9」与
+     `[PP-SCOPE-001]` 弹窗截图）
+  2. 「项目树如果是管能不能按设置参数来执行后处理的话，那么我认为默认就该全部勾选，
+     而且不要有提示跳过的提醒，因为我所有图基本都是要后处理的，区别的至少自动后处理和手动后处理而已」
+  3. 「我直接已经叫你把项目树融合进中控台，现在你是中控台已经有项目树的功能，但项目树还保留着」
+  4. 「要加（总开关），但是默认关」
+- **状态**：DONE · 主写线
+- **根因（三条是同一件事的三个面）**
+  1. **「要不要自动跑」藏在勾选里**：`store.ts` 的闸门判 `selectedCollectionIds.length === 0`。
+     用户以为「没勾 = 没启用」，实际勾了别的方向就每批都跑，再因本方向没勾而逐批留一条
+     `PP-SCOPE-001`「已跳过」——**刷屏是配置事实被每批重播**，不是故障。
+  2. **两层开关说同一件事**：方向级 `PostprocessNodeOverride.enabled`（默认**开**，可继承）
+     与「启用范围」白名单（默认**空**）都在回答「这个方向参不参与自动产出」，判定却各写一套，
+     UI 还分在两处。用户在两处之间迷路（`PP-SCOPE-001` vs `PP-SCOPE-002`）。
+  3. **同一棵树有两份 UI**：中控台 `ConsoleAssetTree` 能管结构（还多了拖拽 / 回收站），
+     但「后处理」列**只在旧的项目树工作台**（`ProjectTreeWorkbench`，素材库工具栏入口）。
+- **做法**
+  1. **加总开关** `AppSettings.autoPostprocess`（**默认关**，`undefined` 与 `false` 同义）；
+     自动侧的闸门从「启用范围非空」改成「总开关开着」。手动跑完全不受它约束。
+     判定收口在 `store.ts` 的 `isAutoPostprocessEnabled`（可测；一处分叉就会出现
+     「以为关着、后台照写盘」）。UI 在设置 → 通用。
+  2. **撤掉「启用范围」这一层**：删三处总闸（`store.ts` ×2、`taskPostprocess.ts` ×1）与
+     `PP-SCOPE-001` 判定。`selectedCollectionIds` **字段保留**（落盘格式不动，无数据风险），
+     只剩一个用途：**无归属的图（手工拖入 / 旧数据）产出到哪**。码表条目保留但不再产生 ——
+     旧历史记录里还有它，删码会让那些记录渲染成「未知问题」。
+  3. **纯配置使然的跳过不再留档**：零产出且原因只有 `PP-SCOPE-002` 时，从 `runtimeStore`
+     撤掉那条 run 且不落方向历史（`isAutoDisabledOnlySkip`）。⚠️ 按**码**判而不是按 severity ——
+     `PP-CANCEL-001`（取消）与 `PP-SRC-001`（源图读不到）同属 skipped，但都必须留。
+  4. **删旧项目树**：`ProjectTreeWorkbench.tsx` / `ProjectTreeTable.tsx` / `tableRows.ts` /
+     `useJumpToProjectTree.ts` 及其测试、素材库工具栏入口、`projectTreeWorkbench` 状态与两个
+     action、`catalog.ts` 两条登记。`features/projectTree/` 只留参数层（`params` / `types` /
+     `storeProjectTreeParams`）—— 它们被 store、参数面板、水印绑定共用，**不是 UI**。
+- **验收标准（可测）**
+  1. 总开关缺省（`undefined`）与 `false` 都判为关，只有显式 `true` 为开；
+  2. 总开关关着时，手动跑照旧开跑、不报「未启用」；
+  3. 自动跑：归属方向的方向级开关关着 → 记 `PP-SCOPE-002`（防回退）；
+  4. 零产出且只有 `PP-SCOPE-002` → 不留档；混入任何其它原因 / 取消 / 源图不可用 → 照留；
+  5. `isPostprocessReady` 不再要求勾项目；
+  6. 产出预览的全局作用域展开**全部方向**（不再依赖勾选）；
+  7. `npm run verify` 全绿。
+- **验收证据（2026-09-23）**
+  - 全量 `vitest run` **268 文件 / 3230 用例全绿**；`tsc -b` 与 `tsc -p electron` 零错误；
+    `eslint` 零告警；prettier 已跑。
+  - 改造 6 条旧用例（语义已变）：手动跑守「总开关关着也照跑」、`isPostprocessReady` 摘掉项目前提、
+    目标弹窗不再标「未启用」、中控台全局预览摘掉「还没有启用任何方向」、删掉两条
+    `PP-SCOPE-001` 时代的守卫。新增 2 条守卫（`isAutoPostprocessEnabled` 缺省语义、
+    `isAutoDisabledOnlySkip` 按码判定）。
+  - ⚠️ **未做渲染验证**（本机离屏渲染受限）：设置里那个开关的观感、中控台树删掉旧入口后的观感，
+    请在运行中的应用里过目。
+- **文档**：`architecture-constraints.md` §4.3 / §4.4.1 / §4.4.2 重写（含「别再做成闸门」）、
+  `config-spec.md` + schema 字段语义、`RISK.md` R-90 补注、runbook 守卫表、
+  `pages/postprocess.md`、gap-analysis 环节表。
+
 
 ### TB-014 后处理按图片归属自动匹配参数
 

@@ -580,11 +580,11 @@ export function selectPostprocessOutputPlan(
 }
 
 /**
- * 后处理是否已具备运行条件：启用范围非空（至少勾了一个项目/方向）+ 至少能产出一个变体。
+ * 后处理是否已具备运行条件：至少勾了一个渠道，且至少能产出一个变体。
  *
- * 勾选是**启用范围**（哪些方向参与*自动*后处理）而不是产出目标——有归属的图片按归属方向产出，
- * 这里的 `selectedCollectionIds` 只负责回答「有没有启用」以及「无归属的图往哪儿放」。
- * 手动跑若要跨出这个范围，走的是「记住的产出目标」那条路（`savedTargetCollectionIds`）。
+ * 2026-09-23 起**不再看「启用范围」**：那层白名单已撤掉 —— 方向参不参与改由方向级开关决定
+ * （`PostprocessNodeOverride.enabled`），整个后台跑不跑由设置里的总开关决定
+ * （`AppSettings.autoPostprocess`）。所以这里只剩一句话：**这批图按当前配置能不能产出东西**。
  */
 export function isPostprocessReady(
   config: PostprocessMediaConfig,
@@ -592,7 +592,6 @@ export function isPostprocessReady(
   projects: PostprocessProjectTarget[] = [],
   presetNames: Record<string, string> = {},
 ): boolean {
-  if (config.selectedCollectionIds.length === 0) return false
   if (config.selectedMediaIds.length === 0) return false
   if (!source) return true
   return selectPostprocessOutputPlan(config, source, projects, presetNames).units.length > 0

@@ -7,6 +7,7 @@ import {
   formatPostprocessRunBadge,
   formatPostprocessRunProgress,
   getPostprocessRunPercent,
+  isAutoDisabledOnlySkip,
   resolvePostprocessRunStatus,
   summarizePostprocessRun,
 } from './postprocessRun'
@@ -142,6 +143,31 @@ describe('后处理运行记录', () => {
       producedFiles: 0,
     })
     expect(countPostprocessIssues(finished)).toEqual({ errors: 1, skipped: 2 })
+  })
+
+  /**
+   * 「方向关了自动后处理」这类纯配置跳过**不值得留档**（2026-09-23）。
+   *
+   * 判定必须**按码**而不是按 severity —— 同属 `skipped` 的 `PP-CANCEL-001`（用户取消）与
+   * `PP-SRC-001`（源图读不到）都要留：前者要交代「停在哪儿、产物还在」，后者指向真的缺数据。
+   * 一刀切会把它们一起抹掉，而**记录不见了是没人会发现的**（正是这条守卫要挡的）。
+   */
+  it('只有「方向关了自动后处理」才算不值得留档，其余跳过照留', () => {
+    expect(isAutoDisabledOnlySkip([createPostprocessIssue({ code: 'PP-SCOPE-002', stage: 'prepare' })])).toBe(true)
+    // 同样严重度、同样「零产出」的码，一条都不能被顺手带上
+    expect(isAutoDisabledOnlySkip([createPostprocessIssue({ code: POSTPROCESS_CANCEL_CODE, stage: 'finish' })])).toBe(
+      false,
+    )
+    expect(isAutoDisabledOnlySkip([createPostprocessIssue({ code: 'PP-SRC-001', stage: 'prepare' })])).toBe(false)
+    // 混了别的说过不去的原因 → 留（否则「为什么没产出」就查不到了）
+    expect(
+      isAutoDisabledOnlySkip([
+        createPostprocessIssue({ code: 'PP-SCOPE-002', stage: 'prepare' }),
+        createPostprocessIssue({ code: 'PP-MEDIA-001', stage: 'prepare' }),
+      ]),
+    ).toBe(false)
+    // 一条原因都没有 = 不是「配置使然的跳过」，那是别的状态 → 留
+    expect(isAutoDisabledOnlySkip([])).toBe(false)
   })
 
   it('一行结论按状态分档，且带上未完成条数', () => {

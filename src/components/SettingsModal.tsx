@@ -2828,6 +2828,34 @@ export default function SettingsModal() {
                       模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。
                     </div>
                   </div>
+                  {/*
+                    自动后处理总开关（2026-09-23）。
+                    原先「要不要自动跑」是由项目树里那份「启用范围」勾选隐式决定的，用户以为没启用、
+                    实际每批都在跑 —— 现在提到一个明确的开关上，而且**默认关**：自动产出是
+                    「用户没看着的时候往磁盘写文件」，得由他明确打开。
+                  */}
+                  <div className="block">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="block text-sm text-ds-muted dark:text-ds-muted">生成完自动跑后处理</span>
+                      <button
+                        type="button"
+                        onClick={() => commitSettings({ ...draft, autoPostprocess: !draft.autoPostprocess })}
+                        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.autoPostprocess ? 'bg-ds-primary' : 'bg-ds-subtle dark:bg-ds-subtle'}`}
+                        role="switch"
+                        aria-checked={draft.autoPostprocess === true}
+                        aria-label="生成完自动跑后处理"
+                        data-testid="settings-auto-postprocess"
+                      >
+                        <span
+                          className={`inline-block h-3 w-3 transform rounded-full bg-ds-surface shadow transition-transform ${draft.autoPostprocess ? 'translate-x-[14px]' : 'translate-x-[2px]'}`}
+                        />
+                      </button>
+                    </div>
+                    <div data-selectable-text className="text-xs text-ds-muted dark:text-ds-muted">
+                      开启后，每个生成任务完成时会按图片所在方向自动产出各渠道变体（参数在中控台配置）。
+                      默认关闭：关着时后台不会写盘，需要时到素材库选中素材手动跑一次即可，效果一样。
+                    </div>
+                  </div>
                   {isElectronEnv() && (
                     <div className="block">
                       <div className="mb-1 flex items-center justify-between">

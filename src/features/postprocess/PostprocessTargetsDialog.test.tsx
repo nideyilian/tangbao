@@ -98,18 +98,19 @@ afterEach(() => {
 })
 
 describe('PostprocessTargetsDialog', () => {
-  it('⭐ 整棵树都在 —— 启用范围之外的产品线（工具线 / 清理大师 / 清爽）照样可选', () => {
+  it('⭐ 整棵树都在 —— 所有产品线（工具线 / 清理大师 / 清爽）照样可选', () => {
     render()
 
     const text = document.body.textContent ?? ''
     // 层级名都在（是树，不是一长条平铺）
     expect(text).toContain('医疗线')
     expect(text).toContain('工具线')
-    // 范围外的方向必须出现，否则「跨产品」是句空话
+    // 其它产品下的方向必须出现，否则「跨产品」是句空话
     expect(text).toContain('清爽')
     expect(checkboxByLabel('清爽').disabled).toBe(false)
-    // 范围外的方向给提醒，但不拦着勾
-    expect(text).toContain('未启用')
+    // 2026-09-23 起不再标「未启用」：那层「启用范围」白名单已撤，
+    // 方向参不参与自动产出改由各自的方向级开关决定，跟这份手动目标清单没有关系。
+    expect(text).not.toContain('未启用')
   })
 
   it('⭐ 勾中间层 = 其下方向一起勾，但落盘只有叶子', () => {

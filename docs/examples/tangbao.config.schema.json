@@ -98,7 +98,7 @@
         "selectedCollectionIds": {
           "type": "array",
           "default": [],
-          "description": "启用范围：哪些树节点参与自动后处理。空数组 = 没启用任何一个方向。与 savedTargetCollectionIds 是两件事，别混（一个回答「自动跑哪些」，一个回答「手动这次投哪些」）。自动触发时目标逐个过它，手动触发不看它。",
+          "description": "无归属图片的兜底产出目标：只在图片没有任何归属方向（手工拖入 / 旧数据）时才用它。2026-09-23 起它**不再是**「哪些方向参与自动后处理」的白名单（那层已撤）。与 savedTargetCollectionIds 是两件事，别混（一个回答「没归属的图投哪儿」，一个回答「手动这次投哪些」）。",
           "items": { "type": "string" }
         },
         "savedTargetCollectionIds": {
