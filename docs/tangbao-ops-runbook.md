@@ -1612,6 +1612,42 @@ UNC 不支持 → fail-closed）、Node/Python 的 `unlink`（同一网关）、
 （安全策略直接拒，报 "bypasses all command validation"）。
 **写入不受影响**（`writeJsonText`、导出都正常）。⇒ 产物发错了要清理，只能人工去共享盘删。
 
+### 5. 发布后校验：`releases/tags/<tag>` 的 `assets` 会骗人（2026-09-23 定稿）
+
+**症状**：发版流程全绿（softprops 四次 `✅ Uploaded …`、`Verify release assets` success），
+但事后查 `api.github.com/repos/<owner>/<repo>/releases/tags/<tag>` 得到：
+
+```
+tag: v0.3.7 | draft: false | assets: 0        ← 看着像「安装包根本没上传」
+```
+
+而同一时刻**网页与实际下载都是好的**。匿名查与带 token 查结果一样 ⇒ **不是限流**。
+
+⚠️ **两个坑长得一模一样，先分辨**：限流时返回的是 `{"message":"API rate limit exceeded…"}`，
+那份响应里**没有 `assets` 字段**，而 `(j.assets || []).length` 照样算出 **`0`** ——
+所以「查到 0」这一步先看有没有 `message` 字段，再决定是限流还是本条。
+
+**正确姿势：三条旁路，全过才判「发布可用」**
+
+```bash
+# ① 网页实际渲染的资产列表（GitHub 就是拿它画下载区的）
+curl -sL --ssl-no-revoke "https://github.com/<owner>/<repo>/releases/expanded_assets/<tag>" \
+  | grep -oE 'releases/download/<tag>/[^"]+' | sed 's|.*/||' | sort -u
+
+# ② 直链实测（200 = 文件在）
+curl -sIL --ssl-no-revoke -o /dev/null -w "%{http_code}\n" \
+  "https://github.com/<owner>/<repo>/releases/download/<tag>/latest.yml"
+
+# ③ latest.yml 内容 —— 自动更新的入口文件，必须核
+curl -sL --ssl-no-revoke "https://github.com/<owner>/<repo>/releases/download/<tag>/latest.yml"
+```
+
+②③ 都要做：①只证明文件在，③证明**内容对得上**（`latest.yml` 里的 `size` / `sha512`
+要与真实安装包一致 —— 否则存量用户会收到「有新版本」却下不动）。
+
+**不要**因为 `assets: 0` 就重发一次：tag 已指向某个提交，重发往往意味着换提交或强推 tag，
+把一个「看着像的问题」变成真问题。本方实测（v0.3.7）API 报 0、旁路三条全过。
+
 ---
 
 ## 二十五、本机跑 `npm run build`：safe-delete 护栏 与「备份目录必须移出项目根」（2026-09-23 定稿）
