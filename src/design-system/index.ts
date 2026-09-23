@@ -105,7 +105,7 @@ export type {
   ThumbnailProps,
 } from './data-display'
 
-export { Alert, ErrorState, Kbd, Progress, Spinner, StatusIndicator, ToastMessage } from './feedback'
+export { Alert, ErrorState, Kbd, Progress, ProgressRing, Spinner, StatusIndicator, ToastMessage } from './feedback'
 
 export type {
   AlertProps,
@@ -113,6 +113,7 @@ export type {
   FeedbackTone,
   KbdProps,
   ProgressProps,
+  ProgressRingProps,
   SpinnerProps,
   StatusIndicatorProps,
   ToastMessageProps,

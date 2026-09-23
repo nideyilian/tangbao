@@ -393,8 +393,6 @@ git add <其余完全属于我的文件>           # ⚠️ 绝不能把上面�
    - 为什么更好：不受「紧贴行并成同一 hunk」影响，也不依赖 `git apply` 的行号定位 ⇒
      第 6 条那个「零上下文补丁插到文件末尾」的坑天然不存在。
 
-
-
 ## 九、批量写入 localStorage（水印预设 / 左栏比例等）—— 2026-09-18 实测定稿
 
 **为什么不能直接改文件**：水印预设存在 **localStorage**（`tangbao-composite-v2-workspace-storage`，
@@ -1784,3 +1782,63 @@ async function authorizeHistoryOutputDirs(): Promise<void> {
    `ensureDir` 会一直等到超时。
 2. **失败即跳过**：一个不可达的旧目录不该拖住启动，更不该弹错。
 3. **给上限**（这里 200）：历史是落盘数据，一条被外部改坏的记录不该让启动发出去上千次 IPC。
+
+## 二十七、本机抓屏抽查界面（未装 PIL 也能用）+「vitest 整体哑掉」的处置（2026-09-23 定稿）
+
+### 1. 为什么需要它
+
+本机 `python -c "import PIL"` 直接 `ModuleNotFoundError`（系统 3.11 没装、也不该为这个去装），
+而「改了 UI 想自证」只有两条路：跑测试（见下节，当前坏着）或**看界面**。
+`PrintWindow` 对 Electron **可能返回过时位图**（`~/.workbuddy/MEMORY.md` 已记：同窗口同一时刻
+给过另一个主题/tab 的画面），拿它当证据会得出反向结论 —— **要以真实屏幕像素为准**。
+
+### 2. 抓屏脚本（零依赖：ctypes `BitBlt` + zlib 手写 PNG）
+
+脚本 `%TEMP%/tb-shot-0923.py`，用 Python **3.13** 跑（只用标准库，不需要任何第三方包）：
+
+```bash
+PY="C:/Users/tt/.workbuddy/binaries/python/versions/3.13.12/python.exe"
+"$PY" tb-shot-0923.py out.png                  # 全屏
+"$PY" tb-shot-0923.py out.png <hwnd> [x y w h] # 置前抓窗口 / 窗口内的一块区域（跑完还原焦点）
+```
+
+- **找 hwnd**：脚本第一步会打印所有可见窗口（`hwnd / 标题 / 位置 / 尺寸`）。
+  糖包是 `Chrome_WidgetWin_1` + 标题「糖包」，**每次启动 hwnd 都会变**。
+- ⚠️ **会短暂抢焦点 1.2 秒**（`SetForegroundWindow` → 截图 → 还原），别在对方正打字时跑。
+- ⚠️ 输出是**物理像素**（脚本调了 `SetProcessDPIAware`）：4K 100% 缩放下糖包主窗 3862×2110，
+  **不要再乘 dpr**。
+- 区域参数 `x y w h` 是**窗口内坐标**（相对窗口左上角），不是屏幕坐标。
+- **实践建议**：先全屏抓一张定位「目标在第几行」，再按区域放大抓细节。本机素材库工具栏第一行
+  在窗口内 **y≈135–165**、按钮从左约 x≈380 起（「产出目标」「后处理记录」都在这一行靠前的位置，
+  **不在最右侧** —— 最右侧是搜索框/筛选/排序，这片常被误当成按钮区而白抓几次）。
+
+### 3. `vitest` 整体哑掉时的处置
+
+**症状**：任何测试文件都在**第一个 `describe()`** 处报
+`TypeError: Cannot read properties of undefined (reading 'config')`；
+全量跑则是 `268/268 failed` + `Vitest failed to find the runner`，`environment` 阶段耗 **64.5s**。
+
+**第零步 —— 先用 4 行探针定性**（否则会在业务代码里白翻一天）：
+
+```ts
+// src/probe-vitest.test.ts（验完 rm 掉）
+import { describe, expect, it } from 'vitest'
+describe('probe', () => { it('runs', () => { expect(1).toBe(1) }) })
+```
+
+连它都挂 = **环境故障**，与你的改动无关。已排除清单见 `docs/RISK.md` R-98
+（Node 版本 / peer / sandbox / `NODE_OPTIONS` / 缓存 / electron 插件 / `--pool` / `--no-isolate`）。
+
+**确认是环境故障后怎么交付**：tsc 双端 + `eslint` + `prettier` + 本文第 2 节的抓屏，
+并在交付说明里**如实写「测试未执行」** —— 不要把没跑的凑成一句「全绿」。
+
+### 4. 正常时的跑法（供对照）
+
+```bash
+export PATH="/c/Program Files/nodejs:$PATH"   # 系统 Node 24 必须提到 PATH 最前
+npm test                                       # = vitest run
+```
+
+否则会死在 `vite.config.ts` 的 `MIN_NODE_MAJOR = 24` 守卫上（报「Node 版本过低」，
+症状看不出是环境不对）。**单文件过滤（`vitest run <path>`）与全量走同一条链路**，
+不存在「单文件能跑、全量不能跑」的分裂。

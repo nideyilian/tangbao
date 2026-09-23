@@ -202,6 +202,9 @@ describe('AssetLibraryToolbar', () => {
     })
     expect(button().props.loading).toBe(true)
     expect(button().findByType('button').props.disabled).toBe(true)
+    // 文案**不随运行态切换**（2026-09-23）：同一屏里右侧常驻入口已经在报进度了，
+    // 左边这颗再说一遍「后处理中」只会让人分不清哪个是入口、哪个是刚点的动作
+    expect(button().props.children).toBe('跑后处理 (1)')
 
     // 换成方向 B 的素材 → 同一个按钮恢复可用（B 没被占），这是本次改造的核心
     act(() => {
@@ -213,5 +216,49 @@ describe('AssetLibraryToolbar', () => {
       useRuntimeStore.setState({ postprocessRuns: {}, postprocessRunIds: [] })
     })
     expect(button().props.loading).toBe(false)
+  })
+
+  /**
+   * 入口**常驻**（2026-09-23 杰哥要求：「不然我没有在后处理时无法查看之前的记录」）。
+   *
+   * 契约：没在跑、也没跑过时它仍然在，报「后处理记录」——
+   * 「上次跑完了、想回头查产到哪几个目录」这种时候界面上必须有入口可点。
+   */
+  it('后处理入口常驻：没在跑也不消失，报「后处理记录」', () => {
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<AssetLibraryToolbar scopeLabel="全部" totalCount={7} />)
+    })
+
+    const entry = renderer!.root.findByProps({ 'data-testid': 'asset-postprocess-issues' })
+    expect(entry.props.children).toBe('后处理记录')
+  })
+
+  it('常驻入口的另外两态：在跑报进度（图标走 leadingIcon）、跑完后报结果', () => {
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<AssetLibraryToolbar scopeLabel="全部" totalCount={7} />)
+    })
+
+    act(() => {
+      useRuntimeStore.getState().startPostprocessRun({
+        id: 'run-a',
+        source: 'manual',
+        totalImages: 4,
+        directionId: 'direction-a',
+        directionLabel: '产品A / 方向A',
+      })
+    })
+    const running = renderer!.root.findByProps({ 'data-testid': 'asset-postprocess-progress' })
+    expect(running.props.children).toBe('后处理 0/4 0%')
+    // 图标必须是 leadingIcon：塞进 children 会被 preflight 的 svg{display:block} 顶到单独一行
+    expect(running.props.leadingIcon).toBeTruthy()
+
+    act(() => {
+      useRuntimeStore.getState().finishPostprocessRun('run-a', { issues: [], producedFiles: 3 })
+    })
+    const done = renderer!.root.findByProps({ 'data-testid': 'asset-postprocess-issues' })
+    expect(done.props.children).toBe('后处理记录')
+    expect(done.props.leadingIcon).toBeTruthy()
   })
 })

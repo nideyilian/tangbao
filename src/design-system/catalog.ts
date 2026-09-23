@@ -274,6 +274,15 @@ export const componentSpecs: ComponentSpec[] = [
     accessibility: '完整 progressbar 数值属性',
   },
   {
+    name: 'ProgressRing',
+    category: 'feedback',
+    purpose: '用环形把「在跑」与「跑到哪了」压进一个方框',
+    useWhen: '工具栏、按钮内等横向空间紧张的位置需要常驻进度指示',
+    avoidWhen: '有整行空间可用；用 Progress（环形要读弧度，条形更易扫）',
+    variants: ['determinate', 'indeterminate', 'tones', 'size'],
+    accessibility: '环是装饰，固定 aria-hidden；进度由相邻文字提供，与 StatusIndicator 的圆点同口径',
+  },
+  {
     name: 'Skeleton',
     category: 'feedback',
     purpose: '为将出现的内容保留空间',

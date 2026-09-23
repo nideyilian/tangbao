@@ -8,6 +8,7 @@ import {
   MenuItem,
   MenuSeparator,
   Popover,
+  ProgressRing,
   SearchField,
   SegmentedControl,
   Slider,
@@ -22,7 +23,6 @@ import {
   FolderOpenIcon,
   ImageIcon,
   ListChecksIcon,
-  LoaderCircleIcon,
   PinIcon,
   StarIcon,
   TrashIcon,
@@ -41,9 +41,11 @@ import {
 } from '../../stores/runtimeStore'
 import { useDismissableLayer } from '../../hooks/useDismissableLayer'
 import {
+  POSTPROCESS_RUN_STATUS_TONES,
   countPostprocessIssues,
   formatPostprocessRunBadge,
   formatPostprocessRunProgress,
+  getPostprocessRunPercent,
   isRunInFlight,
 } from '../postprocess/postprocessRun'
 import { POSTPROCESS_STAGE_LABELS } from '../postprocess/postprocessIssue'
@@ -981,17 +983,28 @@ function ManualPostprocessButton() {
       }
       onClick={handleClick}
     >
-      {running ? '后处理中…' : `跑后处理 (${selectedAssetIds.length})`}
+      {/*
+        文案**不再随运行态切换**（2026-09-23）：原先跑起来会变成「后处理中…」，而右侧常驻入口
+        同时在报同一件事 —— 一屏里两句「后处理」、两个转圈，分不清哪个是入口、哪个是刚点的动作。
+        运行态保留 `loading`（它同时是 disabled 的唯一表达：这批方向在跑，点了也会被并发闸挡），
+        让文案只说**这个按钮要干什么**。
+      */}
+      {`跑后处理 (${selectedAssetIds.length})`}
     </Button>
   )
 }
 
 /**
- * 后处理状态入口：**进行中**显示实时进度，**结束后有问题**显示状态入口 —— 两者都点开同一个面板。
+ * 后处理状态入口（**常驻**）：进行中报进度、结束后有问题报结果、两者都没有时报「后处理记录」
+ * —— 三种形态都点开同一个面板。
  *
  * 为什么要它：「跑后处理」按钮只在有选中素材时出现，而后处理既可能由生成完成自动触发、
  * 也可能在选中被清掉之后还在跑 —— 那时界面上就没有任何东西说明「它还在跑」。
  * 这个入口不依赖选中状态，是「到底有没有在跑」的常驻答复。
+ *
+ * ⚠️ 2026-09-23 起**真正常驻**（原先只在「在飞」或「最近一次有问题」时才出现）：没在跑、
+ * 也没问题时它仍在，报「后处理记录」。不这么做的话，「上次跑完了、想回头查产到哪几个目录」
+ * 这种时候界面上根本没有入口 —— 杰哥原话：「我没有在后处理时无法查看之前的记录」。
  *
  * 为什么不能只靠 toast：toast 几秒就没了，而且失败原因多到看不全（哪张图、哪个渠道、
  * 哪个目录、原始错误）。
@@ -1026,7 +1039,6 @@ function PostprocessStatusEntry() {
         ? `后处理出错 (${errors})`
         : `后处理跳过 (${skipped})`
       : null
-  const showEntry = activeRuns.length > 0 || idleLabel !== null
   /**
    * 紧凑标签：一个方向时给「4/12 33%」这种可读进度，多个方向时只报**几个在跑** ——
    * 把 N 个方向的进度拼进工具栏必然超宽（这一条已经被 2026-09-21 那次报障验证过），
@@ -1040,6 +1052,30 @@ function PostprocessStatusEntry() {
           ? '排队中'
           : (formatPostprocessRunBadge(activeRuns[0]) ?? '后处理中')
         : `${runningCount} 个方向在跑${queuedCount > 0 ? ` · ${queuedCount} 排队` : ''}`
+  /**
+   * 入口文案**三态**（入口常驻之后三种都得有话说）：
+   * 在跑 → 报进度；跑完 → 报结果（有真错说「出错」、零产出但没出错说「跳过」）；
+   * 都没有 → 说清这里能查**历史记录**（否则一个不带状态的「后处理」按钮没人知道点开是什么）。
+   */
+  const entryLabel =
+    activeRuns.length > 0 ? (activeLabel ? `后处理 ${activeLabel}` : '后处理中') : (idleLabel ?? '后处理记录')
+  /**
+   * 环：**弧长就是进度**，替掉原先塞在 children 里那个转圈图标。
+   *
+   * 三种取值对应三件事：
+   * - 单方向在跑 → 确定进度（`getPostprocessRunPercent` 返回 undefined 表示排队中，环自动转成不定态）；
+   * - 多方向在跑 → 没有单一百分比，给不定态。编一个「平均进度」是撒谎；
+   * - 没在跑但跑过 → 满环 + 结果色（成功绿 / 部分完成黄 / 出错红 / 跳过与取消中性灰，
+   *   与面板里的 StatusIndicator 同一套 `POSTPROCESS_RUN_STATUS_TONES`）。
+   *
+   * 首次进入（从没跑过）不画环：一个空环只会被读成「卡在 0%」。
+   */
+  const ring =
+    activeRuns.length > 0 ? (
+      <ProgressRing tone="info" value={activeRuns.length === 1 ? getPostprocessRunPercent(activeRuns[0]) : undefined} />
+    ) : latestRun ? (
+      <ProgressRing tone={POSTPROCESS_RUN_STATUS_TONES[latestRun.status]} value={100} />
+    ) : undefined
   // 悬浮提示：每个方向一行（含当前写盘文件名 —— 那是被工具栏刻意压掉的详情）
   const activeTitle = activeRuns
     .map((run) => {
@@ -1051,36 +1087,36 @@ function PostprocessStatusEntry() {
 
   return (
     <>
-      {showEntry && (
-        <div className="flex shrink-0 items-center gap-0.5">
-          <Button
-            variant="ghost"
+      <div className="flex shrink-0 items-center gap-0.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          // 图标走 leadingIcon：Button 的 children 会被包进一个 span，直接塞进去的 svg
+          // 会被 preflight 的 `svg{display:block}` 顶到单独一行（表现就是「图标飘在文字左上」）
+          leadingIcon={ring}
+          // tabular-nums：数字等宽 —— 「0/100」涨到「100/100」时长宽不变，工具栏不抖
+          className="tabular-nums"
+          data-testid={activeRuns.length > 0 ? 'asset-postprocess-progress' : 'asset-postprocess-issues'}
+          title={
+            activeRuns.length > 0
+              ? `${activeTitle}\n（点开看完整进度与最近记录）`
+              : '看历次后处理的产出、跳过与错误：按方向长期保留、重启后仍在，每条都能直接打开产出所在位置'
+          }
+          onClick={() => setOpen(true)}
+        >
+          {entryLabel}
+        </Button>
+        {/* 只在跑完之后给 ×：在飞的记录要留着接进度上报，清掉会让后续上报全部落空 */}
+        {activeRuns.length === 0 && latestRun && (
+          <IconButton
+            aria-label="清除这次后处理的状态"
+            icon={<XIcon size={13} />}
             size="sm"
-            // tabular-nums：数字等宽 —— 「0/100」涨到「100/100」时长宽不变，工具栏不抖
-            className="tabular-nums"
-            data-testid={activeRuns.length > 0 ? 'asset-postprocess-progress' : 'asset-postprocess-issues'}
-            title={
-              activeRuns.length > 0
-                ? `${activeTitle}\n（点开看完整进度与最近记录）`
-                : '看最近一次后处理的产出、跳过与错误，以及历次运行记录'
-            }
-            onClick={() => setOpen(true)}
-          >
-            {activeRuns.length > 0 && <LoaderCircleIcon className="h-3.5 w-3.5 shrink-0 animate-spin" />}
-            {activeRuns.length > 0 ? (activeLabel ? `后处理 ${activeLabel}` : '后处理中') : idleLabel}
-          </Button>
-          {/* 只在跑完之后给 ×：在飞的记录要留着接进度上报，清掉会让后续上报全部落空 */}
-          {activeRuns.length === 0 && latestRun && (
-            <IconButton
-              aria-label="清除这次后处理的状态"
-              icon={<XIcon size={13} />}
-              size="sm"
-              data-testid="asset-postprocess-dismiss"
-              onClick={() => dismissPostprocessRun(latestRun.id)}
-            />
-          )}
-        </div>
-      )}
+            data-testid="asset-postprocess-dismiss"
+            onClick={() => dismissPostprocessRun(latestRun.id)}
+          />
+        )}
+      </div>
       <PostprocessRunsDialog open={open} onClose={() => setOpen(false)} />
     </>
   )

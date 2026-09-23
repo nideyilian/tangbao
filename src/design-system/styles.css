@@ -1760,6 +1760,56 @@
   --ds-progress-color: var(--ds-color-warning);
 }
 
+/* 环形进度（2026-09-23）：工具栏等**横向空间紧**的位置用它替掉「转圈图标 + 一行文字」——
+   图标和文字是两样东西，会各占一行/各自对齐；环把两者压进同一个方框（弧长 = 百分比）。
+   颜色复用条形进度那套 `--ds-progress-color`，两者同处一屏时不会一个蓝一个绿。 */
+.ds-progress-ring {
+  display: inline-block;
+  flex: none;
+  /* 行高归零：否则 inline-block 会被行高撑高，比按钮里的文字高出一截 */
+  line-height: 0;
+}
+
+.ds-progress-ring__track {
+  stroke: hsl(var(--ds-color-surface-subtle));
+}
+
+.ds-progress-ring__bar {
+  stroke: hsl(var(--ds-progress-color));
+  transition: stroke-dashoffset var(--ds-duration-slow) var(--ds-ease-out);
+}
+
+/* 进度不可知（排队中 / 多方向并发）：一段 1/4 弧自转。
+   比 spinner 慢一档 —— 它不是「等待」，是「正在推进」。 */
+.ds-progress-ring--indeterminate {
+  animation: ds-spin 1100ms linear infinite;
+}
+
+.ds-progress-ring--primary {
+  --ds-progress-color: var(--ds-color-primary);
+}
+
+.ds-progress-ring--info {
+  --ds-progress-color: var(--ds-color-info);
+}
+
+.ds-progress-ring--success {
+  --ds-progress-color: var(--ds-color-success);
+}
+
+.ds-progress-ring--warning {
+  --ds-progress-color: var(--ds-color-warning);
+}
+
+.ds-progress-ring--danger {
+  --ds-progress-color: var(--ds-color-danger);
+}
+
+/* 与 StatusIndicator 的中性色同源：跳过 / 取消不是故障，不该染红黄 */
+.ds-progress-ring--neutral {
+  --ds-progress-color: var(--ds-color-text-subtle);
+}
+
 .ds-progress__bar--danger {
   --ds-progress-color: var(--ds-color-danger);
 }
@@ -2969,6 +3019,16 @@
   .ds-progress__bar--indeterminate,
   .ds-status__dot--pulse {
     animation: none;
+  }
+
+  .ds-progress-ring {
+    transition-duration: 0ms;
+  }
+
+  /* 环的不定态**不**降到 0：弧线转动是「正在推进」的唯一指示，停住等于告诉用户卡死了
+     （与 .ds-spinner 同口径，只是再慢一档） */
+  .ds-progress-ring--indeterminate {
+    animation-duration: 1.6s;
   }
 
   .ds-tooltip__content {

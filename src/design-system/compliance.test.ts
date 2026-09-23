@@ -141,6 +141,36 @@ function findSwallowedPositionUtilities(path: string, src: string): string[] {
 // 都是这个写法；已在运行中的应用里截图确认「图标 + 文字」分成了两行。
 const ICON_TAG = /Icon$/
 
+/**
+ * 收集 `<Button>` 的子节点里「其实是图标」的那些元素。
+ *
+ * 2026-09-23 补：原实现只认**直接写出来的** JSX 子元素，于是 `{cond && <LoaderCircleIcon />}`
+ * 这一整类写法漏在检查外 —— 素材库工具栏的后处理入口正是这么写的，它在运行中的应用里
+ * 就是「图标飘在文字左上」（杰哥 2026-09-23 截图确认）。现在把 `{a && <Icon/>}` 的右侧也认下来。
+ */
+function collectIconChildren(node: ts.JsxElement, file: ts.SourceFile): string[] {
+  const names: string[] = []
+  const take = (element: ts.JsxElement | ts.JsxSelfClosingElement) => {
+    const name = (ts.isJsxElement(element) ? element.openingElement : element).tagName.getText(file).split('.').pop()
+    if (name && ICON_TAG.test(name)) names.push(name)
+  }
+  for (const child of node.children) {
+    if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
+      take(child)
+      continue
+    }
+    // {cond && <Icon/>}：元素被包进表达式，但落地仍是 Button 的一个子节点
+    if (ts.isJsxExpression(child)) {
+      const expr = child.expression
+      if (expr && ts.isBinaryExpression(expr)) {
+        const right: ts.Expression = expr.right
+        if (ts.isJsxElement(right) || ts.isJsxSelfClosingElement(right)) take(right)
+      }
+    }
+  }
+  return names
+}
+
 function findIconChildButtons(path: string, src: string): string[] {
   if (!path.endsWith('.tsx')) return []
   const display = normalizeKey(path)
@@ -151,16 +181,7 @@ function findIconChildButtons(path: string, src: string): string[] {
     if (ts.isJsxElement(node)) {
       const tag = node.openingElement.tagName.getText(file).split('.').pop() ?? ''
       if (tag === 'Button') {
-        const iconKids = node.children
-          .filter(
-            (child): child is ts.JsxElement | ts.JsxSelfClosingElement =>
-              ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child),
-          )
-          .map(
-            (child) =>
-              (ts.isJsxElement(child) ? child.openingElement : child).tagName.getText(file).split('.').pop() ?? '',
-          )
-          .filter((name) => ICON_TAG.test(name))
+        const iconKids = collectIconChildren(node, file)
         if (iconKids.length > 0) {
           const { line } = file.getLineAndCharacterOfPosition(node.getStart(file))
           violations.push(
