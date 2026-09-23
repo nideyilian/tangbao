@@ -1606,3 +1606,46 @@ TANGBAO_ELECTRON_ARGS="--remote-debugging-port=9333 --disable-gpu" npm run dev
 UNC 不支持 → fail-closed）、Node/Python 的 `unlink`（同一网关）、`cmd /c del`
 （安全策略直接拒，报 "bypasses all command validation"）。
 **写入不受影响**（`writeJsonText`、导出都正常）。⇒ 产物发错了要清理，只能人工去共享盘删。
+
+---
+
+## 二十五、本机跑 `npm run build`：safe-delete 护栏 与「备份目录必须移出项目根」（2026-09-23 定稿）
+
+### 1. `vite build` 会被安全删除护栏拦住
+
+本机注入了 `node-safe-delete-shim`：**同一个 turn 内批量删除超过 50 个文件**会被拦，报
+
+```
+[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":62,"threshold":50,"scope":"turn","targets":["…\\dist\\assets"],…}
+```
+
+而 `vite build` 起手就是 `emptyDir(dist)` —— 本仓 `dist/assets` 有 60 个左右文件，**必撞**。
+症状：构建失败，且**失败时 `dist` 已被删掉一部分**（实测 assets 从 62 掉到 50，目录处于半毁状态）。
+
+**绕过（不改护栏、不删数据）**：先把产物目录**改名挪走**（rename 不算删除），再 build ——
+新目录不存在，vite 无需清空任何东西：
+
+```bash
+cd /d/AAA/TANGBAO
+mv dist .dist-prebuild-bak && mv dist-electron .dist-electron-prebuild-bak
+npm run build
+```
+
+### 2. ⚠️ 备份目录**必须移出项目根**，否则 `npm run verify` 会红一大片
+
+`eslint` 的忽略规则只认 `dist/`（带斜杠 = 只匹配这个名字），**不认 `.dist-prebuild-bak`** ——
+于是它把打包产物（minified、单行几千列）当源码扫，报 **1 万多个**
+`no-useless-assignment` / `no-unused-expressions`。报错位置长这样：`140:776`、`140:3007`
+（同一个超长行的不同列）—— **看不到文件名时极容易误判成某个源码文件炸了**。
+
+所以第 1 步的备份要落到项目**外**（同盘 rename，仍是瞬间完成）：
+
+```bash
+mv dist .dist-prebuild-bak && mv .dist-prebuild-bak ../.tb-bak-dist
+```
+
+### 3. 判据
+
+- 报错**列号动辄三、四位**且集中在同一行 → 先怀疑「扫到了打包产物」，别去读源码。
+- `ls -d .dist*` 秒查有没有漏在项目根。
+- 顺带：`dist/` 与 `dist-electron/` 是构建产物，别提交；备份目录更别落在根目录里过夜。

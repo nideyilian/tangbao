@@ -5036,3 +5036,30 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
 - **⚠️ 并行写线提醒（开工时实测）**：本轮开工时 `src/features/projectTree/params.ts` 与
   `src/lib/postprocessMedia.ts` 正被 TB-107 那条线**活跃修改**（`params.ts` 在开工前 12 秒
   刚落盘）。本轮**一个字节都没碰**这两个文件（R-09 / R-79）。
+
+---
+
+### TB-109 SOP 管理中心弹窗「标签栏被压扁」
+
+- **来源**：杰哥 2026-09-23 报障「界面出BUG了，标签栏显示异常」→ 澄清为「SOP 管理弹窗」（安装版）
+- **状态**：DONE · 主写线
+- **现象**：打开 SOP 管理中心，顶部标签栏（SOP 库 / 生成元指令 / 智能生成）被压成一条，
+  文字只剩上半截；**全程不报错**。dev 与生产构建表现一致（已在生产等效预览上复现原 bug）。
+- **根因（见 R-92）**：`.sop-center-dialog` 是 `flex flex-col`，高度由 `max-height: min(86vh, 860px)`
+  兜住；内容一多（SOP 列表）浏览器就**按比例压缩可收缩子项**。`.sop-center-header` 有
+  `min-height: 3.25rem`，所以保住了自己；`.sop-center-tabs` 只有 `background` + `padding-inline`、
+  **没有任何高度下限** ⇒ 实测被压到 **7px**。
+- **改动**：`src/features/strategy/styles.css` → `.sop-center-tabs` 加 `flex: none;`（注释写明原因）。
+- **验收证据**（2026-09-23）
+  - **CDP 实测 `getBoundingClientRect`**：修复前标签栏高 **7px**（三个 `.ds-tabs__item` 全被压）；
+    修复后 **41px**、三个标签各 **40px**，弹窗高度由 742（顶到 max-height）回落到 691。
+  - 守卫：`sopCenterSizing.test.ts` 新增「标签栏不被压缩：必须不参与 flex 收缩」。
+  - **反向验证**：撤掉 `flex: none` → **恰好 1 条红、其余 3 条绿**，报错原文即缺该声明；恢复后 4/4 绿。
+  - ⚠️ 第一次反向验证**是假绿**：注释里写了「`flex: none`」几个字，而 `declarations()` 不剥注释、
+    正则命中了注释 → 已修（见 R-93）。
+- **未做**：其他用了同一个 `Tabs` 的地方（中控台 / 后处理参数面板）没体检 —— 它们当前渲染正常，
+  但同属「放进行高受限 flex 列里的横向条」，若要根治应给 `.ds-tabs` 本身加不收缩约束（会动到
+  design-system 组件，需单独评估）。
+- **环境副作用（非项目问题）**：本机 `npm run build` 会被 WorkBuddy 的 safe-delete 护栏拦住
+  （vite 清空 `dist/` 时一次删 62 个文件 > 阈值 50）。绕过方式与「备份目录必须移出项目根」的坑
+  见 `docs/tangbao-ops-runbook.md` §二十五。

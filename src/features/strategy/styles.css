@@ -103,6 +103,11 @@
 
 .sop-center-tabs {
   background: hsl(var(--ds-color-surface));
+  /* 标签栏**不参与 flex 收缩**：弹窗是 flex 列布局，内容多时（SOP 列表几百条）会按比例
+     压缩所有可收缩的子项。头部靠 `min-height: 3.25rem` 保住了自己，标签栏没有下限，
+     于是被压成一条 —— 实测高 7px，三个标签只剩文字上半截（2026-09-23 报障）。
+     这里用 `flex: none` 从根上钉住，标签栏的高度只在「内容变多」时由自己决定。 */
+  flex: none;
   padding-inline: 1.25rem;
 }
 

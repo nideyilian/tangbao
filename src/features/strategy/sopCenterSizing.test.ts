@@ -22,7 +22,9 @@ function declarations(selector: string): string {
   const start = css.indexOf(selector)
   expect(start, `找不到规则：${selector}`).toBeGreaterThanOrEqual(0)
   const end = css.indexOf('}', start)
-  return css.slice(start, end)
+  // 必须剥掉注释：注释里自然语言提到的属性名（例如说明文字里的「flex: none」）
+  // 会被正则断言当成真声明命中 —— 反向验证时表现为「撤掉修复、测试仍然全绿」。
+  return css.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, '')
 }
 
 describe('SOP 管理中心弹窗尺寸契约', () => {
@@ -49,5 +51,13 @@ describe('SOP 管理中心弹窗尺寸契约', () => {
     expect(block).toMatch(/grid-template-rows:\s*minmax\(0, 1fr\)/)
     expect(block).toContain('.sop-center-dialog .sop-center-meta-grid')
     expect(block).toContain('.sop-center-dialog .sop-center-generate-grid')
+  })
+
+  it('标签栏不被压缩：必须不参与 flex 收缩', () => {
+    // 弹窗是 flex 列布局：内容多时（SOP 列表几百条）会按比例压缩所有可收缩的子项。
+    // 头部靠 `min-height: 3.25rem` 保住了自己，标签栏没有下限 —— 不钉住就会被压扁
+    // （2026-09-23 报障实测：高 7px，三个标签只剩文字上半截）。
+    const block = declarations('.sop-center-tabs')
+    expect(block).toMatch(/flex:\s*none|flex-shrink:\s*0/)
   })
 })
