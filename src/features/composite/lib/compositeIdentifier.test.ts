@@ -1,53 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyIdentifierToText,
-  buildIdentifierLayer,
   createDefaultIdentifier,
   getIdentifierSignature,
-  hasRenderableTextLayer,
   isIdentifierEnabled,
   isVerticalText,
   layerWantsIdentifier,
   normalizeIdentifier,
-  resolveIdentifierLayer,
   resolveLayerText,
 } from './compositeIdentifier'
-import type { CompositeV2Preset, CompositeV2TextLayer } from './compositeV2Types'
-
-function presetWithLayers(layers: CompositeV2Preset['layers']): CompositeV2Preset {
-  return {
-    id: 'p1',
-    name: '测试水印',
-    productId: '',
-    baseCanvas: { width: 1080, height: 1920 },
-    sampleBackgroundPath: '',
-    layers,
-    updatedAt: 1,
-  }
-}
-
-function textLayer(text: string, visible = true): CompositeV2TextLayer {
-  return {
-    id: 't1',
-    type: 'text',
-    name: 'Text Layer',
-    visible,
-    locked: false,
-    opacity: 1,
-    rotation: 0,
-    position: { mode: 'free', x: 0, y: 0, width: 400, height: 100 },
-    shadow: { enabled: false, color: '#000000', x: 0, y: 4, blur: 12, opacity: 0.25 },
-    text,
-    fontFamily: 'sans-serif',
-    fontSize: 48,
-    fontWeight: 700,
-    color: '#000000',
-    align: 'center',
-    lineHeight: 1.1,
-    letterSpacing: 0,
-    padding: 5,
-  }
-}
 
 describe('水印标识符 · 启停判定', () => {
   it('空文本 / 纯空格都不算启用（纯空格只会给水印多贴一对空白）', () => {
@@ -116,37 +77,21 @@ describe('水印标识符 · 文案附加', () => {
   })
 })
 
-describe('水印标识符 · 无文字水印时的左下角图层', () => {
-  it('预设里没有可出字的文字层 → 生成左下角一层', () => {
-    const layer = resolveIdentifierLayer(presetWithLayers([]), { text: '@小王', placement: 'suffix' })
-    expect(layer).not.toBeNull()
-    expect(layer?.position).toMatchObject({ mode: 'anchor', anchor: 'bottom-left' })
-    expect(layer?.text).toBe('@小王')
-  })
-
-  it('有可出字的文字层 → 不生成（那种情况走文案叠加）', () => {
-    expect(
-      resolveIdentifierLayer(presetWithLayers([textLayer('限时秒杀')]), { text: '@小王', placement: 'suffix' }),
-    ).toBeNull()
-  })
-
-  it('隐藏的文字层不算「有文字」，空白文本也不算', () => {
-    expect(hasRenderableTextLayer(presetWithLayers([textLayer('限时秒杀', false)]))).toBe(false)
-    expect(hasRenderableTextLayer(presetWithLayers([textLayer('   ')]))).toBe(false)
-    expect(hasRenderableTextLayer(presetWithLayers([textLayer('限时秒杀')]))).toBe(true)
-  })
-
-  it('字号按短边比例取，横竖版得到视觉一致的大小', () => {
-    const portrait = buildIdentifierLayer(presetWithLayers([]), { text: '@小王', placement: 'suffix' })
-    const landscape = buildIdentifierLayer(
-      { ...presetWithLayers([]), baseCanvas: { width: 1920, height: 1080 } },
-      { text: '@小王', placement: 'suffix' },
-    )
-    expect(portrait?.fontSize).toBe(landscape?.fontSize)
-  })
-
-  it('未启用时返回 null', () => {
-    expect(buildIdentifierLayer(presetWithLayers([]), createDefaultIdentifier())).toBeNull()
+describe('水印标识符 · 不补署名（2026-09-23，TB-018 口径）', () => {
+  /*
+   * 曾有一条规则：预设里没有可出字的文字层时，在左下角造一个独立文字层写标识符
+   * （TB-041 验收 3）。它把「就是没有水印」（未绑预设 / 纯净版）和「有图标但没文字层」
+   * 当成同一件事，于是没绑水印的产出也会被补署名 —— 只是因为后处理那条路用的空预设
+   * 基准画布是 1×1，图层框被算到画布外，才一直没被发现。
+   *
+   * 行为守卫在 `compositeRendererV2.test.ts`（「预设里没有文字层时覆盖层一笔都不画」）。
+   * 这里钉住的是**接口面**：那两个函数不该再存在 —— 它们一旦回来，就说明有人把
+   * 「没有水印」和「只有图标的水印」又混成了一件事。
+   */
+  it('不再暴露「无文字水印补署名」的兜底层函数', async () => {
+    const module_ = await import('./compositeIdentifier')
+    expect('buildIdentifierLayer' in module_).toBe(false)
+    expect('resolveIdentifierLayer' in module_).toBe(false)
   })
 })
 

@@ -29,6 +29,21 @@ import { runTaskPostprocess, mergePendingPostprocessDistribution } from './taskP
  * 包一层 mock 才能断言「参数是按哪个方向解析的」—— 这是「多目标不串味」在**可测层面**的
  * 等价观测。真正的串味表现是文件写进错目录，那要跑渲染 + 写盘，jsdom 下测不到。
  */
+/**
+ * 渲染链的固定耗时。用 `vi.hoisted` 是为了让它比 `vi.mock` 的工厂先就位 ——
+ * 工厂被提升到 import 之前执行，引用普通模块级 `const` 会撞 TDZ。
+ */
+const MOCK_STATS = vi.hoisted(() => ({ paintMs: 1.5, encodeMs: 2.5, encodeCount: 1 }))
+
+/**
+ * 渲染链整体替身：jsdom 没有 canvas，而「目录缓存」与「耗时累计」这两件事都不在渲染里 ——
+ * 用固定 stats 换取可精确断言的累计值（真渲染的耗时是随机的，断言不了）。
+ */
+vi.mock('./renderVariant', () => ({
+  renderOnce: vi.fn(async () => ({ dataUrl: 'data:image/jpeg;base64,AAAA', stats: MOCK_STATS })),
+  renderWithMaxKb: vi.fn(async () => ({ dataUrl: 'data:image/jpeg;base64,AAAA', stats: MOCK_STATS })),
+}))
+
 vi.mock('../projectTree/params', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../projectTree/params')>()
   return { ...actual, resolveProjectPostprocessSlice: vi.fn(actual.resolveProjectPostprocessSlice) }
@@ -320,5 +335,104 @@ describe('待分发项：按生效分发配置合并', () => {
         { config: two, items: [] },
       ]),
     ).toHaveLength(1)
+  })
+})
+
+/**
+ * 目录链缓存与耗时诊断（2026-09-23）。
+ *
+ * 背景：实测同一套配置下，单变体耗时在 **168ms ~ 1312ms** 之间摆动（8 倍），而当时
+ * **没有任何分阶段数据**，只能拿两批产出记录的时间戳反推 —— 而且反推错过两次。
+ * 这一组守住新加的两件事：
+ * ① 同一批里重复的目录只建一次（原来每个变体都要 pathJoin + authorize + ensureDir 三次 IPC）；
+ * ② 耗时构成被如实累计（否则界面上那行诊断永远显示 0，等于白加）。
+ */
+describe('目录链缓存与耗时诊断', () => {
+  /** 只有一个尺寸的渠道：让两张源图**落进同一个目录**，才验得了「只建一次」。 */
+  const SINGLE_SIZE_MEDIA = [
+    {
+      id: 'gdt',
+      name: '广点通',
+      sizes: [{ id: 'gdt-1280x720', width: 1280, height: 720, maxSizeKb: 399, enabled: true }],
+    },
+  ]
+
+  function stubWritableApi() {
+    // 参数签名要写出来：`mock.calls` 的类型由它推断，写成 `vi.fn(async () => true)` 会得到
+    // 一个零长度元组，`calls.map(([dir]) => …)` 直接编译不过
+    const ensureDir = vi.fn(async (_dirPath: string) => true)
+    const saveBytes = vi.fn(async (_filePath: string, _bytes: Uint8Array) => true)
+    vi.stubGlobal('window', {
+      electronAPI: {
+        isElectron: true,
+        getLocalSavePath: vi.fn(async () => 'D:\\LocalSaves'),
+        pathJoin: vi.fn(async (base: string, name: string) => `${base}\\${name}`),
+        ensureDir,
+        authorizeCompositeOutputDirectory: vi.fn(async () => true),
+        checkExists: vi.fn(async () => false),
+        saveCompositeImageBytes: saveBytes,
+        saveCompositeImage: vi.fn(async () => true),
+      },
+    })
+    return { ensureDir, saveBytes }
+  }
+
+  /** 两张源图 × 一个渠道 × 一个尺寸 = 2 个变体，且两者落在**同一个**输出子目录。 */
+  function runTwoImages() {
+    return runTaskPostprocess({
+      taskId: 'task-dir-cache',
+      imageIds: ['image-a', 'image-b'],
+      collections: [DIRECTION],
+      projectParams: {},
+      resolveImageCollectionId: () => 'direction-a',
+      readSource,
+      source: 'manual',
+    })
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+    usePostprocessMediaStore.setState({
+      media: SINGLE_SIZE_MEDIA,
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: ['direction-a'],
+      outputDir: '',
+      mediaOutputDirs: {},
+      watermarkPresetIds: [],
+      savedTargetCollectionIds: [],
+    })
+  })
+
+  it('⭐ 两张源图落同一个目录时，目录链只建一次', async () => {
+    const { ensureDir, saveBytes } = stubWritableApi()
+
+    const result = await runTwoImages()
+
+    // 先确认真的写出了 2 个文件 —— 否则「只建了一次目录」可能只是根本没走到写盘（探针打空）
+    expect(saveBytes).toHaveBeenCalledTimes(2)
+    expect(result.outputs).toHaveLength(2)
+
+    /*
+     * 判据写成「每个目录路径只建一次」而不是「总共调了几次」：`ensureDir` 还有第二个调用方
+     * （`getExplicitImageSaveDirectory` 解析输出根时也要建），按总数断言会把那一次也算进来，
+     * 变成一条随输出根实现变化而碎的脆弱断言。
+     *
+     * 旧实现的行为差异在**重复项**上：第二张源图会拿同一个子目录再走一遍
+     * `pathJoin + authorize + ensureDir`（`dirs` 里出现同一个路径两次）。
+     */
+    const dirs = ensureDir.mock.calls.map(([dir]) => String(dir))
+    expect(new Set(dirs).size).toBe(dirs.length)
+    // 输出根 1 次 + 这一批共用的子目录 1 次
+    expect(dirs).toHaveLength(2)
+  })
+
+  it('耗时构成按变体累计（渲染替身的 stats × 变体数）', async () => {
+    stubWritableApi()
+
+    const result = await runTwoImages()
+
+    expect(result.diagnostics.encodeCount).toBe(2)
+    expect(result.diagnostics.paintMs).toBeCloseTo(MOCK_STATS.paintMs * 2)
+    expect(result.diagnostics.encodeMs).toBeCloseTo(MOCK_STATS.encodeMs * 2)
   })
 })

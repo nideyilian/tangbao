@@ -77,6 +77,30 @@ function formatRunTime(timestamp: number): string {
   })
 }
 
+/** 毫秒给人看：一秒以下给整数毫秒，以上给秒（两位小数够区分钟级以内的差别）。 */
+function formatDuration(ms: number): string {
+  if (ms >= 10_000) return `${(ms / 1000).toFixed(1)}s`
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
+  return `${Math.round(ms)}ms`
+}
+
+/**
+ * 耗时构成：`画 X · 编码 Y（N 轮）· 写盘 Z`。
+ *
+ * 为什么直接摊开而不是只报一个总耗时：「慢」有三种成因，处理方式完全不同 ——
+ * 画得多 ⇒ 图层 / 尺寸问题（而且是**卡界面**的那一类）；编码多 ⇒ 体积上限压得紧
+ * （`N 轮` 一眼看出，正常应是 1 轮或 3 轮）；写盘多 ⇒ 磁盘或共享盘慢，与渲染无关。
+ * 只给总耗时等于这三种都得重新猜一遍。
+ *
+ * 返回 null 表示这条记录没有可看的数字（收尾前收尾、或整批被跳过所以没走到渲染）。
+ */
+function describeDiagnostics(run: PostprocessRun): string | null {
+  const d = run.diagnostics
+  if (!d) return null
+  if (d.paintMs === 0 && d.encodeMs === 0 && d.writeMs === 0) return null
+  return `画 ${formatDuration(d.paintMs)} · 编码 ${formatDuration(d.encodeMs)}（${d.encodeCount} 轮）· 写盘 ${formatDuration(d.writeMs)}`
+}
+
 function ActiveRunBlock({ run }: { run: PostprocessRun }) {
   const percent = getPostprocessRunPercent(run)
   return (
@@ -102,20 +126,27 @@ function ActiveRunBlock({ run }: { run: PostprocessRun }) {
 function RunRow({ run }: { run: PostprocessRun }) {
   const { errors, skipped } = countPostprocessIssues(run)
   const summary = `${formatRunTime(run.startedAt)} · ${directionOf(run)} · ${SOURCE_LABELS[run.source]} · ${summarizePostprocessRun(run)}`
+  const diagnostics = describeDiagnostics(run)
+  const elapsed = run.finishedAt ? run.finishedAt - run.startedAt : undefined
   return (
     <div
       data-testid="postprocess-run-row"
-      className="flex items-center gap-2 rounded-ds-lg border border-ds-border px-3 py-2"
+      className="flex flex-col gap-1 rounded-ds-lg border border-ds-border px-3 py-2"
     >
-      <StatusIndicator tone={STATUS_TONE[run.status]}>{POSTPROCESS_RUN_STATUS_LABELS[run.status]}</StatusIndicator>
-      {/* 行内为了紧凑会截断，全文挂在 title 上（hover 即得） */}
-      <div title={summary} className="min-w-0 flex-1 truncate text-xs text-ds-muted">
-        {summary}
+      <div className="flex items-center gap-2">
+        <StatusIndicator tone={STATUS_TONE[run.status]}>{POSTPROCESS_RUN_STATUS_LABELS[run.status]}</StatusIndicator>
+        {/* 行内为了紧凑会截断，全文挂在 title 上（hover 即得） */}
+        <div title={summary} className="min-w-0 flex-1 truncate text-xs text-ds-muted">
+          {summary}
+        </div>
+        {run.issues.length > 0 && (
+          <Button size="sm" variant="ghost" onClick={() => showPostprocessIssuesDialog(run.issues)}>
+            {errors > 0 ? `查看问题 (${errors})` : `查看跳过 (${skipped})`}
+          </Button>
+        )}
       </div>
-      {run.issues.length > 0 && (
-        <Button size="sm" variant="ghost" onClick={() => showPostprocessIssuesDialog(run.issues)}>
-          {errors > 0 ? `查看问题 (${errors})` : `查看跳过 (${skipped})`}
-        </Button>
+      {diagnostics && (
+        <div className="text-xs text-ds-text-subtle">{`耗时 ${formatDuration(elapsed ?? 0)} · ${diagnostics}`}</div>
       )}
     </div>
   )

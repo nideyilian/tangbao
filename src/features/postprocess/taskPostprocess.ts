@@ -36,7 +36,7 @@ import {
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
 import { mergePromotedGlobals, useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 import type { ProjectNodeParamsMap } from '../projectTree/types'
-import { renderWithMaxKb } from './renderVariant'
+import { renderOnce, renderWithMaxKb, type RenderVariantOutcome } from './renderVariant'
 import { resolveBucketOutputRoots } from './outputRoots'
 import { createOutputRootResolver } from './outputRootResolver'
 import {
@@ -45,8 +45,7 @@ import {
   type PostprocessIssue,
   type PostprocessIssueInput,
 } from './postprocessIssue'
-import type { PostprocessProgressPatch, PostprocessRunSource } from './postprocessRun'
-import { renderCompositeV2ToJpegDataUrl } from '../composite/lib/compositeRendererV2'
+import type { PostprocessProgressPatch, PostprocessRunDiagnostics, PostprocessRunSource } from './postprocessRun'
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
 
@@ -163,16 +162,30 @@ export interface TaskPostprocessResult {
    * 两份文案一旦分叉，界面按码查到的说法就会与 toast 看到的不一致。
    */
   warnings: string[]
+  /**
+   * 本次的耗时构成（绘制 / 编码 / 编码轮数 / 写盘）。
+   *
+   * 存在的理由：这条链的耗时**差异极大**（实测单变体 168ms ~ 1312ms，慢的是「每张图都走满
+   * 编码轮数」那一类），而在加它之前**没有任何分阶段数据** —— 只能拿两批产出记录的时间戳反推，
+   * 反推还会反错。它同时承担两件事：让用户看得见「为什么这次慢」，让优化改完能立刻验证。
+   */
+  diagnostics: PostprocessRunDiagnostics
 }
 
 /** 执行过程中的累加器：问题先以结构化形式收着，返回前统一派生 `warnings`。 */
 type PostprocessAccumulator = Pick<
   TaskPostprocessResult,
-  'outputs' | 'skippedMediaIds' | 'issues' | 'pendingDistribution'
+  'outputs' | 'skippedMediaIds' | 'issues' | 'pendingDistribution' | 'diagnostics'
 >
 
 function emptyAccumulator(): PostprocessAccumulator {
-  return { outputs: [], skippedMediaIds: [], issues: [], pendingDistribution: [] }
+  return {
+    outputs: [],
+    skippedMediaIds: [],
+    issues: [],
+    pendingDistribution: [],
+    diagnostics: { paintMs: 0, encodeMs: 0, encodeCount: 0, writeMs: 0 },
+  }
 }
 
 function toResult(acc: PostprocessAccumulator): TaskPostprocessResult {
@@ -265,6 +278,15 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   let sequencesByFolder: Record<string, number> = {}
   /** 已写成的文件数（双写按实际份数算），进度与收尾结论都看它。 */
   let producedFiles = 0
+  /**
+   * 本批次已建好的目录链（键 = 根目录 + 子目录链）。
+   *
+   * 不加这个缓存时，**每一个产出变体**都要走 `pathJoin` + `authorize` + `ensureDir` 三次 IPC，
+   * 而同一批的变体绝大多数落在同几个目录里 —— 几百个变体就是上千次 IPC 白跑。
+   * 存的是 Promise 而不是结果：同一批的多个变体几乎同时开工，等第一个建完再让其余重复建一遍
+   * 就白等了（授权与建目录本身是幂等的，重复调用不会出错，只是慢）。
+   */
+  const dirCache: DirectoryChainCache = new Map()
 
   /**
    * 待分发的产出，按**生效分发配置**分组。
@@ -470,20 +492,12 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         const plan = plans[planIndex]
         // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
         const planPreset = plan.unit.watermark ? (bucketPresets.get(plan.unit.watermark.id) ?? null) : null
-        const written = await writeVariant(
-          api,
-          outputRoots,
-          plan,
-          source.dataUrl,
-          planPreset,
-          // 画面适配是全局一套（不随方向覆盖），整批图取同一个值
-          baseConfig.fitMode,
-          result,
-          {
-            sourceImageId: imageId,
-            sourceIndex: index,
-          },
-        )
+        const written = await writeVariant(api, outputRoots, plan, source.dataUrl, planPreset, baseConfig.fitMode, {
+          acc: result,
+          dirCache,
+          sourceImageId: imageId,
+          sourceIndex: index,
+        })
         producedFiles += written.length
         reportProgress({
           imageUnits: plans.length,
@@ -649,6 +663,25 @@ interface WrittenVariant {
   root: string
 }
 
+/** 本批次已建好的目录链；键是「根目录 + 子目录链」，值是尚未 settle 的建目录 Promise。 */
+type DirectoryChainCache = Map<string, Promise<string | null>>
+
+/**
+ * 一次变体写盘的上下文。
+ *
+ * 收成一个对象而不是继续加形参：这个函数本来就有 6 个入参，再逐个加（累加器、目录缓存、
+ * 定位线索）会到 9 个 —— 调用点全是位置参数，多一个少一个只能靠数数对，加字段时极易错位。
+ */
+interface WriteVariantContext {
+  /** 问题与耗时累加器 */
+  acc: PostprocessAccumulator
+  /** 本批次的目录链缓存（见 `RunTaskPostprocessInput` 上方的说明） */
+  dirCache: DirectoryChainCache
+  /** 定位线索：出问题时用户要靠「哪张源图的哪个文件」去查 */
+  sourceImageId: string
+  sourceIndex: number
+}
+
 /**
  * 渲染 + 写盘一个变体（可以写多个位置）；返回实际写成的那些位置，全失败时把原因记成带码的问题项
  * 并返回空数组。
@@ -664,52 +697,55 @@ async function writeVariant(
   preset: CompositeV2Preset | null,
   /** 源图适配目标尺寸的方式（全局配置，见 `PostprocessMediaConfig.fitMode`） */
   fitMode: CompositeV2FitMode,
-  result: PostprocessAccumulator,
-  /** 定位线索：出问题时用户要靠「哪张源图的哪个文件」去查 */
-  context: { sourceImageId: string; sourceIndex: number },
+  ctx: WriteVariantContext,
 ): Promise<WrittenVariant[]> {
   const written: WrittenVariant[] = []
   const locator = {
     file: plan.fileName,
     mediaId: plan.unit.mediaId,
     mediaName: plan.unit.mediaName,
-    sourceImageId: context.sourceImageId,
-    sourceIndex: context.sourceIndex,
+    sourceImageId: ctx.sourceImageId,
+    sourceIndex: ctx.sourceIndex,
   }
 
-  let rendered: { dataUrl: string; warning?: string }
+  let rendered: RenderVariantOutcome
   try {
     rendered = await renderVariant(sourceDataUrl, plan, preset, fitMode)
   } catch (error) {
     // 渲染抛异常：以前这里只留一条「全部导出位置写入失败」，真因（异常本身）只在 console 里。
-    reportIssue(result, { code: 'PP-RENDER-001', stage: 'render', ...locator, cause: messageOf(error) })
+    reportIssue(ctx.acc, { code: 'PP-RENDER-001', stage: 'render', ...locator, cause: messageOf(error) })
     console.error('后处理产出失败', plan.fileName, error)
     return written
   }
+  ctx.acc.diagnostics.paintMs += rendered.stats.paintMs
+  ctx.acc.diagnostics.encodeMs += rendered.stats.encodeMs
+  ctx.acc.diagnostics.encodeCount += rendered.stats.encodeCount
   if (rendered.warning)
-    reportIssue(result, { code: 'PP-RENDER-002', stage: 'render', ...locator, cause: rendered.warning })
+    reportIssue(ctx.acc, { code: 'PP-RENDER-002', stage: 'render', ...locator, cause: rendered.warning })
 
   // 第一个位置定下的文件名（含撞名后缀）给后面几个位置沿用，双写的两份看起来才是同一个东西
+  const writeStart = performance.now()
   let fileName = plan.fileName
   for (const root of roots) {
-    const directory = await ensureDirectoryChain(api, root, plan.subFolders)
+    const directory = await ensureDirectoryChainCached(api, root, plan.subFolders, ctx.dirCache)
     if (!directory) {
-      reportIssue(result, { code: 'PP-DIR-004', stage: 'write', ...locator, dir: root })
+      reportIssue(ctx.acc, { code: 'PP-DIR-004', stage: 'write', ...locator, dir: root })
       continue
     }
     const filePath = await resolveUniquePath(api, directory, fileName)
     if (!filePath) {
-      reportIssue(result, { code: 'PP-NAME-001', stage: 'write', ...locator, dir: directory })
+      reportIssue(ctx.acc, { code: 'PP-NAME-001', stage: 'write', ...locator, dir: directory })
       continue
     }
     const saved = await saveCompositeImage(api, filePath, rendered.dataUrl)
     if (!saved) {
-      reportIssue(result, { code: 'PP-WRITE-001', stage: 'write', ...locator, dir: directory })
+      reportIssue(ctx.acc, { code: 'PP-WRITE-001', stage: 'write', ...locator, dir: directory })
       continue
     }
     fileName = filePath.split(/[\\/]/).pop() ?? fileName
     written.push({ path: filePath, root })
   }
+  ctx.acc.diagnostics.writeMs += performance.now() - writeStart
   return written
 }
 
@@ -728,7 +764,7 @@ async function renderVariant(
   plan: PostprocessVariantPlan,
   preset: CompositeV2Preset | null,
   fitMode: CompositeV2FitMode,
-): Promise<{ dataUrl: string; warning?: string }> {
+): Promise<RenderVariantOutcome> {
   const renderInput = {
     backgroundDataUrl: sourceDataUrl,
     preset: preset ?? PLAIN_PRESET,
@@ -736,18 +772,38 @@ async function renderVariant(
     fitMode,
   }
   if (!plan.compress) {
-    return { dataUrl: await renderCompositeV2ToJpegDataUrl({ ...renderInput, quality: UNLIMITED_QUALITY }) }
+    return await renderOnce(renderInput, UNLIMITED_QUALITY)
   }
   return await renderWithMaxKb(renderInput, plan.unit.maxSizeKb)
 }
 
 /**
- * 逐级建子目录（`2026-09-20/保险/…` 这类）。
+ * 逐级建子目录（`2026-09-20/保险/…` 这类），并按「根 + 子目录链」缓存结果。
  *
  * 子目录跟在已授权的根目录之下，且**每一级都先授权再建**：只授权根目录是不够的 ——
  * `assertAllowedPath` 逐级检查的是实际写入路径，多一层没授权就整条链断在这里，
  * 而 `ensureDir` 现在会在失败时返回错误消息字符串（不再是布尔 `false`），所以用 `!== true` 判定。
+ *
+ * ⚠️ **失败不进缓存**：建目录失败（返回 null）时把条目删掉，让后面的变体还能自己重试一次 ——
+ * 把一次偶发失败缓存成「整批这个目录都不可用」是最难查的那种错（明明目录后来建好了，却整批跳过）。
  */
+async function ensureDirectoryChainCached(
+  api: NonNullable<Window['electronAPI']>,
+  root: string,
+  subFolders: string[],
+  cache: DirectoryChainCache,
+): Promise<string | null> {
+  const key = [root, ...subFolders].join('\u0000')
+  const hit = cache.get(key)
+  if (hit) return await hit
+
+  const pending = ensureDirectoryChain(api, root, subFolders)
+  cache.set(key, pending)
+  const resolved = await pending
+  if (resolved === null) cache.delete(key)
+  return resolved
+}
+
 async function ensureDirectoryChain(
   api: NonNullable<Window['electronAPI']>,
   root: string,

@@ -36,6 +36,31 @@ export function isRunInFlight(run: Pick<PostprocessRun, 'status'>): boolean {
   return run.status === 'queued' || run.status === 'running'
 }
 
+/**
+ * 一次运行的耗时构成（诊断用）。
+ *
+ * 为什么要有它：这条链的耗时**差异极大** —— 实测同一套配置下，只编 1 轮的批次是 168ms/变体，
+ * 走满编码轮数的批次是 1312ms/变体（由 09-21 八个批次的产出时间戳反推）。而在加它之前
+ * **没有任何分阶段数据**，「慢在哪」只能靠猜，而猜错过两次。这四个数把疑点直接摊开：
+ *
+ * - `paintMs` 高 → 主线程在画布上花的时间多（**会卡界面**）：图层多 / 源图大 / 画面适配贵；
+ * - `encodeMs` 高 → JPEG 编码吃 CPU：图内容复杂、体积上限压得紧；
+ * - `encodeCount` 是上一项最直接的驱动量（每次调用平均 `encodeMs / encodeCount`）；
+ * - `writeMs` 高 → 磁盘 / 共享盘 / 目录授权慢，与渲染无关。
+ *
+ * 全部为 0 表示这一次没走到渲染（例如整批被跳过）。单位毫秒，是**累计值**不是单张。
+ */
+export interface PostprocessRunDiagnostics {
+  /** 画布绘制累计耗时 */
+  paintMs: number
+  /** JPEG 编码累计耗时 */
+  encodeMs: number
+  /** 编码累计轮数（`toBlob` 调用次数） */
+  encodeCount: number
+  /** 写盘累计耗时（含建目录、查重名、落盘） */
+  writeMs: number
+}
+
 export interface PostprocessRun {
   id: string
   /** 自动（任务完成触发）还是手动（素材库补跑） */
@@ -70,6 +95,13 @@ export interface PostprocessRun {
   issues: PostprocessIssue[]
   startedAt: number
   finishedAt?: number
+  /**
+   * 耗时构成，**收尾时才写**（见 `finishPostprocessRun`）。
+   *
+   * 运行中不给值：中途的数字没有参考价值，而且每张图往上写会打破
+   * 「`PostprocessProgressPatch` 全部是绝对值」的一致性（增量在重试/并发下会算重）。
+   */
+  diagnostics?: PostprocessRunDiagnostics
 }
 
 /** 进度补丁：全部是**绝对值**而不是增量 —— 增量在重试 / 并发下容易算重，绝对值天然幂等。 */
@@ -145,6 +177,8 @@ export function applyPostprocessProgress(run: PostprocessRun, patch: Postprocess
 export interface FinishPostprocessRunInput {
   issues: PostprocessIssue[]
   producedFiles: number
+  /** 本次的耗时构成；不传（旧调用方 / 单测）则记录上不带这个字段 */
+  diagnostics?: PostprocessRunDiagnostics
   finishedAt?: number
 }
 
@@ -161,6 +195,7 @@ export function finishPostprocessRun(run: PostprocessRun, input: FinishPostproce
     imageUnits: 0,
     imageUnitsDone: 0,
     currentLabel: undefined,
+    ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
     finishedAt: input.finishedAt ?? Date.now(),
   }
 }

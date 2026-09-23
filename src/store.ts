@@ -1035,7 +1035,14 @@ function resolvePostprocessDirectionConcurrency(): number {
 
 /** 空结果（没启用 / 没有可处理的图 / 某个方向被跳过都用它，形状统一免得下游各写一套判空）。 */
 function emptyPostprocessResult(): TaskPostprocessResult {
-  return { outputs: [], skippedMediaIds: [], issues: [], pendingDistribution: [], warnings: [] }
+  return {
+    outputs: [],
+    skippedMediaIds: [],
+    issues: [],
+    pendingDistribution: [],
+    warnings: [],
+    diagnostics: { paintMs: 0, encodeMs: 0, encodeCount: 0, writeMs: 0 },
+  }
 }
 
 /** 把各方向的结果并成一份（批次级回写与提示看的就是它）。 */
@@ -1045,6 +1052,11 @@ function mergePostprocessResults(results: TaskPostprocessResult[]): TaskPostproc
     merged.outputs.push(...result.outputs)
     merged.issues.push(...result.issues)
     merged.pendingDistribution.push(...result.pendingDistribution)
+    // 耗时构成同样累加：批次级的「这次一共花多少在画、多少在编码」是排查慢的第一眼
+    merged.diagnostics.paintMs += result.diagnostics.paintMs
+    merged.diagnostics.encodeMs += result.diagnostics.encodeMs
+    merged.diagnostics.encodeCount += result.diagnostics.encodeCount
+    merged.diagnostics.writeMs += result.diagnostics.writeMs
     for (const mediaId of result.skippedMediaIds) {
       if (!merged.skippedMediaIds.includes(mediaId)) merged.skippedMediaIds.push(mediaId)
     }
@@ -1315,9 +1327,11 @@ async function executePostprocessImageIds(
         // 进度上报：绝对值补丁，直接落到**这个方向**的运行记录上（界面订阅它显示「3/12」）
         onProgress: (patch) => useRuntimeStore.getState().updatePostprocessRun(runId, patch),
       })
-      useRuntimeStore
-        .getState()
-        .finishPostprocessRun(runId, { issues: result.issues, producedFiles: result.outputs.length })
+      useRuntimeStore.getState().finishPostprocessRun(runId, {
+        issues: result.issues,
+        producedFiles: result.outputs.length,
+        diagnostics: result.diagnostics,
+      })
       return result
     } catch (error) {
       // 异常必须走「可上报结果」而不是抛出去：调用方是 `void x()`（fire-and-forget），

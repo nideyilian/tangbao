@@ -9,6 +9,7 @@ import {
   isRunInFlight,
   startQueuedPostprocessRun,
   type CreatePostprocessRunInput,
+  type FinishPostprocessRunInput,
   type PostprocessProgressPatch,
   type PostprocessRun,
 } from '../features/postprocess/postprocessRun'
@@ -69,7 +70,11 @@ type RuntimeStore = {
   updatePostprocessRun(id: string, patch: PostprocessProgressPatch): void
   /** 排队 → 进行中（拿到并发名额后调用）。幂等，不在排队态时不动。 */
   markPostprocessRunStarted(id: string): void
-  finishPostprocessRun(id: string, input: { issues: PostprocessRun['issues']; producedFiles: number }): void
+  /**
+   * 收尾一条运行记录。`finishedAt` 刻意不收 —— 它由 `finishPostprocessRun` 自己打时间戳，
+   * 调用方传值只会让「记录里的结束时刻」与真实收尾时刻对不上。
+   */
+  finishPostprocessRun(id: string, input: Omit<FinishPostprocessRunInput, 'finishedAt'>): void
   /**
    * 用户手动清掉一条运行记录（工具栏入口的 ×）。
    *

@@ -5888,6 +5888,7 @@ describe('手动后处理入口', () => {
       issues: [createPostprocessIssue({ code: 'PP-SCOPE-002', stage: 'prepare' })],
       pendingDistribution: [],
       warnings: [],
+      diagnostics: { paintMs: 0, encodeMs: 0, encodeCount: 0, writeMs: 0 },
     }
 
     // 后台自动跑：这只是「这个方向关了自动后处理」，不是故障 → 一声不吭
@@ -5908,6 +5909,7 @@ describe('手动后处理入口', () => {
       issues: [createPostprocessIssue({ code: 'PP-WRITE-001', stage: 'write', file: 'a.jpg' })],
       pendingDistribution: [],
       warnings: [],
+      diagnostics: { paintMs: 0, encodeMs: 0, encodeCount: 0, writeMs: 0 },
     }
     reportPostprocessResult(failed, { source: 'auto' })
     expect(showToast).toHaveBeenCalledTimes(1)

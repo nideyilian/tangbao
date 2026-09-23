@@ -9,12 +9,7 @@ import {
   loadImageOriented,
   type OrientedImageSource,
 } from '../../../lib/canvasImage'
-import {
-  getIdentifierSignature,
-  normalizeIdentifier,
-  resolveIdentifierLayer,
-  resolveLayerText,
-} from './compositeIdentifier'
+import { getIdentifierSignature, normalizeIdentifier, resolveLayerText } from './compositeIdentifier'
 import { resolveVerticalColumns } from './compositeTextLayout'
 import type {
   CompositeV2IdentifierConfig,
@@ -183,7 +178,21 @@ function coverSize(base: Size, target: Size): Size {
   }
 }
 
-async function renderOverlayAt(
+/**
+ * 把预设的全部图层画到一张新的覆盖层画布上。
+ *
+ * ⚠️ **导出是为了可测**（与 `drawLayer` 同一理由）：jsdom 没有 canvas 实现，而
+ * 「预设里没有文字层时，覆盖层上到底画没画东西」只有拿到这张画布才验得了
+ * （`compositeRendererV2.test.ts` 用假 ctx 驱动）。生产代码请走 `renderCompositeV2ToCanvas`。
+ *
+ * ## 这里**不**再补署名层（2026-09-23，TB-018 口径）
+ *
+ * 曾经：一个能出字的文字层都没有时，在左下角造一个独立文字层写标识符。
+ * 它把「就是没有水印」（未绑预设 / 纯净版）和「有图标但没文字层」（TB-018 的纯图标水印）
+ * 当成同一件事 —— 前者本该什么都不画。收回的推导与它为什么长期不可见（1×1 基准画布导致的
+ * 几何巧合）写在 `compositeIdentifier.ts` 头注。**别在这里加回兜底层。**
+ */
+export async function renderOverlayAt(
   preset: CompositeV2Preset,
   size: Size,
   identifier?: CompositeV2IdentifierConfig | null,
@@ -196,10 +205,6 @@ async function renderOverlayAt(
   for (const layer of [...preset.layers].reverse()) {
     if (layer.visible) await drawLayer(overlayCtx, layer, preset, size, identifier)
   }
-  // 一个能出字的文字层都没有时，标识符退化成一个左下角图层。最后画 = 压在最上层，
-  // 且它本身就是标识符原文，不再二次叠加（传 null）。
-  const identifierLayer = resolveIdentifierLayer(preset, identifier)
-  if (identifierLayer) await drawLayer(overlayCtx, identifierLayer, preset, size, null)
   return overlay
 }
 
@@ -389,7 +394,16 @@ export async function renderCompositeV2ToCanvas(
 ) {
   const background = input.backgroundDataUrl ? await loadImage(input.backgroundDataUrl) : null
   if (options?.isStale?.()) return canvas
-  const overlay = await renderCombinedOverlay(input.preset, input.targetSize)
+  /*
+   * 没有可见图层的预设（后处理的 `PLAIN_PRESET`、纯净版）**不造覆盖层**。
+   *
+   * 空覆盖层是一张全透明的整尺寸画布，合成上去等于把目标尺寸整张重画一遍 —— 纯白工，
+   * 而且每次还要先分配一张同尺寸 canvas（1280×720 = 3.7MB 位图）。
+   * 后处理里「纯净版 + 未绑水印的渠道」按实测占**一半**的产出量（每张源图 clean 与渠道各一），
+   * 所以这条短路省的不只是 1~3ms/变体，还有一半的覆盖层内存分配。
+   */
+  const hasOverlayContent = input.preset.layers.some((layer) => layer.visible)
+  const overlay = hasOverlayContent ? await renderCombinedOverlay(input.preset, input.targetSize) : null
   if (options?.isStale?.()) return canvas
 
   canvas.width = input.targetSize.width
@@ -414,7 +428,7 @@ export async function renderCompositeV2ToCanvas(
   }
 
   // overlay 可能以更大的同比例基准尺寸渲染，这里统一缩放到目标尺寸（异比例时尺寸相等，等价 1:1 绘制）
-  ctx.drawImage(overlay, 0, 0, input.targetSize.width, input.targetSize.height)
+  if (overlay) ctx.drawImage(overlay, 0, 0, input.targetSize.width, input.targetSize.height)
   return canvas
 }
 

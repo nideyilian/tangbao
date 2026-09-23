@@ -159,4 +159,37 @@ describe('后处理进度面板', () => {
     fixtures.runs = []
     expect(render()).toContain('还没有跑过后处理')
   })
+
+  /**
+   * 耗时构成（2026-09-23）。
+   *
+   * 加它之前这条链**没有任何分阶段数据**：「慢在哪」只能靠两批产出记录的时间戳反推，
+   * 而反推错过两次。所以这行字的作用不只是「好看」—— 它把三种成因分开摊给用户看：
+   * 画得多是主线程问题（卡界面）、编码多说明体积上限压得紧、写盘多就是磁盘/共享盘慢。
+   */
+  it('⭐ 带耗时构成时：总耗时 + 三段拆分 + 编码轮数都显示出来', () => {
+    fixtures.runs = [
+      run({
+        id: 'run-timing',
+        status: 'succeeded',
+        producedFiles: 20,
+        finishedAt: NOW + 12_400,
+        diagnostics: { paintMs: 400, encodeMs: 9800, encodeCount: 38, writeMs: 1100 },
+      }),
+    ]
+    const text = render()
+
+    expect(text).toContain('12.4s')
+    expect(text).toContain('画 400ms')
+    expect(text).toContain('编码 9.80s')
+    // 轮数是「编码为什么贵」最直接的线索：正常应是 1 轮或 3 轮
+    expect(text).toContain('38 轮')
+    expect(text).toContain('写盘 1.10s')
+  })
+
+  it('没有耗时数据时整行不出现（不摆一串 0ms 出来误导人）', () => {
+    fixtures.runs = [run({ id: 'run-no-timing', status: 'succeeded', producedFiles: 1 })]
+
+    expect(render()).not.toContain('耗时')
+  })
 })

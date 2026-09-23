@@ -161,15 +161,12 @@ export type CompositeV2IdentifierConfig = {
   placement: CompositeV2IdentifierPlacement
 }
 
-/** 预设里没有任何可用文字水印时，标识符退化成一个左下角文字层——这些是它的默认样式。 */
-export const IDENTIFIER_FALLBACK_STYLE = {
-  /** 字号取 baseCanvas 短边的比例：竖版横版都能得到视觉上一致的大小 */
-  fontSizeRatio: 0.032,
-  color: '#FFFFFF',
-  strokeColor: '#000000',
-  strokeWidthRatio: 0.006,
-  marginRatio: 0.03,
-} as const
+/*
+ * 这里曾有 `IDENTIFIER_FALLBACK_STYLE`（左下角兜底署名层的默认样式），2026-09-23 删除。
+ * 它的使用者只有 `buildIdentifierLayer`，而那条「没有文字水印就补一个署名层」的规则已按
+ * TB-018 口径收回（「无文案水印」= 纯图标，不补署名）。
+ * 推导与代价见 `compositeIdentifier.ts` 头注，**别把常量加回来**。
+ */
 
 export type CompositeV2Preset = {
   id: string

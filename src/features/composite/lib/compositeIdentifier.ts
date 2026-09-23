@@ -1,16 +1,35 @@
 /**
  * 水印标识符的附加规则（纯函数，无副作用，便于单测）。
  *
- * 三条规则：
+ * 两条规则：
  * 1. **预设里有能出字的文字层** → 按位置把标识符贴到文案上（开头 / 结尾 / 两侧）。
  *    ⚠️ 这是**逐层**的：多文案水印默认每段都贴，除非那一层 `withIdentifier: false`
  *    （2026-09-22 加 —— 多文案水印里「卖点」这种文案不该带标识）。
  *    竖排文案（一个字一行）另有一条例外：标识符**自己占一行**，不跟首字并排，见 `applyIdentifierToText`。
- * 2. **一个能出字的文字层都没有** → 退化成一个左下角的独立文字层，只写标识符本身。
- * 3. 「这一层贴不贴」由 `layerWantsIdentifier` **一处**判定 —— 图层界面的勾选框与渲染器
+ * 2. 「这一层贴不贴」由 `layerWantsIdentifier` **一处**判定 —— 图层界面的勾选框与渲染器
  *    读的是同一份判据，不各写一次。
  *
- * 标识符**不写回预设**：它是渲染时叠加的派生值。写回就得在导出/复制/撤销时反复处理
+ * ## ⛔ 刻意不做：给「没有文字的水印」补一个署名图层（2026-09-23 按 TB-018 口径收回）
+ *
+ * 曾经有第三条规则：预设里一个能出字的文字层都没有时，在**左下角造一个独立文字层**只写标识符
+ * （来自 TB-041 验收标准 3）。它本意是服务「只有图标的水印」，实际却把**两类完全不同的东西**
+ * 归到了同一个判据下 ——
+ *
+ * - 「这个预设**就是没有水印**」（后处理没绑预设、纯净版）→ 应该什么都不画；
+ * - 「这个预设**有图但没有文字层**」（纯图标水印）→ TB-018 要的正是「无文案 = 纯图标」。
+ *
+ * 两者都命中「没有可出字的文字层」，于是**没绑水印的产出也会被补一个署名**。
+ * 它之所以一直没暴露，是因为后处理那条路用的空预设基准画布是 **1×1**
+ * （`taskPostprocess.ts` 的 `PLAIN_PRESET`）：字号按比例算出来 8px，再按
+ * `min(target/base)` 放大 **720 倍** ⇒ 图层框算到画布**上方之外**，整段文字落在画布外不可见。
+ * **那是几何巧合，不是设计** —— 基准画布一旦换成真实尺寸，每张干净的图（含纯净版）
+ * 都会被糊上一行巨大文字。
+ *
+ * ⇒ 「无文案水印」的语义由 TB-018 定：**没有文字就是没有文字，不补署名**。
+ *   要署名就把它写进预设自己的文字层里。**别把兜底层加回来** —— 加回来等于又把
+ *   「没有水印」和「只有图标的水印」混成一件事。
+ *
+ * 标识符本身仍然**不写回预设**：它是渲染时叠加的派生值。写回就得在导出/复制/撤销时反复处理
  * 「这段到底是不是用户自己写的」，还会让「改一次标识符」变成改 N 个预设的批量写盘；
  * 叠加则天然满足「设置后对所有相关水印即时生效」。
  *
@@ -18,13 +37,7 @@
  * 没变，预览会继续用旧帧（见 `compositeRendererV2.getCompositeOverlayCacheKey`）。
  */
 
-import {
-  IDENTIFIER_FALLBACK_STYLE,
-  type CompositeV2IdentifierConfig,
-  type CompositeV2IdentifierPlacement,
-  type CompositeV2Preset,
-  type CompositeV2TextLayer,
-} from './compositeV2Types'
+import { type CompositeV2IdentifierConfig, type CompositeV2IdentifierPlacement } from './compositeV2Types'
 
 export const IDENTIFIER_PLACEMENTS: CompositeV2IdentifierPlacement[] = ['prefix', 'suffix', 'both']
 
@@ -126,7 +139,7 @@ export function layerWantsIdentifier(layer: { withIdentifier?: boolean }): boole
  * 才能验证「关掉标识的那一层真的不带署名」。
  */
 export function resolveLayerText(
-  layer: Pick<CompositeV2TextLayer, 'text' | 'withIdentifier'>,
+  layer: { text: string; withIdentifier?: boolean },
   identifier?: CompositeV2IdentifierConfig | null,
 ): string {
   return layerWantsIdentifier(layer) ? applyIdentifierToText(layer.text, identifier) : layer.text
@@ -141,74 +154,4 @@ export function resolveLayerText(
 export function getIdentifierSignature(identifier?: CompositeV2IdentifierConfig | null): string {
   if (!isIdentifierEnabled(identifier)) return '-'
   return `${identifier!.placement}:${identifier!.text}`
-}
-
-/** 预设里是否存在「能出字」的文字层（可见 + 文本非空）。隐藏 / 空文本的层不算。 */
-export function hasRenderableTextLayer(preset: CompositeV2Preset | null | undefined): boolean {
-  if (!preset) return false
-  return preset.layers.some((layer) => layer.type === 'text' && layer.visible && layer.text.trim() !== '')
-}
-
-/**
- * 造出「无文字水印时」的那个左下角标识符层。
- *
- * 样式取预设画布短边的比例而不是写死像素：竖版 1080x1920 与横版 1920x1080 会得到视觉上
- * 一致的大小，不用为两种版式各配一份样式。宽度给到画布的 80%，保证 `fillText` 的 maxWidth
- * 不会把长标识符挤扁。
- */
-export function buildIdentifierLayer(
-  preset: CompositeV2Preset,
-  identifier?: CompositeV2IdentifierConfig | null,
-): CompositeV2TextLayer | null {
-  if (!isIdentifierEnabled(identifier)) return null
-  const base = preset.baseCanvas
-  const shortSide = Math.min(base.width, base.height)
-  if (!(shortSide > 0)) return null
-  const fontSize = Math.max(8, Math.round(shortSide * IDENTIFIER_FALLBACK_STYLE.fontSizeRatio))
-  const margin = Math.round(shortSide * IDENTIFIER_FALLBACK_STYLE.marginRatio)
-  const strokeWidth = Math.round(shortSide * IDENTIFIER_FALLBACK_STYLE.strokeWidthRatio * 100) / 100
-
-  return {
-    id: `identifier-layer-${preset.id}`,
-    type: 'text',
-    name: '水印标识符',
-    visible: true,
-    // 锁住：它是派生的，不该被当成普通图层拖走或改字号
-    locked: true,
-    opacity: 1,
-    rotation: 0,
-    position: {
-      mode: 'anchor',
-      anchor: 'bottom-left',
-      marginX: margin,
-      marginY: margin,
-      offsetX: 0,
-      offsetY: 0,
-      width: Math.max(1, Math.round(base.width * 0.8)),
-      height: Math.max(1, Math.round(fontSize * 1.4)),
-    },
-    shadow: { enabled: false, color: IDENTIFIER_FALLBACK_STYLE.strokeColor, x: 0, y: 4, blur: 12, opacity: 0.25 },
-    stroke: { enabled: strokeWidth > 0, color: IDENTIFIER_FALLBACK_STYLE.strokeColor, width: strokeWidth },
-    text: identifier!.text,
-    fontFamily: 'sans-serif',
-    fontSize,
-    fontWeight: 700,
-    color: IDENTIFIER_FALLBACK_STYLE.color,
-    align: 'left',
-    lineHeight: 1.2,
-    letterSpacing: 0,
-    padding: 0,
-  }
-}
-
-/**
- * 渲染时要画的额外标识符层：有可出字的文字层时为 null（那种情况走文案叠加），
- * 否则返回左下角那层。
- */
-export function resolveIdentifierLayer(
-  preset: CompositeV2Preset,
-  identifier?: CompositeV2IdentifierConfig | null,
-): CompositeV2TextLayer | null {
-  if (hasRenderableTextLayer(preset)) return null
-  return buildIdentifierLayer(preset, identifier)
 }

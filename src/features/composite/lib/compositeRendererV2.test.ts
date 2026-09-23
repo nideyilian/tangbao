@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
+/* @vitest-environment jsdom */
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   drawLayer,
   getCompositeOverlayCacheKey,
   getScaledLayerStrokeWidth,
   getScaledTextMetrics,
+  renderCompositeV2ToCanvas,
+  renderOverlayAt,
 } from './compositeRendererV2'
 import { createDefaultCompositeV2Preset } from './compositeV2Defaults'
 import type { CompositeV2TextLayer } from './compositeV2Types'
@@ -224,5 +227,129 @@ describe('composite renderer v2', () => {
     expect(drawn.map((item) => item.text)).toEqual(['★', '该', '活', '动'])
     expect(new Set(drawn.map((item) => item.x)).size).toBe(1)
     expect(drawn[0]!.y).toBeLessThan(drawn[1]!.y)
+  })
+})
+
+/**
+ * 让 `renderOverlayAt` 里的 `document.createElement('canvas')` 返回一张假画布。
+ * jsdom 没有 canvas 实现，而这两条守卫要看的只是「画布上有没有出现字」。
+ *
+ * 每次调用**新建**一个对象：一次 `renderCompositeV2ToCanvas` 会先后建两张画布
+ * （覆盖层 + 目标画布），返回同一个对象会让覆盖层直接画到自己身上。
+ */
+function installFakeOverlayCanvas(ctx: CanvasRenderingContext2D) {
+  return vi
+    .spyOn(document, 'createElement')
+    .mockImplementation(() => ({ width: 0, height: 0, getContext: () => ctx }) as unknown as HTMLElement)
+}
+
+/**
+ * 记录「画布级」操作（清屏 / 合成）。`drawImage` 的**次数**直接回答
+ * 「覆盖层到底有没有被合成上去」—— 这正是「空图层别白画一张」那条优化要守的东西。
+ */
+function canvasOpContext() {
+  const ops: string[] = []
+  const base = recordingContext(18).ctx as unknown as Record<string, unknown>
+  const ctx = {
+    ...base,
+    filter: '',
+    clearRect: () => ops.push('clearRect'),
+    drawImage: () => ops.push('drawImage'),
+  } as unknown as CanvasRenderingContext2D
+  return { ctx, ops }
+}
+
+describe('composite renderer v2 · 覆盖层不补署名（TB-018 口径）', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /*
+   * 曾有一条规则：预设里一个能出字的文字层都没有时，在左下角造一个独立文字层写标识符。
+   * 它把「就是没有水印」（未绑预设 / 纯净版）和「有图标但没文字层」（纯图标水印）
+   * 判成了同一件事 —— 前者本该什么都不画。
+   *
+   * 为什么长期没被发现：后处理那条路用的空预设基准画布是 **1×1**，字号算出来 8px，
+   * 再按 `min(target/base)` 放大 **720 倍** ⇒ 图层框落到画布上方之外，整段文字不可见。
+   */
+  it('⭐ 预设里没有文字层 → 覆盖层一笔都不画（哪怕标识符已启用）', async () => {
+    const { ctx, drawn } = recordingContext(18)
+    installFakeOverlayCanvas(ctx)
+
+    await renderOverlayAt(
+      createDefaultCompositeV2Preset(),
+      { width: 1280, height: 720 },
+      { text: '@小王', placement: 'suffix' },
+    )
+
+    expect(drawn).toEqual([])
+  })
+
+  /*
+   * 对照用例：证明上面那条守卫的探针**有能力看到字**（R-83 那一类「探针没打中目标」的教训）。
+   * 少了它，把整个绘制循环删掉也能让上面全绿。
+   */
+  it('（对照）预设里有文字层 → 同样的探针能看到字', async () => {
+    const { ctx, drawn } = recordingContext(18)
+    installFakeOverlayCanvas(ctx)
+
+    await renderOverlayAt(
+      { ...createDefaultCompositeV2Preset(), layers: [complianceTextLayer({ text: '限时秒杀' })] },
+      { width: 1280, height: 720 },
+      { text: '@小王', placement: 'suffix' },
+    )
+
+    expect(drawn).toHaveLength(1)
+    expect(drawn[0]!.text).toBe('限时秒杀@小王')
+  })
+})
+
+describe('composite renderer v2 · 空覆盖层不合成（2026-09-23）', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /*
+   * 后处理里「纯净版」与「没绑水印的渠道」用的都是空图层预设（`PLAIN_PRESET`），
+   * 而它们按实测占**一半**的产出量（每张源图 clean 与渠道各一）。
+   *
+   * 空覆盖层是一张全透明的整尺寸画布：合成上去等于把目标尺寸整张重画一遍，
+   * 而且还先分配了一份同尺寸位图（1280×720 = 3.7MB）。
+   */
+  it('⭐ 预设没有可见图层时：只清屏，不合成覆盖层', async () => {
+    const { ctx, ops } = canvasOpContext()
+    installFakeOverlayCanvas(ctx)
+    const canvas = { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement
+
+    // 不给背景图：这样 ops 里除了覆盖层合成不该出现别的 drawImage（背景也要 drawImage，会干扰判据）
+    await renderCompositeV2ToCanvas(
+      { preset: createDefaultCompositeV2Preset(), targetSize: { width: 640, height: 360 }, fitMode: 'crop-fill' },
+      canvas,
+    )
+
+    expect(ops).toEqual(['clearRect'])
+  })
+
+  /* 对照用例：证明上一条不是因为「压根没走到合成」而通过（探针有效性）。 */
+  it('（对照）有可见图层时会合成覆盖层 —— 同样的探针看得到 drawImage', async () => {
+    const { ctx, ops } = canvasOpContext()
+    installFakeOverlayCanvas(ctx)
+    const canvas = { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement
+
+    await renderCompositeV2ToCanvas(
+      {
+        // 换一个 id：overlay 缓存键含 preset.id 与 updatedAt，同 id 会命中上一条的空覆盖层
+        preset: {
+          ...createDefaultCompositeV2Preset(),
+          id: 'preset-with-text',
+          layers: [complianceTextLayer({ text: '限时秒杀' })],
+        },
+        targetSize: { width: 640, height: 360 },
+        fitMode: 'crop-fill',
+      },
+      canvas,
+    )
+
+    expect(ops).toContain('drawImage')
   })
 })
