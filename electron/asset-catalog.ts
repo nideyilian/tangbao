@@ -64,8 +64,57 @@ export function assetSearchText(asset: GeneratedAsset): string {
   return values.filter(Boolean).join(' ')
 }
 
-/** 命名排序列回填的完成标记（写在 `catalog_meta` 里，防重复回填）。 */
+/**
+ * 命名排序列回填的完成标记（防重复回填）。
+ *
+ * ⚠️ 这个标记**不在 `catalog_meta` 表里** —— 它走 `AppDataStore`，落在 `app_data_records` 表
+ * 的 `catalog_meta` namespace 下（见 `backfillAssetSortColumns`）。而**目录结构版本号**走的是
+ * `catalog_meta` 表（`getMeta` / `setMeta`）。两者不是同一处存储，改的时候别找错地方。
+ */
 const ASSET_SORT_BACKFILL_KEY = 'asset_sort_columns_backfill_v1'
+
+// ===== 目录结构版本与迁移链 =====
+
+/**
+ * 当前目录结构版本。
+ *
+ * ⚠️ **加列 / 加表 / 改列语义之后，必须把这里 +1，并在 `CATALOG_MIGRATIONS` 末尾追加一节。**
+ * 只改建表 SQL 而不升版本，等于让已经升过级的用户库拿不到这一步 ——
+ * 版本号已是最新的库不会再跑迁移链，新列永远不会补上，用户看到的是"功能莫名其妙没生效"。
+ */
+export const CATALOG_SCHEMA_VERSION = 1
+
+/** 结构版本号在 `catalog_meta` 表里的键名（读写走 `getMeta` / `setMeta`）。 */
+export const CATALOG_SCHEMA_VERSION_KEY = 'schema_version'
+
+export interface CatalogMigration {
+  /** 目标版本号；必须严格递增，且最后一节与 `CATALOG_SCHEMA_VERSION` 对齐 */
+  version: number
+  description: string
+  /**
+   * 每一步都必须**幂等**：老库可能已经跑过其中一部分（历史遗留的库版本号是 0），
+   * 重跑不能改坏数据。
+   */
+  run: (catalog: AssetCatalog) => void
+}
+
+/**
+ * 迁移链，按版本升序执行；库里的版本号小于 `CATALOG_SCHEMA_VERSION` 时补跑缺的那几节。
+ *
+ * 第一节把「糖包引入版本号之前」的库补齐到当前结构 —— 那些库里读不到版本号，按 0 算，
+ * 正好会完整跑一遍。三个 `ensureXxx` 本身就是"探测到缺列才补"的幂等写法，重复执行安全。
+ */
+export const CATALOG_MIGRATIONS: CatalogMigration[] = [
+  {
+    version: 1,
+    description: '补齐 tags 树形列、collections 颜色/置顶/软删列、assets 命名排序列并回填存量',
+    run: (catalog) => {
+      catalog.ensureTagTreeColumns()
+      catalog.ensureCollectionExtraColumns()
+      catalog.ensureAssetSortColumns()
+    },
+  },
+]
 
 /**
  * 素材的「命名排序」值：规范名（`20260918-网赚-401-1`）与批次号。
@@ -149,6 +198,8 @@ export class AssetCatalog {
   }
 
   private migrate() {
+    // 建表 SQL 只含「基础结构」，后加的列一律由迁移链补（见 `CATALOG_MIGRATIONS`）。
+    // 所以这里不做「新库 / 老库」分流 —— 两种库走同一条链，避免出现两套结构定义。
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS blobs (
         id TEXT PRIMARY KEY,
@@ -245,9 +296,38 @@ export class AssetCatalog {
         value TEXT NOT NULL
       );
     `)
-    this.ensureTagTreeColumns()
-    this.ensureCollectionExtraColumns()
-    this.ensureAssetSortColumns()
+    this.runMigrations()
+  }
+
+  /** 库里记录的结构版本；读不到（引入版本号之前的老库、以及全新库）按 0 算，正好触发整条迁移链。 */
+  private readSchemaVersion(): number {
+    const raw = this.getMeta(CATALOG_SCHEMA_VERSION_KEY)
+    if (raw === null) return 0
+    const parsed = Number.parseInt(raw, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+  }
+
+  private writeSchemaVersion(version: number): void {
+    this.setMeta(CATALOG_SCHEMA_VERSION_KEY, String(version))
+  }
+
+  /**
+   * 补跑缺失的迁移。
+   *
+   * **全新库也要走这条链**：建表 SQL 只含「基础结构」，后加的列全靠各节 `ensureXxx` 补。
+   * 所以新库与"引入版本号之前的老库"是同一条路径，不会出现两套结构定义。
+   *
+   * 每跑完一节才写一次版本号：中途崩溃时版本号停在上一节，下次打开重跑当前节 ——
+   * 各节都是幂等的，所以这条路径安全，不需要把整条链包进一个大事务。
+   */
+  private runMigrations(): void {
+    const current = this.readSchemaVersion()
+    if (current >= CATALOG_SCHEMA_VERSION) return
+    for (const migration of CATALOG_MIGRATIONS) {
+      if (migration.version <= current) continue
+      migration.run(this)
+      this.writeSchemaVersion(migration.version)
+    }
   }
 
   /**
@@ -259,8 +339,9 @@ export class AssetCatalog {
    *
    * 存量行 `file_name` 为 NULL、`filename_batch` 为 0（ALTER 的默认值），要用一次回填补齐，
    * 否则老素材会全部挤在同一端、看起来像排序坏了。回填用 `catalog_meta` 标记防重复。
+   * 由 `CATALOG_MIGRATIONS` v1 调用；公开是为了让模块级的迁移链能编排它，不是对外 API。
    */
-  private ensureAssetSortColumns() {
+  ensureAssetSortColumns() {
     const columns = new Set(
       (this.db.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map((row) => row.name),
     )
@@ -299,8 +380,8 @@ export class AssetCatalog {
     this.appData.put('catalog_meta', { id: ASSET_SORT_BACKFILL_KEY, value: '1' })
   }
 
-  /** 旧库升级：为 collections 表补齐颜色 / 置顶 / 软删除列。 */
-  private ensureCollectionExtraColumns() {
+  /** 旧库升级：为 collections 表补齐颜色 / 置顶 / 软删除列。由 `CATALOG_MIGRATIONS` v1 调用。 */
+  ensureCollectionExtraColumns() {
     const columns = new Set(
       (this.db.prepare('PRAGMA table_info(collections)').all() as Array<{ name: string }>).map((row) => row.name),
     )
@@ -309,8 +390,8 @@ export class AssetCatalog {
     if (!columns.has('trashed_at')) this.db.exec('ALTER TABLE collections ADD COLUMN trashed_at INTEGER')
   }
 
-  /** 旧库升级：为 tags 表补齐树形列（parent_id / sort_order）。 */
-  private ensureTagTreeColumns() {
+  /** 旧库升级：为 tags 表补齐树形列（parent_id / sort_order）。由 `CATALOG_MIGRATIONS` v1 调用。 */
+  ensureTagTreeColumns() {
     const columns = new Set(
       (this.db.prepare('PRAGMA table_info(tags)').all() as Array<{ name: string }>).map((row) => row.name),
     )
