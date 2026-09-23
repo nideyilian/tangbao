@@ -270,6 +270,27 @@ export function buildAssetBatchGroups(
     }
   }
 
+  /**
+   * SOP 批次是一个**整体**：成员由「任务记录」决定，不由「素材」决定。
+   *
+   * 素材只负责"挂图"——某条没出图、或它的图不在当前查询结果里（在别的文件夹、在还没加载到的
+   * 分页里、已被清理），都不该把它从「整批 N 条」里静默抹掉。批次详情弹窗
+   * （`SopBatchDetailModal` → `sopBatchTaskGrouping.groupSopBatchTasks`）就是按任务记录算的；
+   * 两边口径不一致，就会出现「卡片说 74 条、点开弹窗说 150 条」这种同一批次两个数字。
+   *
+   * ⚠️ 只补**已经存在**的批次组（= 至少有一张图落进来的）。完全无产出的批次**不**凭空建卡，
+   * 否则卡片视图会被历史空批次刷屏——那是 `includeTaskless` 谓词该管的事，不由这里代劳。
+   */
+  for (const task of tasksById.values()) {
+    const sopBatch = task.sopBatch
+    if (!sopBatch) continue
+    const groupId = sopBatch.snapshotId || sopBatch.batchId
+    if (!groupId) continue
+    const group = groups.get(`sop-batch:${groupId}`)
+    if (!group || group.taskIds.includes(task.id)) continue
+    group.taskIds.push(task.id)
+  }
+
   // 排序基准时间：任务卡位置在创建（提交）时即确定，不随实际生成进度变化——
   // 有关联任务的组一律以任务提交时间为基准（SOP 组取组内最早提交时间 = 批次创建时间），
   // 避免「生成中沉底、生成完成跳到最上方」的卡片跳动；孤儿组（任务已删除）没有任务

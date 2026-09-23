@@ -277,6 +277,89 @@ describe('buildAssetBatchGroups', () => {
     })
     expect(groups).toEqual([])
   })
+
+  // TB-121：批次成员由「任务记录」决定，不由「素材」决定。
+  // 真实事故（2026-09-23）：批次 150 条提示词里只有 74 条的图能查到，卡片就显示「整批 74 条」，
+  // 而点开批次详情弹窗写的是 150 条——同一批次两个数字。
+  describe('SOP 批次成员补全（TB-121）', () => {
+    const sopBatchMeta = (promptIndex: number) => ({
+      batchId: 'batch-1',
+      snapshotId: 'snap-1',
+      sopId: 'sop-1',
+      sopName: 'SOP 海报',
+      promptIndex,
+      promptCount: 3,
+    })
+
+    it('没出图的条目不会被从批次里抹掉（即使没传 includeTaskless）', () => {
+      const withImage = makeTask('t1', { sopBatch: sopBatchMeta(0) })
+      const doneWithoutImage = makeTask('t2', { sopBatch: sopBatchMeta(1), status: 'done', outputImages: [] })
+      const failed = makeTask('t3', { sopBatch: sopBatchMeta(2), status: 'error', error: '服务商超时' })
+
+      const groups = buildAssetBatchGroups(
+        [makeAsset('img-a', makeOrigin('t1', 0), 1000)],
+        new Map([
+          ['t1', withImage],
+          ['t2', doneWithoutImage],
+          ['t3', failed],
+        ]),
+        new Map([['snap-1', snapshot]]),
+      )
+
+      expect(groups).toHaveLength(1)
+      // 三条都在，而不是只剩「有图的那一条」
+      expect(groups[0]?.taskIds).toEqual(['t1', 't2', 't3'])
+      // 卡片上的「整批 N 条提示词」= 全部成员
+      expect(groups[0]?.summary).toEqual({ total: 3, running: 0, completed: 2, failed: 1 })
+    })
+
+    it('不跨批次吸血：别的批次的任务不会被并进来', () => {
+      const taskA = makeTask('t1', { sopBatch: sopBatchMeta(0) })
+      const taskB = makeTask('t2', {
+        sopBatch: {
+          batchId: 'b2',
+          snapshotId: 's2',
+          sopId: 'sop-2',
+          sopName: '另一批',
+          promptIndex: 0,
+          promptCount: 1,
+        },
+      })
+
+      const groups = buildAssetBatchGroups(
+        [makeAsset('img-a', makeOrigin('t1', 0))],
+        new Map([
+          ['t1', taskA],
+          ['t2', taskB],
+        ]),
+        new Map(),
+      )
+
+      expect(groups).toHaveLength(1)
+      expect(groups[0]?.taskIds).toEqual(['t1'])
+    })
+
+    it('完全无产出的批次不凭空建卡（历史空批次不刷屏）', () => {
+      const empty = makeTask('t1', { sopBatch: sopBatchMeta(0) })
+      expect(buildAssetBatchGroups([], new Map([['t1', empty]]), new Map())).toEqual([])
+    })
+
+    it('批次位置按组内最早提交时间算（补进来的成员也算）', () => {
+      const later = makeTask('t1', { sopBatch: sopBatchMeta(0), createdAt: 8000 })
+      const earliest = makeTask('t2', { sopBatch: sopBatchMeta(1), createdAt: 1000, status: 'done', outputImages: [] })
+
+      const groups = buildAssetBatchGroups(
+        [makeAsset('img-a', makeOrigin('t1', 0), 8000)],
+        new Map([
+          ['t1', later],
+          ['t2', earliest],
+        ]),
+        new Map([['snap-1', snapshot]]),
+      )
+
+      expect(groups[0]?.createdAt).toBe(1000)
+    })
+  })
 })
 
 describe('hasTaskFailure', () => {
