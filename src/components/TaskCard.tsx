@@ -1078,7 +1078,7 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                       useStore.getState().setConfirmDialog({
                         title: '取消收藏',
                         message:
-                          '确定要取消收藏吗？这会删除这个收藏卡片及其生成的图片，不可恢复；被其他任务/会话引用的图片会保留。',
+                          '确定要取消收藏吗？这会删除这个收藏卡片，其生成的图片会移入回收站（可恢复）；被其他任务/会话引用的图片会保留。',
                         action: () => {
                           removeMultipleTasks([task.id])
                         },

@@ -175,11 +175,11 @@ afterEach(() => {
  * @param layoutWidth 布局容器的 `clientWidth`。传 0 模拟「还没量到宽度」
  *   （空态 → 非空态切换、ResizeObserver 未建立时就是这个状态，见下方 TB-106 用例）。
  */
-function renderGrouped(layoutWidth = 800) {
+function renderGrouped(layoutWidth = 800, scope?: string) {
   let renderer: ReactTestRenderer
   act(() => {
     renderer = create(
-      createElement(AssetGroupedView, { assets, libraryAssetCount: assets.length, onPurgeRequest: vi.fn() }),
+      createElement(AssetGroupedView, { assets, libraryAssetCount: assets.length, onPurgeRequest: vi.fn(), scope }),
       {
         createNodeMock: (element) => {
           const props = element.props as Record<string, unknown>
@@ -305,6 +305,21 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
     expect(renderer.root.findAllByProps({ 'data-group-id': 'orphan:t9' })).toHaveLength(0)
     expect(renderer.root.findAll((node) => node.type === 'button' && node.props.title === '打开查看器')).toHaveLength(0)
     act(() => renderer.unmount())
+  })
+
+  it('回收站作用域放行孤儿组：删掉任务卡后的图能在回收站里找到（TB-119）', () => {
+    // 删任务卡现在把它的产出图移入回收站（来源任务随之消失）⇒ 那些图只会归进孤儿组。
+    // 回收站里若也一并滤掉孤儿组，用户按「删任务卡 → 去回收站捞图」走就会看到空回收站
+    // （只有切回图片模式才看得见），与「回收站中可见、可操作」的原意相反。
+    const renderer = renderGrouped(800, 'trash')
+    try {
+      expect(renderer.root.findAllByProps({ 'data-group-id': 'orphan:t9' }).length).toBeGreaterThan(0)
+      expect(collectText(renderer)).toContain('任务已删除')
+      // 孤儿卡不给「删除/复用配置」这类入口（任务没了，入口点了也没用）
+      expect(renderer.root.findAll((node) => node.props.title === '删除任务')).toHaveLength(0)
+    } finally {
+      act(() => renderer.unmount())
+    }
   })
 
   it('opens the task detail modal on a plain click (published version interaction)', () => {

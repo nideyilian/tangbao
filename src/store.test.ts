@@ -23,6 +23,8 @@ import type {
   WorkspaceTab,
 } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
+import { planAssetPurge } from './lib/assetPurge'
+import { buildImageReferenceGraph } from './lib/imageReferenceGraph'
 import { formatGeneratedImageDate } from './lib/generatedImageFilename'
 import {
   getActivePostprocessRuns,
@@ -226,6 +228,12 @@ vi.mock('./lib/db', () => {
     putGeneratedAsset: async (asset: GeneratedAsset) => asset.id,
     putGeneratedAssets: async () => undefined,
     deleteGeneratedAsset: async () => undefined,
+    // 素材写盘的三件套（记录 + blob + 版本）：仓库层「浏览器回退」分支要它们存在。
+    // 「删任务卡 → 图片进回收站」是第一条真正走到 applyTrashStatus 写入的用例，
+    // 之前没人踩到这个分支，mock 里一直缺这三个导出（TB-119）。
+    putGeneratedAssetRecords: async () => undefined,
+    putAssetBlobs: async () => undefined,
+    putAssetVersions: async () => undefined,
     clearGeneratedAssets: async () => undefined,
     getAllAssetCollections: async () => [],
     getAssetCollection: async () => undefined,
@@ -310,6 +318,8 @@ vi.mock('./lib/localSave', async (importOriginal) => {
     deleteLocalImageFiles: vi.fn(async () => 0),
     // 测试环境没有真实磁盘文件：换成 spy，供「永久删除素材时原图文件也要删掉」的断言使用
     deleteRawCacheImages: vi.fn(async () => {}),
+    // 磁盘缩略图删除（主进程 thumb:delete）：同样只做 spy —— 断言「永久删除时缩略图一起清」
+    deleteThumbnailsFromDisk: vi.fn(async () => 0),
   }
 })
 
@@ -355,6 +365,8 @@ import {
   removeMultipleTasks,
   removeDeletedLocalImage,
   removeTask,
+  detachTrashedAssetsFromTasks,
+  purgeGeneratedAssets,
   reportPostprocessResult,
   rerunSopBatchTasks,
   retryTask,
@@ -4083,11 +4095,14 @@ describe('agent context for removed outputs', () => {
     expect(serializedConversations).not.toContain('batch-deleted-base64')
   })
 
-  it('cascade-deletes the task together with its generated assets (task card delete)', async () => {
+  it('把任务卡删掉时，它的产出图移入回收站而不是永久删除（TB-119）', async () => {
     dbMockState.assetsByImage.clear()
     dbMockState.purgedAssetIds.length = 0
+    // 素材 id 与 imageId 取同一个值：测试环境的素材读取最终落到
+    // `batchGetGeneratedAssetsByImageIds`（db mock 只按 imageId 建索引），
+    // 两套键一致，回收站的真实写入路径（getAssetsByIds → applyTrashStatus）才跑得通。
     const cascadeAsset: GeneratedAsset = {
-      id: 'asset-cascade',
+      id: 'img-cascade',
       imageId: 'img-cascade',
       status: 'active',
       createdAt: 1,
@@ -4104,8 +4119,9 @@ describe('agent context for removed outputs', () => {
     }
     dbMockState.assetsByImage.set('img-cascade', cascadeAsset)
     const cascadeTask = task({ id: 'task-cascade', outputImages: ['img-cascade'] })
-    // 幸存任务也引用了同一张图且保存过本地导出文件——素材被永久删除时，
-    // 指向同一原图的导出文件应一并删除（图片字节已删，硬链接/副本指向已删图片）
+    // 幸存任务也引用了同一张图且保存过本地导出文件：旧口径下这张图被永久删除时，
+    // 指向同一原图的导出文件会一并删掉；现在图只是进回收站（字节还在），
+    // 所以**别的任务**的导出文件一个都不能动。
     const survivorTask = task({
       id: 'task-survivor',
       outputImages: ['img-cascade'],
@@ -4114,15 +4130,63 @@ describe('agent context for removed outputs', () => {
     const { deleteLocalImageFiles } = await import('./lib/localSave')
     const deleteLocalImageFilesMock = vi.mocked(deleteLocalImageFiles)
     deleteLocalImageFilesMock.mockClear()
-    useStore.setState({ tasks: [cascadeTask, survivorTask] })
+    const previousAssetsById = useAssetLibraryStore.getState().assetsById
+    const previousAssetOrder = useAssetLibraryStore.getState().assetOrder
 
-    await removeTask(cascadeTask)
+    try {
+      useStore.setState({ tasks: [cascadeTask, survivorTask] })
 
-    expect(dbMockState.purgedAssetIds).toContain('asset-cascade')
-    // 级联删除素材后，幸存任务里引用该原图的本地导出文件也被删除
-    expect(deleteLocalImageFilesMock).toHaveBeenCalledWith(
-      expect.arrayContaining(['D:\\LocalSaves\\images\\cascade-export.png']),
-    )
+      await removeTask(cascadeTask)
+
+      // 不再永久删除（没有墓碑、没有删素材记录）
+      expect(dbMockState.purgedAssetIds).not.toContain('img-cascade')
+      // 素材真的进了回收站 —— 可恢复，这是本次改动的核心
+      expect(useAssetLibraryStore.getState().assetsById['img-cascade']?.status).toBe('trashed')
+      // 涉及的其他任务：导出文件保持原样（图还在，删用户磁盘上的副本就说不通了）
+      expect(deleteLocalImageFilesMock).not.toHaveBeenCalledWith(
+        expect.arrayContaining(['D:\\LocalSaves\\images\\cascade-export.png']),
+      )
+    } finally {
+      useAssetLibraryStore.setState({ assetsById: previousAssetsById, assetOrder: previousAssetOrder })
+    }
+  })
+
+  it('退槽：素材进回收站后，任务卡的输出槽位被置空并记为已删除（TB-119）', async () => {
+    const asset: GeneratedAsset = {
+      id: 'img-detach',
+      imageId: 'img-detach',
+      status: 'trashed',
+      createdAt: 1,
+      updatedAt: 1,
+      trashedAt: 2,
+      favorite: false,
+      rating: 0,
+      collectionIds: [],
+      tagIds: [],
+      origins: [],
+      primaryOriginKey: null,
+      parentAssetIds: [],
+      metadataVersion: 1,
+    }
+    const keepTask = task({ id: 'task-keep', outputImages: ['img-detach', 'img-other'] })
+    const untouched = task({ id: 'task-untouched', outputImages: ['img-else'] })
+    useStore.setState({ tasks: [keepTask, untouched] })
+
+    const patchedCount = await detachTrashedAssetsFromTasks([asset])
+
+    expect(patchedCount).toBe(1)
+    const patched = useStore.getState().tasks.find((item) => item.id === 'task-keep')!
+    // 槽位置空（卡片封面/角标不再指着这张已进回收站的图），其余槽位不动
+    expect(patched.outputImages[0]).toBeUndefined()
+    expect(patched.outputImages[1]).toBe('img-other')
+    // 与永久删除同一套「已删除」语义：卡片据此显示「已删除」而不是「图片已丢失」
+    expect(patched.purgedOutputSlots).toEqual([0])
+    // 落盘（否则重启后残留引用又回来了）
+    const { getAllTasks } = await import('./lib/db')
+    const persisted = (await getAllTasks()).find((item) => item.id === 'task-keep')
+    expect(persisted?.purgedOutputSlots).toEqual([0])
+    // 没被这一步牵连的任务保持原样
+    expect(useStore.getState().tasks.find((item) => item.id === 'task-untouched')?.outputImages).toEqual(['img-else'])
   })
 
   it('keeps generated assets still referenced by another live task when deleting the task', async () => {
@@ -5326,6 +5390,69 @@ describe('缩略图 grid 通道（网格小图）', () => {
     } finally {
       unsubscribe()
     }
+  })
+
+  it('永久删除素材时缩略图一起清（内存两个通道 + 磁盘 thumbs/）（TB-119）', async () => {
+    useElectronWindow()
+    // 两个通道各留一份内存缓存：full 走 IndexedDB 记录，grid 走磁盘缩略图（与上一条用例同法）
+    vi.mocked(getFreshThumbnailFromDisk).mockImplementation(async (id, variant) =>
+      variant === 'grid'
+        ? { id, thumbnailDataUrl: GRID_THUMB, width: 288, height: 288, thumbnailVersion: 2 }
+        : undefined,
+    )
+    const { putImageThumbnail } = await import('./lib/db')
+    await putImageThumbnail({
+      id: 'purged-thumb',
+      thumbnailDataUrl: FULL_THUMB,
+      width: 1024,
+      height: 1024,
+      thumbnailVersion: 2,
+    })
+    await ensureImageThumbnailCached('purged-thumb', 'visible', GRID_THUMBNAIL_VARIANT)
+    await ensureImageThumbnailCached('purged-thumb')
+    expect(getCachedThumbnail('purged-thumb', GRID_THUMBNAIL_VARIANT)?.dataUrl).toBe(GRID_THUMB)
+    expect(getCachedThumbnail('purged-thumb')?.dataUrl).toBe(FULL_THUMB)
+
+    const asset: GeneratedAsset = {
+      id: 'asset-purged-thumb',
+      imageId: 'purged-thumb',
+      status: 'trashed',
+      createdAt: 1,
+      updatedAt: 1,
+      trashedAt: 1,
+      favorite: false,
+      rating: 0,
+      collectionIds: [],
+      tagIds: [],
+      origins: [],
+      primaryOriginKey: null,
+      parentAssetIds: [],
+      metadataVersion: 1,
+    }
+    const graph = buildImageReferenceGraph({
+      tasks: [],
+      assets: [asset],
+      workspaceTabs: [],
+      agentConversations: [],
+      sopRuns: [],
+      sopCoverImageIds: [],
+      currentInputImageIds: [],
+      galleryDraftInputImageIds: [],
+      agentDraftInputImageIds: [],
+    })
+    const plan = planAssetPurge({ assetIds: [asset.id], assets: [asset], tasks: [], graph })
+    const { deleteThumbnailsFromDisk } = await import('./lib/localSave')
+    const deleteThumbnailsFromDiskMock = vi.mocked(deleteThumbnailsFromDisk)
+    deleteThumbnailsFromDiskMock.mockClear()
+
+    await purgeGeneratedAssets([asset.id], { plan, reason: 'test-purge-thumb' })
+
+    // 磁盘缩略图（thumbs/<id>.v*.webp，full + grid 全版本）交给主进程按前缀删
+    expect(deleteThumbnailsFromDiskMock).toHaveBeenCalledWith(['purged-thumb'])
+    // 内存两个通道都要清干净：旧实现写的是 `thumbnailCache.delete(imageId)`，
+    // 而真实键是 `${id}:${variant}` → 一条都删不掉，用户看到「素材没了、缩略图还在」
+    expect(getCachedThumbnail('purged-thumb', GRID_THUMBNAIL_VARIANT)).toBeUndefined()
+    expect(getCachedThumbnail('purged-thumb')).toBeUndefined()
   })
 })
 

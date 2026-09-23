@@ -1000,6 +1000,15 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
           if (asset) assetsBefore[id] = asset
         }
         const updated = await repository.moveToTrash(ids, undefined, onProgress)
+        // 与任务卡**退槽**：回收站是软删，图还在，任务卡封面/角标又直接读 task.outputImages，
+        // 不退槽就会出现「删了图，卡片还报着它的张数、封面还显示它」这种「删了没删掉」的观感。
+        // 失败不回滚回收站（回收站才是用户要的结果），只留痕。
+        try {
+          const { detachTrashedAssetsFromTasks } = await import('../../store')
+          await detachTrashedAssetsFromTasks(updated)
+        } catch (error) {
+          console.error('素材退槽失败（图片已在回收站）:', error)
+        }
         const assetsAfter: Record<string, GeneratedAsset> = {}
         for (const asset of updated) assetsAfter[asset.id] = asset
         if (Object.keys(assetsBefore).length > 0) {

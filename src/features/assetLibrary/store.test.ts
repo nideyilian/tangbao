@@ -82,6 +82,7 @@ const mainStoreMock = vi.hoisted(() => {
   const setConfirmDialog = vi.fn()
   return {
     purgeGeneratedAssets: vi.fn(),
+    detachTrashedAssetsFromTasks: vi.fn(),
     showToast,
     setConfirmDialog,
     useStore: { getState: vi.fn(() => ({ showToast, setConfirmDialog })) },
@@ -418,6 +419,31 @@ describe('mutation actions', () => {
     useAssetLibraryStore.setState({ selectedAssetIds: [] })
     await useAssetLibraryStore.getState().trashSelectedAssets()
     expect(mock.moveToTrash).not.toHaveBeenCalled()
+  })
+
+  it('移入回收站时同步让任务卡退槽（TB-119）', async () => {
+    useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a') }, assetOrder: ['a'] })
+    const trashed = makeAsset('a', { status: 'trashed', trashedAt: 5000 })
+    mock.moveToTrash.mockResolvedValue([trashed])
+
+    await useAssetLibraryStore.getState().moveToTrash(['a'])
+
+    // 传的是仓库回写的「已回收」素材：任务卡据此把输出槽位置空。
+    // 不传/不调用的话，卡片角标还报着它的张数、封面还显示它 —— 那就是「删了没删掉」。
+    expect(mainStoreMock.detachTrashedAssetsFromTasks).toHaveBeenCalledWith([trashed])
+  })
+
+  it('退槽失败不牵连回收站本身（图已在回收站，只是卡片关联没解开）', async () => {
+    useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a') }, assetOrder: ['a'] })
+    mock.moveToTrash.mockResolvedValue([makeAsset('a', { status: 'trashed' })])
+    mainStoreMock.detachTrashedAssetsFromTasks.mockRejectedValueOnce(new Error('退槽失败'))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await useAssetLibraryStore.getState().moveToTrash(['a'])
+
+    expect(useAssetLibraryStore.getState().assetsById.a.status).toBe('trashed')
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
   })
 
   it('removes an asset locally without touching the repository', () => {

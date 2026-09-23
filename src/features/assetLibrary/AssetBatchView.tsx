@@ -311,7 +311,7 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
       const taskList = batchTasks(group)
       setConfirmDialog({
         title: '删除 SOP 批量任务',
-        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并删除，不可恢复；被其他任务/会话引用的图片会保留。`,
+        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。`,
         action: () =>
           removeMultipleTasks(taskList.map((task) => task.id)).catch(() =>
             useStore.getState().showToast('删除失败，请重试', 'error'),
@@ -324,7 +324,7 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
     setConfirmDialog({
       title: '删除任务',
       message:
-        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并删除，不可恢复；被其他任务/会话引用的图片会保留。',
+        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。',
       action: () => removeTask(task).catch(() => useStore.getState().showToast('删除失败，请重试', 'error')),
     })
   }, [group, batchTasks, setConfirmDialog])
@@ -515,12 +515,17 @@ function AssetGroupedView({
   }, [collections, includeSubcollections, scope])
   // 任务卡视图不再展示「任务已删除」孤儿组（按用户要求，禁止出现该状态）：
   // 只过滤展示，不自动改动任何数据——这些图片仍在「图片」视图与回收站中可见、可操作。
+  //
+  // **例外：回收站作用域放行孤儿组**（2026-09-23）。删任务卡现在会把它的产出图移入回收站
+  // （见 store.ts 的 trashTaskOutputAssets），那些图的来源任务已经没了 ⇒ 全部落进孤儿组。
+  // 这里若一并滤掉，用户按「删掉任务卡 → 去回收站把图捞回来」走就会看到空的回收站
+  // （只有切到图片模式才看得见），与上面那句「回收站中可见、可操作」正好相反。
   const groups = useMemo(
     () =>
       buildAssetBatchGroups(assets, tasksById, snapshots, { includeTaskless }).filter(
-        (group) => group.kind !== 'orphan',
+        (group) => group.kind !== 'orphan' || scope === 'trash',
       ),
-    [assets, includeTaskless, snapshots, tasksById],
+    [assets, includeTaskless, scope, snapshots, tasksById],
   )
   const overview = useMemo(() => buildAssetBatchOverview(groups, tasksById), [groups, tasksById])
   /**
@@ -907,7 +912,7 @@ function AssetGroupedView({
       const taskList = batchTasks(group)
       setConfirmDialog({
         title: '删除 SOP 批量任务',
-        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并删除，不可恢复；被其他任务/会话引用的图片会保留。`,
+        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。`,
         action: () =>
           removeMultipleTasks(taskList.map((task) => task.id)).catch(() =>
             useStore.getState().showToast('删除失败，请重试', 'error'),
@@ -920,7 +925,7 @@ function AssetGroupedView({
     setConfirmDialog({
       title: '删除任务',
       message:
-        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并删除，不可恢复；被其他任务/会话引用的图片会保留。',
+        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。',
       action: () => removeTask(task).catch(() => useStore.getState().showToast('删除失败，请重试', 'error')),
     })
   }

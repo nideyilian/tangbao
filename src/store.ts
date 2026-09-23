@@ -229,7 +229,12 @@ import {
   buildGridThumbnail,
   type PurgeRecords,
 } from './lib/db'
-import { buildImageReferenceGraph, isImageReferenced, type ImageReferenceGraph } from './lib/imageReferenceGraph'
+import {
+  buildImageReferenceGraph,
+  getTaskOutputReferences,
+  isImageReferenced,
+  type ImageReferenceGraph,
+} from './lib/imageReferenceGraph'
 import { callImageApi } from './lib/api'
 import {
   callAgentChatCompletionsApi,
@@ -1639,10 +1644,41 @@ function cacheThumbnail(
   thumbnailCache.set(thumbnailKey(id, variant), thumbnail, thumbnail.dataUrl.length * 2)
 }
 
+/** 缩略图两个通道（`full` 详情大图 / `grid` 网格小图）；删图时两个都要清，漏一个等于没清。 */
+const THUMBNAIL_VARIANTS: readonly ThumbnailVariant[] = ['full', 'grid']
+
 /** 清掉一张图两个通道的内存缓存（图片被删除 / 内容重算后的统一入口）。 */
 function clearCachedThumbnail(id: string) {
-  thumbnailCache.delete(thumbnailKey(id, 'full'))
-  thumbnailCache.delete(thumbnailKey(id, 'grid'))
+  for (const variant of THUMBNAIL_VARIANTS) thumbnailCache.delete(thumbnailKey(id, variant))
+}
+
+/**
+ * 清掉一张图**全部按图登记的内存派生状态**：原图缓存、缩略图两个通道、待算队列、在途回填、
+ * 订阅者、预取窗口、等待者。
+ *
+ * 为什么必须一次清干净：调用它的场合都是「这张图已经不存在了」（永久删除 / 记录失效清理），
+ * 任何一处残留都会在下一帧把这个死掉的 imageId 又推回界面（订阅方拿到旧缩略图 → 卡片上显示
+ * 一张已经删掉的图）。
+ *
+ * ⚠️ 2026-09-23 之前永久删除路径写的是 `thumbnailCache.delete(imageId)`，而真实键是
+ * `` `${id}:${variant}` ``（见 {@link thumbnailKey}）→ 等于**一行都没删掉**（full/grid 两份都还在）。
+ * 其余删图路径用的是本函数；本次统一到一处，别再各写各的。
+ */
+function clearImageDerivedCaches(id: string) {
+  imageCache.delete(id)
+  imageLoadPromises.delete(id)
+  clearCachedThumbnail(id)
+  for (const variant of THUMBNAIL_VARIANTS) {
+    const key = thumbnailKey(id, variant)
+    thumbnailBackfillIds.delete(key)
+    thumbnailBackfillRunningIds.delete(key)
+    thumbnailSubscribers.delete(key)
+    pendingThumbnailIds.delete(key)
+    aheadThumbnailIds.delete(key)
+    thumbnailLoadPromises.delete(key)
+    // 等这批缩略图的卡片必须收到回音：只删 map 会让它的 Promise 永远悬着（卡片卡在「加载中」）
+    resolveThumbnailWaiters(key, undefined)
+  }
 }
 
 // 同一图片并发加载去重：快速划过网格 / 多个组件同时请求同一 imageId 时，
@@ -3358,19 +3394,15 @@ function isImageReferencedByState(state: AppState, imageId: string) {
 }
 
 export async function deleteImageIfUnreferenced(imageId: string) {
-  imageCache.delete(imageId)
-  clearCachedThumbnail(imageId)
-  for (const variant of ['full', 'grid'] as const) {
-    const key = thumbnailKey(imageId, variant)
-    thumbnailBackfillIds.delete(key)
-    thumbnailBackfillRunningIds.delete(key)
-    thumbnailSubscribers.delete(key)
-  }
+  // 先清内存派生状态：即便最终判定「还被引用、不删图」，这些缓存也没有保留价值（下次渲染自会重建）
+  clearImageDerivedCaches(imageId)
   if (isImageReferencedByState(useStore.getState(), imageId)) return
   try {
     const graph = await buildStoreImageReferenceGraph()
     if (isImageReferenced(graph, imageId)) return
     await deleteImage(imageId)
+    // 记录真的删了才动磁盘缩略图：图还在时不能删（那是活图的正经缓存）
+    await deleteThumbnailsFromDisk([imageId])
   } catch {
     // 清理是内存/存储优化，失败不影响替换结果。
   }
@@ -7779,10 +7811,10 @@ export async function purgeGeneratedAssets(
         if (imageIds.length === 0) return
         const { batchDeleteImages } = await import('./lib/db')
         await batchDeleteImages(imageIds, onImagesProgress)
-        for (const imageId of imageIds) {
-          imageCache.delete(imageId)
-          thumbnailCache.delete(imageId)
-        }
+        // 记录删完还要清派生数据（内存缩略图两个通道 + 磁盘 thumbs/*.webp）：
+        // 以前这里写的是 `thumbnailCache.delete(imageId)`（键是 `${id}:${variant}`，删不掉任何东西），
+        // 磁盘缩略图更是一个没动 —— 用户看到的是「素材没了，缩略图还在」。
+        await purgeImageDerivedData(imageIds)
       },
     },
     (stage, done, total) => {
@@ -7830,26 +7862,40 @@ export async function purgeGeneratedAssets(
   }
 }
 
+/**
+ * 删除一批图片的**全部派生数据**：磁盘缩略图（`thumbs/<id>.v*.webp`，full + grid 所有版本，
+ * 由主进程 `thumb:delete` 按 imageId 前缀扫）与内存派生状态（见 {@link clearImageDerivedCaches}）。
+ *
+ * 所有「记录已被删掉」的路径统一走这里。2026-09-23 之前的永久删除只清了图片记录与内存原图，
+ * 缩略图在内存和磁盘上都留着 —— 素材没了、缩略图还在。
+ *
+ * 只在图片记录确已删除后调用：磁盘缩略图删了就没了，活图删它等于白丢一次缓存。
+ */
+async function purgeImageDerivedData(imageIds: Iterable<string>): Promise<void> {
+  const ids = Array.from(new Set(Array.from(imageIds).filter(Boolean)))
+  if (ids.length === 0) return
+  await deleteThumbnailsFromDisk(ids)
+  for (const id of ids) clearImageDerivedCaches(id)
+}
+
 async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   const candidates = Array.from(new Set(Array.from(imageIds).filter(Boolean)))
   if (candidates.length === 0) return
 
   const graph = await buildStoreImageReferenceGraph()
+  const removed: string[] = []
   for (const imgId of candidates) {
     if (isImageReferenced(graph, imgId)) continue
     await deleteImage(imgId)
-    imageCache.delete(imgId)
-    clearCachedThumbnail(imgId)
+    removed.push(imgId)
   }
+  await purgeImageDerivedData(removed)
 }
 
 export async function cleanupAllOrphanedImages(): Promise<number> {
   const orphanIds = await getAllOrphanedImageIds()
-  for (const imgId of orphanIds) {
-    await deleteImage(imgId)
-    imageCache.delete(imgId)
-    clearCachedThumbnail(imgId)
-  }
+  for (const imgId of orphanIds) await deleteImage(imgId)
+  await purgeImageDerivedData(orphanIds)
   return orphanIds.length
 }
 
@@ -7893,11 +7939,7 @@ export async function cleanupMissingImageRecords(): Promise<number> {
 
   const ids = toClean.map((candidate) => candidate.id)
   await batchDeleteImages(ids)
-  await deleteThumbnailsFromDisk(ids)
-  for (const id of ids) {
-    imageCache.delete(id)
-    clearCachedThumbnail(id)
-  }
+  await purgeImageDerivedData(ids)
   useStore.getState().showToast(`已清理 ${toClean.length} 张源文件缺失的图片（含缩略图）`, 'info')
   return toClean.length
 }
@@ -11733,31 +11775,37 @@ export function moveTasksToWorkspaceTab(taskIds: string[], targetTabId: string, 
 
 /** 删除多条任务 */
 /**
- * 删除任务时连同其生成的素材图片一起永久删除：
- * 按任务输出图片找到对应素材，走统一的永久删除计划（引用冲突安全——
- * 被其他任务输入 / Agent 会话等拥有型引用的图片保留，**不自动改动任何数据**，
- * 不回收到站、不强制解除引用）。
- * 返回 { purged: 已永久删除图片数, kept: 因被引用而保留的图片数 }。
+ * 删除任务时把它的产出图**移入回收站**（2026-09-23 起不再永久删除）：
+ * 按任务输出图片找到对应素材，仍被其他任务输入 / Agent 会话 / 工作区等拥有型引用的图片
+ * **保留不动**（不回收、不强解引用 —— 替用户改别人卡片的数据是最不可逆的一种「帮忙」），
+ * 其余移入回收站，用户可以在回收站里恢复或显式清空。
+ *
+ * 为什么不再永久删除：「这批图不要了」和「这张卡不要了」是两件事，而删任务卡是高频操作。
+ * 永久删除只保留在回收站的显式入口（清空回收站 / 永久删除按钮），语义单一、后果自明。
+ * 返回 { trashed: 已移入回收站图片数, kept: 因被引用而保留的图片数 }。
  */
-async function purgeTaskOutputAssets(
+async function trashTaskOutputAssets(
   deletedTasks: TaskRecord[],
   graph: ImageReferenceGraph,
-): Promise<{ purged: number; kept: number }> {
+): Promise<{ trashed: number; kept: number }> {
   const outputImageIds = new Set<string>()
   for (const t of deletedTasks) {
     for (const id of t.outputImages ?? []) {
       if (id) outputImageIds.add(id)
     }
   }
-  if (outputImageIds.size === 0) return { purged: 0, kept: 0 }
+  if (outputImageIds.size === 0) return { trashed: 0, kept: 0 }
 
   // 桌面端素材权威存储是 SQLite，必须走 getAssetsByImageIds（Electron 下走 SQLite、
   // 浏览器下才回退 IndexedDB）；不能再用 db 层的 batchGetGeneratedAssetsByImageIds（只查 IndexedDB），
-  // 否则 Electron 下查不到素材，删除任务时图片不会被一起删除。
+  // 否则 Electron 下查不到素材，删除任务时图片不会被一起回收。
   const assetsByImage = await getAssetsByImageIds([...outputImageIds])
-  const assets = [...assetsByImage.values()]
-  if (assets.length === 0) return { purged: 0, kept: 0 }
+  // 已在回收站里的不再回收一次：重复写 status/trashedAt 会让回收站排序与「已恢复到什么时间」抖动
+  const assets = [...assetsByImage.values()].filter((asset) => asset.status === 'active')
+  if (assets.length === 0) return { trashed: 0, kept: 0 }
 
+  // 谁能动、谁被保留仍复用永久删除的计划器：它已经处理好「素材自身引用不算阻断」这条口径，
+  // 于是本函数与旧行为只差最后一步 —— 同一批图片，从「永久删除」变成「移入回收站」。
   const plan = planAssetPurge({
     assetIds: assets.map((asset) => asset.id),
     assets,
@@ -11765,15 +11813,54 @@ async function purgeTaskOutputAssets(
     graph,
   })
   if (plan.allowedAssetIds.length > 0) {
-    await purgeGeneratedAssets(
-      assets.map((asset) => asset.id),
-      {
-        plan,
-        reason: 'task-deleted',
-      },
-    )
+    await useAssetLibraryStore.getState().moveToTrash(plan.allowedAssetIds)
   }
-  return { purged: plan.allowedAssetIds.length, kept: plan.blocked.length }
+  return { trashed: plan.allowedAssetIds.length, kept: plan.blocked.length }
+}
+
+/**
+ * 素材被移入回收站后，把任务记录里指向它的**输出槽位**摘掉（退槽）。
+ *
+ * 为什么必须做：回收站是软删 —— 素材记录与图片字节都还在，而任务卡封面直接读
+ * `task.outputImages[0]`、角标读 `task.outputImages.length`。不退槽的话，用户「删了一张图」
+ * 之后卡片角标仍报着它的张数、封面还可能显示它，看起来就是**没删掉**；那条残留引用还会一直挂着，
+ * 之后删任务卡 / 编辑输出 / 找图都会再撞上这张早已进了回收站的图。
+ *
+ * 用的是永久删除那一套槽位语义（{@link patchTaskForPurgedSlots}：置空槽位 + 记 `purgedOutputSlots`），
+ * 所以卡片显示「已删除」与永久删除后的表现一致；任务与卡片本身都不删。
+ *
+ * ⚠️ 有意**不建**「图 ↔ 卡片」反查表：从回收站恢复这张图时不会自动接回任务卡。要接回就得在库里
+ * 长期维护那份映射（还要处理卡片已被删、槽位已被别的图占用、图被移进别的卡片等情况），
+ * 收益远小于代价 —— 恢复后它作为一张独立素材回到素材库。
+ * 返回被改写的任务数。
+ */
+export async function detachTrashedAssetsFromTasks(assets: GeneratedAsset[]): Promise<number> {
+  if (assets.length === 0) return 0
+  const graph = await buildStoreImageReferenceGraph()
+  const slotsByTask = new Map<string, number[]>()
+  for (const asset of assets) {
+    for (const ref of getTaskOutputReferences(graph, asset.imageId)) {
+      const slots = slotsByTask.get(ref.taskId) ?? []
+      if (!slots.includes(ref.outputSlot)) slots.push(ref.outputSlot)
+      slotsByTask.set(ref.taskId, slots)
+    }
+  }
+  if (slotsByTask.size === 0) return 0
+
+  const state = useStore.getState()
+  const tasksById = new Map(state.tasks.map((task) => [task.id, task]))
+  const patched: TaskRecord[] = []
+  for (const [taskId, slots] of slotsByTask) {
+    const task = tasksById.get(taskId)
+    if (!task) continue
+    const next = patchTaskForPurgedSlots(task, slots)
+    tasksById.set(taskId, next)
+    patched.push(next)
+  }
+  if (patched.length === 0) return 0
+  useStore.setState({ tasks: [...tasksById.values()] })
+  await batchPutTasks(patched)
+  return patched.length
 }
 
 /**
@@ -11847,15 +11934,16 @@ export async function removeMultipleTasks(taskIds: string[]) {
 
   // 统一引用图：素材（有效/回收站）持有输出原图引用，任务输出不会被误删
   const graph = await buildStoreImageReferenceGraph()
+  const removedImageIds: string[] = []
   for (const imgId of deletedImageIds) {
     if (isImageReferenced(graph, imgId)) continue
     await deleteImage(imgId)
-    imageCache.delete(imgId)
-    clearCachedThumbnail(imgId)
+    removedImageIds.push(imgId)
   }
+  await purgeImageDerivedData(removedImageIds)
 
-  // 删除任务时连同其生成的素材图片一起永久删除（被其他任务/会话引用的图片安全保留，不自动改动数据）
-  const { purged, kept } = await purgeTaskOutputAssets(deletedTasks, graph)
+  // 删任务卡时把它的产出图移入回收站（被其他任务/会话引用的图片安全保留，不自动改动数据）
+  const { trashed, kept } = await trashTaskOutputAssets(deletedTasks, graph)
 
   // 如果删除的任务在选中列表中，则移除
   const newSelection = selectedTaskIds.filter((id) => !toDelete.has(id))
@@ -11864,7 +11952,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   }
 
   const summaryParts: string[] = []
-  if (purged > 0) summaryParts.push(`含 ${purged} 张生成图片`)
+  if (trashed > 0) summaryParts.push(`${trashed} 张图已移入回收站`)
   if (kept > 0) summaryParts.push(`${kept} 张被其他任务/会话引用，已保留`)
   showToast(
     summaryParts.length > 0
@@ -11909,18 +11997,19 @@ export async function removeTask(task: TaskRecord) {
 
   // 统一引用图：素材持有输出原图引用，删除任务不会误删素材原图
   const graph = await buildStoreImageReferenceGraph()
+  const removedImageIds: string[] = []
   for (const imgId of taskImageIds) {
     if (isImageReferenced(graph, imgId)) continue
     await deleteImage(imgId)
-    imageCache.delete(imgId)
-    clearCachedThumbnail(imgId)
+    removedImageIds.push(imgId)
   }
+  await purgeImageDerivedData(removedImageIds)
 
-  // 删除任务时连同其生成的素材图片一起永久删除（被其他任务/会话引用的图片安全保留，不自动改动数据）
-  const { purged, kept } = await purgeTaskOutputAssets([task], graph)
+  // 删任务卡时把它的产出图移入回收站（被其他任务/会话引用的图片安全保留，不自动改动数据）
+  const { trashed, kept } = await trashTaskOutputAssets([task], graph)
 
   const summaryParts: string[] = []
-  if (purged > 0) summaryParts.push(`含 ${purged} 张生成图片`)
+  if (trashed > 0) summaryParts.push(`${trashed} 张图已移入回收站`)
   if (kept > 0) summaryParts.push(`${kept} 张被其他任务/会话引用，已保留`)
   showToast(summaryParts.length > 0 ? `已删除任务（${summaryParts.join('；')}）` : '已删除任务', 'success')
 }

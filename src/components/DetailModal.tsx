@@ -455,7 +455,7 @@ export default function DetailModal() {
     setConfirmDialog({
       title: '删除任务',
       message:
-        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并删除，不可恢复；被其他任务/会话引用的图片会保留。',
+        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。',
       action: () => removeTask(task),
     })
   }

@@ -18,6 +18,7 @@
 | TB-112 | 后处理按产出方向拆成独立运行实例          | DONE  | 主写线 | 2026-09-23 |
 | TB-116 | 撤「启用范围」白名单 + 总开关（默认关）+ 删旧项目树 | DONE  | 主写线 | 2026-09-23 |
 | TB-117 | 分发：按排期日整装（撤「原地套一层」+ 撤复制） | DONE  | 主写线 | 2026-09-23 |
+| TB-119 | 图片删除：软删退槽 + 删任务卡进回收站 + 清空即彻底清 | DONE  | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -243,6 +244,60 @@
 ---
 
 ## M3 · 数据可恢复性 / 项目管理基建
+
+### TB-119 图片删除：软删退槽 + 删任务卡进回收站 + 清空即彻底清
+
+- **来源**：杰哥 2026-09-23「当在图片模式下单独删除某张图片时，该图片应自行进入回收站，并与对应的
+  任务卡解除关联；当整个任务卡被删除时，则其关联的所有图片随任务卡一并进入回收站，以此避免因
+  残留引用导致无法删除的情况。此外，请在图片被清空后，彻底清除与这张图片相关的所有信息和缩略图」
+- **状态**：DONE · 写线：主写线 · 决策记 `docs/adr/0019-task-delete-moves-outputs-to-trash.md`
+- **诊断（三条是同一模型缺口的三种表现；开工前已报方案，杰哥回复「开工」）**
+  1. 回收站是**软删**，而 `moveToTrash`（`features/assetLibrary/store.ts`）**不动任务记录**：
+     `task.outputImages[slot]` 仍指着它，卡片封面读 `outputImages[0]`、角标读 `outputImages.length`
+     ⇒ 删完「封面照旧、张数照旧」，看起来就是**没删掉**。永久删除那边早就有现成语义
+     （`patchTaskForPurgedSlots` + `purgedOutputSlots` → 卡片显示「已删除」），软删没用上。
+  2. 删任务卡走 `purgeTaskOutputAssets` → **永久删除**（写墓碑 + 删字节 + 删磁盘原图），与要求相反；
+     连界面文案都在替它背书（「一并删除，不可恢复」，6 处）。
+  3. 永久删除只清图片记录与内存原图：**磁盘缩略图一个没删**，内存那句写成
+     `thumbnailCache.delete(imageId)` —— 真实键是 `` `${id}:${variant}` `` ⇒ **一条都没删掉**。
+- **验收标准（可测）**
+  1. 图片模式删单张 ⇒ 素材 `status='trashed'`，且它所属任务卡的输出槽位被置空、槽位号记进
+     `purgedOutputSlots`、其余槽位不动、改动落盘。
+  2. 删任务卡 ⇒ 产出图进回收站（**不**永久删除、不写墓碑），仍被其他任务/会话拥有型引用的图保留不动。
+  3. 清空/永久删除 ⇒ 内存缩略图 **full + grid 两个通道**都清空，且磁盘缩略图删除接口收到这批 imageId。
+  4. 回收站的任务卡视图能看到「删卡后进回收站」的图（孤儿组只在回收站作用域放行）。
+- **验收证据（2026-09-23）**
+  1. `src/store.test.ts`（158 例，+2）：`把任务卡删掉时，它的产出图移入回收站而不是永久删除`
+     （`purgedAssetIds` 不含它 + 素材库内存里 `status==='trashed'` + 别的任务的导出副本不再被删）、
+     `退槽：素材进回收站后，任务卡的输出槽位被置空并记为已删除`（槽位置空 / 第二个槽位不动 /
+     `purgedOutputSlots===[0]` / 已落盘 / 无关任务不受影响）、
+     `永久删除素材时缩略图一起清`（两个通道各断言一次 + `deleteThumbnailsFromDisk(['purged-thumb'])`）。
+  2. `src/features/assetLibrary/store.test.ts`（102 例，+2）：移入回收站时调 `detachTrashedAssetsFromTasks`
+     并把它回写的素材传进去；退槽抛错时**回收站本身不受影响**（图仍是 trashed，只留痕）。
+  3. `src/features/assetLibrary/AssetBatchView.test.tsx`（+1）：回收站作用域渲染出
+     `orphan:t9` 且带「任务已删除」；非回收站作用域仍不渲染（原口径不变）。
+  4. **反向验证（五处一起改回旧行为，精确命中 6 条，逐条都红在钉住修复的那条断言上）**：
+     ① 永久删除改回 `thumbnailCache.delete(imageId)` → 缩略图用例红
+     （`expected "vi.fn()" to be called with arguments: [['purged-thumb']]`，即磁盘删除没发生）；
+     ② `trashTaskOutputAssets` 改回 `purgeGeneratedAssets` → 删卡用例红
+     （`expected ['img-cascade'] to not include 'img-cascade'`）；
+     ③ 拿掉 `detachTrashedAssetsFromTasks` 的引用遍历 → 退槽用例红（`expected +0 to be 1`）；
+     ④ `moveToTrash` 里拿掉退槽调用 → 素材库两条红；⑤ 回收站放行条件去掉 → 分组视图用例红
+     （`expected 0 to be greater than 0`）。恢复后重跑全绿。
+  5. `npm run verify` 等效：`tsc -b` + `tsc -p electron/tsconfig.json --noEmit` 双端零错误、
+     `eslint` 本轮 9 个文件零告警、`prettier --check` 全部 unchanged、
+     **全量 `268 文件 / 3245 用例`全绿**。
+     ⚠️ 顺带给了 R-98（「本机 vitest 整体哑掉」）一个实测答复：**本轮已恢复**（定向 15 例 + 全量
+     3245 例全绿，同为 `node_modules/vitest/vitest.mjs run`）。**成因仍未定位**，
+     故 R-98 的状态一个字都没改（不替别人改条目，R-09）—— 期望下一轮开工时顺手复核。
+- **未做 / 说明**
+  1. **恢复不接回任务卡**（有意）：不建「图 ↔ 卡片」反查表，撤销/恢复只把图捞回素材库。
+  2. **删任务卡仍会删这张卡自己的导出副本**（`localSavedOutputImagePaths`，旧口径不变）：
+     那些路径只存在任务记录上，任务一删就再也追不回来。但**别的任务**引用同一张原图的导出文件
+     不再删除（图只是进了回收站，删用户磁盘上的副本说不通）—— 见 ADR-0019。
+  3. 回收站会变长（删卡是高频操作），清空回收站是显式动作、默认勾选「解除引用并彻底删除」。
+  4. **界面改动未做真机观感确认**（本机无法做网页渲染验证）：三处请杰哥过目 ——
+     回收站（任务卡模式）里的「任务已删除」卡片、删卡后的 toast 文案、任务卡被退槽后的封面「已删除」。
 
 ### TB-024 把机制挂进 `AGENTS.md`
 
