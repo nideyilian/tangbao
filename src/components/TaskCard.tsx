@@ -12,8 +12,14 @@ import {
 } from '../store'
 import { getImage } from '../lib/db'
 import { isLocalImageUrl } from '../lib/localImageUrl'
-import { useRuntimeStore, useLatestPostprocessRunForTask } from '../stores/runtimeStore'
-import { countPostprocessIssues, formatPostprocessRunProgress } from '../features/postprocess/postprocessRun'
+import {
+  getTaskPostprocessIssues,
+  useLatestPostprocessRunForTask,
+  useRuntimeStore,
+  useTaskPostprocessInflightCount,
+  useTaskPostprocessIssueCount,
+} from '../stores/runtimeStore'
+import { formatPostprocessRunProgress, isRunInFlight } from '../features/postprocess/postprocessRun'
 import { updateTaskPrompt } from '../store'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from './paramDisplay'
@@ -122,12 +128,16 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
    * 为什么卡片要关心它：`postprocessOutputs` 是**产出落库之后**才有的，所以「跑到一半」
    * 与「跑了但一个都没成」两种情况下，卡片原本什么都不会显示 —— 用户只看到图出来了，
    * 不知道后处理还在跑还是已经失败了。
+   *
+   * 后处理按方向独立运行之后，这里取到的是**最近的那一条**（某个方向的），
+   * 「几个方向在一起跑」由下面的计数补充；问题清单则按**最近一批全方向**汇总 ——
+   * 只显示代表方向那一份的话，「三个方向跑、只有第二个失败了」这种情况会被漏报。
    */
   const postprocessRun = useLatestPostprocessRunForTask(task.id)
-  const postprocessIssues =
-    postprocessRun && postprocessRun.status !== 'running'
-      ? countPostprocessIssues(postprocessRun).errors || postprocessRun.issues.length
-      : 0
+  /** 在飞的方向数（含排队）：0/1/多 三态，卡片据此决定要不要标「N 个方向」。 */
+  const postprocessInflightDirections = useTaskPostprocessInflightCount(task.id)
+  /** 最近一批里已落定方向的问题条数（还在跑的没有结论，不计）。 */
+  const postprocessIssues = useTaskPostprocessIssueCount(task.id)
 
   const updateSwipeDirection = (nextDirection: -1 | 0 | 1) => {
     if (swipeDirectionRef.current === nextDirection) return
@@ -994,25 +1004,32 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                 )}
                 {/* 后处理进行中 / 有问题：自动触发那条路径上，卡片的「后处理 N」要等产出落库
                     才会出现，中途与失败时卡片上原本什么都不会显示 —— 这两个徽章补的就是那段空白。 */}
-                {postprocessRun?.status === 'running' && (
+                {postprocessRun && isRunInFlight(postprocessRun) && (
                   <span
                     className="gallery-task-tag flex items-center gap-1 px-1.5 py-0.5 rounded text-xs flex-shrink-0"
                     data-testid="task-postprocess-running"
-                    title={`后处理进行中：${formatPostprocessRunProgress(postprocessRun) || '准备中'}`}
+                    title={`后处理进行中：${formatPostprocessRunProgress(postprocessRun) || '准备中'}${
+                      postprocessInflightDirections > 1 ? `（共 ${postprocessInflightDirections} 个方向在跑）` : ''
+                    }`}
                   >
                     <LoaderCircleIcon className="gallery-task-tag__icon w-3 h-3 flex-shrink-0 animate-spin" />
-                    <span>{`后处理中 ${formatPostprocessRunProgress(postprocessRun)}`.trim()}</span>
+                    {/* 多方向时补一个计数：只给一个方向的百分比，用户会以为别的不见了 */}
+                    <span>
+                      {`后处理中 ${formatPostprocessRunProgress(postprocessRun)}${
+                        postprocessInflightDirections > 1 ? ` · ${postprocessInflightDirections} 个方向` : ''
+                      }`.trim()}
+                    </span>
                   </span>
                 )}
-                {postprocessIssues > 0 && postprocessRun && postprocessRun.status !== 'running' && (
+                {postprocessIssues > 0 && (
                   <button
                     type="button"
                     className="gallery-task-tag flex cursor-pointer items-center gap-1 px-1.5 py-0.5 rounded text-xs flex-shrink-0"
                     data-testid="task-postprocess-issues"
-                    title="查看这次后处理的问题：错误码、涉及的图片与文件、以及可照做的定位线索"
+                    title="查看这次后处理的问题：错误码、涉及的图片与文件、以及可照做的定位线索（含各方向）"
                     onClick={(e) => {
                       e.stopPropagation()
-                      showPostprocessIssuesDialog(postprocessRun.issues)
+                      showPostprocessIssuesDialog(getTaskPostprocessIssues(task.id))
                     }}
                     onTouchStart={(e) => e.stopPropagation()}
                     onTouchEnd={(e) => e.stopPropagation()}

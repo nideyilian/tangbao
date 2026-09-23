@@ -4,7 +4,7 @@ import { createDesktopJsonStorage } from './lib/desktopJsonStorage'
 import { applyApiSecrets, extractApiSecrets, stripApiSecrets, type ApiSecretBundle } from './lib/apiSecrets'
 import { calculateImageSize, inferSizeTier } from './lib/size'
 import { parseVariablePrompt, renderVariablePromptBatch } from './lib/variablePrompt'
-import { getPostprocessRun, useRuntimeStore } from './stores/runtimeStore'
+import { getPostprocessRun, isDirectionPostprocessBusy, useRuntimeStore } from './stores/runtimeStore'
 import {
   getPostprocessMediaConfigSnapshot,
   restorePostprocessMediaConfig,
@@ -38,6 +38,14 @@ import {
   type PostprocessIssue,
 } from './features/postprocess/postprocessIssue'
 import type { PostprocessRunSource } from './features/postprocess/postprocessRun'
+// 方向拆分相关：`directionTargets` 只依赖纯类型（无副作用模块），`postprocessDirectionGate`
+// 只依赖 runtimeStore —— 两者都不会把 features/composite 拉进 store.ts 的模块图（见上面那条注释）。
+import { groupImageIdsByTargetDirection } from './features/postprocess/directionTargets'
+import {
+  acquirePostprocessDirection,
+  releasePostprocessDirection,
+} from './features/postprocess/postprocessDirectionGate'
+import { resolvePostprocessProjectTargets } from './lib/postprocessProjectTree'
 import {
   DEFAULT_CONTROL_CONSOLE_SECTION,
   type ControlConsoleSectionId,
@@ -796,7 +804,29 @@ const OWNERSHIP_WAIT_TOTAL_MS = 2000
 const OWNERSHIP_WAIT_STEP_MS = 250
 
 /**
- * 解析每张图的归属方向（`Asset.collectionIds` 里最深的一条）。
+ * 同步读一次每张图的归属方向（`Asset.collectionIds` 里最深的一条）。
+ *
+ * 为什么要有同步版本（2026-09-23 按方向拆分后）：归属现在决定「这次触发会拆成几条 run」，
+ * 而 run 记录必须在**同一个同步段**里建出来 —— 用户点「跑后处理」之后，工具栏的「后处理」入口
+ * 里要立刻能看到 N 条记录（这是「点了到底有没有生效」唯一的答复）。中间插一个 `await`
+ * 就意味着那一帧查不到任何东西。
+ */
+function collectImageOwnership(imageIds: string[]): Map<string, string | null> {
+  const state = useAssetLibraryStore.getState()
+  const assetByImageId = new Map<string, GeneratedAsset>()
+  for (const asset of Object.values(state.assetsById)) {
+    if (!assetByImageId.has(asset.imageId)) assetByImageId.set(asset.imageId, asset)
+  }
+  const result = new Map<string, string | null>()
+  for (const imageId of imageIds) {
+    const asset = assetByImageId.get(imageId)
+    result.set(imageId, asset ? pickDeepestCollectionId(state.collections, asset.collectionIds) : null)
+  }
+  return result
+}
+
+/**
+ * 有界等待归属落地（**仅批次任务用**，见 `collectImageOwnership`）。
  *
  * 为什么要等：批次任务的素材归档走异步队列（`assetSyncQueue → archiveTaskToBatchFolder`），
  * 与「任务保存完成 → 触发后处理」是并发的两条线。不等的话首轮几乎必然拿不到归属，
@@ -805,31 +835,22 @@ const OWNERSHIP_WAIT_STEP_MS = 250
  * 等待是有界的，且只在**一张都拿不到**归属时继续等：一旦有任何一张拿到，
  * 说明归档已经跑过一轮，剩下的按当前结果走即可，不再多花时间。
  */
-async function resolveImageOwnership(
+async function waitForImageOwnership(
   imageIds: string[],
-  options: { waitForOwnership: boolean },
+  initial: Map<string, string | null>,
 ): Promise<Map<string, string | null>> {
-  const collect = (): Map<string, string | null> => {
-    const state = useAssetLibraryStore.getState()
-    const assetByImageId = new Map<string, GeneratedAsset>()
-    for (const asset of Object.values(state.assetsById)) {
-      if (!assetByImageId.has(asset.imageId)) assetByImageId.set(asset.imageId, asset)
-    }
-    const result = new Map<string, string | null>()
-    for (const imageId of imageIds) {
-      const asset = assetByImageId.get(imageId)
-      result.set(imageId, asset ? pickDeepestCollectionId(state.collections, asset.collectionIds) : null)
-    }
-    return result
-  }
-
-  let ownership = collect()
-  if (!options.waitForOwnership) return ownership
-
+  let ownership = initial
   for (let waited = 0; waited < OWNERSHIP_WAIT_TOTAL_MS; waited += OWNERSHIP_WAIT_STEP_MS) {
     if ([...ownership.values()].some((id) => id)) break
     await new Promise((resolve) => setTimeout(resolve, OWNERSHIP_WAIT_STEP_MS))
-    ownership = collect()
+    try {
+      ownership = collectImageOwnership(imageIds)
+    } catch (error) {
+      // 等待期间读失败就用已有的那份接着跑：这一步只是「尽量拿到归属」，
+      // 让整个批次因为一次读失败而中断（而且失败在 await 之后，没人接）才是更糟的结果。
+      console.error('后处理等待归属期间读取失败', error)
+      break
+    }
   }
   return ownership
 }
@@ -873,21 +894,30 @@ async function scheduleTaskPostprocess(taskId: string): Promise<void> {
   if (config.selectedCollectionIds.length === 0) return
 
   const produced = new Set((task.postprocessOutputs ?? []).map((item) => item.rawImageId))
-  const targets = imageIds.filter(
-    (imageId) => !produced.has(imageId) && !postprocessedSourceKeys.has(`${taskId}:${imageId}`),
-  )
-  if (targets.length === 0) return
-  // 先占位再执行：本函数是 fire-and-forget，防同一批图被两次触发重复产出
-  targets.forEach((imageId) => postprocessedSourceKeys.add(`${taskId}:${imageId}`))
-
-  const result = await executePostprocessImageIds(targets, {
+  const result = await executePostprocessImageIds(imageIds, {
     // 批次任务会自动归档到项目文件夹，归属能决定参数、输出目录和 `{line}/{product}/{direction}` 命名段，
-    // 所以即使树上还没配参数也要等一下（`resolveImageOwnership` 一拿到归属就提前退出，不是干等 2s）。
+    // 所以即使树上还没配参数也要等一下（`waitForImageOwnership` 一拿到归属就提前退出，不是干等 2s）。
     waitForOwnership: Boolean(task.sopBatch),
     alreadyProducedImageIds: [...produced],
     createdAt: task.createdAt,
     taskId,
     source: 'auto',
+    /**
+     * 会话内幂等闸挪到**分组之后**（执行体按方向逐张认领）。
+     *
+     * 键里必须带方向：按方向拆分之后，同一次触发的每个方向都要处理同一张图 ——
+     * 沿用原来的 `taskId:imageId` 会让第二个方向以为自己「已经产出过」而整条跳过，
+     * 症状是「只出了一个方向的东西」（而它看起来像是配置问题）。
+     *
+     * 「先占位再执行」的次序没变：认领发生在建 run 之前，本函数仍是 fire-and-forget 的防重入。
+     */
+    claimImage: (directionId, imageId) => {
+      if (produced.has(imageId)) return false
+      const key = `${taskId}:${directionId}:${imageId}`
+      if (postprocessedSourceKeys.has(key)) return false
+      postprocessedSourceKeys.add(key)
+      return true
+    },
   })
   if (!result) return
 
@@ -992,16 +1022,107 @@ export function showPostprocessIssuesDialog(issues: PostprocessIssue[]): void {
 }
 
 /**
- * 执行后处理并回报结果（自动触发与手动批量**共用**）。
+ * 后处理同时能跑几个方向。
+ *
+ * 口径（杰哥 2026-09-23）：「同时跑的数量不要限制，可以使用最多并发数 + 排队的方式」——
+ * 所以这里读的就是设置里那个「最多并发数」（`ApiProfile.maxConcurrent`，默认 5），
+ * 刻意**不另造**一个只属于后处理的常数：用户已经有一个地方在管这个数字，多一个必然分叉。
+ * 配大了就是真并行（不封顶），配成 1 就等于串行，配小了超出的方向排队。
+ */
+function resolvePostprocessDirectionConcurrency(): number {
+  return normalizeMaxConcurrent(getActiveApiProfile(useStore.getState().settings).maxConcurrent)
+}
+
+/** 空结果（没启用 / 没有可处理的图 / 某个方向被跳过都用它，形状统一免得下游各写一套判空）。 */
+function emptyPostprocessResult(): TaskPostprocessResult {
+  return { outputs: [], skippedMediaIds: [], issues: [], pendingDistribution: [], warnings: [] }
+}
+
+/** 把各方向的结果并成一份（批次级回写与提示看的就是它）。 */
+function mergePostprocessResults(results: TaskPostprocessResult[]): TaskPostprocessResult {
+  const merged = emptyPostprocessResult()
+  for (const result of results) {
+    merged.outputs.push(...result.outputs)
+    merged.issues.push(...result.issues)
+    merged.pendingDistribution.push(...result.pendingDistribution)
+    for (const mediaId of result.skippedMediaIds) {
+      if (!merged.skippedMediaIds.includes(mediaId)) merged.skippedMediaIds.push(mediaId)
+    }
+  }
+  return merged
+}
+
+/** 方向的展示名 `产品线 / 产品 / 方向`；树上找不到（已被删）时退回 id，宁可显示 id 也不要空。 */
+function describeDirectionLabel(collections: AssetCollection[], directionId: string): string {
+  const [target] = resolvePostprocessProjectTargets(collections, [directionId])
+  if (!target) return directionId
+  return [target.line, target.product, target.direction].filter(Boolean).join(' / ') || directionId
+}
+
+/**
+ * 给**批次级**问题留一条可查记录（准备阶段失败、分发失败）。
+ *
+ * 为什么不挂在某条方向 run 上：分发是跨方向的收尾动作、准备失败时连方向都还没拆出来 ——
+ * 它们都不属于任何一个方向，挂到第一条 run 上会让「这个方向有问题」变成假话。
+ * 但也不能不留：toast 3 秒就没了，而错误码正是排查的起点（`postprocessIssue.ts` 的码表就是为这个存在的）。
+ */
+function recordBatchLevelPostprocessRun(input: {
+  batchId: string
+  source: PostprocessRunSource
+  taskId?: string
+  directionLabel: string
+  issues: PostprocessIssue[]
+  producedFiles: number
+}): void {
+  const runId = `${input.source}-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const runtime = useRuntimeStore.getState()
+  runtime.startPostprocessRun({
+    id: runId,
+    source: input.source,
+    taskId: input.taskId,
+    totalImages: 0,
+    batchId: input.batchId,
+    directionLabel: input.directionLabel,
+  })
+  runtime.finishPostprocessRun(runId, { issues: input.issues, producedFiles: input.producedFiles })
+}
+
+/** 准备阶段（读归属 / 读树 / 读配置 / 分方向）就已经失败：留痕 + 返回可上报的结果。 */
+function recordPostprocessPrepareCrash(input: {
+  batchId: string
+  source: PostprocessRunSource
+  taskId?: string
+  error: unknown
+}): TaskPostprocessResult {
+  const issues = [
+    createPostprocessIssue({ code: 'PP-CRASH-001', stage: 'prepare', cause: messageOfError(input.error) }),
+  ]
+  recordBatchLevelPostprocessRun({
+    ...input,
+    directionLabel: '全部方向（准备阶段失败）',
+    issues,
+    producedFiles: 0,
+  })
+  return { ...emptyPostprocessResult(), issues, warnings: issuesToWarnings(issues) }
+}
+
+/**
+ * 执行后处理并回报结果（自动触发与手动批量**共用**）的**批次编排**。
  *
  * 抽出来是因为两个触发点只差「处理哪些图」与「结果记到哪」，其余（归属解析、源图读取、
- * 参数继承、warning 上报）完全一样。各写一份必然出现「自动跑有归属、手动跑没归属」这类偏差。
+ * 参数继承、**方向拆分**、warning 上报）完全一样。各写一份必然出现「自动跑有归属、手动跑没归属」这类偏差。
+ *
+ * **为什么是「批次 + 方向」两级**（2026-09-23 杰哥要求按方向独立运行）：
+ * 一次触发 = 一个批次；批次内**每个产出方向各一条独立 run** —— 各自的进度、各自的输出目录与
+ * 文件序号、各自的失败，方向之间互不阻塞（上限见 `resolvePostprocessDirectionConcurrency`，
+ * 超出的排队）。但**分发与总结算是一次**的：分发要跨方向共用一次洗牌，各方向各洗一次会让
+ * 「同一张素材在各渠道目录落在同一天」这条性质失效（`taskPostprocess` 的 `deferDistribution`）。
+ *
+ * 拆分的键是**产出目标方向**（`directionTargets.ts` 的唯一实现），不是图片归属方向 ——
+ * 手动跑的「记住配置」可以一批跨方向，按归属拆会拆不干净。
  *
  * 不碰任务记录：自动触发要写回 `postprocessOutputs`，手动触发没有任务可写，
  * 把写回塞进来会让两边的幂等语义互相污染。返回 null = 后处理没启用（调用方据此提示）。
- *
- * **运行记录也在这里建**（`runtimeStore.startPostprocessRun`）：进度与状态是「这次跑的」属性，
- * 两个触发点各建一份必然分叉成「手动有进度、自动没有」。执行体的进度回调直接写进这条记录。
  */
 async function executePostprocessImageIds(
   imageIds: string[],
@@ -1012,105 +1133,281 @@ async function executePostprocessImageIds(
     taskId?: string
     /** 自动（任务完成触发）还是手动（素材库补跑）；只影响记录归属与文案 */
     source: PostprocessRunSource
+    /**
+     * 认领一张图在某个方向上的处理权；返回 false = 这次不用处理它。
+     *
+     * 自动触发用它做会话内幂等（`postprocessedSourceKeys`）。**键里必须带方向**：
+     * 同一次触发的每个方向都要处理同一张图，不带方向的话第二个方向会以为自己
+     * 「已经产出过」而整条跳过 —— 症状是「只出了一个方向的东西」。
+     */
+    claimImage?: (directionId: string, imageId: string) => boolean
   },
 ): Promise<TaskPostprocessResult | null> {
   // 启用范围为空 = 没启用。与输入栏的「未启用」显示保持一致，不看树上有多少参数。
   if (usePostprocessMediaStore.getState().selectedCollectionIds.length === 0) return null
 
-  const runtime = useRuntimeStore.getState()
-  runtime.beginPostprocess()
-  // 本次运行的 id：`startPostprocessRun` 用它把后续每一次进度上报对到同一条记录上
-  const runId = `${options.source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  runtime.startPostprocessRun({
-    id: runId,
-    source: options.source,
-    taskId: options.taskId,
-    totalImages: imageIds.length,
-  })
+  const batchId = `${options.source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-  try {
-    const ownership = await resolveImageOwnership(imageIds, { waitForOwnership: options.waitForOwnership })
-    // 等待期间归档可能新建了项目文件夹，这里取最新的树
-    const collections = useAssetLibraryStore.getState().collections
-    const projectParams = useProjectTreeParamsStore.getState().params
-
-    const readSource = async (imageId: string, index: number): Promise<TaskPostprocessSource | null> => {
-      const rec = await getImage(imageId)
-      const dataUrl = rec?.dataUrl || (await ensureImageCached(imageId))
-      if (!dataUrl) return null
-      let width = rec?.width ?? 0
-      let height = rec?.height ?? 0
-      if (!width || !height) {
-        // 后处理要靠源图尺寸判方向、筛尺寸；记录里缺尺寸时从像素解一次
-        try {
-          const image = await loadImageOriented(dataUrl)
-          width = getSourceWidth(image)
-          height = getSourceHeight(image)
-        } catch (error) {
-          console.error('后处理源图尺寸解析失败', index, error)
-          return null
-        }
-      }
-      return { imageId, dataUrl, width, height }
+  /**
+   * 准备阶段（读归属 / 读树 / 读配置）逐处兜错：**这一步炸了也要留一条带码的记录**。
+   *
+   * 2026-09-21 排查过同类问题：前段抛错只进 console，界面上什么也没有 ——「点了没反应」。
+   * 归属读取尤其如此（它是第一个真正碰到其它 store 的地方，`useAssetLibraryStore.getState()`
+   * 一旦出问题，后面全部无从谈起）。
+   */
+  const readFailures: unknown[] = []
+  const readOrNull = <T>(read: () => T): T | null => {
+    try {
+      return read()
+    } catch (error) {
+      readFailures.push(error)
+      return null
     }
-
-    const { runTaskPostprocess } = await import('./features/postprocess/taskPostprocess')
-    const result = await runTaskPostprocess({
-      // 手动触发没有任务，给一个占位 id：执行体只用它做日志与幂等键，不查任务表
-      taskId: options.taskId ?? 'manual-postprocess',
-      imageIds,
-      collections,
-      projectParams,
-      // 图片来源 → 所在方向：取素材归属里最深的一条，后处理据此自动取参数与输出目录
-      resolveImageCollectionId: (imageId) => ownership.get(imageId) ?? null,
-      alreadyProducedImageIds: options.alreadyProducedImageIds ?? [],
-      createdAt: options.createdAt,
-      // 来源决定方向级「自动后处理」开关是否生效（手动跑不该被它拦）——见执行体的 `source` 注释
-      source: options.source,
-      readSource,
-      // 进度上报：绝对值补丁，直接落到运行记录上（界面订阅它显示「3/12」）
-      onProgress: (patch) => useRuntimeStore.getState().updatePostprocessRun(runId, patch),
-    })
-    useRuntimeStore
-      .getState()
-      .finishPostprocessRun(runId, { issues: result.issues, producedFiles: result.outputs.length })
-    return result
-  } catch (error) {
-    // 异常必须走「可上报结果」而不是抛出去：调用方是 `void x()`（fire-and-forget），
-    // 抛出去只会变成一条没人看见的未处理 rejection —— 这正是「点了没反应」的来源之一。
-    console.error('后处理产出失败', error)
-    const issues = [createPostprocessIssue({ code: 'PP-CRASH-001', stage: 'prepare', cause: messageOfError(error) })]
-    // 产出数**沿用进度里已经写下的值**，不写 0：异常可能发生在已经写出若干文件之后
-    // （某次 IPC 掉链子、目录授权被拒），磁盘上产物是齐的，写 0 会让记录谎报
-    // 「失败：没有产出文件」—— 又是一条「显示失败、实际成功」（2026-09-21 排查）。
-    // 取记录里的值还顺带保证口径单一：进度面板上显示的就是它。
-    const interrupted = getPostprocessRun(runId)
-    useRuntimeStore.getState().finishPostprocessRun(runId, {
-      issues,
-      producedFiles: interrupted?.producedFiles ?? 0,
-    })
-    return { outputs: [], skippedMediaIds: [], issues, warnings: issuesToWarnings(issues) }
-  } finally {
-    runtime.endPostprocess()
   }
+
+  const ownedNow = readOrNull(() => collectImageOwnership(imageIds))
+  const ownership = options.waitForOwnership && ownedNow ? await waitForImageOwnership(imageIds, ownedNow) : ownedNow
+
+  // 等待期间归档可能新建了项目文件夹，这里取最新的树
+  const collections = readOrNull(() => useAssetLibraryStore.getState().collections)
+  const projectParams = readOrNull(() => useProjectTreeParamsStore.getState().params)
+  const config = readOrNull(() => getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState()))
+  if (readFailures.length > 0 || !ownership || !collections || !projectParams || !config) {
+    return recordPostprocessPrepareCrash({
+      batchId,
+      source: options.source,
+      taskId: options.taskId,
+      error: readFailures[0] ?? new Error('准备阶段读取失败'),
+    })
+  }
+
+  /**
+   * 方向分组 → 剔掉在跑的 → 逐张认领。
+   *
+   * 三处顺序都是刻意的：
+   * - **先判方向是否在跑，再认领**：同一方向已经有一条在飞时这次跳过（`PP-RUN-001`）。
+   *   若反过来先认领再判，被跳过的那些图会白白占掉会话内幂等键，之后再触发就**再也产不出**
+   *   它们了（而这个"丢了"完全不可见）。
+   * - **认领后为空的组不建 run**：那是「这一组的图都已经产出过」的正常幂等命中，
+   *   建一条只会产出 0 个文件的 run，还会在记录里留一句「没有产出任何文件」误导用户。
+   * - 每一步都不含 await，于是「判定 → 建 run」仍在同一个同步段里，不存在抢到一半被别人插队。
+   */
+  const groups = new Map<string, string[]>()
+  const skippedBusyIssues: PostprocessIssue[] = []
+  for (const [directionId, ids] of groupImageIdsByTargetDirection({
+    imageIds,
+    ownership,
+    source: options.source,
+    config,
+  })) {
+    // 同一方向已经有在飞的一条 → 跳过这次：用户要的是「别的方向能同时用」，
+    // 同一方向重复触发本来就是误操作，而且两条会争同一批输出目录与文件名序号。
+    if (isDirectionPostprocessBusy(directionId)) {
+      skippedBusyIssues.push(
+        createPostprocessIssue({
+          code: 'PP-RUN-001',
+          stage: 'prepare',
+          detail: `方向：${describeDirectionLabel(collections, directionId)}`,
+        }),
+      )
+      continue
+    }
+    const claimable = options.claimImage ? ids.filter((id) => options.claimImage!(directionId, id)) : ids
+    if (claimable.length > 0) groups.set(directionId, claimable)
+  }
+  if (groups.size === 0) {
+    // 全被跳过 / 全已产出：也要把「为什么没跑」说清楚（否则界面只能报「没有产出」）。
+    // 被跳过的方向**没有自己的 run**，所以留一条批次级记录让用户能查得到。
+    if (skippedBusyIssues.length > 0) {
+      recordBatchLevelPostprocessRun({
+        batchId,
+        source: options.source,
+        taskId: options.taskId,
+        directionLabel: '未开跑的方向',
+        issues: skippedBusyIssues,
+        producedFiles: 0,
+      })
+    }
+    return { ...emptyPostprocessResult(), issues: skippedBusyIssues, warnings: issuesToWarnings(skippedBusyIssues) }
+  }
+
+  const api = typeof window !== 'undefined' ? window.electronAPI : undefined
+  // 并发上限在**派发那一刻**定死：跑到一半改设置，不该让同一次触发的各方向按不同上限排队
+  const maxConcurrent = resolvePostprocessDirectionConcurrency()
+  const createdAt = options.createdAt ?? Date.now()
+
+  const readSource = async (imageId: string, index: number): Promise<TaskPostprocessSource | null> => {
+    const rec = await getImage(imageId)
+    const dataUrl = rec?.dataUrl || (await ensureImageCached(imageId))
+    if (!dataUrl) return null
+    let width = rec?.width ?? 0
+    let height = rec?.height ?? 0
+    if (!width || !height) {
+      // 后处理要靠源图尺寸判方向、筛尺寸；记录里缺尺寸时从像素解一次
+      try {
+        const image = await loadImageOriented(dataUrl)
+        width = getSourceWidth(image)
+        height = getSourceHeight(image)
+      } catch (error) {
+        console.error('后处理源图尺寸解析失败', index, error)
+        return null
+      }
+    }
+    return { imageId, dataUrl, width, height }
+  }
+
+  /**
+   * 跑一个方向。**永不抛错**：单点失败只变成这个方向的结果（别的方向照跑）。
+   * 这也是「按方向独立运行」真正要买到的东西 —— 以前一个方向炸了，整批一起停。
+   */
+  const runDirection = async (directionId: string, ids: string[]): Promise<TaskPostprocessResult> => {
+    const directionLabel = describeDirectionLabel(collections, directionId)
+
+    const runId = `${options.source}-${directionId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    useRuntimeStore.getState().startPostprocessRun({
+      id: runId,
+      source: options.source,
+      taskId: options.taskId,
+      totalImages: ids.length,
+      batchId,
+      directionId,
+      directionLabel,
+      // 先按「排队中」建：能不能立刻开工由下面抢名额决定（抢到就转进行中）。
+      // 这样「点了之后界面上什么都没有」的空窗期不存在（排队也是一种明确状态）。
+      queued: true,
+    })
+
+    let acquired = false
+    try {
+      /**
+       * 先**同步**抢一次名额。
+       *
+       * 绝大多数情况下这一下就成了，于是「点下去 → 这条记录就是 running」与拆方向之前完全一致；
+       * 若写成「无条件 await acquire」，状态会晚一个微任务才从 queued 变 running ——
+       * 界面看不出差别，但「点下去就能查到在跑」这条契约就不再是同步成立的了。
+       * 抢不到才进等待（`acquire` 内部会重试并注册唤醒）。
+       */
+      acquired = useRuntimeStore.getState().tryAdmitPostprocessDirection(directionId, maxConcurrent)
+      if (!acquired) {
+        await acquirePostprocessDirection(directionId, maxConcurrent)
+        acquired = true
+      }
+      useRuntimeStore.getState().markPostprocessRunStarted(runId)
+
+      const { runTaskPostprocess } = await import('./features/postprocess/taskPostprocess')
+      const result = await runTaskPostprocess({
+        // 手动触发没有任务，给一个占位 id：执行体只用它做日志与幂等键，不查任务表
+        taskId: options.taskId ?? 'manual-postprocess',
+        imageIds: ids,
+        collections,
+        projectParams,
+        // 图片来源 → 所在方向：取素材归属里最深的一条，后处理据此自动取参数与输出目录
+        resolveImageCollectionId: (imageId) => ownership.get(imageId) ?? null,
+        alreadyProducedImageIds: options.alreadyProducedImageIds ?? [],
+        // 只产这一个方向：其余目标各有自己的一条 run（键是产出目标方向，不是归属方向）
+        onlyTargetCollectionIds: [directionId],
+        // 分发推迟到批次收尾统一做一次（一次洗牌，同一素材跨渠道同一天）
+        deferDistribution: true,
+        createdAt,
+        // 来源决定方向级「自动后处理」开关是否生效（手动跑不该被它拦）——见执行体的 `source` 注释
+        source: options.source,
+        readSource,
+        // 进度上报：绝对值补丁，直接落到**这个方向**的运行记录上（界面订阅它显示「3/12」）
+        onProgress: (patch) => useRuntimeStore.getState().updatePostprocessRun(runId, patch),
+      })
+      useRuntimeStore
+        .getState()
+        .finishPostprocessRun(runId, { issues: result.issues, producedFiles: result.outputs.length })
+      return result
+    } catch (error) {
+      // 异常必须走「可上报结果」而不是抛出去：调用方是 `void x()`（fire-and-forget），
+      // 抛出去只会变成一条没人看见的未处理 rejection —— 这正是「点了没反应」的来源之一。
+      // 而且这里吞掉异常还保证**别的方向不受牵连**（并发闸的释放走 finally）。
+      console.error('后处理产出失败', directionId, error)
+      const issues = [createPostprocessIssue({ code: 'PP-CRASH-001', stage: 'prepare', cause: messageOfError(error) })]
+      // 产出数**沿用进度里已经写下的值**，不写 0：异常可能发生在已经写出若干文件之后
+      // （某次 IPC 掉链子、目录授权被拒），磁盘上产物是齐的，写 0 会让记录谎报
+      // 「失败：没有产出文件」—— 又是一条「显示失败、实际成功」（2026-09-21 排查）。
+      const interrupted = getPostprocessRun(runId)
+      useRuntimeStore.getState().finishPostprocessRun(runId, {
+        issues,
+        producedFiles: interrupted?.producedFiles ?? 0,
+      })
+      return { ...emptyPostprocessResult(), issues, warnings: issuesToWarnings(issues) }
+    } finally {
+      // 名额必须成对释放：漏掉会让别的方向**永远**排不上队，且只表现为「一直在排队」
+      if (acquired) releasePostprocessDirection(directionId)
+    }
+  }
+
+  // `map` 里的 `runDirection` 会同步执行到第一个 await —— N 条 run 记录在这一刻全部建好，
+  // 所以「点下去 → 入口里立刻查到 N 条」这条契约与拆方向之前一模一样。
+  const results = await Promise.all([...groups].map(([directionId, ids]) => runDirection(directionId, ids)))
+  const merged = mergePostprocessResults(results)
+  /**
+   * 被跳过（同一方向在跑）的那些方向也要进结论，否则用户只看到「产出 N 个文件」，
+   * 不知道有一批图根本没轮到。
+   *
+   * 同时单独留一条批次级记录：这些方向**没有自己的 run**（因为没开跑），
+   * 而 toast 只显示第一条原因、3 秒就没 —— 那些没轮到的图需要一个能查得到的地方。
+   */
+  merged.issues.push(...skippedBusyIssues)
+  if (skippedBusyIssues.length > 0) {
+    recordBatchLevelPostprocessRun({
+      batchId,
+      source: options.source,
+      taskId: options.taskId,
+      directionLabel: '未开跑的方向',
+      issues: skippedBusyIssues,
+      producedFiles: 0,
+    })
+  }
+
+  // 分发：跨方向合并成**一次**（合并键 = 生效分发配置，见 `mergePendingPostprocessDistribution`）。
+  // 各方向各分发一次会把「同一张素材在各渠道目录落在同一天」这条性质打掉（TB-107，2026-09-23）。
+  if (api) {
+    const { distributePostprocessOutputs, mergePendingPostprocessDistribution } =
+      await import('./features/postprocess/taskPostprocess')
+    const distributionIssues = await distributePostprocessOutputs(
+      api,
+      mergePendingPostprocessDistribution(merged.pendingDistribution),
+      merged.outputs,
+      createdAt,
+    )
+    if (distributionIssues.length > 0) {
+      merged.issues.push(...distributionIssues)
+      recordBatchLevelPostprocessRun({
+        batchId,
+        source: options.source,
+        taskId: options.taskId,
+        directionLabel: '全部方向（分发）',
+        issues: distributionIssues,
+        producedFiles: merged.outputs.length,
+      })
+    }
+  }
+
+  return { ...merged, warnings: issuesToWarnings(merged.issues) }
 }
 
 function messageOfError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** 手动后处理的重入标记（内存态）。 */
-const manualPostprocessInFlight = new Set<string>()
-
 /**
  * 手动对一批已有素材跑后处理。
  *
- * 存在的意义：自动触发只发生在「任务完成」那一刻，历史素材、以及当时尚未启用后处理的老图
+ * 存在的意义：自动触发只发生在「任务完成」那一刻，历史素材、以及当时还没启用后处理的老图
  * 再也拿不到变体。旧「后期处理工作区」的批量导出正是覆盖这条路径，退役它之前必须先补上。
  *
  * 与自动触发的两点不同：
  * - **不**剔除已产出的图：手动就是「再跑一次」的意思，重名由写盘的 `-2` 后缀兜底，不静默跳过；
  * - **不**等待归属：素材早已归档完毕，归属是即时可读的（等待窗口只为批次任务的异步归档存在）。
+ *
+ * **重入按方向判**（2026-09-23 起）：这里原先有一个按图片 id 的在飞集合，效果等于
+ * 「有一批在跑就别再点」。现在由编排对**每个产出方向**逐条判：已在跑的那个方向记
+ * `PP-RUN-001` 跳过（提示里说清去哪看进度），别的方向照跑 —— 所以这里不再需要任何全局闸，
+ * 而那个全局闸正是「一个方向占了整个功能」的来源（按钮的 `loading` 直接等于 `disabled`）。
  */
 export async function runManualPostprocess(imageIds: string[]): Promise<void> {
   const ids = [...new Set(imageIds.filter((id) => typeof id === 'string' && id.trim()))]
@@ -1119,21 +1416,12 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
     return
   }
 
-  // 防重入：幂等闸只挡「同一任务的重复触发」，手动重跑是刻意允许的，所以单独用一套在飞标记
-  const pending = ids.filter((id) => !manualPostprocessInFlight.has(id))
-  if (pending.length === 0) {
-    // 静默 return 会让用户以为按钮坏了：明确告诉他在飞，而不是什么都不发生
-    useStore.getState().showToast('后处理正在运行中，请等这批跑完再试', 'info')
-    return
-  }
-  pending.forEach((id) => manualPostprocessInFlight.add(id))
-
   // 开跑立刻给一条提示：后处理（读图 + 逐渠道渲染 + 体积压缩）可能持续几十秒，
   // 期间按钮会转圈，这条 toast 是「点击已生效」的第二重确认。
-  useStore.getState().showToast(`开始跑后处理：${pending.length} 张素材`, 'info')
+  useStore.getState().showToast(`开始跑后处理：${ids.length} 张素材`, 'info')
 
   try {
-    const result = await executePostprocessImageIds(pending, { waitForOwnership: false, source: 'manual' })
+    const result = await executePostprocessImageIds(ids, { waitForOwnership: false, source: 'manual' })
     if (!result) {
       useStore.getState().showToast('后处理未启用：请先在项目树里勾选启用范围', 'error')
       return
@@ -1143,12 +1431,10 @@ export async function runManualPostprocess(imageIds: string[]): Promise<void> {
     // 少了它，手动产出的图在素材库里永远显示成「没跑过」。
     if (result.outputs.length > 0) await markImagesPostprocessed(result.outputs.map((item) => item.rawImageId))
   } catch (error) {
-    // 兜底：任何逃出执行体的异常都要变成用户能看见的提示（调用方是 `void`，抛出去等于没发生）
+    // 兜底：任何逃出编排的异常都要变成用户能看见的提示（调用方是 `void`，抛出去等于没发生）
     console.error('手动后处理失败', error)
     const message = error instanceof Error ? error.message : String(error)
     useStore.getState().showToast(`手动后处理失败：${message}`, 'error')
-  } finally {
-    pending.forEach((id) => manualPostprocessInFlight.delete(id))
   }
 }
 

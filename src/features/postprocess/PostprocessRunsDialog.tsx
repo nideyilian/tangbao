@@ -31,6 +31,7 @@ import {
   countPostprocessIssues,
   formatPostprocessRunCount,
   getPostprocessRunPercent,
+  isRunInFlight,
   summarizePostprocessRun,
   type PostprocessRun,
   type PostprocessRunStatus,
@@ -42,8 +43,10 @@ import {
  * `skipped` 用中性灰、不走警告黄：它的含义是「这次一张都没产，但原因是配置 / 参与范围」，
  * 与 `partial`（产出不全，可能真要去修）不是一回事。黄色会把人往「出故障了」带，
  * 而这类记录的正确反应是「看一眼跳过的原因，决定要不要手动跑」。
+ * `queued` 同样中性：它在等名额，不是故障（配小了「最多并发数」时必然会看到它）。
  */
 const STATUS_TONE: Record<PostprocessRunStatus, 'neutral' | 'info' | 'success' | 'warning' | 'danger'> = {
+  queued: 'neutral',
   running: 'info',
   succeeded: 'success',
   partial: 'warning',
@@ -52,6 +55,16 @@ const STATUS_TONE: Record<PostprocessRunStatus, 'neutral' | 'info' | 'success' |
 }
 
 const SOURCE_LABELS = { auto: '自动触发', manual: '手动触发' } as const
+
+/**
+ * 方向段（`产品线 / 产品 / 方向`）。
+ *
+ * 每条 run 只服务一个方向，而记录列表里同时会有好几个方向的记录 —— 不带方向的话，
+ * 「三条同时跑的记录」在用户眼里是三份无法区分的东西。
+ */
+function directionOf(run: PostprocessRun): string {
+  return run.directionLabel ?? (run.directionId ? run.directionId : '未指定方向')
+}
 
 function formatRunTime(timestamp: number): string {
   // 带日期：会话可能跨天（午夜后还在跑），只给时刻会让人误读成今天
@@ -67,14 +80,18 @@ function formatRunTime(timestamp: number): string {
 function ActiveRunBlock({ run }: { run: PostprocessRun }) {
   const percent = getPostprocessRunPercent(run)
   return (
-    <div className="flex flex-col gap-2 rounded-ds-lg border border-ds-border p-3">
+    <div className="flex flex-col gap-2 rounded-ds-lg border border-ds-border p-3" data-testid="postprocess-active-run">
       <Progress
-        label={formatPostprocessRunCount(run) ?? `共 ${run.totalImages} 张`}
+        label={
+          run.status === 'queued'
+            ? `${directionOf(run)} · 排队中`
+            : (formatPostprocessRunCount(run) ?? `共 ${run.totalImages} 张`)
+        }
         showValue={percent !== undefined}
         value={percent}
       />
       <div className="text-xs text-ds-muted">
-        {`${POSTPROCESS_STAGE_LABELS[run.stage]} · ${SOURCE_LABELS[run.source]} · 共 ${run.totalImages} 张 · 已产出 ${run.producedFiles} 个文件 · 开始于 ${formatRunTime(run.startedAt)}`}
+        {`${directionOf(run)} · ${POSTPROCESS_RUN_STATUS_LABELS[run.status]} · ${POSTPROCESS_STAGE_LABELS[run.stage]} · ${SOURCE_LABELS[run.source]} · 共 ${run.totalImages} 张 · 已产出 ${run.producedFiles} 个文件 · 开始于 ${formatRunTime(run.startedAt)}`}
       </div>
       {/* 写盘文件名正是工具栏里被压掉的那一段：这里要能完整读到，长名字换行而不是溢出 */}
       {run.currentLabel && <div className="break-all text-xs text-ds-text-subtle">{`正在写：${run.currentLabel}`}</div>}
@@ -84,7 +101,7 @@ function ActiveRunBlock({ run }: { run: PostprocessRun }) {
 
 function RunRow({ run }: { run: PostprocessRun }) {
   const { errors, skipped } = countPostprocessIssues(run)
-  const summary = `${formatRunTime(run.startedAt)} · ${SOURCE_LABELS[run.source]} · ${summarizePostprocessRun(run)}`
+  const summary = `${formatRunTime(run.startedAt)} · ${directionOf(run)} · ${SOURCE_LABELS[run.source]} · ${summarizePostprocessRun(run)}`
   return (
     <div
       data-testid="postprocess-run-row"
@@ -108,8 +125,10 @@ export default function PostprocessRunsDialog({ open, onClose }: { open: boolean
   const runs = usePostprocessRuns()
   const dismissPostprocessRun = useRuntimeStore((state) => state.dismissPostprocessRun)
 
-  const activeRun = runs.find((run) => run.status === 'running')
-  const history = runs.filter((run) => run.status !== 'running')
+  // 在飞的**全部**方向（含排队）：后处理按方向独立运行，同时有好几条是正常状态，
+  // 只显示一条会让另外几条看起来不存在。
+  const activeRuns = runs.filter(isRunInFlight)
+  const history = runs.filter((run) => !isRunInFlight(run))
 
   return (
     <Dialog
@@ -119,11 +138,13 @@ export default function PostprocessRunsDialog({ open, onClose }: { open: boolean
       }}
       size="md"
       title="后处理进度"
-      description="变体在生成任务完成时自动产出。这里是它跑到哪了，以及最近几次的结果（只保留本次会话）。"
+      description="每个方向各自跑一条，互不阻塞（同时跑几个由设置里的「最多并发数」决定，超出的排队）。这里是它们跑到哪了，以及最近几次的结果（只保留本次会话）。"
     >
       <div className="flex flex-col gap-4">
-        {activeRun && <ActiveRunBlock run={activeRun} />}
-        {!activeRun && runs.length === 0 && (
+        {activeRuns.map((run) => (
+          <ActiveRunBlock key={run.id} run={run} />
+        ))}
+        {activeRuns.length === 0 && runs.length === 0 && (
           <EmptyState
             icon={<InfoIcon size={20} />}
             title="还没有跑过后处理"

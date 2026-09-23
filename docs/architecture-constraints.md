@@ -151,6 +151,46 @@
 - ⚠️ `store.setAppMode` 的**兜底分支会把非白名单值改写成 `agent`** → 新增工作区必须补分支，
   否则表现为"点 tab 完全没反应且零报错"（`RISK.md` R-12）。
 
+### 4.7 运行实例按**产出方向**拆（2026-09-23，TB-112）
+
+**一次触发 = 一个批次；批次内每个产出方向各一条独立 run**，方向之间互不阻塞。
+改这块之前先读这一节 —— 下面每一条都是"看起来可以合并、合并了就出静默错"的地方。
+
+- **拆分的键是「产出目标方向」，不是图片归属方向**（唯一实现在
+  `features/postprocess/directionTargets.ts`）：手动跑的「记住配置」可以一批跨方向，
+  按归属拆会拆不干净。**界面与编排必须共用这一份实现** ——
+  各写一遍的结果是「按钮让点、点下去被跳过」，而界面上看不出为什么。
+- **并发上限 = 设置里那个「最多并发数」**（`ApiProfile.maxConcurrent`，默认 5），
+  超出的方向**排队**（`PostprocessRun.status === 'queued'`，不是被丢弃）。
+  杰哥 2026-09-23：「同时跑的数量不要限制，可以使用最多并发数 + 排队的方式」。
+  纯判断在 `lib/postprocessDirectionQueue.ts`（可单测），等待唤醒在
+  `features/postprocess/postprocessDirectionGate.ts`（广播唤醒 + 2s 兜底重试）。
+- **同一方向同时最多一条**：两条会争同一批输出目录与文件名序号。新来的那次按
+  `PP-RUN-001` 跳过（不是排队）并说明去哪看进度。
+- ⚠️ **分发必须收敛成一次**（`RunTaskPostprocessInput.deferDistribution` + 批次层
+  `mergePendingPostprocessDistribution`）：分发的"打乱"是**全量洗一次牌、各目标目录共用
+  同一份顺序**（`postprocessDistribution.ts` 的 `buildSourceRank`），同一张素材的头条版与
+  广点通版因此落在同一天。**改成各方向各分发一次，这个性质就没了**，而产物看上去完全正常，
+  只有跨渠道对日期时才发现。
+- ⚠️ **认领幂等键必须带方向**（`store.ts` 的 `claimImage`，键 `taskId:direction:imageId`），
+  且**先判方向是否在跑、再认领**：同一次触发的每个方向都要处理同一张图，
+  不带方向会让第二个方向以为自己"已经产出过"而整条跳过；先认领后被跳过则会白白吃掉幂等键，
+  那批图之后**再也产不出来**（且完全不可见）。
+- ⚠️ **写盘路径要先占位再查盘**（`taskPostprocess.ts` 的 `reservedOutputPaths` +
+  `reserveIfAvailable`）：`resolveUniquePath` 是"查存在 → 再写"，以前同批串行所以撞名一定被
+  已写完的文件挡下；方向并行之后，两个方向共用同一输出目录（命名模板里不带方向段）会双双
+  查到"不存在"然后互相覆盖。
+- 幂等 / 进度契约不变：run 记录**在同步段就建好**（手动点下去立刻能查到 N 条），
+  所以抢名额要**先同步试一次**再进等待（多一次 `await` 会让状态晚一个微任务才变）。
+- 批次级问题（准备阶段失败、分发失败、被跳过的方向）**没有自己的方向 run**，
+  单独留一条批次级记录（`recordBatchLevelPostprocessRun`）—— 否则它们只活在 toast 里（3 秒）。
+
+## 五、持久化
+
+- 工作区 = 顶栏 `appMode === 'postprocess'`。
+- ⚠️ `store.setAppMode` 的**兜底分支会把非白名单值改写成 `agent`** → 新增工作区必须补分支，
+  否则表现为"点 tab 完全没反应且零报错"（`RISK.md` R-12）。
+
 ## 五、持久化
 
 - **`createDesktopJsonStorage(ns)` 是全仓唯一落盘入口。**

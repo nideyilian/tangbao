@@ -17,12 +17,13 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_POSTPROCESS_DISTRIBUTION } from '../../lib/postprocessDistribution'
 import { DEFAULT_POSTPROCESS_MEDIA } from '../../lib/postprocessMedia'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import type { AssetCollection } from '../../types'
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
 import type { ProjectNodeParamsMap } from '../projectTree/types'
-import { runTaskPostprocess } from './taskPostprocess'
+import { runTaskPostprocess, mergePendingPostprocessDistribution } from './taskPostprocess'
 
 /**
  * 包一层 mock 才能断言「参数是按哪个方向解析的」—— 这是「多目标不串味」在**可测层面**的
@@ -164,7 +165,7 @@ describe('多目标产出：记住的产出目标', () => {
     return new Set(vi.mocked(resolveProjectPostprocessSlice).mock.calls.map((call) => String(call[2])))
   }
 
-  function run(options: { source?: 'auto' | 'manual'; params?: ProjectNodeParamsMap } = {}) {
+  function run(options: { source?: 'auto' | 'manual'; params?: ProjectNodeParamsMap; onlyTargets?: string[] } = {}) {
     return runTaskPostprocess({
       taskId: 'task-targets',
       imageIds: ['image-a'],
@@ -173,6 +174,7 @@ describe('多目标产出：记住的产出目标', () => {
       resolveImageCollectionId: () => DIRECTION_A.id,
       readSource,
       source: options.source ?? 'manual',
+      ...(options.onlyTargets ? { onlyTargetCollectionIds: options.onlyTargets } : {}),
     })
   }
 
@@ -263,5 +265,60 @@ describe('多目标产出：记住的产出目标', () => {
     })
 
     expect(codesOf(result.issues)).toContain('PP-SCOPE-002')
+  })
+
+  /**
+   * 方向级拆分：调用方一次只让执行体负责**一个**方向（其余目标各有自己的一条 run）。
+   *
+   * 这条契约是本次改造的执行体侧落点：编排层按方向拆开之后，执行体必须能被收敛到单个目标，
+   * 否则「同一个方向产两遍、别的方向一遍没产」这种账在界面上完全看不出来。
+   */
+  it('⭐ 只产指定方向（方向级拆分）：只解析那一个方向的参数', async () => {
+    usePostprocessMediaStore.setState({
+      selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+    })
+
+    const result = await run({ source: 'manual', onlyTargets: [DIRECTION_B.id] })
+
+    expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_B.id]))
+    // 只收敛目标，不改变「没产出也没理由」这条结论的形状（渠道没勾时照旧报 PP-EMPTY-001）
+    expect(result.pendingDistribution).toEqual([])
+  })
+})
+
+/**
+ * 跨方向合并待分发项（批次收尾统一分发用）。
+ *
+ * 为什么必须合并成**一次**：分发的「打乱」是全量洗一次牌、各目标目录共用同一份顺序 ——
+ * 同一张素材的头条版与广点通版因此落在同一天。各方向各洗一次就会把这个性质打掉
+ * （2026-09-23 TB-107 刚定的口径），而产物看上去完全正常，只有跨渠道对日期时才发现。
+ */
+describe('待分发项：按生效分发配置合并', () => {
+  /** 用真实默认配置做基底：手拼一个字面量会在配置新增字段时静默漏项（这里就漏过三次）。 */
+  const distribution = (days: number) => ({ ...DEFAULT_POSTPROCESS_DISTRIBUTION, days })
+
+  it('同配置合并成一组（各方向的产出进同一份洗牌），不同配置各成一组', () => {
+    const merged = mergePendingPostprocessDistribution([
+      { config: distribution(7), items: [{ path: 'a.jpg', outputRoot: 'D:/out' }] },
+      { config: distribution(7), items: [{ path: 'b.jpg', outputRoot: 'D:/out' }] },
+      { config: distribution(30), items: [{ path: 'c.jpg', outputRoot: 'D:/out' }] },
+    ])
+
+    expect(merged).toHaveLength(2)
+    expect(merged[0].items.map((item) => item.path)).toEqual(['a.jpg', 'b.jpg'])
+    expect(merged[1].items.map((item) => item.path)).toEqual(['c.jpg'])
+  })
+
+  it('合并键与执行体内部的分组键同口径（同字段同值算同一组，归一化由配置层负责）', () => {
+    const one = distribution(7)
+    const two = distribution(7)
+
+    expect(
+      mergePendingPostprocessDistribution([
+        { config: one, items: [] },
+        { config: two, items: [] },
+      ]),
+    ).toHaveLength(1)
   })
 })

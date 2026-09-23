@@ -104,6 +104,24 @@ export interface RunTaskPostprocessInput {
    *   后处理」，所以它不该管用户手动选的那批目标（见下方产出目标来源处注释）。
    */
   source?: PostprocessRunSource
+  /**
+   * 只产这些目标方向（方向级拆分用）。不传 = 按内部分组口径把每张图的全部目标都产出来。
+   *
+   * 为什么要有它：后处理现在按产出方向拆成**一条 run 一个方向**（见 `store.ts` 的批次编排）——
+   * 每个方向的参数、输出目录、水印、投放渠道都可能不同（ADR-0003 实测 25/61 个方向的目录不同），
+   * 拆开跑才能各自排队、各自报进度、各自失败。执行体不需要知道「现在是哪个方向」，
+   * 只要把目标收敛到调用方给的那一个即可。
+   */
+  onlyTargetCollectionIds?: string[]
+  /**
+   * 把分发推迟回调用方（批次层）。
+   *
+   * 必须推迟的理由：分发的「打乱」是**全量洗一次牌、各目标目录共用这一份顺序**
+   * （`postprocessDistribution.ts` 的 `buildSourceRank`）—— 同一张素材的头条版与广点通版
+   * 因此落在同一天。各方向各洗一次就会把这个性质打掉（同一素材跨渠道对不上，2026-09-23
+   * TB-107 刚定的口径）。所以**产出并行、分发收敛成一次**：批次层收齐各方向的待分发项后统一执行。
+   */
+  deferDistribution?: boolean
   /** 取源图像素数据；返回 null 表示这张图不可用（跳过并记 warning） */
   readSource: (imageId: string, index: number) => Promise<TaskPostprocessSource | null>
   /**
@@ -111,6 +129,17 @@ export interface RunTaskPostprocessInput {
    * `postprocessRun.ts` 的 `PostprocessProgressPatch`）。不传就纯静默跑——单测与脚本用得上。
    */
   onProgress?: (patch: PostprocessProgressPatch) => void
+}
+
+/**
+ * 一组待分发的产出（按「生效分发配置」分组，见 `TaskPostprocessResult.pendingDistribution`）。
+ *
+ * 提出来当公共类型，是为了让批次编排（`store.ts`）能把各方向的组**合并成一次分发**时
+ * 不自己另造一个形状 —— 两处形状一分叉，分发就会漏掉某个方向的产出（静默，不报错）。
+ */
+export interface PendingPostprocessDistribution {
+  config: PostprocessDistributionConfig
+  items: PostprocessDistributionItem[]
 }
 
 export interface TaskPostprocessResult {
@@ -123,6 +152,11 @@ export interface TaskPostprocessResult {
    */
   issues: PostprocessIssue[]
   /**
+   * 待分发的产出。`deferDistribution` 时由调用方收齐后统一执行；否则本执行体已就地分发完
+   * （数组为空 —— 已经排过期的产出不再需要二次处理）。
+   */
+  pendingDistribution: PendingPostprocessDistribution[]
+  /**
    * 问题的单行文本，**由 `issues` 派生**（`formatPostprocessIssue`）。
    *
    * 保留它是为了不动既有调用方（toast 取首条、日志取整段）；但**不要再往这里推文案** ——
@@ -132,10 +166,13 @@ export interface TaskPostprocessResult {
 }
 
 /** 执行过程中的累加器：问题先以结构化形式收着，返回前统一派生 `warnings`。 */
-type PostprocessAccumulator = Pick<TaskPostprocessResult, 'outputs' | 'skippedMediaIds' | 'issues'>
+type PostprocessAccumulator = Pick<
+  TaskPostprocessResult,
+  'outputs' | 'skippedMediaIds' | 'issues' | 'pendingDistribution'
+>
 
 function emptyAccumulator(): PostprocessAccumulator {
-  return { outputs: [], skippedMediaIds: [], issues: [] }
+  return { outputs: [], skippedMediaIds: [], issues: [], pendingDistribution: [] }
 }
 
 function toResult(acc: PostprocessAccumulator): TaskPostprocessResult {
@@ -276,8 +313,18 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
      *   无归属（手工拖入、旧数据）才退回全局勾选的项目。
      */
     const savedTargets = input.source === 'manual' ? baseConfig.savedTargetCollectionIds : []
-    const targetIds =
+    const resolvedTargetIds =
       savedTargets.length > 0 ? savedTargets : collectionId ? [collectionId] : baseConfig.selectedCollectionIds
+    /**
+     * 方向级拆分：调用方一次只让本执行体负责一个方向，其余目标归它自己那条 run。
+     *
+     * 收敛放在**这里**而不是让调用方传更窄的配置，是为了让「目标怎么定」只有一份实现 ——
+     * 批次编排的分组用的是 `features/postprocess/directionTargets.ts`，两边口径一字不差；
+     * 各写一遍必然出现「分组说投 B、执行体按 A 产」这种只在产物上看得出来的偏差。
+     */
+    const targetIds = input.onlyTargetCollectionIds?.length
+      ? resolvedTargetIds.filter((id) => input.onlyTargetCollectionIds!.includes(id))
+      : resolvedTargetIds
     const projects = resolvePostprocessProjectTargets(input.collections, targetIds)
     if (projects.length === 0) {
       reportIssue(result, { code: 'PP-TARGET-001', stage: 'prepare', sourceImageId: imageId, sourceIndex: index }, true)
@@ -485,7 +532,22 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     imageUnitsDone: 0,
     producedFiles,
   })
-  await distributeOutputs(api, distributionGroups, result, createdAt)
+  // 分发：默认就地做（手工触发与旧调用方的行为一字不变）；
+  // 批次编排传 `deferDistribution` 时把分组原样交回去，由它在**所有方向都跑完之后**统一洗一次牌。
+  if (input.deferDistribution) {
+    result.pendingDistribution = [...distributionGroups.values()].map(({ config, items }) => ({
+      config,
+      items: [...items],
+    }))
+  } else {
+    const distributionIssues = await distributePostprocessOutputs(
+      api,
+      distributionGroups.values(),
+      result.outputs,
+      createdAt,
+    )
+    result.issues.push(...distributionIssues)
+  }
 
   // 一个文件都没出、又没记下任何原因：这本身就是结论（配置指向了空产出 —— 渠道的尺寸全禁用、
   // 预设没挂上东西之类）。不留这条的话，界面只能报「结束了」而说不出为什么，
@@ -498,40 +560,68 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
 }
 
 /**
- * 执行分发并回写路径。
+ * 执行分发并回写路径；返回本次分发产生的问题项（由调用方决定记在哪条运行记录上）。
+ *
+ * 导出是给**批次编排**用的：方向拆成并行之后，分发必须收敛成一次（见
+ * `RunTaskPostprocessInput.deferDistribution`），于是「执行分发」这个动作有了第二个调用方
+ * （`store.ts` 在批次收尾时合并各组再调）。各写一份的话，「路径回写」这条很容易只在一处做对 ——
+ * 而漏掉的后果是产出记录指向不存在的文件（重跑判定与「打开文件」一起失效）。
  *
  * 分发失败**不**回滚已产出的文件：产物本身是好的，只是没排到日期目录里，
  * 报出来让用户自己决定要不要重跑，比删掉已产出的东西更安全。
  */
-async function distributeOutputs(
+export async function distributePostprocessOutputs(
   api: NonNullable<Window['electronAPI']>,
-  groups: Map<string, { config: PostprocessDistributionConfig; items: PostprocessDistributionItem[] }>,
-  result: PostprocessAccumulator,
+  groups: Iterable<PendingPostprocessDistribution>,
+  /** 产出记录：分发移动过的文件要把路径跟着改（原地改对象，与原先一致） */
+  outputs: TaskPostprocessOutput[],
   /** 本次产出的时间基准（与命名模板 `{date}` 同源）；排期起算日由它得出 */
   createdAt: number,
-): Promise<void> {
-  if (groups.size === 0) return
+): Promise<PostprocessIssue[]> {
+  const list = [...groups]
+  if (list.length === 0) return []
+  const issues: PostprocessIssue[] = []
   const movedPaths = new Map<string, string>()
   const baseDate = toBaseDate(createdAt)
-  for (const { config, items } of groups.values()) {
+  for (const { config, items } of list) {
     try {
       const outcome = await runPostprocessDistribution(items, config, api, { baseDate })
       for (const item of outcome.moved) movedPaths.set(item.originalPath, item.targetPath)
       for (const error of outcome.errors) {
-        reportIssue(result, { code: 'PP-DIST-001', stage: 'distribute', cause: error })
+        issues.push(createPostprocessIssue({ code: 'PP-DIST-001', stage: 'distribute', cause: error }))
       }
-      if (outcome.canceled) reportIssue(result, { code: 'PP-DIST-002', stage: 'distribute' })
+      if (outcome.canceled) issues.push(createPostprocessIssue({ code: 'PP-DIST-002', stage: 'distribute' }))
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      reportIssue(result, { code: 'PP-DIST-003', stage: 'distribute', cause: message })
+      issues.push(createPostprocessIssue({ code: 'PP-DIST-003', stage: 'distribute', cause: messageOf(error) }))
     }
   }
-  if (movedPaths.size === 0) return
+  if (movedPaths.size === 0) return issues
   // 产出记录跟着搬。留旧路径会让「已产出」清单指向不存在的文件，重跑判定与打开文件都会失效。
-  for (const output of result.outputs) {
+  for (const output of outputs) {
     const moved = movedPaths.get(output.path)
     if (moved) output.path = moved
   }
+  return issues
+}
+
+/**
+ * 把多个来源（各方向各一条 run）的待分发组**按生效分发配置合并**成一批。
+ *
+ * 合并键与执行体内部的分组键必须是同一个口径（`JSON.stringify(分布配置)`）：
+ * 不同配置混在一组会让「按天均分」的前提失效（A 方向 7 天、B 方向 30 天，混着排谁都不均匀）；
+ * 而同一配置被拆成两组又会各自洗一次牌 —— 那正是本次改造要避免的（同一素材跨渠道不同天）。
+ */
+export function mergePendingPostprocessDistribution(
+  sources: Iterable<PendingPostprocessDistribution>,
+): PendingPostprocessDistribution[] {
+  const merged = new Map<string, PendingPostprocessDistribution>()
+  for (const group of sources) {
+    const key = JSON.stringify(group.config)
+    const existing = merged.get(key)
+    if (existing) existing.items.push(...group.items)
+    else merged.set(key, { config: group.config, items: [...group.items] })
+  }
+  return [...merged.values()]
 }
 
 function isUsableSize(width: number, height: number): boolean {
@@ -674,8 +764,30 @@ async function ensureDirectoryChain(
 }
 
 /**
+ * 本会话已经分配出去（可能还没写完）的输出路径。
+ *
+ * 为什么必须有它（2026-09-23 按方向并发运行之后）：`resolveUniquePath` 是「查存在 → 再写」
+ * 两步，以前同一批产出串行跑，撞名一定被前一个**已经写完**的文件挡下；方向拆成并行之后，
+ * 两个方向共用同一个输出目录（命名模板里不带方向段时就是这种情况）会双双查到「不存在」，
+ * 然后后写的那个把先写的覆盖掉 —— 而这在界面上不报任何错，用户拿到的是少了一个文件。
+ *
+ * 注册和使用都发生在 `resolveUniquePath` 内部，顺序是**先占位再查盘**：
+ * 若反过来（先查盘再登记），两个并发调用仍会双双查空、双双登记、返回同一条路径。
+ *
+ * 只登记、不清理：一条路径几十字节，一场几千张图的会话也不过几百 KB；
+ * 与「清了旧条目又开始覆盖」相比，宁可留着。键做大小写归一（Windows 路径不区分大小写）。
+ */
+const reservedOutputPaths = new Set<string>()
+
+function outputPathKey(path: string): string {
+  return path.trim().toLowerCase()
+}
+
+/**
  * 同名兜底：模板缺 `{seq}` 或人为重跑时会撞名，加 `-2`/`-3` 后缀而不是覆盖已有文件。
  * （正常路径下 `{seq}` 已保证唯一，这里只是不覆盖用户已有素材的安全网。）
+ *
+ * 判据是**两个**：磁盘上不存在、且本会话没把这条路径分配给别的产出（见 `reservedOutputPaths`）。
  */
 async function resolveUniquePath(
   api: NonNullable<Window['electronAPI']>,
@@ -683,14 +795,33 @@ async function resolveUniquePath(
   fileName: string,
 ): Promise<string | null> {
   const candidate = await api.pathJoin(directory, fileName)
-  if (!(await api.checkExists(candidate))) return candidate
+  const taken = await reserveIfAvailable(api, candidate)
+  if (taken) return taken
 
   const dot = fileName.lastIndexOf('.')
   const base = dot > 0 ? fileName.slice(0, dot) : fileName
   const ext = dot > 0 ? fileName.slice(dot) : ''
   for (let suffix = 2; suffix <= 999; suffix += 1) {
     const next = await api.pathJoin(directory, `${base}-${suffix}${ext}`)
-    if (!(await api.checkExists(next))) return next
+    const taken = await reserveIfAvailable(api, next)
+    if (taken) return taken
   }
   return null
+}
+
+/**
+ * 尝试占住一条路径：磁盘上没有、且本会话没分配给别的产出 → 登记并返回它；否则返回 null。
+ *
+ * **先登记再查盘**是关键（见 `reservedOutputPaths` 的注释）：两个并发调用因此不会同时
+ * 选中同一路径。查盘发现真存在时把占位撤掉，让后面的候选继续用。
+ */
+async function reserveIfAvailable(api: NonNullable<Window['electronAPI']>, candidate: string): Promise<string | null> {
+  const key = outputPathKey(candidate)
+  if (reservedOutputPaths.has(key)) return null
+  reservedOutputPaths.add(key)
+  if (await api.checkExists(candidate)) {
+    reservedOutputPaths.delete(key)
+    return null
+  }
+  return candidate
 }

@@ -5481,6 +5481,19 @@ describe('migratePersistedState 丢弃已废弃的皮肤字段', () => {
 })
 
 describe('手动后处理入口', () => {
+  /**
+   * 每个用例都从「没有后处理在跑」开始。
+   *
+   * 为什么必须显式清（2026-09-23 加）：后处理改成方向级并发闸之后，**同一方向同时只允许一条** ——
+   * 前面用例里那些 `void` 出去的自动触发如果还没跑完，它会一直占着方向名额，
+   * 后面的用例就会莫名其妙地拿到 `queued` 而不是 `running`。
+   * 这是测试隔离问题（生产里每条 run 都有 `Promise.all` + `finally` 保证释放），
+   * 但留着它会让「排队」这个新状态变成随机失败的来源。
+   */
+  beforeEach(() => {
+    useRuntimeStore.setState({ postprocessRunningDirections: [], postprocessRuns: {}, postprocessRunIds: [] })
+  })
+
   it('没选中素材时只提示，不进入执行', async () => {
     const showToast = vi.fn()
     useStore.setState({ showToast })
@@ -5603,6 +5616,178 @@ describe('手动后处理入口', () => {
     expect(getPostprocessRun(active[0].id)!.issues[0]?.code).toBe('PP-EMPTY-001')
   })
 
+  /**
+   * 按产出方向拆分（2026-09-23 杰哥要求「每个方向各自拥有独立的实例」）。
+   *
+   * 契约：**一次触发按产出目标方向拆成 N 条 run**，各自带方向、各自报进度、各自失败；
+   * 方向之间互不阻塞 —— 这正是原先那把全局锁（任一方向在跑，整个「跑后处理」按钮点不动）
+   * 要去掉的东西。同步段建齐记录这一条也一起守住：拆方向不能把「点了就有反馈」拆没了。
+   */
+  it('一次触发按产出方向拆成多条 run，每条只处理自己那个方向', async () => {
+    useStore.setState({ showToast: vi.fn() })
+    stubElectronApi()
+    const directionA = directionFixture('direction-a')
+    const directionB = directionFixture('direction-b')
+    useAssetLibraryStore.setState({
+      collections: [directionA, directionB],
+      assetsById: {
+        'asset-a': { id: 'asset-a', imageId: 'image-a', collectionIds: [directionA.id] } as never,
+        'asset-b': { id: 'asset-b', imageId: 'image-b', collectionIds: [directionB.id] } as never,
+      },
+    })
+    usePostprocessMediaStore.setState({
+      // 尺寸全禁用 → 零产出、不进渲染链；这条用例只关心「拆成了几条、各自带哪个方向」
+      media: [
+        {
+          id: 'gdt',
+          name: '广点通',
+          sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
+        },
+      ],
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: [directionA.id, directionB.id],
+      savedTargetCollectionIds: [],
+      outputDir: '',
+    })
+    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+    await putImage({ id: 'image-b', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+
+    const pending = runManualPostprocess(['image-a', 'image-b'])
+
+    const active = getActivePostprocessRuns()
+    expect(active).toHaveLength(2)
+    expect(new Set(active.map((run) => run.directionId))).toEqual(new Set([directionA.id, directionB.id]))
+    // 同一次触发 = 同一个批次
+    expect(new Set(active.map((run) => run.batchId)).size).toBe(1)
+    // 每条 run 只处理归属自己方向的图（不是把两张图都跑一遍）
+    expect(active.map((run) => run.totalImages)).toEqual([1, 1])
+
+    await pending
+    expect(getActivePostprocessRuns()).toHaveLength(0)
+  })
+
+  /**
+   * 方向级并发闸：同时跑几个由设置里的「最多并发数」决定，超出的**排队**（不丢单）。
+   *
+   * 杰哥 2026-09-23：「同时跑的数量不要限制，可以使用最多并发数 + 排队的方式」——
+   * 所以这里把上限压到 1，验证第二个方向是 `queued` 而不是被静默丢掉，且最终照样跑完。
+   */
+  it('最多并发数配成 1 时，第二个方向排队而不是被丢弃', async () => {
+    const originalSettings = useStore.getState().settings
+    const profile = { ...normalizeSettings(originalSettings).profiles[0], maxConcurrent: 1 }
+    useStore.setState({
+      showToast: vi.fn(),
+      settings: normalizeSettings({
+        ...normalizeSettings(originalSettings),
+        profiles: [profile],
+        activeProfileId: profile.id,
+      }),
+    })
+    stubElectronApi({
+      // 第一次建目录卡住，制造一个可观察的「在飞」窗口
+      ensureDir: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return true
+      }),
+    })
+    const directionA = directionFixture('direction-a')
+    const directionB = directionFixture('direction-b')
+    useAssetLibraryStore.setState({
+      collections: [directionA, directionB],
+      assetsById: {
+        'asset-a': { id: 'asset-a', imageId: 'image-a', collectionIds: [directionA.id] } as never,
+        'asset-b': { id: 'asset-b', imageId: 'image-b', collectionIds: [directionB.id] } as never,
+      },
+    })
+    usePostprocessMediaStore.setState({
+      media: [
+        {
+          id: 'gdt',
+          name: '广点通',
+          sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
+        },
+      ],
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: [directionA.id, directionB.id],
+      savedTargetCollectionIds: [],
+      outputDir: '',
+    })
+    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+    await putImage({ id: 'image-b', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+
+    try {
+      const pending = runManualPostprocess(['image-a', 'image-b'])
+
+      const active = getActivePostprocessRuns()
+      expect(active).toHaveLength(2)
+      expect(active.filter((run) => run.status === 'running')).toHaveLength(1)
+      expect(active.filter((run) => run.status === 'queued')).toHaveLength(1)
+
+      await pending
+      // 排队的那条最终也跑完了（排队 ≠ 丢弃）
+      expect(getActivePostprocessRuns()).toHaveLength(0)
+    } finally {
+      useStore.setState({ settings: originalSettings })
+    }
+  })
+
+  /**
+   * 方向级跳过的作用域（2026-09-23 本次改造的核心承诺）。
+   *
+   * 契约：**一个方向在跑，只挡住那个方向** —— 别的方向照常开工，并在结论里说清「谁被跳过、
+   * 去哪看它的进度」。改造前这里是一把全局锁：任一方向在跑，整个「跑后处理」按钮都点不动。
+   */
+  it('某方向已在跑时只跳过那一个方向，别的方向照跑并说明原因', async () => {
+    const showToast = vi.fn()
+    useStore.setState({ showToast })
+    stubElectronApi()
+    const directionA = directionFixture('direction-a')
+    const directionB = directionFixture('direction-b')
+    useAssetLibraryStore.setState({
+      collections: [directionA, directionB],
+      assetsById: {
+        'asset-a': { id: 'asset-a', imageId: 'image-a', collectionIds: [directionA.id] } as never,
+        'asset-b': { id: 'asset-b', imageId: 'image-b', collectionIds: [directionB.id] } as never,
+      },
+    })
+    usePostprocessMediaStore.setState({
+      media: [
+        {
+          id: 'gdt',
+          name: '广点通',
+          sizes: [{ id: 'gdt-1', width: 1280, height: 720, maxSizeKb: 399, enabled: false }],
+        },
+      ],
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: [directionA.id, directionB.id],
+      savedTargetCollectionIds: [],
+      outputDir: '',
+    })
+    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+    await putImage({ id: 'image-b', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
+
+    // 方向 A 已经有一条在飞（模拟另一次触发）
+    useRuntimeStore.getState().startPostprocessRun({
+      id: 'run-a',
+      source: 'auto',
+      totalImages: 1,
+      batchId: 'batch-0',
+      directionId: directionA.id,
+    })
+
+    const pending = runManualPostprocess(['image-a', 'image-b'])
+
+    // 只为 B 建了新记录（A 那条仍是原来那条，没被顶掉也没重复跑）
+    const manualRuns = getActivePostprocessRuns().filter((run) => run.source === 'manual')
+    expect(manualRuns.map((run) => run.directionId)).toEqual([directionB.id])
+
+    await pending
+    // 被跳过的方向没有自己的 run（根本没开跑），所以它落在一条批次级记录里，能查得到
+    const skipRecord = getLatestPostprocessRun()
+    expect(skipRecord?.issues.map((issue) => issue.code)).toContain('PP-RUN-001')
+    expect(String(skipRecord?.issues[0]?.message)).toContain('正在运行后处理')
+  })
+
   it('执行前段抛错时，运行记录里留下带码的崩溃项（不是只有 console）', async () => {
     useStore.setState({ showToast: vi.fn() })
     usePostprocessMediaStore.setState({ selectedCollectionIds: ['direction-a'] })
@@ -5701,6 +5886,7 @@ describe('手动后处理入口', () => {
       outputs: [],
       skippedMediaIds: [],
       issues: [createPostprocessIssue({ code: 'PP-SCOPE-002', stage: 'prepare' })],
+      pendingDistribution: [],
       warnings: [],
     }
 
@@ -5720,6 +5906,7 @@ describe('手动后处理入口', () => {
       outputs: [],
       skippedMediaIds: [],
       issues: [createPostprocessIssue({ code: 'PP-WRITE-001', stage: 'write', file: 'a.jpg' })],
+      pendingDistribution: [],
       warnings: [],
     }
     reportPostprocessResult(failed, { source: 'auto' })

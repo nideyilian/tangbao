@@ -34,12 +34,22 @@ const storeMocks = vi.hoisted(() => {
 })
 
 vi.mock('../store', () => storeMocks)
-/** 后处理运行记录由用例按需注入（默认 undefined = 没有记录、不渲染徽章）。 */
+/**
+ * 后处理运行记录由用例按需注入（默认空 = 没有记录、不渲染徽章）。
+ *
+ * 三个 ref 对应卡片用到的三处查询（R-75：手工 mock 的工厂必须与真实导出同步）：
+ * 代表 run、在飞方向数、最近一批已落定方向的问题清单。
+ */
 const postprocessRunRef = vi.hoisted(() => ({ current: undefined as unknown }))
+const postprocessInflightRef = vi.hoisted(() => ({ current: 0 }))
+const postprocessIssuesRef = vi.hoisted(() => ({ current: [] as unknown[] }))
 vi.mock('../stores/runtimeStore', () => ({
   useRuntimeStore: (selector: (value: { streamPreviews: Record<string, string> }) => unknown) =>
     selector({ streamPreviews: {} }),
   useLatestPostprocessRunForTask: () => postprocessRunRef.current,
+  useTaskPostprocessInflightCount: () => postprocessInflightRef.current,
+  useTaskPostprocessIssueCount: () => postprocessIssuesRef.current.length,
+  getTaskPostprocessIssues: () => postprocessIssuesRef.current,
 }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -49,6 +59,8 @@ const mountedRenderers: Array<ReturnType<typeof create>> = []
 afterEach(() => {
   while (mountedRenderers.length) mountedRenderers.pop()?.unmount()
   postprocessRunRef.current = undefined
+  postprocessInflightRef.current = 0
+  postprocessIssuesRef.current = []
   vi.clearAllMocks()
 })
 
@@ -245,17 +257,40 @@ describe('TaskCard · 后处理状态徽章', () => {
       issues: [],
       startedAt: 1,
     }
+    postprocessInflightRef.current = 1
 
     const texts = collectTexts(await renderCard())
     // (1 + 2/3) / 4 = 41.7% → 42%
     expect(texts).toContain('后处理中 1/4 42% · 头条 1080x1920')
   })
 
-  it('结束后有问题给问题徽章，点击把这次运行的问题交给清单弹窗', async () => {
+  it('多个方向同时跑时补一个方向计数（只给一个方向的百分比会让人以为别的不见了）', async () => {
+    postprocessRunRef.current = {
+      id: 'run-1',
+      source: 'auto',
+      taskId: 'task-1',
+      status: 'running',
+      stage: 'write',
+      totalImages: 4,
+      completedImages: 1,
+      imageUnits: 0,
+      imageUnitsDone: 0,
+      producedFiles: 2,
+      issues: [],
+      startedAt: 1,
+    }
+    postprocessInflightRef.current = 3
+
+    const texts = collectTexts(await renderCard())
+    expect(texts).toContain('后处理中 1/4 25% · 3 个方向')
+  })
+
+  it('结束后有问题给问题徽章，点击把**最近一批全方向**的问题交给清单弹窗', async () => {
     const issues = [
       createPostprocessIssue({ code: 'PP-DIR-001', stage: 'write', dir: 'D:/投放' }),
       createPostprocessIssue({ code: 'PP-PRESET-001', stage: 'prepare' }),
     ]
+    postprocessIssuesRef.current = issues
     postprocessRunRef.current = {
       id: 'run-2',
       source: 'auto',

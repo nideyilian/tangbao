@@ -1,4 +1,4 @@
-import { memo, useRef, useState, type ReactNode } from 'react'
+import { memo, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetLibraryFilters, AssetSortKey, AssetSourceMode, PinnedFilter } from '../../types'
 import {
   Badge,
@@ -34,14 +34,22 @@ import { pinnedFilterKey, pinnedFilterLabel } from './pinnedFilters'
 import FilterControlStrip from './FilterControlStrip'
 import ProjectTreeWorkbench from '../projectTree/ProjectTreeWorkbench'
 import { runManualPostprocess, useStore } from '../../store'
-import { useLatestPostprocessRun, useRuntimeStore } from '../../stores/runtimeStore'
+import {
+  useAnyDirectionPostprocessBusy,
+  useLatestPostprocessRun,
+  usePostprocessRuns,
+  useRuntimeStore,
+} from '../../stores/runtimeStore'
 import { useDismissableLayer } from '../../hooks/useDismissableLayer'
 import {
   countPostprocessIssues,
   formatPostprocessRunBadge,
   formatPostprocessRunProgress,
+  isRunInFlight,
 } from '../postprocess/postprocessRun'
 import { POSTPROCESS_STAGE_LABELS } from '../postprocess/postprocessIssue'
+import { collectTargetDirectionIdsFromOwnership } from '../postprocess/directionTargets'
+import { pickDeepestCollectionId } from '../projectTree/params'
 import PostprocessRunsDialog from '../postprocess/PostprocessRunsDialog'
 import PostprocessTargetsDialog from '../postprocess/PostprocessTargetsDialog'
 import { usePostprocessMediaStore } from '../../storePostprocessMedia'
@@ -937,8 +945,36 @@ function PostprocessTargetsEntryButton() {
 function ManualPostprocessButton() {
   const selectedAssetIds = useAssetLibraryStore((s) => s.selectedAssetIds)
   const assetsById = useAssetLibraryStore((s) => s.assetsById)
+  const collections = useAssetLibraryStore((s) => s.collections)
   const showToast = useStore((state) => state.showToast)
-  const running = useRuntimeStore((s) => s.postprocessRunning > 0)
+  const savedTargetCollectionIds = usePostprocessMediaStore((s) => s.savedTargetCollectionIds)
+  const selectedCollectionIds = usePostprocessMediaStore((s) => s.selectedCollectionIds)
+
+  /**
+   * 这次点击会产出到哪些方向。
+   *
+   * 用的是编排层**同一份口径**（`directionTargets.ts` 的唯一实现）—— 在这里另写一遍判定的后果是
+   * 「按钮让点、点下去被跳过」，而界面上看不出为什么。
+   */
+  const targetDirectionIds = useMemo(
+    () =>
+      collectTargetDirectionIdsFromOwnership(
+        selectedAssetIds.map((assetId) => {
+          const asset = assetsById[assetId]
+          return asset ? pickDeepestCollectionId(collections, asset.collectionIds) : null
+        }),
+        'manual',
+        { savedTargetCollectionIds, selectedCollectionIds },
+      ),
+    [selectedAssetIds, assetsById, collections, savedTargetCollectionIds, selectedCollectionIds],
+  )
+  /**
+   * **按方向判加载态**（2026-09-23 改）：原先看的是「有没有后处理在跑」这个全局事实，
+   * 而按钮的 `loading` 直接等于 `disabled`（见 `design-system/components.tsx`）—— 所以任一方向在跑，
+   * 整个素材库的按钮都点不动，别的方向根本开不了工（杰哥报障「该功能就被整体占用」）。
+   * 现在只看本次选中素材会产出到的那几个方向：别的方向在跑与我无关。
+   */
+  const running = useAnyDirectionPostprocessBusy(targetDirectionIds)
 
   if (selectedAssetIds.length === 0) return null
 
@@ -964,8 +1000,8 @@ function ManualPostprocessButton() {
       data-testid="asset-manual-postprocess"
       title={
         running
-          ? '后处理正在跑：进度看右侧「后处理」入口，点它能打开完整面板'
-          : '对选中素材跑一次后处理：参数与输出目录按每张图所属方向自动取值'
+          ? '这批素材所在的某个方向正在跑后处理：进度看右侧「后处理」入口（点开是完整面板）。其他方向不受影响，另选素材即可继续跑'
+          : '对选中素材跑一次后处理：参数与输出目录按每张图所属方向自动取值；方向之间互不阻塞，同时跑几个由设置里的「最多并发数」决定'
       }
       onClick={handleClick}
     >
@@ -991,15 +1027,20 @@ function ManualPostprocessButton() {
  */
 function PostprocessStatusEntry() {
   const [open, setOpen] = useState(false)
-  const activeRun = useRuntimeStore((s) => {
-    for (const id of s.postprocessRunIds) {
-      const run = s.postprocessRuns[id]
-      if (run?.status === 'running') return run
-    }
-    return undefined
-  })
+  /**
+   * 在飞的**全部**方向（不再只取第一条）。
+   *
+   * 2026-09-23 改：后处理按方向独立运行之后，「谁在跑」是一个集合而不是一条记录 ——
+   * 只取第一条的话，三个方向在跑时界面只显示一个，另外两个像是凭空消失（而这正是
+   * 「我只跑了一个方向」这类误判的来源）。排队中的也算在飞：它占着那个方向。
+   */
+  const runs = usePostprocessRuns()
   const latestRun = useLatestPostprocessRun()
   const dismissPostprocessRun = useRuntimeStore((s) => s.dismissPostprocessRun)
+
+  const activeRuns = runs.filter(isRunInFlight)
+  const runningCount = activeRuns.filter((run) => run.status === 'running').length
+  const queuedCount = activeRuns.length - runningCount
 
   const { errors, skipped } = latestRun ? countPostprocessIssues(latestRun) : { errors: 0, skipped: 0 }
   // 结束后的文案：一个真错都没有时叫「跳过」而不是「问题」—— 码表里大多数是配置使然
@@ -1009,10 +1050,28 @@ function PostprocessStatusEntry() {
         ? `后处理出错 (${errors})`
         : `后处理跳过 (${skipped})`
       : null
-  const showEntry = Boolean(activeRun) || idleLabel !== null
-  // 紧凑计数（不带写盘文件名）；完整进度含文件名，留给悬浮提示与点开的面板
-  const badge = activeRun ? formatPostprocessRunBadge(activeRun) : undefined
-  const fullProgress = activeRun ? formatPostprocessRunProgress(activeRun) : ''
+  const showEntry = activeRuns.length > 0 || idleLabel !== null
+  /**
+   * 紧凑标签：一个方向时给「4/12 33%」这种可读进度，多个方向时只报**几个在跑** ——
+   * 把 N 个方向的进度拼进工具栏必然超宽（这一条已经被 2026-09-21 那次报障验证过），
+   * 逐步进度留给悬浮提示与点开的面板。
+   */
+  const activeLabel =
+    activeRuns.length === 0
+      ? undefined
+      : activeRuns.length === 1
+        ? activeRuns[0].status === 'queued'
+          ? '排队中'
+          : (formatPostprocessRunBadge(activeRuns[0]) ?? '后处理中')
+        : `${runningCount} 个方向在跑${queuedCount > 0 ? ` · ${queuedCount} 排队` : ''}`
+  // 悬浮提示：每个方向一行（含当前写盘文件名 —— 那是被工具栏刻意压掉的详情）
+  const activeTitle = activeRuns
+    .map((run) => {
+      const progress = formatPostprocessRunProgress(run)
+      const head = `${run.directionLabel ?? '未指定方向'} · ${run.status === 'queued' ? '排队中' : POSTPROCESS_STAGE_LABELS[run.stage]}`
+      return progress ? `${head} · ${progress}` : head
+    })
+    .join('\n')
 
   return (
     <>
@@ -1023,19 +1082,19 @@ function PostprocessStatusEntry() {
             size="sm"
             // tabular-nums：数字等宽 —— 「0/100」涨到「100/100」时长宽不变，工具栏不抖
             className="tabular-nums"
-            data-testid={activeRun ? 'asset-postprocess-progress' : 'asset-postprocess-issues'}
+            data-testid={activeRuns.length > 0 ? 'asset-postprocess-progress' : 'asset-postprocess-issues'}
             title={
-              activeRun
-                ? `后处理进行中 · ${POSTPROCESS_STAGE_LABELS[activeRun.stage]}${fullProgress ? ` · ${fullProgress}` : ''}（点开看完整进度与最近记录）`
+              activeRuns.length > 0
+                ? `${activeTitle}\n（点开看完整进度与最近记录）`
                 : '看最近一次后处理的产出、跳过与错误，以及历次运行记录'
             }
             onClick={() => setOpen(true)}
           >
-            {activeRun && <LoaderCircleIcon className="h-3.5 w-3.5 shrink-0 animate-spin" />}
-            {activeRun ? (badge ? `后处理 ${badge}` : '后处理中') : idleLabel}
+            {activeRuns.length > 0 && <LoaderCircleIcon className="h-3.5 w-3.5 shrink-0 animate-spin" />}
+            {activeRuns.length > 0 ? (activeLabel ? `后处理 ${activeLabel}` : '后处理中') : idleLabel}
           </Button>
-          {/* 只在跑完之后给 ×：进行中的记录要留着接进度上报，清掉会让后续上报全部落空 */}
-          {!activeRun && latestRun && (
+          {/* 只在跑完之后给 ×：在飞的记录要留着接进度上报，清掉会让后续上报全部落空 */}
+          {activeRuns.length === 0 && latestRun && (
             <IconButton
               aria-label="清除这次后处理的状态"
               icon={<XIcon size={13} />}

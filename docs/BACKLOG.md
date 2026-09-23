@@ -15,6 +15,7 @@
 | TB-108 | 每日素材批量生成：策略卡 + 每日比例抽取 + 预览审核发布 | DOING | 主写线 | 2026-09-23 |
 | TB-110 | 顶栏设计规范统一（高度/圆角/组件/左基线）      | DONE  | 主写线 | 2026-09-23 |
 | TB-111 | 配方卡导入兼容「一键衍生」模板            | DONE  | 主写线 | 2026-09-23 |
+| TB-112 | 后处理按产出方向拆成独立运行实例          | DONE  | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -5167,3 +5168,54 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
   3. 已知取舍：转成配方卡后**组合不足不再自动调 AI 扩词条**（只报「候选组合已耗尽」）、
      生成时走配方卡合规红线（含「最高 / 第一 / 军」等词的候选值会被剔除）、
      `variableMeta`（主题 / 类型 / 衍生数量）在配方卡无对应物，只能丢弃。
+
+### TB-112 后处理按产出方向拆成独立运行实例
+
+- **来源**：杰哥 2026-09-23「当前后处理是全局单例的：只要有一个方向启动了后处理，该功能就被
+  整体占用，其他方向无法同时使用。请改为按方向维度管理」。先出诊断 + 方案（含四项说明：
+  涉及模块 / 数据结构 / 线程管理 / 隔离与释放），杰哥回「同时跑的数量不要限制，可以使用
+  最多并发数 + 排队的方式」后开工。
+- **状态**：DONE · 主写线
+- **诊断（先查证再动手，结论与杰哥的描述一致但位置不同）**
+  1. **执行体本来就没有全局锁**：`runTaskPostprocess` 是每次调用独立的 async 长任务；
+     `manualPostprocessInFlight` 是**按图片 id** 的在飞集合，不是全局闸。
+  2. **「整体占用」的真身在 UI**：`ManualPostprocessButton` 拿**全局计数器**
+     `runtimeStore.postprocessRunning` 当 `loading`，而 ds 的 `Button` 是
+     `disabled={disabled || loading}` ⇒ **任一方向在跑，全库「跑后处理」按钮点不动**（零报错）。
+  3. 状态入口只取 `postprocessRunIds` **第一条** running ⇒ 多方向并行时界面只显示一个。
+  4. **「生图按方向独立运行」在代码里不存在**（`TaskRecord` 无方向字段，生图是 per-task 执行体 +
+     task 内并发信号量）⇒ 照抄它的结构 = 一个方向一条 run + 方向级并发闸。
+- **改动**
+  - 新增 `lib/postprocessDirectionQueue.ts`（纯判断：名额 / 同一方向互斥 / 上限钳制）+
+    `features/postprocess/postprocessDirectionGate.ts`（广播唤醒 + 2s 兜底重试）+
+    `features/postprocess/directionTargets.ts`（**产出目标方向解析的唯一实现**，界面与编排共用）。
+  - `PostprocessRun` 加 `batchId` / `directionId` / `directionLabel` 与 `queued` 状态；
+    runtimeStore 的全局计数换成 `postprocessRunningDirections`（方向级名额表）+ 方向级派生查询；
+    `POSTPROCESS_RUN_KEEP` 20 → 60（一次触发就产生 N 条）。
+  - `taskPostprocess` 加 `onlyTargetCollectionIds`（只产一个方向）与 `deferDistribution`
+    （分发推迟到批次收尾），抽出 `distributePostprocessOutputs` / `mergePendingPostprocessDistribution`；
+    `resolveUniquePath` 改为**先占位再查盘**（`reservedOutputPaths`）。
+  - `store.ts` 的 `executePostprocessImageIds` 改成**批次编排**：按目标方向分组建 run →
+    抢名额（**先同步试一次**，保证「点下去就有记录」仍是同步成立）→ 各方向独立跑 →
+    全部结束后**统一分发一次**；删除 `manualPostprocessInFlight`。
+  - 界面：按钮 loading 改看**选中素材所在方向**；状态入口显示「N 个方向在跑 · M 排队」；
+    进度面板列出全部在飞方向；任务卡补「N 个方向」并改为汇总最近一批全方向的问题。
+- **验收证据（2026-09-23）**
+  - `npm run verify`（用 Node 24 跑）：**267 文件 / 3204 用例全绿** + tsc 双端 + eslint + format:check。
+  - 新增用例 31 例：方向闸 6、目标方向口径 8、待分发合并 2、方向拆分/排队/跳过 3、
+    runtimeStore 方向闸 3、工具栏按方向判 loading 1、任务卡多方向 1、执行体只产单方向 1 等。
+  - **新增：一次触发拆成多条 run**（`store.test.ts`）—— 同步段就建好 2 条、各带自己的方向、
+    同一个 `batchId`、各只处理 1 张图；**最多并发数配 1 时**第二条为 `queued` 且最终照样跑完；
+    **某方向在跑时只跳过那一个**，别的方向照跑，跳过原因落在批次级记录里可查。
+- **刻意保留（勿改回，详见 `architecture-constraints.md` §4.7）**
+  1. **分发收敛成一次**：各方向各分发一次会让「同一素材跨渠道落在同一天」失效（TB-107 口径）。
+  2. **幂等键带方向**（`taskId:direction:imageId`），且**先判在跑再认领** ——
+     顺序反了会白白吃掉幂等键，那批图之后再也产不出来（不可见）。
+  3. **同一方向同时一条**：两条会争同一批输出目录与文件名序号。
+- **未做 / 说明**
+  1. **无取消**：本轮只做并发与状态，方向级取消（`AbortSignal`）留接口未做 ——
+     产出链现在没有取消机制，加它要穿过渲染链与写盘。
+  2. **内存登记表不清理**（`reservedOutputPaths`）：一场几千张图的会话几百 KB，
+     与「清了旧条目又开始覆盖」相比宁可留着。
+  3. 本机无法做渲染验证（`.env` 已知限制）→ 界面改动只做了 `prettier --check` + 规则推导 +
+     组件级用例，**未经真机观感确认**，请杰哥在运行中的应用里过一眼工具栏与进度面板。

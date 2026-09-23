@@ -18,9 +18,11 @@ import { isErrorIssue, type PostprocessIssue, type PostprocessStage } from './po
 
 export type PostprocessRunSource = 'auto' | 'manual'
 
-export type PostprocessRunStatus = 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
+export type PostprocessRunStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
 
 export const POSTPROCESS_RUN_STATUS_LABELS: Record<PostprocessRunStatus, string> = {
+  /** 方向级并发闸名额满了：这条 run 已建好记录，等别的方向跑完就开工 */
+  queued: '排队中',
   running: '进行中',
   succeeded: '成功',
   partial: '部分完成',
@@ -29,12 +31,29 @@ export const POSTPROCESS_RUN_STATUS_LABELS: Record<PostprocessRunStatus, string>
   skipped: '已跳过',
 }
 
+/** 在飞状态（还没落终态）：排队与进行中都属于「这条 run 还占着这个方向」。 */
+export function isRunInFlight(run: Pick<PostprocessRun, 'status'>): boolean {
+  return run.status === 'queued' || run.status === 'running'
+}
+
 export interface PostprocessRun {
   id: string
   /** 自动（任务完成触发）还是手动（素材库补跑） */
   source: PostprocessRunSource
   /** 自动触发时对应的任务 id，供任务卡按任务找自己的进度 */
   taskId?: string
+  /**
+   * 所属批次：**一次触发一条**（手动点一次 / 一个任务完成跑一轮）。
+   *
+   * 批次内每个产出方向各一条 run —— 这就是「按方向独立运行」的落点：
+   * 方向之间互不阻塞（各自排队、各自进度、各自问题清单），但**分发与总结算是一次**的
+   * （分发要跨方向共用一次洗牌，否则同一张素材会在不同渠道落到不同的日子）。
+   */
+  batchId?: string
+  /** 这条 run 服务的**产出方向**（collectionId）—— 方向级并发闸与界面按它归位 */
+  directionId?: string
+  /** 方向展示名（`产品线 / 产品 / 方向`）：只用于界面，不参与任何判定 */
+  directionLabel?: string
   status: PostprocessRunStatus
   stage: PostprocessStage
   /** 本次要处理的源图总数（分母，事前已知） */
@@ -68,6 +87,15 @@ export interface CreatePostprocessRunInput {
   source: PostprocessRunSource
   taskId?: string
   totalImages: number
+  /** 所属批次（见 `PostprocessRun.batchId`） */
+  batchId?: string
+  directionId?: string
+  directionLabel?: string
+  /**
+   * 以「排队中」起步：方向级并发闸名额已满时，记录先建好（用户点下去就能查到它），
+   * 拿到名额再转 `running`（见 `startQueuedPostprocessRun`）。
+   */
+  queued?: boolean
   startedAt?: number
 }
 
@@ -76,7 +104,10 @@ export function createPostprocessRun(input: CreatePostprocessRunInput): Postproc
     id: input.id,
     source: input.source,
     ...(input.taskId ? { taskId: input.taskId } : {}),
-    status: 'running',
+    ...(input.batchId ? { batchId: input.batchId } : {}),
+    ...(input.directionId ? { directionId: input.directionId } : {}),
+    ...(input.directionLabel ? { directionLabel: input.directionLabel } : {}),
+    status: input.queued ? 'queued' : 'running',
     stage: 'prepare',
     totalImages: Math.max(0, input.totalImages),
     completedImages: 0,
@@ -86,6 +117,17 @@ export function createPostprocessRun(input: CreatePostprocessRunInput): Postproc
     issues: [],
     startedAt: input.startedAt ?? Date.now(),
   }
+}
+
+/**
+ * 排队 → 进行中（`startedAt` 重打，界面上「开始于」是真正开工的时刻）。
+ *
+ * 幂等：不在排队态时原样返回 —— 并发闸的唤醒是广播式的（所有等待者都会醒来看一眼名额），
+ * 被唤醒但没抢到名额的那个不该因为这次调用就把自己标成在跑。
+ */
+export function startQueuedPostprocessRun(run: PostprocessRun, now: number = Date.now()): PostprocessRun {
+  if (run.status !== 'queued') return run
+  return { ...run, status: 'running', stage: 'prepare', startedAt: now }
 }
 
 /** 应用一次进度上报，返回新对象（store 靠引用变化触发重渲染）。 */
@@ -150,8 +192,12 @@ export function resolvePostprocessRunStatus(input: {
 /**
  * 百分比（0–100）。分母是源图张数，当前这张图按已完成单元数折算小数部分 ——
  * 一张图要产 20 个单元时，中间那 19 次也能看到数字在动，而不是卡在整数张上。
+ *
+ * 排队中**不给数字**（而不是给 0%）：0% 与「刚开工还没解出第一张图」在界面上长得一样，
+ * 而这两件事对用户的意义完全不同 —— 一个是「还没轮到」，一个是「已经在干了」。
  */
 export function getPostprocessRunPercent(run: PostprocessRun): number | undefined {
+  if (run.status === 'queued') return undefined
   if (run.totalImages <= 0) return undefined
   if (run.finishedAt) return 100
   const fraction = run.imageUnits > 0 ? Math.min(1, run.imageUnitsDone / run.imageUnits) : 0
@@ -185,6 +231,8 @@ export function countPostprocessIssues(run: PostprocessRun): { errors: number; s
 export function summarizePostprocessRun(run: PostprocessRun): string {
   const { errors, skipped } = countPostprocessIssues(run)
   switch (run.status) {
+    case 'queued':
+      return '排队等待开工：同时运行的方向数已达上限'
     case 'running':
       return `后处理进行中：${run.completedImages}/${run.totalImages}`
     case 'succeeded':
