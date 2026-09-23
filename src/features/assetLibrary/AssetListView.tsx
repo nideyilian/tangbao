@@ -362,7 +362,7 @@ function AssetListView({
       onScroll={handleScroll}
     >
       {/* 列头：全宽 sticky，内容与下方行区对齐（32px） */}
-      <div className="sticky top-0 z-10 flex h-ds-control-md items-center border-b border-ds-border bg-ds-surface px-8 text-xs text-ds-muted">
+      <div className="sticky top-0 z-10 flex h-ds-control-md items-center border-b border-ds-border bg-ds-surface px-4 text-xs text-ds-muted">
         <span className="w-14 shrink-0">预览</span>
         <span className="min-w-0 flex-1 truncate">提示词</span>
         <span className="hidden w-28 shrink-0 sm:block">尺寸</span>
@@ -372,7 +372,7 @@ function AssetListView({
       </div>
       {/* 内容间距层：左右留白统一 32px（滚动条在最右边缘，不挤占右侧内容间距）；
           底部留白跟随输入框高度（--input-bar-clearance），保证最后一行图片不被悬浮输入框遮挡、可完整点击 */}
-      <div className="px-8 pb-[var(--input-bar-clearance,12rem)]">
+      <div className="px-4 pb-[var(--input-bar-clearance,12rem)]">
         <div className="relative" style={{ height: assets.length * ROW_HEIGHT }}>
           {visible.map((asset, rowIndex) => {
             // 用切片下标直接推导全局下标，避免每帧对全部素材做 indexOf（万级素材下是明显开销）

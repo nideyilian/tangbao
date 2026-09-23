@@ -13,6 +13,7 @@
 | TB-089 | 多目标产出：「产出目标」+「记住配置」 | DOING | 主写线 | 2026-09-22 |
 | TB-107 | 分发排期：起算日自动 + 原地建日期文件夹 + 按素材打乱 | DOING | 主写线 | 2026-09-23 |
 | TB-108 | 每日素材批量生成：策略卡 + 每日比例抽取 + 预览审核发布 | DOING | 主写线 | 2026-09-23 |
+| TB-110 | 顶栏设计规范统一（高度/圆角/组件/左基线）      | DONE  | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -5063,3 +5064,63 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
 - **环境副作用（非项目问题）**：本机 `npm run build` 会被 WorkBuddy 的 safe-delete 护栏拦住
   （vite 清空 `dist/` 时一次删 62 个文件 > 阈值 50）。绕过方式与「备份目录必须移出项目根」的坑
   见 `docs/tangbao-ops-runbook.md` §二十五。
+
+---
+
+### TB-110 顶栏设计规范统一
+
+- **来源**：杰哥 2026-09-23「顶栏存在设计风格、组件 UI 和对齐不统一的问题，按设计规范统一」
+  → 先报方案（给出具体规范 / 组件范围 / 验收标准），杰哥选 **A+B** 后开工。
+- **状态**：DONE · 主写线
+- **范围**：A = 全局顶栏 `Header.tsx`；B = 各工作区顶部行（素材库 / 每日生成 / 中控台）。
+- **问题（改动前实测）**
+  1. **一行四种高度**：品牌图标 24 · 图标按钮 36 · 工作区切换 38（`.ds-segmented` 的
+     padding 3px 把控件顶到体系外）· 统计胶囊 44（`px-1.5 py-1` + 边框）。
+  2. **统计胶囊内部再叠一层**：指标块 34（`px-2.5 py-1`）vs 范围按钮 24（`py-1.5`），差 10px；
+     且「胶囊套胶囊 + 各自 pill 圆角」与同排图标按钮的平面语言冲突（MASTER 4.5）。
+  3. **两套图标按钮**：顶栏是手搓 `p-2 rounded-full` 幽灵按钮，素材库等处用的是设计系统
+     `IconButton`（8px 圆角 + 描边）。
+  4. **NEW 徽章手搓**：`rounded-sm` + `font-black`（超规范字重）+ 绝对定位魔法数字。
+  5. **移动端第二行比第一行多缩进 8px**：组件自带 `mx-2`，叠加 `.app-mode-switcher--mobile`
+     的 `width: calc(100% - 1rem)`。
+  6. **动效手写**：`duration-300`；`transition`（全属性）出现在只变 max-height/opacity 的地方。
+  7. **素材库水平内边距 32px**：全应用唯一一处（顶栏 `safe-area-x`、每日生成、中控台都是 16px，
+     设计系统 `.ds-container` 的 `padding-inline` 也是 `--ds-space-4` = 16px）。
+- **改动**
+  - `src/components/Header.tsx`：图标按钮 → `IconButton`；统计区改为「指标组(gap-1) + 范围按钮」
+    两组(gap-3)、全部 `h-ds-control-md`；NEW → `Badge tone="danger"` 并改为同排 flex 项；
+    品牌区 `items-start` → `items-center`；去掉 `max-w-7xl`（应用壳不套内容宽度上限，
+    与下方工作区标题行共用 16px 基线）；移动端去掉 `mx-2`；动效改
+    `duration-[var(--ds-duration-normal)]` / `ease-[var(--ds-ease-in-out)]`，
+    并只声明实际变化的属性。
+  - `src/index.css`：`.app-mode-switcher--mobile` 宽度 `calc(100% - 1rem)` → `100%`。
+  - `src/design-system/styles.css`：`.ds-segmented` 落到控件高度体系 —— `padding: 3px` → `2px`、
+    圆角 `lg(12px)` → `md(8px)`，item 圆角 `md` → `sm(6px)`。
+    ⇒ md 变体 = 30 + 4 + 2 = **36px**（`--ds-control-md`），sm 变体 = 26 + 4 + 2 = **32px**（`--ds-control-sm`）。
+  - B 组：素材库 12 处 `px-8` → `px-4`（工具条 / 网格 / 批次视图 / 列表 / 表头 / 筛选条 /
+    子文件夹条 / 提示条）；`DailyWorkspace.tsx` 手搓分区按钮 → 设计系统 `Tabs`
+    （顺带修掉选中态用 `bg-ds-primary-subtle` 品牌蓝铺底的规范违规）。
+- **验收证据（2026-09-23，CDP 实测实机窗口，非截图）**
+  - 高度：`IconButton` ×3 = **36.0px** · 统计块 ×4 = **36.0px** · 范围按钮 = **36.0px**；
+    段控容器 = **35.33px**（`dpr = 1.5` 把 1px 边框折算成 0.667 CSS px，逻辑值仍为 36px）。
+  - 垂直对齐：上述元素与品牌区、段控 item 的中心线**全部 `cy = 28`**（顶栏 56px 的几何中心）。
+  - 左基线：顶栏 `padding-left = 16px`、素材库工具条 `padding-left = 16px`。
+  - 圆角：IconButton / 统计块 / 段控容器 = **8px**，段控 item = **6px**（改前分别是 pill / pill / 12px / 8px）。
+  - 层级：IconButton 带 1px `ds-border` 描边（改前无边框）。
+  - 动效：顶栏 `transition-property: transform`、`duration: 0.18s`（改前 300ms）；
+    移动行 `transition-property: max-height, opacity, padding`（改前全属性）。
+  - 移动端：切换器 `margin-left = 0px`、`width = 100%`（改前 8px / `calc(100% - 1rem)`）。
+  - `npm run verify` → **265 文件 / 3172 用例全绿**（与 v0.3.6 基线同数，未新增用例）。
+- **未做 / 说明**
+  1. **中控台未改**：体检后已合规（`px-4` + 已用设计系统 `Tabs`），其标题行没有独立底线是
+     因为下面的 Tabs 自带底线承担了分界，不是遗漏。
+  2. **素材库工具条的 16px 是相对右栏的**（左侧栏展开时它不在窗口坐标起点上）——
+     「顶栏与素材库内容左边界差 16px」的准确说法是「素材库内部用 32px、与全应用其余地方的
+     16px 不一致」，本轮统一的是后者。
+  3. 顶栏宽度上限：去掉了 `max-w-7xl`(80rem)。MASTER 4.4 的 75rem 针对「主内容」，
+     应用壳跟随窗口；若日后要改，需连带 `AgentWorkspace` 的 `max-w-7xl` 一起评估（本轮未动）。
+  4. 未新增回归用例 —— 本轮是样式/结构统一，既有 `compliance.test.ts` 棘轮负责「旧类只减不增」，
+     实测数据来自 CDP 而非自动化断言。
+- **⚠️ 并行写线（开工期间实测）**：`src/features/strategy/campaignRecipeImport.ts` 在
+  10:34:41 被**另一条线**修改（dev 日志里的 `page reload` 暴露的），本轮**一个字节没碰**该文件，
+  提交时也只 `git add` 本轮文件（R-09 / R-79）。

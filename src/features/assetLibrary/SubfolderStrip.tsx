@@ -56,7 +56,7 @@ function SubfolderStrip({ counts }: { counts: AssetSidebarCounts }) {
     <div
       data-testid="asset-subfolder-strip"
       data-no-drag-select
-      className="shrink-0 border-b border-ds-border/60 bg-ds-surface/60 px-8 py-2"
+      className="shrink-0 border-b border-ds-border/60 bg-ds-surface/60 px-4 py-2"
     >
       <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-ds-muted">
         <FolderIcon size={13} />

@@ -241,7 +241,7 @@ function AssetFilterTabBar() {
       aria-label="筛选标签栏（固定的常用筛选 + 当前生效的筛选条件）"
       data-testid="asset-filter-tab-bar"
       data-no-drag-select
-      className="shrink-0 border-b border-ds-border/60 bg-ds-surface/60 px-8 py-1.5"
+      className="shrink-0 border-b border-ds-border/60 bg-ds-surface/60 px-4 py-1.5"
     >
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-xs font-medium text-ds-muted">筛选</span>

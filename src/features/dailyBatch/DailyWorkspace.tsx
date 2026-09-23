@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Tabs } from '../../design-system'
 import { DailyReviewSection } from './DailyReviewSection'
 import { DailyScopeTree } from './DailyScopeTree'
 import { DailyTargetsSection } from './DailyTargetsSection'
@@ -11,6 +12,8 @@ const SECTIONS = [
 ] as const
 
 type SectionId = (typeof SECTIONS)[number]['id']
+
+const SECTION_TABS = SECTIONS.map((item) => ({ value: item.id, label: item.label }))
 
 /**
  * 每日生成工作区。
@@ -30,19 +33,18 @@ export default function DailyWorkspace() {
     >
       <DailyScopeTree value={scopeId} onChange={setScopeId} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-1 border-b border-ds-border px-4 py-2">
-          {SECTIONS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setSection(item.id)}
-              className={`rounded-ds-md px-3 py-1.5 text-sm ${
-                section === item.id ? 'bg-ds-primary-subtle text-ds-text' : 'text-ds-muted'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+        {/* 分区切换走设计系统 Tabs（TB-110）：选中态用中性 Selection 下划线，符合 MASTER 4.2
+            「导航选中态不使用整块品牌色背景」；自带 tablist 语义与左右方向键切换。
+            原先手搓按钮、选中态是 bg-ds-primary-subtle（品牌蓝铺底），全应用只此一处。
+            底线由 header 承担（DS Tabs 自带 1px 底线，这里用 !border-b-0 让位，避免双线）。 */}
+        <header className="shrink-0 border-b border-ds-border px-4">
+          <Tabs
+            aria-label="每日生成分区"
+            className="!border-b-0"
+            items={SECTION_TABS}
+            onValueChange={setSection}
+            value={section}
+          />
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {section === 'review' && <DailyReviewSection scopeId={scopeId} />}

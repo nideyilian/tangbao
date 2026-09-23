@@ -1034,7 +1034,7 @@ function AssetGroupedView({
           注意：不用 backdrop-blur —— sticky 头部在内容滚动时每帧重算背景模糊，是滚动卡顿的来源之一。 */}
       <div
         data-testid="asset-batch-overview"
-        className="sticky top-0 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ds-border/60 bg-ds-surface px-8 py-1.5 text-xs text-ds-muted"
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ds-border/60 bg-ds-surface px-4 py-1.5 text-xs text-ds-muted"
       >
         <span className="tabular-nums">
           {overview.groupCount} 个分组 · {overview.taskCount} 个任务 · {overview.assetCount} 张素材
@@ -1069,7 +1069,7 @@ function AssetGroupedView({
 
       {/* 内容间距层：左右留白统一 32px（滚动条在最右边缘，不挤占右侧内容间距）；
           底部留白跟随输入框高度（--input-bar-clearance），保证最后一行图片不被悬浮输入框遮挡、可完整点击 */}
-      <div className="px-8 pb-[var(--input-bar-clearance,12rem)]">
+      <div className="px-4 pb-[var(--input-bar-clearance,12rem)]">
         <div
           ref={layoutRef}
           data-testid="asset-grouped-layout"

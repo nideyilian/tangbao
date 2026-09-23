@@ -825,7 +825,7 @@ function AssetLibraryWorkspaceInner() {
             <div
               role="status"
               data-testid="asset-operation-progress"
-              className="shrink-0 border-b border-ds-primary/35 bg-ds-primary-subtle px-8 py-1.5 text-xs text-ds-primary dark:border-ds-primary/20 dark:bg-ds-primary/10 dark:text-ds-primary"
+              className="shrink-0 border-b border-ds-primary/35 bg-ds-primary-subtle px-4 py-1.5 text-xs text-ds-primary dark:border-ds-primary/20 dark:bg-ds-primary/10 dark:text-ds-primary"
             >
               <div className="flex items-center gap-2">
                 <span className="shrink-0">{operationProgress.label}…</span>
@@ -854,7 +854,7 @@ function AssetLibraryWorkspaceInner() {
             <div
               role="status"
               data-testid="asset-running-tasks-notice"
-              className="flex shrink-0 items-center gap-2 border-b border-ds-primary/35 bg-ds-primary-subtle px-8 py-1.5 text-xs text-ds-primary transition-colors hover:bg-ds-primary/10 dark:border-ds-primary/20 dark:bg-ds-primary/10 dark:text-ds-primary dark:hover:bg-ds-primary/15"
+              className="flex shrink-0 items-center gap-2 border-b border-ds-primary/35 bg-ds-primary-subtle px-4 py-1.5 text-xs text-ds-primary transition-colors hover:bg-ds-primary/10 dark:border-ds-primary/20 dark:bg-ds-primary/10 dark:text-ds-primary dark:hover:bg-ds-primary/15"
             >
               <button
                 type="button"
@@ -891,7 +891,7 @@ function AssetLibraryWorkspaceInner() {
             <div
               role="alert"
               data-testid="asset-catalog-error-notice"
-              className="flex shrink-0 items-center gap-3 border-b border-ds-danger/35 bg-ds-danger-subtle px-8 py-1.5 text-xs text-ds-danger dark:border-ds-danger/20 dark:bg-ds-danger/10 dark:text-ds-danger"
+              className="flex shrink-0 items-center gap-3 border-b border-ds-danger/35 bg-ds-danger-subtle px-4 py-1.5 text-xs text-ds-danger dark:border-ds-danger/20 dark:bg-ds-danger/10 dark:text-ds-danger"
             >
               <span className="min-w-0 flex-1 truncate">素材列表刷新失败：{catalogError}</span>
               <button
@@ -908,7 +908,7 @@ function AssetLibraryWorkspaceInner() {
             <div
               role="status"
               data-testid="asset-catalog-pending"
-              className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-sm text-ds-muted"
+              className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 text-sm text-ds-muted"
             >
               {catalogError ? (
                 <>

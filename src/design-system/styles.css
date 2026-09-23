@@ -734,18 +734,23 @@
 .ds-segmented {
   background: hsl(var(--ds-color-surface-subtle));
   border: 1px solid hsl(var(--ds-color-border));
-  border-radius: var(--ds-radius-lg);
+  /* 高度落到控件制度上：整体 = item 30px + padding 2×2 + border 2×1 = 36px（--ds-control-md），
+     与 IconButton / Button(md) 同高；sm 变体 = 26 + 4 + 2 = 32px（--ds-control-sm）。
+     原来是 padding 3px + radius-lg(12px)：高度 38px 落在体系之外，在顶栏里与 36px 的
+     图标按钮差 2px、圆角也和小控件的 8px 不一致，同排对齐不上（MASTER 4.5 小控件 6–8px）。 */
+  border-radius: var(--ds-radius-md);
   display: inline-flex;
   gap: 2px;
   max-width: 100%;
   overflow-x: auto;
-  padding: 3px;
+  padding: 2px;
 }
 
 .ds-segmented__item {
   background: transparent;
   border: 0;
-  border-radius: var(--ds-radius-md);
+  /* 嵌套圆角：外层 8px − 内距 2px ⇒ 内层 6px，与外框保持同心 */
+  border-radius: var(--ds-radius-sm);
   color: hsl(var(--ds-color-text-muted));
   cursor: pointer;
   flex: none;

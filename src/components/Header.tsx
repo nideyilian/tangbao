@@ -12,7 +12,7 @@ import {
   type GenerationStatsTabCount,
 } from '../lib/generationStats'
 import type { AppMode } from '../types'
-import { SegmentedControl } from '../design-system'
+import { Badge, IconButton, SegmentedControl } from '../design-system'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
@@ -63,8 +63,10 @@ function GenerationStatsMetric({
 
   return (
     <div className="relative" {...tooltip.handlers}>
-      {/* 圆角制度：交互元素统一 pill；间距由父级 gap 控制，本元素不再自带水平 padding */}
-      <div className="flex min-w-[3.5rem] flex-col items-start rounded-full px-2.5 py-1 transition-colors hover:bg-ds-surface-subtle">
+      {/* 高度制度：与同排控件一致 36px（--ds-control-md）；圆角 8px —— MASTER 4.5
+          把胶囊圆角只留给标签和筛选，交互控件一律用控件圆角。
+          水平间距由父级 gap 控制，本元素不自带水平外边距。 */}
+      <div className="flex h-ds-control-md min-w-[3.5rem] flex-col items-center justify-center rounded-ds-md px-2 transition-colors hover:bg-ds-surface-subtle">
         <span className="text-xs leading-none text-ds-muted">{label}</span>
         <span className={`mt-0.5 text-xs font-semibold leading-none ${getGenerationStatsMetricValueClass(metricKey)}`}>
           {formatGenerationStatsValue(metricKey, value)}
@@ -119,17 +121,21 @@ function GenerationStatsBar() {
     { key: 'failure', value: stats.totals.failure },
   ]
 
-  // 层级制度：只用 1px 描边表达层级，不再叠 阴影 / 半透明底 / 嵌套卡片。
-  // 原实现在边框卡片里又放了一个带 shadow-sm 的按钮，形成「三层浮起」，与同排图标按钮的平面语言冲突。
+  // 分级制度：4 个指标是一组、范围切换是另一组 —— 组内 gap-1(4px)、组间 gap-3(12px)，
+  // 全部由父级控制，两组等高（36px）。
+  // 原实现把两组塞进同一个边框胶囊，胶囊里的指标块 34px、范围按钮 24px，同排差 10px；
+  // 再叠「胶囊套胶囊 + 各自 pill 圆角」，与同排图标按钮的平面语言冲突（MASTER 4.5）。
   return (
-    <div className="hidden lg:flex items-center gap-1 rounded-full border border-ds-border bg-ds-surface px-1.5 py-1 text-xs">
-      {metrics.map((metric) => (
-        <GenerationStatsMetric key={metric.key} metricKey={metric.key} value={metric.value} tabs={stats.byTab} />
-      ))}
+    <div className="hidden lg:flex items-center gap-3 text-xs">
+      <div className="flex items-center gap-1">
+        {metrics.map((metric) => (
+          <GenerationStatsMetric key={metric.key} metricKey={metric.key} value={metric.value} tabs={stats.byTab} />
+        ))}
+      </div>
       <button
         type="button"
         onClick={() => setRange((current) => getNextGenerationStatsRange(current))}
-        className="ml-0.5 min-w-[3rem] rounded-full bg-ds-surface-subtle px-2.5 py-1.5 text-xs font-medium leading-none text-ds-text transition-colors hover:bg-ds-border"
+        className="h-ds-control-md min-w-[3rem] rounded-ds-md bg-ds-surface-subtle px-3 text-xs font-medium leading-none text-ds-text transition-colors hover:bg-ds-border"
         title="切换统计范围"
       >
         {getGenerationStatsRangeLabel(range)}
@@ -209,12 +215,19 @@ export default function Header() {
       <header
         data-no-drag-select
         data-theme-transition
-        className={`safe-area-top fixed top-0 left-0 right-0 z-sticky bg-ds-surface border-b border-ds-border transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}
+        className={`safe-area-top fixed top-0 left-0 right-0 z-sticky bg-ds-surface border-b border-ds-border transition-transform duration-[var(--ds-duration-normal)] ease-[var(--ds-ease-in-out)] ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}
       >
-        {/* 间距制度：水平间距一律由父级 gap 控制，子元素不再用 mr-N / ml-N 各自推 */}
-        <div className="safe-area-x safe-header-inner max-w-7xl mx-auto flex items-center gap-2 relative">
+        {/* 顶栏是应用壳的一部分，**不加 max-width** —— 它必须与下方工作区标题行共用
+            同一条左基线（素材库工具条 / 每日生成分区条 / 中控台标题行都是 16px 内边距）。
+            宽度制度的例外说明见 MASTER 4.4：75rem 针对的是「主内容」，不含应用壳。
+            间距制度：组内 gap-1(4px)、组间 gap-3(12px)，一律由父级 gap 控制，
+            子元素不得用 mr-N / ml-N 各自推。 */}
+        <div className="safe-area-x safe-header-inner flex items-center gap-3 relative">
           <div className="flex-1 min-w-0 flex items-center gap-2">
-            <h1 className="inline-flex min-w-0 items-start relative">
+            {/* 品牌区垂直居中与整行一致（原来用 items-start，logo 与文字各自贴顶）；
+                版本徽章从「绝对定位浮在右上角」改为同排 flex 项，
+                否则它的位置靠 translate 魔法数字维持，与「一切对齐到同一条基线」冲突。 */}
+            <h1 className="inline-flex min-w-0 items-center gap-2 relative">
               {showFavoriteCollectionTitle ? (
                 <>
                   <span
@@ -246,24 +259,21 @@ export default function Header() {
               )}
               {hasUpdate && latestRelease && (
                 <a
+                  className="shrink-0 animate-fade-in"
                   href={latestRelease.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   onClick={dismiss}
-                  className="absolute -right-1 -top-1 translate-x-full -translate-y-1/4 px-1 py-0.5 rounded-sm border border-ds-danger/30 text-xs font-black bg-ds-danger text-ds-text-inverse hover:bg-ds-danger-hover transition animate-fade-in leading-none"
+                  rel="noopener noreferrer"
+                  target="_blank"
                   title={`新版本 ${latestRelease.tag}`}
                 >
-                  NEW
+                  <Badge tone="danger">NEW</Badge>
                 </a>
               )}
             </h1>
           </div>
           {showFavoriteCollectionTitle && (
             <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
-              <div
-                className="truncate rounded-full px-2 py-1 text-sm font-semibold text-ds-text"
-                title={favoriteCollectionTitle}
-              >
+              <div className="truncate px-2 text-sm font-semibold text-ds-text" title={favoriteCollectionTitle}>
                 {favoriteCollectionTitle}
               </div>
             </div>
@@ -277,57 +287,52 @@ export default function Header() {
               onValueChange={handleModeChange}
             />
           </div>
+          {/* 图标按钮统一走设计系统 IconButton（36px 控件高 + 8px 控件圆角 + 描边层级）。
+              原先是手搓的 p-2 rounded-full 幽灵按钮，与素材库等处的 IconButton 构成两套图标按钮，
+              且 pill 圆角违反 MASTER 4.5「胶囊只留给标签和筛选」。 */}
           <div className="flex items-center gap-1 shrink-0">
             <div className="relative" {...themeTooltip.handlers}>
-              <button
+              <IconButton
+                aria-label={themeTooltipText}
+                icon={themeMode === 'dark' ? <SunIcon className="h-5 w-5" /> : <MoonIcon className="h-5 w-5" />}
                 onClick={() => {
                   dismissAllTooltips()
                   setSettings({ themeMode: nextThemeMode })
                 }}
-                className="p-2 rounded-full text-ds-muted hover:bg-ds-surface-subtle hover:text-ds-text transition-colors"
-                aria-label={themeTooltipText}
-              >
-                {themeMode === 'dark' ? (
-                  <SunIcon className="w-5 h-5 text-current" />
-                ) : (
-                  <MoonIcon className="w-5 h-5 text-current" />
-                )}
-              </button>
+              />
               <ViewportTooltip visible={themeTooltip.visible} className="whitespace-nowrap">
                 {themeTooltipText}
               </ViewportTooltip>
             </div>
             <div className="relative" {...helpTooltip.handlers}>
-              <button
+              <IconButton
+                aria-label="操作指南"
+                icon={<HelpCircleIcon className="h-5 w-5" />}
                 onClick={() => {
                   dismissAllTooltips()
                   setShowHelp(true)
                 }}
-                className="p-2 rounded-full text-ds-muted hover:bg-ds-surface-subtle hover:text-ds-text transition-colors"
-                aria-label="操作指南"
-              >
-                <HelpCircleIcon className="w-5 h-5 text-current" />
-              </button>
+              />
               <ViewportTooltip visible={helpTooltip.visible} className="whitespace-nowrap">
                 操作指南
               </ViewportTooltip>
             </div>
             <div className="relative" {...settingsTooltip.handlers}>
-              <button
-                onClick={() => setShowSettings(true)}
-                className="p-2 rounded-full text-ds-muted hover:bg-ds-surface-subtle hover:text-ds-text transition-colors"
+              <IconButton
                 aria-label="设置"
-              >
-                <SettingsIcon className="w-5 h-5 text-current" />
-              </button>
+                icon={<SettingsIcon className="h-5 w-5" />}
+                onClick={() => setShowSettings(true)}
+              />
               <ViewportTooltip visible={settingsTooltip.visible} className="whitespace-nowrap">
                 设置
               </ViewportTooltip>
             </div>
           </div>
         </div>
+        {/* 移动端第二行与第一行共用同一条左基线：间距只由 safe-area-x 提供，
+            切换器自己不再用 mx-2 推（那会让第二行比第一行多缩进 8px）。 */}
         <div
-          className={`safe-area-x sm:hidden overflow-hidden transition duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-20 opacity-100 pb-2'}`}
+          className={`safe-area-x sm:hidden overflow-hidden transition-[max-height,opacity,padding] duration-[var(--ds-duration-normal)] ease-[var(--ds-ease-in-out)] ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 opacity-0 pb-0' : 'max-h-20 opacity-100 pb-2'}`}
         >
           <SegmentedControl
             aria-label="切换工作区"
@@ -335,14 +340,14 @@ export default function Header() {
             options={modeOptions}
             onValueChange={handleModeChange}
             size="sm"
-            className="app-mode-switcher--mobile mx-2"
+            className="app-mode-switcher--mobile"
           />
         </div>
       </header>
 
       {/* Hint for sliding down */}
       <div
-        className={`fixed top-0 left-0 right-0 z-sticky flex justify-center pointer-events-none transition duration-300 ease-in-out sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}
+        className={`fixed top-0 left-0 right-0 z-sticky flex justify-center pointer-events-none transition-[transform,opacity] duration-[var(--ds-duration-normal)] ease-[var(--ds-ease-in-out)] sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}
       >
         <div className="bg-ds-scrim/85 backdrop-blur-sm text-ds-text-inverse text-xs px-3 py-1.5 rounded-b-ds-lg">
           下拉展示顶栏
@@ -350,7 +355,7 @@ export default function Header() {
       </div>
 
       <div
-        className={`safe-area-top invisible pointer-events-none transition duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? 'max-h-0 sm:max-h-[500px] opacity-0 sm:opacity-100 overflow-hidden sm:overflow-visible' : 'max-h-[500px] opacity-100'}`}
+        className={`safe-area-top invisible pointer-events-none transition-[max-height,opacity] duration-[var(--ds-duration-normal)] ease-[var(--ds-ease-in-out)] ${appMode === 'agent' && !agentMobileHeaderVisible ? 'max-h-0 sm:max-h-[500px] opacity-0 sm:opacity-100 overflow-hidden sm:overflow-visible' : 'max-h-[500px] opacity-100'}`}
         aria-hidden="true"
       >
         <div className="safe-header-inner" />

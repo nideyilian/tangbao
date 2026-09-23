@@ -199,11 +199,14 @@ function AssetLibraryToolbar({
 
   const clearFilters = () => setFilters({})
 
+  // 水平内边距统一到 16px：与设计系统 Container 的 padding-inline(--ds-space-4)、
+  // 顶栏的 safe-area-x、每日生成 / 中控台标题行共用同一条左基线（TB-110）。
+  // 原 32px(px-8) 是全应用唯一一处，会让顶栏品牌与素材库内容左边界差 16px。
   return (
     <Toolbar
       label="素材库工具栏"
       data-testid="asset-library-toolbar"
-      className="flex flex-wrap items-center gap-2 px-8 py-2"
+      className="flex flex-wrap items-center gap-2 px-4 py-2"
     >
       <span className="text-sm font-medium text-ds-foreground">{scopeLabel}</span>
       <span className="text-xs tabular-nums text-ds-muted">{totalCount} 张</span>

@@ -90,7 +90,9 @@ select optgroup {
 
 .app-mode-switcher--mobile {
   display: flex;
-  width: calc(100% - 1rem);
+  /* 宽度交给父级 safe-area-x 的 16px 内边距决定。原先这里是 calc(100% - 1rem)，
+     再叠加组件自带的 mx-2，导致移动端第二行比第一行多缩进 8px（两行左基线不齐）。 */
+  width: 100%;
 }
 
 .app-mode-switcher--mobile .ds-segmented__item {

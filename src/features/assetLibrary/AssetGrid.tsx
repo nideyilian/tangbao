@@ -488,7 +488,7 @@ export default function AssetGrid({
     >
       {/* 内容间距层：左右留白统一 32px（滚动条在最右边缘，不挤占右侧内容间距）；
           底部留白跟随输入框高度（--input-bar-clearance），保证最后一行图片不被悬浮输入框遮挡、可完整点击 */}
-      <div className="px-8 pb-[var(--input-bar-clearance,12rem)]">
+      <div className="px-4 pb-[var(--input-bar-clearance,12rem)]">
         <div
           ref={layoutRef}
           data-testid="asset-grid-layout"
