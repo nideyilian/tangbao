@@ -480,18 +480,18 @@ describe('分发配置', () => {
   })
 
   it('patchDistribution 走归一化，挡住非法枚举与 0 天', () => {
-    usePostprocessMediaStore.getState().patchDistribution({ days: 0, mode: 'delete' } as never)
+    usePostprocessMediaStore.getState().patchDistribution({ days: 0, renameMode: 'uuid' } as never)
 
     const config = usePostprocessMediaStore.getState().distribution
     expect(config.days).toBe(1)
-    expect(config.mode).toBe('copy')
+    expect(config.renameMode).toBe('date')
   })
 
   it('归一化持久化数据时把分发补成完整结构', () => {
     const config = normalizePostprocessMediaConfig({ distribution: { enabled: true } })
     expect(config.distribution.enabled).toBe(true)
     expect(config.distribution.days).toBe(1)
-    expect(config.distribution.mode).toBe('copy')
+    expect(config.distribution.renameMode).toBe('date')
   })
 
   it('旧数据里的 startDate 不再出现在归一化结果里', () => {

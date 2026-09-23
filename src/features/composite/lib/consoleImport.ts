@@ -615,7 +615,7 @@ export function planConsoleImport(
     const distribution: PostprocessDistributionConfig = {
       enabled: parseImportBool(read('enabled')) ?? false,
       days: parseImportNumber(read('days')) ?? 1,
-      mode: read('mode') === 'move' ? 'move' : 'copy',
+      // 老表里若还留着 `mode` 行，读出来也不用：搬运恒定 move（见 postprocessDistribution 模块头注释）
       randomize: parseImportBool(read('randomize')) ?? false,
       skipWeekends: parseImportBool(read('skipWeekends')) ?? false,
       renameMode: read('renameMode') === 'sequence' ? 'sequence' : 'date',

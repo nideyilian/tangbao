@@ -447,7 +447,7 @@ function buildDistributionRows(config: PostprocessDistributionConfig): Array<Rec
     { key: 'enabled', label: '启用分发', value: config.enabled },
     // 起算日已从配置中移除（程序按产出当天取），不再导出这一行
     { key: 'days', label: '铺几天', value: config.days },
-    { key: 'mode', label: '搬运方式', value: config.mode },
+    // 「搬运方式（复制 / 移动）」已从配置中移除（这套结构下恒定剪切），不再导出这一行
     { key: 'randomize', label: '打乱后分配', value: config.randomize },
     { key: 'skipWeekends', label: '跳过周末', value: config.skipWeekends },
     { key: 'renameMode', label: '重命名方式', value: config.renameMode },

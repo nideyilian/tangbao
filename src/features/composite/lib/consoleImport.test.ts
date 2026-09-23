@@ -338,7 +338,6 @@ describe('往返：导出的工作簿能被导入解析回同样的数据', () =
           enabled: false,
           startDate: '',
           days: 1,
-          mode: 'copy' as const,
           randomize: false,
           skipWeekends: false,
           renameMode: 'date' as const,

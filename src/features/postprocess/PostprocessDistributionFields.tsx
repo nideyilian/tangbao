@@ -1,15 +1,17 @@
 /**
  * 分发配置表单。
  *
- * 从 `features/composite` 的旧编排里移植过来的能力：把一批产物按天平均分配到日期文件夹，
- * 供投放排期使用。
+ * 从 `features/composite` 的旧编排里移植过来的能力：把一批产物按天铺开 ——
+ * 产出文件夹按排期日**同级改名**（沿用命名模板，只把日期段换掉），供投放排期使用。
  *
  * ## 谁跟作用域、谁不跟（2026-09-23）
  *
  * - **排期跟着左边树选的方向走**：`days`（铺几天）/ `skipWeekends`（跳不跳周末）。
  *   「A 产品铺 7 天、B 产品铺 30 天」本来就是逐方向的投放节奏（推翻 ADR-0011 裁决 #4）。
- * - **其余一律全局一套**：启用与否、复制还是移动、改名方式、打乱、改 md5、目标目录 ——
+ * - **其余一律全局一套**：启用与否、改名方式、打乱、改 md5、目标目录 ——
  *   这些是「怎么搬」的操作习惯，全局配一次就够；逐方向各配一遍只会让人怀疑到底哪个生效。
+ *   （曾有的「复制 / 移动」开关已撤：这套结构下第 1 天是原地、复制不成立，见
+ *   `lib/postprocessDistribution.ts` 模块头注释。）
  *
  * 宿主（中控台「渠道与输出」分区的分发小节）负责把 `scheduleScope` 算好传进来：
  * 本组件只负责渲染，不去读项目树 —— 它不知道当前作用域是哪个节点。
@@ -37,11 +39,6 @@ interface Props {
     onReset: () => void
   }
 }
-
-const MODE_OPTIONS: Array<{ value: PostprocessDistributionConfig['mode']; label: string }> = [
-  { value: 'copy', label: '复制' },
-  { value: 'move', label: '移动' },
-]
 
 const RENAME_OPTIONS: Array<{ value: PostprocessDistributionConfig['renameMode']; label: string }> = [
   { value: 'date', label: '替换文件名日期段' },
@@ -86,7 +83,7 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
     <div className="space-y-3">
       <Switch
         label="启用分发"
-        description="产出写盘后按天平均分配到日期文件夹（从产出当天开始算），供投放排期使用。全局一套。"
+        description="产出写盘后按天铺开：产出文件夹按排期日改名（从产出当天开始算），供投放排期使用。只整理，不产生副本。全局一套。"
         checked={config.enabled}
         onCheckedChange={(enabled) => onChange({ enabled })}
       />
@@ -106,8 +103,9 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
               placeholder="1"
             />
             <p className="text-xs text-ds-muted">
-              从产出当天开始算，按天平均分。比如今天导出 1000 张、铺 5 天，就是每天 200 张
-              （多个渠道目录各自分各自的，同一张素材在各渠道落在同一天）。
+              从产出当天开始算，按天平均铺开。比如今天导出 1000 张、铺 5 天，就分成 5 个文件夹、每天 200 张
+              （多个渠道目录各自分各自的，同一张素材在各渠道落在同一天）。第一天就是产出当天，文件本来就在
+              那个文件夹里，不会再搬一次。
             </p>
           </div>
 
@@ -121,21 +119,6 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
           </div>
 
           <div className="space-y-1.5">
-            <span className="text-xs font-medium text-ds-text dark:text-ds-text">搬运方式</span>
-            <SegmentedControl
-              aria-label="分发搬运方式"
-              value={config.mode}
-              options={MODE_OPTIONS}
-              onValueChange={(mode) => onChange({ mode })}
-            />
-            <p className="text-xs text-ds-muted dark:text-ds-muted">
-              {config.mode === 'move'
-                ? '移动会从产出目录搬走文件（源目录空了会被清理），产物只剩日期文件夹里那一份。'
-                : '复制保留产出目录里的原文件，日期文件夹里另存一份。'}
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
             <span className="text-xs font-medium text-ds-text dark:text-ds-text">重命名方式</span>
             <SegmentedControl
               aria-label="分发重命名方式"
@@ -145,8 +128,8 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
             />
             <p className="text-xs text-ds-muted dark:text-ds-muted">
               {config.renameMode === 'date'
-                ? '把原文件名里的日期段替换成分发日期；原名没有日期段时保持原样。'
-                : '按「日期_序号」重排，原名不带日期时更好认。'}
+                ? '把原文件名里的日期段替换成该天的排期日期；原名没有日期段时保持原样。'
+                : '按「排期文件夹名_序号」重排，原名不带日期时更好认。'}
             </p>
           </div>
 
@@ -171,7 +154,7 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
               containerClassName="min-w-0 flex-1"
               value={config.targetDir}
               onChange={(event) => onChange({ targetDir: event.target.value })}
-              placeholder="留空则在产出目录下面建日期文件夹"
+              placeholder="留空 = 在产出位置把文件夹按排期日改名"
             />
             <Button
               variant="secondary"
@@ -181,6 +164,9 @@ export default function PostprocessDistributionFields({ config, onChange, onPick
               浏览
             </Button>
           </div>
+          <p className="text-xs text-ds-muted">
+            留空就在产出位置整理；填了则把排期文件夹建到那里，文件搬过去、原位置不留副本。
+          </p>
         </>
       )}
     </div>

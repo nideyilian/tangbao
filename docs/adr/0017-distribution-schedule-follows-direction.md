@@ -10,6 +10,10 @@
 > ⚠️ **本文件推翻 0011 裁决里 `distribution` 的那一部分。**
 > （同一条裁决里的 `autoCompanionClean` 那部分已随字段删除而失效，见 TB-107。）
 > 读 0011 时请连同本文件一起看 —— **不要把 `distribution` 按 0011 的口径再收走一次**。
+>
+> ⚠️ **2026-09-23 补（TB-117）**：下面字段表里的 **`mode`（复制 / 移动）已删除** ——
+> 分发改为「按排期日给产出文件夹**同级改名**、搬运恒定移动」，见
+> [0018](0018-distribution-renames-folder-in-place.md)。**别把 `mode` 按本表加回来。**
 
 ---
 
@@ -40,7 +44,7 @@ export type PostprocessDistributionOverride = Partial<Pick<PostprocessDistributi
 | 字段 | 归谁 | 理由 |
 | --- | --- | --- |
 | `days`（铺几天）、`skipWeekends`（跳不跳周末） | **方向级** | 投放节奏，逐方向必然不同 |
-| `enabled`、`mode`、`renameMode`、`randomize`、`modifyMd5`、`targetDir` | **全局一套** | 「怎么搬」是操作习惯，逐方向各配一遍只会让人怀疑哪个生效 |
+| `enabled`、`renameMode`、`randomize`、`modifyMd5`、`targetDir` | **全局一套** | 「怎么搬」是操作习惯，逐方向各配一遍只会让人怀疑哪个生效 |
 
 - **逐字段合并，不是整份替换**：`applyPostprocessOverride` 里
   `{ ...base.distribution, ...override.distribution }` ⇒ 节点只改「铺几天」不会把目标目录一起抹成默认。

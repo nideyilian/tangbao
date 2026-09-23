@@ -256,7 +256,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   /**
    * 本次产出的时间基准：命名模板的 `{date}` 与分发的排期起算日**必须同源**。
    * 不归一化的话两处各自取一次 `Date.now()`，跨零点那一秒会让「产出目录名里的日期」与
-   * 「第一个日期文件夹」差一天 —— 用户看到一个凭空早/晚一天的文件夹，且无从解释。
+   * 「第一个排期文件夹」差一天 —— 用户看到一个凭空早/晚一天的文件夹，且无从解释。
    */
   const createdAt = input.createdAt ?? Date.now()
 

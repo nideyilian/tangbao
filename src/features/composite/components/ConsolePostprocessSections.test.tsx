@@ -618,14 +618,15 @@ describe('中控台 · 分发分区', () => {
     expect(body).not.toContain('铺几天')
   })
 
-  it('开启后展开条款：铺几天 + 搬运 / 重命名方式', () => {
+  it('开启后展开条款：铺几天 + 重命名方式', () => {
     act(() => {
       usePostprocessMediaStore.getState().patchDistribution({ enabled: true })
     })
     const body = render(<DistributionSection scope={GLOBAL_NODE_ID} />)
     expect(body).toContain('铺几天')
-    expect(body).toContain('搬运方式')
     expect(body).toContain('重命名方式')
+    // 「搬运方式（复制 / 移动）」已撤：这套目录结构下第 1 天是原地，复制会让排期错乱
+    expect(body).not.toContain('搬运方式')
     // 起始日期不再由用户填（起算日由程序按产出当天取），界面上不该再有这个输入框
     expect(body).not.toContain('起始日期')
   })

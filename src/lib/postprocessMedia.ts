@@ -480,7 +480,7 @@ export function formatInheritedOutputDirsHint(dirs: string[]): string {
  * 只放全局等于所有方向只能共用一个节奏 —— 这正是 ADR-0003 里「输出目录 / 水印按方向分叉」
  * 那一类证据，只是当时没人去量。
  *
- * ⚠️ **收回来的只有排期口径**（`days` / `skipWeekends`）：搬运方式、重命名、改 md5、目标目录
+ * ⚠️ **收回来的只有排期口径**（`days` / `skipWeekends`）：重命名、改 md5、目标目录
  * 属于「怎么搬」的操作习惯，全局一套更省心（ADR-0011 的顾虑在这一半上仍然成立）。
  *
  * ### `selectedMediaIds` 为什么回到节点层（ADR-0013，2026-09-21）
@@ -540,7 +540,7 @@ export interface PostprocessNodeOverride {
   /**
    * 这个方向的**排期**（铺几天 / 跳不跳周末）。
    *
-   * 只覆盖这两个字段，其余分发口径（复制还是移动、改名方式、改 md5、目标目录、启用与否）
+   * 只覆盖这两个字段，其余分发口径（改名方式、改 md5、目标目录、启用与否）
    * 一律继承全局。`undefined` 或空对象 = 这个方向没表态 ⇒ 沿继承链向上取。
    */
   distribution?: PostprocessDistributionOverride

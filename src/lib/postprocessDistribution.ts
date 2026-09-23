@@ -1,17 +1,43 @@
 /**
- * 后处理产出的「分发」：把一批产物按天平均分配到日期文件夹。
+ * 后处理产出的「分发」：把一批产物按天铺开，**用排期日给产出文件夹重新命名**。
  *
  * 来源：`features/composite/lib/compositeDistribution.ts`（原「后期处理工作区」的分发能力），
  * 2026-09-18 按杰哥决定移植进后处理链路，随旧编排一起从 composite 退役。
  * 差异：落点从「预设级 / 渠道级 distributionPaths」简化为单一 `targetDir` ——
  * 后处理的产出目录已经由「项目 / 方向 / 预设」三级子目录表达，再叠一层渠道级落点只会更难理解。
  *
- * 移植时保留的三条硬约束（都是原实现踩过的坑）：
+ * ## 目录结构（2026-09-23 第二轮重定 · TB-116）
+ *
+ * 分发**不再在产出文件夹里套一层子文件夹**，而是把产出文件夹本身按排期日命名 ——
+ * 名字沿用命名模板（`postprocessNaming.ts`），只把日期段换掉：
+ *
+ * ```
+ * D:\导出\20260922-高颜值-头条-广点通-1140x640\a-01.jpg     ← 产出（目录名里的日期 = 产出日）
+ *   铺 3 天后 →
+ * D:\导出\20260923-高颜值-头条-广点通-1140x640\a-01.jpg
+ * D:\导出\20260924-高颜值-头条-广点通-1140x640\b-01.jpg
+ * D:\导出\20260925-高颜值-头条-广点通-1140x640\c-01.jpg
+ * ```
+ *
+ * 第一轮的实现是「在产出文件夹下面恒定建一层 `20260923` 这样的纯日期子文件夹 + 按开关复制」。
+ * 杰哥 2026-09-23 报障三条：① 导出后同一张图有两份；② 导出位置没变、只是多了层子文件夹；
+ * ③ 子文件夹只有日期，认不出是哪批素材。三条都是那套结构的直接后果，故整段推翻。
+ *
+ * ## 硬约束（都是踩过的坑，别改回去）
+ *
+ * - **排期日与文件当前位置重合时不搬**（`isSamePath` 那条短路）。起算日 = 产出当天，
+ *   所以**第 1 天的目标目录恰好就是产出文件夹自己** —— 去搬它，`copy` 会在原地凭空多出一份，
+ *   `move` 会与「自己已存在」撞名拿到 `-2` 副本。现在判定「目标 == 源」直接跳过，一个字节都不碰。
+ *   这条判定必须发生在**碰撞检测之前**，顺序反了就形同虚设。
+ * - **搬运恒定是 move**。旧实现留了 `copy | move` 开关，但在这套结构下 copy 根本不成立：
+ *   第 1 天是原地（无副本可言），第 2 天若复制，第 1 天的目录里就会留着所有天的文件 ——
+ *   整个排期错乱。用户要的是「剪切成 N 份」，所以开关撤掉（字段 `mode` 已删，旧数据里的值不读）。
  * - 日期段判定不能用 `\b`：`img_20260601.jpg` 里下划线是单词字符，`\b` 在 `_2` 前不成立，
- *   会导致最常见的下划线命名失效。改用「前后都不是数字」界定。
- * - 判定用**非全局**正则副本：全局正则的 `test()` 会推进 `lastIndex`，
- *   同一目录逐天分配时交替命中/失败，目录结构会在「替换日期」与「嵌套日期子文件夹」之间错乱。
- * - 目标已存在时追加 `-2`/`-3`，绝不静默覆盖 —— `move` 模式下覆盖等于源文件永久丢失。
+ *   最常见的下划线命名会直接失效。改用「前后都不是数字」界定。
+ * - 判定「有没有日期段」要用**独立的非全局副本**，不能拿 `replace` 的结果与原名比：
+ *   替换结果与原名相同时（排期日恰好等于产出日，也就是**第 1 天**）会被误判成「没有日期段」，
+ *   于是凭空加一层前缀，第 1 天就不再是原地了。全局那份只用于 `replace`（它不依赖 `lastIndex`）。
+ * - 目标已存在时追加 `-2`/`-3`，绝不静默覆盖 —— 搬运恒定 move，覆盖等于源文件永久丢失。
  */
 
 export interface PostprocessDistributionConfig {
@@ -26,17 +52,21 @@ export interface PostprocessDistributionConfig {
    * 排期起算日不是用户能知道的量，它属于程序。
    */
   days: number
-  /** `copy` 保留原文件；`move` 搬走后清理已空的源目录 */
-  mode: 'copy' | 'move'
   /** 打乱后再平均分配，避免同一批素材出现肉眼可见的排期规律 */
   randomize: boolean
   /** 只按工作日排期（跳过周六周日） */
   skipWeekends: boolean
-  /** `date` = 替换文件名里的日期段；`sequence` = 按日期文件夹名 + 序号重排 */
+  /** `date` = 替换文件名里的日期段；`sequence` = 按排期文件夹名 + 序号重排 */
   renameMode: 'date' | 'sequence'
   /** 追加随机字节改变 md5，规避投放平台的「重复素材」判定 */
   modifyMd5: boolean
-  /** 分发目标根目录；空 = 在产出目录原地按日期建子文件夹 */
+  /**
+   * 分发目标根目录；**空 = 就在产出位置整理**（产出文件夹同级改名，不搬家、不产生副本）。
+   *
+   * ⚠️ 填成「当前输出根目录」也是合法取值：那等于把排期文件夹建在同一个根下，
+   * 与留空的结果相同（都是同级改名）。旧实现会把这种填法算回产出文件夹自身
+   * （相对结构回填），表现成「填了等于没填」—— 已随本次重写消失。
+   */
   targetDir: string
 }
 
@@ -44,7 +74,6 @@ export interface PostprocessDistributionConfig {
 export const DEFAULT_POSTPROCESS_DISTRIBUTION: PostprocessDistributionConfig = {
   enabled: false,
   days: 1,
-  mode: 'copy',
   randomize: false,
   skipWeekends: false,
   renameMode: 'date',
@@ -61,12 +90,13 @@ export function normalizePostprocessDistributionConfig(raw: unknown): Postproces
     // 旧数据里的 `startDate` **刻意不读**：起算日已改为程序按产出当天算（见类型注释），
     // 用户当年填的值不再有任何含义。留一个死字段往下游传只会让「到底哪个日期生效」需要推理。
     days: rawDays > 0 ? rawDays : DEFAULT_POSTPROCESS_DISTRIBUTION.days,
-    mode: input.mode === 'move' ? 'move' : 'copy',
     randomize: input.randomize === true,
     skipWeekends: input.skipWeekends === true,
     renameMode: input.renameMode === 'sequence' ? 'sequence' : 'date',
     modifyMd5: input.modifyMd5 === true,
     targetDir: typeof input.targetDir === 'string' ? input.targetDir.trim() : '',
+    // 旧数据里的 `mode`（copy / move）同样刻意不读：搬运恒定是 move，
+    // 留着它只会让人以为「复制」还能选（见模块头注释第二条硬约束）。
   }
 }
 
@@ -90,6 +120,10 @@ export interface PostprocessDistributionElectronApi {
    * 名字沿用主进程既有 channel，不为分发另开一个授权入口。
    */
   authorizeCompositeOutputDirectory?: (dir: string) => Promise<boolean>
+  /**
+   * 搬运一个文件。`mode` 留着是主进程的能力（`composite:distribute-file` 两档都支持），
+   * **但分发链路上恒传 `move`** —— 理由见模块头注释第二条硬约束。
+   */
   distributeFile?: (input: {
     sourcePath: string
     targetPath: string
@@ -105,7 +139,10 @@ export interface PostprocessDistributionItem {
   path: string
   /**
    * 该产出所用的输出根目录；配了 `targetDir` 时用它算「相对结构」，
-   * 让「项目 / 方向 / 预设」的子目录层级在分发后仍然保留。
+   * 让输出根之下的**中间层级**（如项目 / 预设）在换位置分发后仍然保留。
+   *
+   * ⚠️ 相对结构的**最后一段（产出文件夹名）不进路径**，它进的是排期文件夹名 ——
+   * 那正是「按排期日重命名」这件事本身。
    */
   outputRoot?: string
   /**
@@ -127,7 +164,7 @@ export interface PostprocessDistributionOptions {
    * 排期起算日（`YYYYMMDD`）—— **由调用方给，不再由用户填**。
    *
    * 取值口径：本次产出所用源图的生成时间（`taskPostprocess` 的 `createdAt`），与命名模板
-   * `{date}` **同源**，这样「产出目录名里的日期」与「第一个日期文件夹」必然一致 ——
+   * `{date}` **同源**，这样「产出目录名里的日期」与「第一个排期文件夹」必然一致 ——
    * 不一致会让用户看到一个凭空早于 / 晚于产出日的文件夹，且无从解释。
    * 缺省回退执行当天，只为兼容单测与脚本。
    */
@@ -139,24 +176,36 @@ export interface PostprocessDistributionResult {
   failed: number
   errors: string[]
   canceled: boolean
-  /** 成功搬运的映射；调用方据此把产出记录里的路径改成新位置 */
+  /**
+   * 每个产出的落点（`originalPath` → `targetPath`）；调用方据此把产出记录里的路径改成新位置。
+   *
+   * **包含「本来就在排期位置上、没搬动」的那些**（起算日 = 产出当天时第 1 天就是这种情况）：
+   * 调用方要的是「这个文件现在在哪」，而不是「磁盘上发生过几次重命名」。
+   */
   moved: Array<{ originalPath: string; targetPath: string }>
 }
 
 /**
- * 文件名里的日期段：`img_20260601.jpg` → 换成排期日期。
+ * 文件名 / 目录名里的日期段：`img_20260601.jpg`、`20260922-高颜值-头条` → 换成排期日期。
  *
  * ⚠️ 只能用「前后都不是数字」界定，**不能用 `\b`**：`img_20260601.jpg` 里下划线是单词字符，
  * `\b` 在 `_2` 前不成立，最常见的下划线命名会直接失效。
  *
- * ⚠️ 这里只剩这一个**全局**副本：`replace` 不依赖 `lastIndex`（内部会重置），可以安全复用。
- * 原先还有一个非全局副本 `DATE_SEGMENT_TEST`，专门判定「目录名里有没有日期段」——
- * **2026-09-23 随「原地恒定建日期子文件夹」一并去掉**：那个判定会把命名模板产出的
- * `20260922-{方向}-{渠道}…` 目录当成「日期层」去替换，于是
- * ① 用户要的日期子文件夹永远不出现；② 填成产出当天时算出「目标目录 == 产出目录」，
- * 每个文件与**自己**撞名 ⇒ 整目录凭空多出一份 `-2` 自我复制。这两条都是实测踩到的。
+ * ⚠️ 只保留这一个**全局**副本，只在 `replace` 里用（`replace` 不依赖 `lastIndex`，内部会重置，
+ * 可以安全复用）。
  */
 const DATE_SEGMENT_PATTERN = /(?<!\d)(20\d{6})(?!\d)/g
+
+/**
+ * 「这个名字里有没有日期段」的判定副本。
+ *
+ * ⚠️ 必须独立于上面那份、且**非全局**：
+ * - 非全局：`test()` 不推进 `lastIndex`（全局副本的 `test` 会推，同一目录逐天判定时交替命中/失败）；
+ * - 独立：**不能**用「`replace` 的结果与原名是否相同」代替它 —— 排期日恰好等于产出日时
+ *   （第 1 天，也就是最常见的场景）替换结果与原名一字不差，会被误判成「没有日期段」，
+ *   于是凭空加一层日期前缀，第 1 天就不再是原地了。
+ */
+const HAS_DATE_SEGMENT_PATTERN = /(?<!\d)20\d{6}(?!\d)/
 
 /** 把毫秒时间戳格式化成 `YYYYMMDD`；非法值回退执行当天（`baseDate` 的兜底口径）。 */
 export function toBaseDate(timestampMs: number | undefined): string {
@@ -179,6 +228,30 @@ function basenameOf(path: string): string {
 /** 路径比较前统一分隔符并去掉尾部分隔符：主进程 `pathJoin` 用 `\`，用户输入可能用 `/`。 */
 function normalizePathForCompare(value: string): string {
   return value.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+/**
+ * 判两个路径是不是同一个位置。
+ *
+ * 盘符大小写、分隔符方向都可以不同（`D:\out` / `d:/out/`），而这条判定的后果是「搬」还是
+ * 「不搬」—— 判错的代价很直接：搬了就是复制一份自己。
+ */
+function isSamePath(a: string, b: string): boolean {
+  return normalizePathForCompare(a).toLowerCase() === normalizePathForCompare(b).toLowerCase()
+}
+
+/**
+ * 排期文件夹名：把产出文件夹名里的日期段换成排期日。
+ *
+ * - `('20260922-高颜值-头条-广点通-1140x640', '20260923')` → `20260923-高颜值-头条-广点通-1140x640`
+ * - 名字里**没有**日期段（命名模板没写 `{date}`）→ 前置排期日：`('高颜值-头条', '20260923')`
+ *   → `20260923-高颜值-头条`。不能保持原样 —— 那样每天的文件夹会撞名，分配结果直接错乱。
+ */
+export function buildDistributionFolderName(produceFolderName: string, targetDate: string): string {
+  const name = produceFolderName.trim()
+  if (!name) return targetDate
+  if (!HAS_DATE_SEGMENT_PATTERN.test(name)) return `${targetDate}-${name}`
+  return name.replace(DATE_SEGMENT_PATTERN, targetDate)
 }
 
 /**
@@ -214,7 +287,7 @@ export function buildDistributionDates(baseDate: string, days: number, skipWeeke
 
 /**
  * 目标文件碰撞检测：已存在时追加 `-2`、`-3`……（扩展名之前）。
- * `move` 模式下覆盖意味着源文件丢失，必须避免。
+ * 搬运恒定是 move，覆盖意味着源文件丢失，必须避免。
  */
 async function resolveNonCollidingTarget(
   api: PostprocessDistributionElectronApi,
@@ -235,31 +308,43 @@ async function resolveNonCollidingTarget(
   return base
 }
 
+/** 一个排期批次：同一个分发根、同一个产出文件夹名的一批文件，合起来铺 N 天。 */
+interface DistributionGroup {
+  root: string
+  /** 产出文件夹名（如 `20260922-高颜值-头条-广点通-1140x640`）；排期文件夹名由它派生 */
+  folderName: string
+  items: PostprocessDistributionItem[]
+}
+
 /**
- * 算出某条产出的目标目录（不含日期层）。
+ * 算出某条产出的**分发根**（排期文件夹的父目录）。
  *
- * - 配了 `targetDir` 且产物在自己的输出根之下 → `targetDir` + 相对结构，保留「项目 / 方向 / 预设」层级
- * - 配了 `targetDir` 但算不出相对结构 → 直接用 `targetDir`
- * - 没配 `targetDir` → 原地（文件当前所在目录）
+ * - 没配 `targetDir` → 产出文件夹的父目录（= 输出根）。分发因此是**同级改名**：不换位置、不产生副本。
+ * - 配了 `targetDir` → `targetDir` + 输出根之下的**中间层级**（保留「项目 / 预设」这类结构）。
+ *   产出恒在「输出根 / 产出文件夹」这一层，所以中间层通常为空，此时就是 `targetDir` 本身。
+ * - 算不出相对结构 → 直接用 `targetDir`（旧行为）。
  */
-async function resolveBaseTargetDir(
+async function resolveDistributionRoot(
   api: PostprocessDistributionElectronApi,
   item: PostprocessDistributionItem,
   config: PostprocessDistributionConfig,
 ): Promise<string> {
-  const originalDir = dirnameOf(item.path)
+  const produceDir = dirnameOf(item.path)
   const targetRoot = config.targetDir.trim()
-  if (!targetRoot) return originalDir
+  if (!targetRoot) return dirnameOf(produceDir)
 
   const outputRoot = item.outputRoot?.trim()
   if (!outputRoot) return targetRoot
 
-  const normalizedDir = normalizePathForCompare(originalDir)
+  const normalizedDir = normalizePathForCompare(produceDir)
   const normalizedRoot = normalizePathForCompare(outputRoot)
   if (!normalizedDir.startsWith(normalizedRoot)) return targetRoot
 
   const relative = normalizedDir.slice(normalizedRoot.length).replace(/^[/\\]+/, '')
-  return relative ? await api.pathJoin(targetRoot, ...relative.split(/[/\\]+/)) : targetRoot
+  const segments = relative.split(/[/\\]+/).filter(Boolean)
+  // 最后一段是**产出文件夹名** —— 它进排期文件夹名，不进路径；只有前面那些才是要保留的中间层。
+  const middle = segments.slice(0, Math.max(0, segments.length - 1))
+  return middle.length > 0 ? await api.pathJoin(targetRoot, ...middle) : targetRoot
 }
 
 /**
@@ -318,40 +403,53 @@ export async function runPostprocessDistribution(
   // 按**素材**打乱：全量洗一次牌，各目标目录共用同一份顺序（见 `buildSourceRank`）。
   const sourceRank = buildSourceRank(items, config.randomize)
 
-  // 1. 按目标目录分组。主进程只允许写入「允许根」内的路径，未授权会导致整组静默失败，
-  //    所以这里按目标根逐个授权并记录失败原因，而不是让整批悄悄什么都没做。
-  const grouped = new Map<string, PostprocessDistributionItem[]>()
+  // 1. 按「分发根 + 产出文件夹名」分组：不同产出文件夹（渠道 / 尺寸 / 预设不同）各自排各自的 ——
+  //    混在一组会让「组内按天均匀」这个前提失效。
+  //    分发根逐个授权（主进程只允许写入「允许根」内的路径）；授权失败要报出来，
+  //    否则整组静默什么都不做 —— 用户只看到「点了没反应」。
+  const grouped = new Map<string, DistributionGroup>()
   const authorizedRoots = new Set<string>()
   for (const item of items) {
-    const baseDir = await resolveBaseTargetDir(api, item, config)
-    if (config.targetDir.trim() && !authorizedRoots.has(baseDir)) {
+    let root: string
+    try {
+      root = await resolveDistributionRoot(api, item, config)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      result.errors.push(`分发目标解析失败: ${message}`)
+      continue
+    }
+
+    if (!authorizedRoots.has(root)) {
       let authorized: boolean
       try {
-        authorized = (await api.authorizeCompositeOutputDirectory?.(baseDir)) ?? true
+        authorized = (await api.authorizeCompositeOutputDirectory?.(root)) ?? true
       } catch {
         authorized = false
       }
       if (!authorized) {
-        result.errors.push(`分发目标未授权或不是绝对路径: ${baseDir}`)
+        result.errors.push(`分发目标未授权或不是绝对路径: ${root}`)
         continue
       }
-      authorizedRoots.add(baseDir)
+      authorizedRoots.add(root)
     }
-    const group = grouped.get(baseDir)
-    if (group) group.push(item)
-    else grouped.set(baseDir, [item])
+
+    const folderName = basenameOf(dirnameOf(item.path))
+    const key = `${normalizePathForCompare(root)}\u0000${folderName}`
+    const group = grouped.get(key)
+    if (group) group.items.push(item)
+    else grouped.set(key, { root, folderName, items: [item] })
   }
 
   let total = 0
-  for (const group of grouped.values()) total += group.length
+  for (const group of grouped.values()) total += group.items.length
   let completed = 0
 
   const sourceDirsToClean = new Set<string>()
 
-  outer: for (const [baseDir, groupItems] of grouped.entries()) {
+  outer: for (const group of grouped.values()) {
     // 按素材序号排；同序号（同一张素材的多个尺寸变体）用原始下标兜底保持原顺序 ——
     // 显式兜底而不是依赖引擎的排序稳定性，让结果可复现。
-    const queue = groupItems
+    const queue = group.items
       .map((item, index) => ({ item, index }))
       .sort((a, b) => {
         const rankA = sourceRank.get(a.item.sourceKey ?? a.item.path) ?? 0
@@ -371,13 +469,11 @@ export async function runPostprocessDistribution(
       }
       const targetDate = targetDates[dayIndex]
       const countForThisDay = baseCount + (dayIndex < remainder ? 1 : 0)
-      // **恒定**在产出目录下面建一层日期文件夹（2026-09-23 改）。
-      // 旧实现是「目录名里已有日期段就替换它」，但产出目录名里的日期来自命名模板 `{date}`
-      // （`20260922-{方向}-{渠道}…`）—— 那是「产出日」，不是「排期日」。两者混在一起会：
-      // ① 用户要的日期子文件夹永远不出现；② 起始日期填成产出当天时目标目录 == 产出目录，
-      // 每个文件与**自己**撞名 ⇒ 整目录凭空多出一份 `-2`。现在不再猜，一律建子文件夹。
-      const targetDir = await api.pathJoin(baseDir, targetDate)
-      const folderBasename = basenameOf(targetDir) || targetDate
+      // 每天的落点 = 分发根 + 以排期日开头（日期段已换掉）的产出文件夹名。
+      // 起算日 = 产出当天时，第 1 天算出来与产出文件夹**同名** ⇒ 目标 == 源，
+      // 下面的短路会直接跳过 —— 文件留在原地，正是它该在的位置。
+      const scheduleFolder = buildDistributionFolderName(group.folderName, targetDate)
+      const targetDir = await api.pathJoin(group.root, scheduleFolder)
 
       for (let k = 0; k < countForThisDay && cursor < queue.length; k += 1) {
         if (shouldCancel()) {
@@ -390,23 +486,37 @@ export async function runPostprocessDistribution(
         const targetFileName =
           config.renameMode === 'date'
             ? originalFileName.replace(DATE_SEGMENT_PATTERN, targetDate)
-            : `${folderBasename}_${String(k + 1).padStart(2, '0')}${originalFileName.slice(
+            : `${scheduleFolder}_${String(k + 1).padStart(2, '0')}${originalFileName.slice(
                 originalFileName.lastIndexOf('.'),
               )}`
 
         try {
+          const candidate = await api.pathJoin(targetDir, targetFileName)
+          /**
+           * ⭐ **已经在排期位置上就不碰它**。
+           *
+           * 起算日 = 产出当天 ⇒ 第 1 天的目标就是产出文件夹自己。这里若继续往下走，
+           * `resolveNonCollidingTarget` 会看到「目标已存在」（那是它自己）而改判 `-2`，
+           * 整目录于是凭空多出一份副本 —— 这正是杰哥 2026-09-23 报的第一条。
+           */
+          if (isSamePath(candidate, item.path)) {
+            result.success += 1
+            result.moved.push({ originalPath: item.path, targetPath: candidate })
+            continue
+          }
+
           const targetPath = await resolveNonCollidingTarget(api, targetDir, targetFileName)
           const outcome = await api.distributeFile?.({
             sourcePath: item.path,
             targetPath,
-            mode: config.mode,
+            mode: 'move',
             appendRandomByte: config.modifyMd5,
           })
 
           if (outcome?.success) {
             result.success += 1
             result.moved.push({ originalPath: item.path, targetPath })
-            if (config.mode === 'move') sourceDirsToClean.add(dirnameOf(item.path))
+            sourceDirsToClean.add(dirnameOf(item.path))
           } else {
             result.failed += 1
             const reason = outcome?.error || '未知错误'
@@ -424,14 +534,12 @@ export async function runPostprocessDistribution(
     }
   }
 
-  // move 之后源目录可能空了，顺手清掉；非空目录会失败，忽略即可
-  if (config.mode === 'move') {
-    for (const sourceDir of sourceDirsToClean) {
-      try {
-        await api.removeEmptyDir?.(sourceDir)
-      } catch {
-        // 目录非空或有占用：保持原样，不当作错误上报
-      }
+  // 搬空的源目录顺手清掉；非空目录会失败，忽略即可（原地跳过的那批文件没动，目录自然不空）
+  for (const sourceDir of sourceDirsToClean) {
+    try {
+      await api.removeEmptyDir?.(sourceDir)
+    } catch {
+      // 目录非空或有占用：保持原样，不当作错误上报
     }
   }
 

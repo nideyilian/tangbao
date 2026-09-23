@@ -340,7 +340,7 @@ describe('分发排期回到节点层（2026-09-23，推翻 ADR-0011 裁决 #4�
     const normalized = normalizePostprocessNodeOverride({
       distribution: { enabled: true, days: 7, skipWeekends: true, mode: 'delete', renameMode: 'uuid' },
     })
-    // 排期进来；启用与否 / 复制还是移动 / 改名 / 目标目录 **不在** 节点层 —— 那是全局一套
+    // 排期进来；启用与否 / 改名 / 目标目录 **不在** 节点层 —— 那是全局一套
     expect(normalized?.distribution).toEqual({ days: 7, skipWeekends: true })
   })
 
@@ -355,7 +355,7 @@ describe('分发排期回到节点层（2026-09-23，推翻 ADR-0011 裁决 #4�
     }
     const slice = resolveProjectPostprocessSlice(COLLECTIONS, chain, DIRECTION, baseConfig())
     expect(slice.config.distribution.days).toBe(30)
-    expect(slice.config.distribution.mode).toBe(baseConfig().distribution.mode)
+    expect(slice.config.distribution.renameMode).toBe(baseConfig().distribution.renameMode)
     expect(slice.config.distribution.targetDir).toBe(baseConfig().distribution.targetDir)
     expect(slice.config.outputDir).toBe('D:/方向')
   })

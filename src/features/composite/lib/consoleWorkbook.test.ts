@@ -223,11 +223,13 @@ describe('buildConsoleSheets', () => {
     expect(byKey.fitMode).toBe('crop-fill')
   })
 
-  it('分发表 8 个字段一个不少（起始日期已移除：起算日由程序按产出当天取）', () => {
+  it('分发表 7 个字段一个不少（起始日期与搬运方式已移除）', () => {
     const rows = sheetNamed(makeInput(), 'distribution').rows
-    expect(rows).toHaveLength(8)
+    expect(rows).toHaveLength(7)
     expect(rows.map((row) => row.key)).toContain('targetDir')
     expect(rows.map((row) => row.key)).not.toContain('startDate')
+    // 搬运方式（复制 / 移动）已撤：这套目录结构下第 1 天是原地，复制会让排期错乱
+    expect(rows.map((row) => row.key)).not.toContain('mode')
   })
 })
 
