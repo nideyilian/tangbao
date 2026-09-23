@@ -14,6 +14,7 @@
 | 操作配方（持久化/推仓等）| `docs/tangbao-ops-runbook.md`            |
 | 哪份文档还算数           | `docs/README.md`                         |
 | AI 开工/收工规范         | `AGENTS.md`「项目管理（开工前必读）」    |
+| 每日生成模块（策略卡等） | `src/features/dailyBatch/`（TB-108）· 页面档 `design-system/tangbao/pages/daily.md` |
 | 过程记录                 | 同日 `YYYY-MM-DD.md`                     |
 
 ## 身份 · 构建 · 发布
@@ -75,6 +76,12 @@
 | **产出目标只有手动读**，自动按归属；启用范围只拦自动（R-90）      | `architecture-constraints.md` §4.3/§4.4.1 |
 
 ## 排查手法（方法论，不是架构事实）
+
+- **⭐ 开工前别只看 `git status`，还要看「未被改动的文件」的 mtime**（2026-09-23 实测）：
+  `git status` 只回答「有没有改」，看不出「是不是**正在**被改」。同一天两条写线并行时，
+  对方的文件会在你跑验证的那几分钟里冒出来（实测：`projectTree/params.ts` 在我检查后 **12 秒**
+  落盘，另一边是 TB-107）。做法：`git status --short` + `stat -c '%y %n' <可疑文件>` 对比 `date`；
+  看到别人在改的文件，**一个字节都别碰**，本轮新增全部放进自己的目录。
 
 - **⭐ 报障第零步：先确认「哪台机器 / 哪个环境」**（2026-09-22 连踩三轮）——
   dev 用 `%APPDATA%\tangbao`、安装版用 `%APPDATA%\糖包`，**是两份互不相干的库**；
