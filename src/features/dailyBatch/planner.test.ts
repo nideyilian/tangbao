@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { allocateByRatios, allocateToCards, buildDailyPlan, dailyJitter, sumRatios } from './planner'
+import {
+  allocateByRatios,
+  allocateToCards,
+  buildDailyPlan,
+  dailyJitter,
+  hasSameStrategyCard,
+  sumRatios,
+} from './planner'
+import type { StrategyCard } from './types'
 
 describe('每日分配：比例 → 各方向张数', () => {
   it('比例合计正好 100 时，张数与比例一致', () => {
@@ -166,6 +174,37 @@ describe('一天的完整出图计划', () => {
     })
     expect(result.skipped).toEqual([])
     expect(result.totalPlanned).toBe(100)
+  })
+})
+
+describe('存为策略卡：重复判定', () => {
+  const card = (sopId: string, directionCollectionId: string): StrategyCard => ({
+    id: `card-${sopId}-${directionCollectionId}`,
+    name: '卡',
+    sopId,
+    sopName: '配方',
+    directionCollectionId,
+    imagesPerPrompt: 1,
+    weight: 1,
+    enabled: true,
+    createdAt: 0,
+    updatedAt: 0,
+  })
+
+  it('同一张 SOP 在同一方向已有卡 ⇒ 判为重复（重复存只会把张数摊薄）', () => {
+    expect(hasSameStrategyCard([card('sop-1', 'dir-1')], 'sop-1', 'dir-1')).toBe(true)
+  })
+
+  it('⭐ 同一张 SOP 在不同方向不算重复（这正是「一卡一方向」的用法）', () => {
+    expect(hasSameStrategyCard([card('sop-1', 'dir-1')], 'sop-1', 'dir-2')).toBe(false)
+  })
+
+  it('同一方向下的不同 SOP 不算重复（一个方向本来就允许多张卡）', () => {
+    expect(hasSameStrategyCard([card('sop-1', 'dir-1')], 'sop-2', 'dir-1')).toBe(false)
+  })
+
+  it('一张卡都没有时不算重复', () => {
+    expect(hasSameStrategyCard([], 'sop-1', 'dir-1')).toBe(false)
   })
 })
 

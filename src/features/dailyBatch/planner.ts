@@ -59,6 +59,16 @@ export function selectEligibleCards(
   return { cards: eligible, skipped }
 }
 
+/**
+ * 「存为策略卡」时的去重判定：同一张 SOP 在同一个方向下已经有卡了吗？
+ *
+ * 重复存没有意义 —— 两张卡引用的 SOP 与归属都相同，出图内容完全一样，
+ * 只会把当天的张数摊薄成两份。所以调用方据此提示「已存在」而不是默默多建一张。
+ */
+export function hasSameStrategyCard(cards: StrategyCard[], sopId: string, directionCollectionId: string): boolean {
+  return cards.some((card) => card.sopId === sopId && card.directionCollectionId === directionCollectionId)
+}
+
 export interface RatioInput {
   id: string
   ratio: number

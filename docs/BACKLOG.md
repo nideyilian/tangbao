@@ -5002,22 +5002,36 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
   2. **串行提交**：1000 张会慢，但不会把 API 打挂；并发闸门留二期。
   3. **1000 张/天受 API 并发与配额限制**，建议先 100–200 张验证链路（数量本身可配）。
   4. **未经真机渲染验证**：新页面布局请在运行中的应用里过目（本机做不了网页与离屏渲染）。
+- **第二轮（2026-09-23 上午）：把「出图后存为策略卡」的入口接上**（杰哥需求原文里的那一步）
+  - **落点**：素材库**任务卡片视图的 SOP 批次卡**（`SopBatchTaskCard`）—— 批次粒度正好对应
+    「一次用某张 SOP 出的一批图」；通用任务卡上没有 SOP 信息，不适用。
+  - 按钮是**受控**的（`onSaveAsStrategyCard` + `saveAsStrategyCardDisabledReason`），
+    与既有的 查看批次 / 再次生成 / 删除 三个操作同款。
+    ⚠️ `SopBatchTaskCard` 是 `memo` + **自定义比较函数**，新 prop 必须加进比较函数，
+    否则按钮点击后状态不刷新（改了却像没改）。
+  - 两种「不能存」的情形**置灰并把原因写在 title 上**，既不藏按钮也不让它点了没反应：
+    ① 这批不是 SOP 出的（没有可引用的卡片）；② 发任务时素材库没选中文件夹
+    （策略卡必须挂在方向上，没方向就无处可挂）。
+  - 重复判定抽成纯函数 `hasSameStrategyCard`：同一张 SOP 在同一方向已有卡 ⇒ 提示「已存在」，
+    而不是默默多建一张（两张一样的卡只会把当天的张数摊薄两份）。
+    **同一张 SOP 在不同方向不算重复** —— 这正是「一卡一方向」的用法。
 - **验收证据**（2026-09-23）
-  - **全量 `npm run verify` 通过**：`265 files / 3167 passed`（Node v24.14.0，tsc 双端 +
-    lint + format:check + test 全绿）。比基线 `262 / 3133` 多 **3 文件 34 用例** —— 正是本轮新增。
-  - 定向：`planner.test.ts` **14 passed**（比例分配 / 抖动可复现 / 跳过原因）、
+  - **全量 `npm run verify` 通过**：`265 files / 3171 passed`（Node v24.14.0，tsc 双端 +
+    lint + format:check + test 全绿）。比开工基线 `262 / 3133` 多 **3 文件 38 用例** —— 全部是本轮新增。
+  - 定向：`planner.test.ts` **18 passed**（比例分配 / 抖动可复现 / 跳过原因 / 存卡去重）、
     `normalize.test.ts` **10 passed**（含⭐字段白名单往返）、`runner.test.ts` **8 passed**
-    （含⭐单卡失败不牵连整批、⭐SOP 被删不静默）。
+    （含⭐单卡失败不牵连整批、⭐SOP 被删不静默）、`AssetBatchView.test.tsx` **29 passed**
+    （既有用例未受影响）。
   - 门禁关联：`appDataNamespaceContract.test.ts` 3 passed（新 namespace 已进白名单）；
     `catalog.test.ts` / `page-coverage-regression.test.tsx`（新页面登记 + `pages/daily.md` 存在）。
   - **开工前先收口了 TB-105**：那批未提交改动（11 文件 / 396 行）单独提交为 `0e8c4c2`，
     与本轮改动分离（R-09 / R-79）。
 - **遗留 / 未覆盖**
   1. **未经真机渲染验证**：新页面布局请在运行中的应用里过目（本机做不了网页与离屏渲染）。
-  2. 「出图后存为策略卡」的**界面入口**尚未接到 SOP 批量结果卡上 —— 数据层
-     `createCardFromGeneration` 已就绪并可用，接 UI 是下一步（TB-108 子项）。
-  3. 每日生成**没有端到端用例**（要跑通真实 API + 电子环境）：分配、归一化、编排三层各有测试，
-     「提示词引擎 → submitTaskWithData」那一跳靠注入点隔离 + 类型检查。
+  2. 每日生成**没有端到端用例**（要跑通真实 API + 电子环境）：分配、归一化、编排三层各有测试，
+     「提示词引擎 → `submitTaskWithData`」那一跳靠注入点隔离 + 类型检查。
+  3. 「存为策略卡」这条 UI 路径**只有纯函数层有测试**（去重判定），按钮本身无组件测试
+     （`SopBatchTaskCard` 目前没有测试文件）。
   4. 二期：每日报表、失败自动补跑、多产品并发闸门。
 - **⚠️ 并行写线提醒（开工时实测）**：本轮开工时 `src/features/projectTree/params.ts` 与
   `src/lib/postprocessMedia.ts` 正被 TB-107 那条线**活跃修改**（`params.ts` 在开工前 12 秒

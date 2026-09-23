@@ -1,5 +1,6 @@
 import { memo, useEffect, useState, type MouseEvent } from 'react'
 import {
+  BookmarkIcon as Bookmark,
   BookOpenCheckIcon as BookOpenCheck,
   EyeIcon as Eye,
   ImageIcon,
@@ -95,6 +96,8 @@ function SopBatchTaskCard({
   onOpenImage,
   onRerun,
   onDelete,
+  onSaveAsStrategyCard,
+  saveAsStrategyCardDisabledReason,
   outputImagesByTask,
 }: {
   sopName: string
@@ -106,6 +109,10 @@ function SopBatchTaskCard({
   onOpenImage: (imageId: string) => void
   onRerun: () => void
   onDelete: () => void
+  /** 把这一批用的 SOP 存成策略卡（供「每日生成」按比例抽取）。缺省则不显示该按钮。 */
+  onSaveAsStrategyCard?: () => void
+  /** 有值 = 不能存（按钮置灰并把原因写在 title 上，不让用户「点了没反应」）。 */
+  saveAsStrategyCardDisabledReason?: string
   outputImagesByTask?: ReadonlyMap<string, string[]>
 }) {
   const [now, setNow] = useState(Date.now())
@@ -239,6 +246,18 @@ function SopBatchTaskCard({
                 size="sm"
                 icon={<RefreshCw size={16} />}
               />
+              {onSaveAsStrategyCard && (
+                <IconButton
+                  type="button"
+                  onClick={onSaveAsStrategyCard}
+                  aria-label={`把 ${sopName} 存为策略卡`}
+                  title={saveAsStrategyCardDisabledReason ?? '存为策略卡（供「每日生成」按比例抽取）'}
+                  disabled={Boolean(saveAsStrategyCardDisabledReason)}
+                  className="gallery-task-action gallery-task-action--primary"
+                  size="sm"
+                  icon={<Bookmark size={16} />}
+                />
+              )}
               <IconButton
                 type="button"
                 onClick={onDelete}
@@ -263,5 +282,7 @@ export default memo(
     previous.tasks === next.tasks &&
     previous.summary === next.summary &&
     previous.isSelected === next.isSelected &&
+    previous.onSaveAsStrategyCard === next.onSaveAsStrategyCard &&
+    previous.saveAsStrategyCardDisabledReason === next.saveAsStrategyCardDisabledReason &&
     previous.outputImagesByTask === next.outputImagesByTask,
 )

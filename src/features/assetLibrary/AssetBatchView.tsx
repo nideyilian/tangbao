@@ -42,6 +42,8 @@ import SopBatchDetailModal from '../../components/SopBatchDetailModal'
 import TaskParamSummary from '../../components/TaskParamSummary'
 import OrphanBatchCard from './OrphanBatchCard'
 import { useAssetLibraryStore, type AssetGridDensity } from './store'
+import { hasSameStrategyCard } from '../dailyBatch/planner'
+import { useDailyBatchStore } from '../dailyBatch/store'
 import AssetTile, { type TileSelectMode } from './AssetTile'
 import AssetCardMenu from './AssetCardMenu'
 import { AssetListRow } from './AssetListView'
@@ -258,6 +260,46 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
     if (task) editOutputs(task)
   }, [group, batchTasks])
 
+  /**
+   * 「存为策略卡」的可用性。
+   *
+   * 两种情况都**置灰并说明原因**，而不是藏掉按钮或点了没反应：
+   * ① 这批不是 SOP 出的（没有可引用的卡片）；② 发任务时素材库没选中文件夹（没有归属方向，
+   * 而策略卡必须挂在方向上）。
+   */
+  const strategyCardDisabledReason = useMemo(() => {
+    const task = taskList.find((item) => item.sopBatch)
+    if (!task?.sopBatch) return '这个批次不是 SOP 生成的，没有可引用的卡片'
+    if (!task.defaultCollectionId) return '这个批次没有归属方向：发任务时素材库要先选中一个方向文件夹'
+    return ''
+  }, [taskList])
+
+  const handleSaveAsStrategyCard = useCallback(() => {
+    const task = taskList.find((item) => item.sopBatch)
+    const batch = task?.sopBatch
+    const directionId = task?.defaultCollectionId
+    if (!batch || !directionId) return
+    const store = useDailyBatchStore.getState()
+    // 同一张 SOP 在同一个方向重复存没有意义（内容完全一样），先说清而不是默默多一张卡
+    if (hasSameStrategyCard(store.cards, batch.sopId, directionId)) {
+      useStore.getState().showToast('这个方向已经有一张引用同一张 SOP 的策略卡了', 'info')
+      return
+    }
+    const created = store.createCardFromGeneration({
+      sopId: batch.sopId,
+      sopName: batch.sopName,
+      directionCollectionId: directionId,
+      imagesPerPrompt: batch.imagesPerPrompt ?? task.params.n,
+      sourceBatchId: batch.batchId,
+    })
+    useStore
+      .getState()
+      .showToast(
+        created ? `已存为策略卡「${created.name}」，可在「每日生成」里看到` : '存为策略卡失败，请重试',
+        created ? 'success' : 'error',
+      )
+  }, [taskList])
+
   const handleRerunBatch = useCallback(() => {
     const taskList = batchTasks(group)
     if (taskList.length === 0) return
@@ -309,6 +351,8 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
         onOpenImage={handleOpenImage}
         onRerun={handleRerunBatch}
         onDelete={handleDeleteGroup}
+        onSaveAsStrategyCard={handleSaveAsStrategyCard}
+        saveAsStrategyCardDisabledReason={strategyCardDisabledReason || undefined}
         outputImagesByTask={outputImagesByTask}
       />
     )
