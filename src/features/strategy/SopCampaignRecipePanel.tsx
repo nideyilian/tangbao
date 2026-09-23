@@ -207,7 +207,7 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
                 <Sparkles size={13} />
                 整段录入
               </strong>
-              <span>把配方卡原文整段粘进来，支持 JSON 与「键: 值 + 列表」自由排版</span>
+              <span>把原文整段粘进来：配方卡 JSON、「键: 值 + 列表」自由排版，或「一键衍生」模板</span>
             </div>
           </div>
           <TextArea
@@ -215,7 +215,7 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
             value={rawText}
             onChange={(event) => setRawText(event.target.value)}
             placeholder={
-              '直接粘贴整份配方卡，例如：\n\n{\n  "name": "歌单推荐美女",\n  "template": "{M}, {S1}, ...",\n  "master": [...],\n  "pools": { "S1": [...], "S2": [...] }\n}\n\n或自由排版：\nname: 歌单推荐美女\ntemplate: {M}, {S1}, {S2}\nmaster:\n  M1 戴耳机侧颜特写, close-up side profile...\npools:\n  S1: 甜美元气, 温柔治愈, 清冷'
+              '直接粘贴整份配方卡，例如：\n\n{\n  "name": "歌单推荐美女",\n  "template": "{M}, {S1}, ...",\n  "master": [...],\n  "pools": { "S1": [...], "S2": [...] }\n}\n\n或自由排版：\nname: 歌单推荐美女\ntemplate: {M}, {S1}, {S2}\nmaster:\n  M1 戴耳机侧颜特写, close-up side profile...\npools:\n  S1: 甜美元气, 温柔治愈, 清冷\n\n或「一键衍生」产出的变量提示词模板（正文 + 可变项）：\n一只{{主体}}，{{风格}}风格。\n\n可变项：\n{{主体}}：柴犬 / 柯基\n{{风格}}：水彩 / 油画'
             }
             containerClassName="sop-recipe-import__field"
             className="sop-recipe-import__input"

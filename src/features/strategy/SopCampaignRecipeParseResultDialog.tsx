@@ -90,6 +90,7 @@ export function countParsedRecipeAttention(parsed: ParsedCampaignRecipe | null):
 const SOURCE_LABEL: Record<ParsedCampaignRecipe['source'], string> = {
   json: 'JSON',
   text: '自由排版',
+  'variable-prompt': '一键衍生模板',
 }
 
 function blankDimension(): CampaignRecipeDimension {

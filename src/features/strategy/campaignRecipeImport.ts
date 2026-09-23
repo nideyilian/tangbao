@@ -1,4 +1,5 @@
 import { parseCampaignRecipeConfig, type CampaignRecipeConfig } from './campaignRecipe'
+import { parseVariablePrompt } from '../../lib/variablePrompt'
 
 /**
  * 配方卡整段文本解析器。
@@ -48,12 +49,17 @@ export interface ParsedCampaignRecipe {
   error: string
   /** 非致命提示（如字段留空、有池无值），供 UI 提示用户确认。 */
   warnings: string[]
-  /** 识别来源，便于 UI 说明与排查。 */
-  source: 'json' | 'text'
+  /**
+   * 识别来源，便于 UI 说明与排查：
+   * - json            配方卡 JSON（资产 / 裸配置 / SOP 库导出片段）；
+   * - text            配方卡「键: 值 + 列表」自由排版；
+   * - variable-prompt 「一键衍生」（变量提示词）模板：正文 + 单独一行「可变项：」+ `{{名}}：选项 / 选项`。
+   */
+  source: 'json' | 'text' | 'variable-prompt'
 }
 
 /** 空结果骨架，避免各处重复构造。 */
-function emptyResult(source: 'json' | 'text'): ParsedCampaignRecipe {
+function emptyResult(source: ParsedCampaignRecipe['source']): ParsedCampaignRecipe {
   return {
     name: '',
     desc: '',
@@ -489,10 +495,104 @@ function finalize(result: ParsedCampaignRecipe): ParsedCampaignRecipe {
   return result
 }
 
+// ---------------------------------------------------------------------------
+// 一键衍生（变量提示词）分支
+// ---------------------------------------------------------------------------
+
+/**
+ * 与一键衍生格式**互斥**的顶层键：出现任一，就说明这段文本是配方卡自己的
+ * 「键: 值 + 列表」语法，必须交给自由排版分支。
+ *
+ * 只列真正竞争「骨架」与「候选池」的键，**不含 name / desc** ——
+ * 一键衍生模板允许用户把 `name: 配方名` 一起粘进来，那是可以合并的（见 splitLeadingRecipeMeta）。
+ */
+const RECIPE_NATIVE_TOP_KEYS = new Set(['template', 'body', 'templatebody', 'pools', 'master', '骨架'])
+
+/**
+ * 判定这段文本是不是「一键衍生」（变量提示词）模板。
+ *
+ * 依据：存在「可变项：」区块头（与 `parseVariablePrompt` 的语法定义一致）。
+ * 定义行形如 `{{主体}}：柴犬 / 柯基`，归一化后的键是 `{{主体}}`、不在 RECIPE_NATIVE_TOP_KEYS 里，
+ * 所以不会自己否决自己。
+ */
+function looksLikeVariablePromptTemplate(text: string): boolean {
+  const lines = text.split(/\r?\n/u)
+  if (!lines.some((line) => /^\s*可变项\s*[：:]/u.test(line))) return false
+  return !lines.some((line) => {
+    const kv = splitKeyValue(line.trim())
+    return Boolean(kv && RECIPE_NATIVE_TOP_KEYS.has(normalizeKey(kv.key)))
+  })
+}
+
+/**
+ * 摘掉骨架开头连续的配方卡式描述行（`name:` / `说明:` …）。
+ *
+ * 为什么需要：一键衍生的模板正文里本来不含名称（名字在 AI 返回的 JSON 字段里，落在 SOP
+ * 的 name 上），但用户可能把 `name: xxx` 与模板一起粘进来。变量提示词的解析器不认识这些键，
+ * 会把它们当成正文的一部分 —— 不摘掉，就会有一行「name: xxx」直接进图片提示词。
+ */
+function splitLeadingRecipeMeta(body: string): { name: string; desc: string; body: string } {
+  const lines = body.split(/\r?\n/u)
+  let name = ''
+  let desc = ''
+  let index = 0
+  for (; index < lines.length; index += 1) {
+    const line = lines[index].trim()
+    if (!line) break
+    const kv = splitKeyValue(line)
+    const key = kv ? normalizeKey(kv.key) : ''
+    const isName = key === 'name' || key === '名称'
+    const isDesc = key === 'desc' || key === '描述' || key === '说明'
+    if (!kv || (!isName && !isDesc)) break
+    if (isName) name = kv.value
+    else desc = kv.value
+  }
+  if (index === 0) return { name, desc, body }
+  return { name, desc, body: lines.slice(index).join('\n').trim() }
+}
+
+/**
+ * 从「一键衍生」产出的变量提示词模板解出配方卡。
+ *
+ * 为什么复用 `parseVariablePrompt` 而不是自己解 `{{名}}：值`：区块头、定义行、选项分隔符
+ * （一键衍生只认 `/`）都属于变量提示词自己的语法，另抄一份正则等于把口径复制成两份，
+ * 一旦漂移就会出现「那侧认得出、这侧认不出」这种只能靠人工比对才能发现的割裂
+ * （即 R-53 / R-54 的病根）。依赖方向安全：`variablePrompt.ts` 零 import，不成环。
+ *
+ * 与变量提示词侧的**唯一差异是结局处理**：那边校验不过就报错禁用（不允许带坏数据去出图），
+ * 这里把错误降级成 warnings 交给可编辑表单 —— 与配方卡导入「宁可少提取也不要乱填」一致。
+ */
+function parseVariablePromptRecipe(text: string): ParsedCampaignRecipe | null {
+  const parsed = parseVariablePrompt(text)
+  if (!parsed.detected) return null
+
+  const result = emptyResult('variable-prompt')
+  const leading = splitLeadingRecipeMeta(parsed.body)
+  result.name = leading.name
+  result.desc = leading.desc
+  result.body = leading.body
+  result.dimensions = parsed.variables.map((variable) => ({ name: variable.name, options: [...variable.options] }))
+  // 变量提示词侧的错误只作提示：例如「可变项：」没单独占一行、正文引用了未定义的变量。
+  // 未定义的变量会由 finalize 补成空维度（进 missingPools），由用户在表单里补值。
+  result.warnings.push(...parsed.errors, ...parsed.warnings)
+
+  const finalized = finalize(result)
+  if (!finalized.ok) {
+    // 失败文案必须指向真因：一键衍生模板里本来就没有 template / pools 键，
+    // 沿用配方卡自己的文案会把用户带去检查一个根本不存在的字段。
+    finalized.error = finalized.body
+      ? '这是「一键衍生」模板格式，但「可变项：」区块里没有解析出可用的变量定义'
+      : '这是「一键衍生」模板格式，但「可变项：」之前没有找到提示词正文'
+  }
+  return finalized
+}
+
 /**
  * 把任意整段文本解析成配方卡。
  *
- * @param text 粘贴进来的原文（JSON 或自由排版）
+ * 三种可识别形态（命中即返回，不叠加）：配方卡 JSON → 一键衍生（变量提示词）模板 → 自由排版文本。
+ *
+ * @param text 粘贴进来的原文（配方卡 JSON / 一键衍生模板 / 自由排版文本）
  * @returns 解析结果；`ok=false` 时 `error` 说明原因，UI 应据此给出明确提示而不是继续保存
  */
 export function parseCampaignRecipeText(text: string): ParsedCampaignRecipe {
@@ -520,12 +620,22 @@ export function parseCampaignRecipeText(text: string): ParsedCampaignRecipe {
     }
   }
 
-  // 2) 自由排版文本
+  // 2) 一键衍生（变量提示词）模板 —— 必须排在自由排版文本**之前**。
+  //    它的「可变项：」区块头与 `{{名}}：A / B` 定义行既不是合法 JSON、也不含 template /
+  //    pools 键，落到自由排版分支只会被逐行忽略（实测：0 个维度、骨架为空）。
+  //    守卫（looksLikeVariablePromptTemplate）保证含配方卡顶层键的文本仍走下面的原生分支，
+  //    既有资产的解析结果一个字节都不变。
+  if (looksLikeVariablePromptTemplate(trimmed)) {
+    const recipe = parseVariablePromptRecipe(trimmed)
+    if (recipe) return recipe
+  }
+
+  // 3) 自由排版文本
   const textResult = parseTextRecipe(trimmed)
   if (textResult.body || textResult.dimensions.length > 0 || textResult.name) return finalize(textResult)
 
   const failed = emptyResult('text')
-  failed.error = '无法从这段内容识别出配方卡：既不是合法 JSON，也没有找到 template / pools 结构'
+  failed.error = '无法从这段内容识别出配方卡：既不是合法 JSON，也没有找到 template / pools 结构，也没有「可变项：」区块'
   return failed
 }
 

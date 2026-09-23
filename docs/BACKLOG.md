@@ -14,6 +14,7 @@
 | TB-107 | 分发排期：起算日自动 + 原地建日期文件夹 + 按素材打乱 | DOING | 主写线 | 2026-09-23 |
 | TB-108 | 每日素材批量生成：策略卡 + 每日比例抽取 + 预览审核发布 | DOING | 主写线 | 2026-09-23 |
 | TB-110 | 顶栏设计规范统一（高度/圆角/组件/左基线）      | DONE  | 主写线 | 2026-09-23 |
+| TB-111 | 配方卡导入兼容「一键衍生」模板            | DONE  | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -5124,3 +5125,45 @@ shell 的 rm、Node/Python 的 unlink、Windows 原生 del 三条路都被环境
 - **⚠️ 并行写线（开工期间实测）**：`src/features/strategy/campaignRecipeImport.ts` 在
   10:34:41 被**另一条线**修改（dev 日志里的 `page reload` 暴露的），本轮**一个字节没碰**该文件，
   提交时也只 `git add` 本轮文件（R-09 / R-79）。
+
+### TB-111 配方卡导入兼容「一键衍生」模板
+
+- **来源**：杰哥 2026-09-23 要求分析「一键衍生与配方卡共用的逻辑实现」，评估让配方卡兼容识别
+  一键衍生格式提示词的可行性 → 先给结论（含实测证据与改造点清单），杰哥回「可以」后开工。
+- **状态**：DONE · 主写线
+- **背景（实测：改动前 0% 可识别）**：一键衍生产物是「正文 + 单独一行『可变项：』+ `{{名}}：A / B`」，
+  而配方卡导入解析器 `parseCampaignRecipeText` 只认配方卡 JSON 与「template / pools」自由排版。
+  用 esbuild 把解析器打包到 `%TEMP%` 跑真实样例：`ok=false`、`body` 空、`dimensions` 空，
+  报文「既不是合法 JSON，也没有找到 template / pools 结构」。缺口四点：① 不认「可变项：」区块头；
+  ② 正文没有 `template:` 前缀就被整段丢弃；③ 选项分隔符集合不含 `/`（一键衍生只认它）；
+  ④ 定义行的 `{{名}}` 若手工改写成配方卡键名会连花括号一起入库，与骨架里的占位符对不上。
+- **改动（只新增，存量逻辑一条未改）**
+  - `campaignRecipeImport.ts`：新增「一键衍生（变量提示词）分支」——
+    `looksLikeVariablePromptTemplate`（互斥守卫）+ `splitLeadingRecipeMeta`（剥离手写的 name/说明 行）
+    + `parseVariablePromptRecipe`（**复用 `lib/variablePrompt.ts` 的 `parseVariablePrompt`**，
+    不另抄正则 —— 抄一份就等于把口径复制成两份，漂移后会变成「那侧认得出、这侧认不出」这种
+    只能靠人工比对发现的咬合问题，即 R-53 / R-54 的病根）。
+    分支插在 JSON 与自由排版**之间**；守卫保证含 `template / body / pools / master / 骨架` 的文本
+    仍走原生分支。失败文案改写为指向一键衍生格式（沿用原文案会把用户带去检查一个根本不存在的键）。
+  - `ParsedCampaignRecipe.source` 增 `'variable-prompt'`；
+    `SopCampaignRecipeParseResultDialog.tsx` 的 `SOURCE_LABEL` 同步（穷尽 Record，改漏了 `tsc` 就红）。
+  - `SopCampaignRecipePanel.tsx`：录入说明与 placeholder 补一键衍生范例。
+- **验收证据（2026-09-23）**
+  - `campaignRecipeImport.test.ts` 17 → **25 例**（新增 8 例：基本识别 / 落成引擎可直接消费的 config /
+    name 描述剥离 / 引用未定义变量补空池 / 互斥守卫 / 失败文案指向 / 头部未独占一行仍容忍 /
+    单花括号骨架只当引用并提示变量被忽略）。
+  - **反向验证**：把新分支临时短路 ⇒ 新用例 **7 条红**、旧 18 条全绿。证明用例确实在测这条路径，
+    且老路径零影响（防 R-93 那类「注释骗过测试」的假绿）。
+  - 定向回归：`src/features/strategy` + `src/lib/variablePrompt.test.ts` = **36 文件 / 499 例全绿**；
+    `src/design-system`（含合规棘轮）= **12 文件 / 272 例全绿**；
+    逐条门禁 `tsc -b` / `eslint`（改动文件）/ `prettier --check`（改动文件）全绿。
+  - **未跑全量 `npm run verify`**：与 TB-110 写线并行期间工作区混着对方 WIP，全量结果绿红都不可信
+    （R-74）⇒ 改跑定向用例 + 逐条门禁；收工时工作区已只剩本轮 4 个文件。
+- **未做 / 说明**
+  1. **判定层一个字没动**：`isCampaignRecipeSop` / `isLocalGenerationSop` 保持原口径。一旦判定也认
+     变量提示词格式，`GallerySopBatchModal` 里 `isLocalGenerationSop` 优先的分流会把**所有一键衍生
+     SOP 抢进配方卡引擎**（AI 扩词条、可变项参数面板全部失效，R-53 / R-54 复发）。
+  2. `splitOptions` 未加 `/` —— 会改变既有自由排版资产的解析口径（候选值含 `16/9` 之类会被误切）。
+  3. 已知取舍：转成配方卡后**组合不足不再自动调 AI 扩词条**（只报「候选组合已耗尽」）、
+     生成时走配方卡合规红线（含「最高 / 第一 / 军」等词的候选值会被剔除）、
+     `variableMeta`（主题 / 类型 / 衍生数量）在配方卡无对应物，只能丢弃。

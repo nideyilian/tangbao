@@ -169,6 +169,101 @@ describe('parseCampaignRecipeText · 自由排版文本分支', () => {
   })
 })
 
+describe('parseCampaignRecipeText · 一键衍生（变量提示词）模板分支', () => {
+  /** 一键衍生产物的真实形态：正文 + 单独一行「可变项：」+ `{{名}}：A / B`（选项只认 `/` 分隔） */
+  const ONE_CLICK_DERIVE = [
+    '一只{{主体}}，{{风格}}风格，背景是{{场景}}。',
+    '',
+    '可变项：',
+    '{{主体}}：柴犬 / 柯基 / 金毛',
+    '{{风格}}：水彩 / 油画 / 卡通',
+    '{{场景}}：海边 / 森林',
+  ].join('\n')
+
+  it('reads a one-click-derive template into body + dimensions', () => {
+    const result = parseCampaignRecipeText(ONE_CLICK_DERIVE)
+
+    expect(result.ok).toBe(true)
+    expect(result.source).toBe('variable-prompt')
+    // 骨架只留「可变项：」之前的正文，区块本身不能混进提示词
+    expect(result.body).toBe('一只{{主体}}，{{风格}}风格，背景是{{场景}}。')
+    // 维度名不带花括号 —— 带了就与骨架里的占位符对不上，替换会整条失效
+    expect(result.dimensions.map((item) => item.name)).toEqual(['主体', '风格', '场景'])
+    // 分隔符是「一键衍生」的 `/`，不是配方卡的逗号 / 顿号
+    expect(result.dimensions.find((item) => item.name === '主体')?.options).toEqual(['柴犬', '柯基', '金毛'])
+    expect(result.missingPools).toEqual([])
+  })
+
+  it('lands on a config the recipe engine can consume directly', () => {
+    const config = toCampaignRecipeConfig(parseCampaignRecipeText(ONE_CLICK_DERIVE))
+
+    expect(config).not.toBeNull()
+    expect(config!.body).toBe('一只{{主体}}，{{风格}}风格，背景是{{场景}}。')
+    expect(config!.dimensions.map((item) => item.name)).toEqual(['主体', '风格', '场景'])
+    expect(config!.dimensions.find((item) => item.name === '风格')?.options).toEqual(['水彩', '油画', '卡通'])
+  })
+
+  it('pulls leading name / desc lines out of the skeleton', () => {
+    const result = parseCampaignRecipeText(['name: 我的衍生配方', '说明: 从参考图反推', ONE_CLICK_DERIVE].join('\n'))
+
+    expect(result.ok).toBe(true)
+    expect(result.name).toBe('我的衍生配方')
+    expect(result.desc).toBe('从参考图反推')
+    // 描述行不能留在骨架里流进图片模型
+    expect(result.body).not.toContain('name:')
+    expect(result.body).not.toContain('说明:')
+  })
+
+  it('keeps a referenced-but-undefined variable as an empty pool for the user to fill', () => {
+    const result = parseCampaignRecipeText(
+      ['一只{{主体}}，{{风格}}风格。', '', '可变项：', '{{主体}}：柴犬 / 柯基'].join('\n'),
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.missingPools).toEqual(['风格'])
+    expect(result.dimensions.find((item) => item.name === '风格')?.options).toEqual([])
+    // 变量提示词侧的硬错误在这里降级成提示（导入阶段允许用户补齐后再保存）
+    expect(result.warnings.join('；')).toContain('风格')
+  })
+
+  it('still identifies a free-form recipe card as text, not as a derive template', () => {
+    // 互斥守卫：同时出现配方卡自己的顶层键（template / pools）时，绝不能走一键衍生分支
+    const result = parseCampaignRecipeText(
+      ['name: 混合', 'template: 一只{主体}，{风格}风格', 'pools:', 'S1: 柴犬, 柯基', '可变项：', '{{主体}}：柴犬'].join(
+        '\n',
+      ),
+    )
+
+    expect(result.source).toBe('text')
+  })
+
+  it('points the failure message at the derive format when there is no usable variable', () => {
+    const result = parseCampaignRecipeText(['一只猫在草地上。', '', '可变项：', '这一行不是合法的变量定义'].join('\n'))
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('一键衍生')
+    // 不能沿用配方卡的文案：那个模板里本来就没有 template / pools 键
+    expect(result.error).not.toContain('pools')
+  })
+
+  it('tolerates a 可变项 header that is not on its own line and reports it as a warning', () => {
+    const result = parseCampaignRecipeText(['一只{{主体}}。', '可变项：{{主体}}：柴犬 / 柯基'].join('\n'))
+
+    expect(result.ok).toBe(true)
+    expect(result.source).toBe('variable-prompt')
+    expect(result.warnings.join('；')).toContain('单独占一行')
+  })
+
+  it('treats a single-brace skeleton as a reference and flags the ignored definitions', () => {
+    // 一键衍生的语法是 {{名}}；正文写成 {名} 时定义行会被判为「未被使用」
+    const result = parseCampaignRecipeText(['一只{主体}。', '', '可变项：', '{{主体}}：柴犬 / 柯基'].join('\n'))
+
+    expect(result.ok).toBe(true)
+    expect(result.missingPools).toEqual(['主体'])
+    expect(result.warnings.join('；')).toContain('已忽略')
+  })
+})
+
 describe('parseCampaignRecipeText · 失败与边界', () => {
   it('reports empty input instead of returning a blank recipe', () => {
     const result = parseCampaignRecipeText('   \n  ')
