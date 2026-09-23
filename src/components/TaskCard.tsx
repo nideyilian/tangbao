@@ -7,6 +7,7 @@ import {
   resolveImageDisplaySrc,
   subscribeImageThumbnail,
   retryTask,
+  continueInterruptedTask,
   removeMultipleTasks,
   showPostprocessIssuesDialog,
 } from '../store'
@@ -108,7 +109,16 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
   const swipeOffsetRef = useRef(0)
   const pendingSwipeOffsetRef = useRef(0)
   const swipeFrameRef = useRef<number | null>(null)
-  const displayTaskStatus = task.status === 'error' && hasCompletedTaskOutputs(task) ? 'done' : task.status
+  /**
+   * 上次会话把这条任务中断了（应用退出 / 崩溃），它还等着用户点「继续」。
+   *
+   * ⚠️ 与文件下方那个 `isInterrupted`（`progressDisplay.cardLabel === '已停止'`，只用来选配色）
+   * **不是一回事**：那个把「用户自己按的停止」和「应用退出」混在一起，不能拿来决定行为。
+   * 这个才是可靠的判据 —— 读字段，不匹配文案。
+   */
+  const canResume = Boolean(task.interruptedAt)
+  const displayTaskStatus =
+    task.status === 'error' && !canResume && hasCompletedTaskOutputs(task) ? 'done' : task.status
   /**
    * 封面槽位（slot 0）的图是否已被删除。
    *
@@ -1057,8 +1067,8 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                 {((displayTaskStatus === 'error' && !isFalReconnecting && !task.promptFailed) ||
                   alwaysShowRetryButton) && (
                   <TaskActionButton
-                    tooltip="重试任务"
-                    onClick={() => retryTask(task)}
+                    tooltip={canResume ? '继续未跑完的部分（已产出的不会重复生成）' : '重试任务'}
+                    onClick={() => (canResume ? continueInterruptedTask(task.id) : retryTask(task))}
                     className="gallery-task-action gallery-task-action--primary"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

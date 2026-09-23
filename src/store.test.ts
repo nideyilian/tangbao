@@ -2446,12 +2446,15 @@ describe('interrupted OpenAI running tasks', () => {
     expect(result.tasks.find((item) => item.id === 'legacy-running')).toMatchObject({
       status: 'error',
       error: expect.stringContaining('请求中断'),
+      // 「上次没跑完」的判据（P1）：界面据此把它与「已停止」「生成失败」分开，并给「继续」入口
+      interruptedAt: now,
       finishedAt: now,
       elapsed: 9_000,
     })
     expect(result.tasks.find((item) => item.id === 'openai-running')).toMatchObject({
       status: 'error',
       error: expect.stringContaining('请求中断'),
+      interruptedAt: now,
       finishedAt: now,
       elapsed: 8_000,
     })
@@ -2488,6 +2491,8 @@ describe('interrupted OpenAI running tasks', () => {
     })
     // 它一个请求都没发出去 —— 说「请求中断」会把排查带偏到接口上
     expect(marked.error).not.toContain('请求中断')
+    // 也不能标成「上次没跑完，可以继续」：词都还没写出来，继续也跑不了（P1）
+    expect(marked.interruptedAt).toBeUndefined()
     expect(result.interruptedTasks.map((item) => item.id)).toEqual(['pending-prompt'])
   })
 })

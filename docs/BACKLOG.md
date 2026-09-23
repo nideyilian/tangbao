@@ -25,6 +25,7 @@
 | TB-122 | 落盘补偿：两次写不进的任务存快照，下次启动重放 | DONE  | 主写线 | 2026-09-23 |
 | TB-123 | 反向对账：素材在、来源任务不在的留痕            | DONE  | 主写线 | 2026-09-23 |
 | TB-124 | 素材库加固：结构版本 + 顺序迁移链 + 老库兼容门禁 | DONE  | 主写线 | 2026-09-23 |
+| TB-125 | 任务中断语义：中断可辨识 + 「继续」入口（不重复产图） | DONE  | 主写线 | 2026-09-24 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -363,6 +364,52 @@
 - **未验证**：跨进程落盘链路**没有端到端跑过** —— 开工期间 41731 被另一条写线占用，本会话全程未启动 dev。
   接入点靠读代码自检（`store.ts:5203` 失败分支、`store.ts:5780` 启动重放）。
   能跑 dev 时建议手工验一次：制造写失败 → 重启看卡片是否回来。
+
+### TB-125 任务中断语义：让「上次没跑完」可辨识，并给出不重复产图的「继续」
+
+- **来源**：`docs/serpent-borrowing-plan.md` 的 P1（参考 Serpent 的 Job `interrupted` 语义：
+  退出时仍是 queued / running 的任务标记为中断、**绝不静默执行**、必须显式重试）。
+  杰哥 2026-09-24 批准开工。
+- **诊断：现状是四套处理并存、语义不一致**
+  1. **OpenAI 系普通生图**：启动时标成 `status:'error'` + `error:'请求中断'`，而
+     `taskProgressDisplay.ts` 的 `isStoppedTask` 用**正则匹配错误文案**
+     （`/已停止|已取消|请求中断|任务已中止|停止生成/`）把它归进「已停止」分支。
+  2. **「卡先建、词后填」的预留卡**：标 `promptFailed`，文案明确说「应用在编写提示词时退出了」。
+  3. **fal / 自定义异步**：走远端恢复（`scheduleFalRecovery` / `scheduleCustomRecovery`）。
+  4. **批量编排批次**：启动时 `void executeTask(task.id)` —— **自己就续跑了**。
+- **要解决的问题**
+  - ① **「应用退出」与「用户自己按的停止」共用一张脸（都叫「已停止」）** ——
+    一个能接着跑、一个不用再跑，**该做的事相反**，用户分不出来。
+  - ② **卡片上只有「重试」，而 `retryTask` 是新建一条任务**（新 id、新卡片）⇒
+    想「接着跑剩下的」得到的是重复卡片 + 重复产图。
+- **改法（6 个文件）**
+  1. `src/types.ts`：`TaskRecord` 新增 `interruptedAt?: number` —— **只由启动时**
+     `markInterruptedOpenAIRunningTasks` 写入；`executeTask` 每次开始执行即清掉
+     （与 `watchdogTimedOutAt` 放在同一处）。**判据读字段，不再匹配文案**。
+  2. `src/store.ts`：OpenAI 中断分支写 `interruptedAt: now`；`executeTask` 开头清它；
+     新增导出 `continueInterruptedTask(taskId)` —— 走 `executeTask`，
+     **与应用启动时那条自动恢复路径是同一个函数**，按已持久化的槽位 / 远端请求续跑、
+     已产出的不重发，所以不另立第二套幂等口径。
+  3. `src/lib/taskProgressDisplay.ts`：新增 `interruptedDisplay()`，卡片标签「上次没跑完」
+     （tone warning），描述写明「已产出 N / M 张」+「点继续会把剩下的接着跑完」；
+     在 `getTaskProgressDisplay` 里**排在「数量够了就算完成」之前**（被标记中断的一定是没跑完就断的）。
+  4. `src/components/TaskCard.tsx`：新增 `canResume`，中断的任务把按钮从「重试」换成「继续」。
+- **验收证据（2026-09-24）**
+  - `npm run verify` **EXIT=0**：**270 文件 / 3279 用例** / 359.86s（比上轮多 2 条，即本次新增）。
+  - 定向：`taskProgressDisplay.test.ts` + `store.test.ts` **171 例**；
+    `TaskCard.test.tsx` + `SopBatchTaskCard.test.tsx` **14 例**。
+  - **反向验证精确命中 2 条**：同时撤掉 `store.ts` 的 `interruptedAt: now` 与
+    `taskProgressDisplay.ts` 的中断分支 → 恰好
+    `marks legacy and OpenAI running tasks as interrupted` 和「中断的任务说「上次没跑完」…」
+    变红，**无连带失败**；恢复后全绿。
+- **刻意不动的两件事**
+  1. **批量编排批次的「启动即自动续跑」保持原样** —— 改成「先问」属于能力回退
+     （忘了点就没跑完），要改需另行拍板。
+  2. `TaskCard.tsx:456` 那个既有的 `isInterrupted`（`cardLabel === '已停止'`，**只用于选配色**）
+     不动 —— 它把「主动停止」和「应用退出」混在一起，但改它会影响观感；
+     本次新增的变量改用 `canResume` 避开重名（首次实现时同名，`tsc` 报 `TS2451` 才发现）。
+- **未做**：本机无法做渲染验证 ⇒ **界面观感未经真机确认**。请在运行中的应用里过一眼：
+  中断的任务卡片是否显示「上次没跑完」、按钮是否为「继续」。
 
 ### TB-124 素材库加固：目录结构版本 + 顺序迁移链 + 老库兼容门禁
 

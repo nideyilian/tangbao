@@ -163,6 +163,29 @@ function recoverableDisplay(task: TaskRecord): TaskProgressDisplay {
   }
 }
 
+/**
+ * 上次会话被中断（应用退出 / 崩溃）留下的任务。
+ *
+ * ⚠️ 必须与「已停止」分开：那是**用户自己按的停止**，这是**应用没了**。
+ * 前者不需要再跑，后者可以接着跑 —— 长得像，但该做的事相反。
+ * 判据用 `interruptedAt` 字段，不靠匹配 `task.error` 的文案（改文案就失效）。
+ */
+function interruptedDisplay(task: TaskRecord): TaskProgressDisplay {
+  const requested = getRequestedCount(task)
+  const success = getSuccessCount(task)
+  const reason = task.error?.trim()
+  return {
+    cardLabel: '上次没跑完',
+    detailTitle: '上次没跑完',
+    detailDescription:
+      `应用退出时这条任务还在跑，已产出 ${success} / ${requested} 张。` +
+      `点「继续」会把剩下的接着跑完，已经产出的不会重复生成。` +
+      (reason ? `中断原因：${reason}。` : ''),
+    tone: 'warning',
+    reasons: reason ? [reason] : [],
+  }
+}
+
 function errorDisplay(task: TaskRecord, liveProgress?: LiveTaskProgress): TaskProgressDisplay {
   if (isStoppedTask(task, liveProgress)) {
     const reason = getFailureReason(task, liveProgress)
@@ -198,6 +221,9 @@ function errorDisplay(task: TaskRecord, liveProgress?: LiveTaskProgress): TaskPr
 
 export function getTaskProgressDisplay(task: TaskRecord, liveProgress?: LiveTaskProgress): TaskProgressDisplay {
   if (task.status === 'running') return runningDisplay(task, liveProgress)
+  // 中断优先于「数量够了就算完成」：被标记中断的任务一定是"没跑完就断了"
+  // （跑满的会先走成 done，根本不会被标记），所以放在前面不会误伤。
+  if (task.interruptedAt) return interruptedDisplay(task)
   if (hasCompletedTaskOutputs(task)) {
     return {
       cardLabel: '已完成',

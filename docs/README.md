@@ -55,7 +55,7 @@
 | [`prompt-library-modal-optimization.md`](prompt-library-modal-optimization.md)                                               | 提示词库弹窗优化                                                                   | 归档 |
 | [`store-split-plan.md`](store-split-plan.md)                                                                                 | store 拆分计划（**未执行**，见 TB-022）                                            | 参考 |
 | [`eagle-interaction-gap-analysis.md`](eagle-interaction-gap-analysis.md)                                                     | Eagle 交互差距分析                                                                 | 参考 |
-| [`serpent-borrowing-plan.md`](serpent-borrowing-plan.md)                                                                     | **参考 Serpent 的素材库加固方案**：任务中断语义 / schema 版本 + 顺序迁移链 / 老库可用性门禁（含可测验收） | 现行 · **P2/P3/P4 已落地，P1 待排期** |
+| [`serpent-borrowing-plan.md`](serpent-borrowing-plan.md)                                                                     | **参考 Serpent 的素材库加固方案**：任务中断语义 / schema 版本 + 顺序迁移链 / 老库可用性门禁（含可测验收） | 现行 · **P1~P4 全部落地**（TB-124 / TB-125） |
 | [`analysis-doupao-liangnianban.md`](analysis-doupao-liangnianban.md)                                                         | 竞品分析                                                                           | 参考 |
 
 ## AI / Agent 相关

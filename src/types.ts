@@ -542,6 +542,17 @@ export interface TaskRecord {
    */
   watchdogTimedOutAt?: number
   /**
+   * 上次会话被中断的时间戳（ms）：**只由启动时** `markInterruptedOpenAIRunningTasks` 写入 ——
+   * 应用退出 / 崩溃时还停在 `running` 的生图任务会带上它。
+   *
+   * 有值 = 「上次没跑完，可以接着跑」。它把两种长得很像的状态分开：
+   * **用户自己按的停止**（不要再跑）与**应用没了**（可以继续）。
+   *
+   * `executeTask` 每次开始执行都会清掉它（与 `watchdogTimedOutAt` 同一处），
+   * 所以它只在两次会话之间短暂存在；正常跑完的任务身上永远不会有它。
+   */
+  interruptedAt?: number
+  /**
    * 批量生成槽位，数量固定等于 params.n。
    * 旧任务可能没有该字段，UI 与编排器均应兼容（按 outputImages 直接展示）。
    */

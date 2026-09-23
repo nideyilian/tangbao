@@ -153,7 +153,9 @@ describe('getTaskProgressDisplay', () => {
     expect(display.tone).toBe('success')
   })
 
-  it('shows stopped label for interrupted tasks', () => {
+  // 引入 `interruptedAt` 之前被中断的老任务：身上只有 error 文案、没有标记。
+  // 这条降级路径仍得说点什么（笼统的「已停止」），新任务会走下面那条更清楚的。
+  it('shows stopped label for legacy interrupted tasks without the marker', () => {
     const display = getTaskProgressDisplay(
       task({
         status: 'error',
@@ -163,5 +165,35 @@ describe('getTaskProgressDisplay', () => {
 
     expect(display.cardLabel).toBe('已停止')
     expect(display.detailDescription).toContain('请求中断')
+  })
+
+  it('中断的任务说「上次没跑完」并交代能继续，而不是笼统的「已停止」（P1）', () => {
+    const display = getTaskProgressDisplay(
+      task({
+        status: 'error',
+        error: '请求中断',
+        interruptedAt: 12_345,
+        outputImages: ['img-1'],
+      }),
+    )
+
+    expect(display.cardLabel).toBe('上次没跑完')
+    expect(display.tone).toBe('warning')
+    expect(display.detailDescription).toContain('已产出 1 / 4 张')
+    expect(display.detailDescription).toContain('继续')
+    // 核心区分：不能跟「用户自己按的停止」共用一张脸
+    expect(display.cardLabel).not.toBe('已停止')
+  })
+
+  it('用户自己按的停止仍说「已停止」——与中断长得很像，但两者该做的事相反（P1）', () => {
+    const display = getTaskProgressDisplay(
+      task({
+        status: 'error',
+        error: '已停止生成。',
+        interruptedAt: undefined,
+      }),
+    )
+
+    expect(display.cardLabel).toBe('已停止')
   })
 })

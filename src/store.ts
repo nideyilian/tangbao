@@ -5259,6 +5259,9 @@ export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Dat
       ...task,
       status: 'error',
       error: OPENAI_INTERRUPTED_ERROR,
+      // 标记「上次没跑完」：这是**应用退出**造成的，不是用户按的停止、也不是服务商返回失败。
+      // 界面据此把它与「已停止」「生成失败」分开，并给出「继续」入口（P1 任务中断语义）。
+      interruptedAt: now,
       progressStage: 'stopped',
       progressUpdatedAt: now,
       falRecoverable: false,
@@ -10154,6 +10157,9 @@ async function executeTask(taskId: string) {
   if (task.promptPending) return
   // 新一次执行开始：上一次执行留下的「超时终结」标记作废，否则收尾会把迟到的旧结果误判成属于本次执行。
   if (task.watchdogTimedOutAt !== undefined) updateTaskInStore(taskId, { watchdogTimedOutAt: undefined })
+  // 同理：上次会话的「中断」标记在本次执行开始时就作废 —— 它表示"正等着用户点继续"，
+  // 现在已经跑起来了，卡片不该再显示「上次没跑完」。本次若又被中断，下次启动会重新写上。
+  if (task.interruptedAt !== undefined) updateTaskInStore(taskId, { interruptedAt: undefined })
   // 任务级取消：注册 AbortController，停止时中止在途请求/轮询
   const abortController = new AbortController()
   taskAbortControllers.set(taskId, abortController)
@@ -11523,6 +11529,21 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
 }
 
 /** 重试失败的任务：创建新任务并执行 */
+/**
+ * 「继续」：从上次中断的地方接着跑（P1 任务中断语义）。
+ *
+ * 与「重试」（{@link retryTask}）是两件事，别看错：
+ * - **重试** = 新建一条任务（新 id、新卡片），原任务留着当历史；
+ * - **继续** = **就地接着跑**，不新建卡、不重复产图。
+ *
+ * 走的是 `executeTask` —— 也就是应用启动时那条自动恢复路径用的**同一个函数**，
+ * 它按已持久化的槽位（`generationSlots`）与远端请求（`remoteGenerationRequests`）续跑，
+ * 已经产出过的槽位不会重新发请求。所以这里不需要另立一套幂等保证，也就不会有第二套口径。
+ */
+export async function continueInterruptedTask(taskId: string): Promise<void> {
+  await executeTask(taskId)
+}
+
 export async function retryTask(
   task: TaskRecord,
   options: { sopBatch?: TaskRecord['sopBatch'] } = {},
