@@ -32,6 +32,8 @@
 | [0016](0016-text-orientation.md)                  | 文字层支持竖排：`orientation` 字段 + 换行 = 换列，框不参与折列             | **生效中（已实现）** | 2026-09-22 |
 | [0017](0017-distribution-schedule-follows-direction.md) | 分发排期（铺几天 / 跳周末）回到方向层，其余字段仍是全局一套          | **生效中（已实现）** | 2026-09-23 |
 | [0018](0018-distribution-renames-folder-in-place.md) | 分发 = 按排期日给产出文件夹同级改名；搬运恒定 move（删 `mode`）      | **生效中（已实现）** | 2026-09-23 |
+| [0019](0019-task-delete-moves-outputs-to-trash.md) | 删任务卡 = 产出图进回收站；素材进回收站必须与任务卡「退槽」           | **生效中（已实现）** | 2026-09-23 |
+| [0020](0020-postprocess-drop-pure-media.md)       | 后处理不再产出「纯净版」（它产出的就是素材库里那张原图）                   | **生效中（已实现）** | 2026-09-23 |
 
 ## 新增 ADR 的模板
 

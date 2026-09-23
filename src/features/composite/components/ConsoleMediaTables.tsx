@@ -42,7 +42,7 @@
  * - 「尺寸数 / 可用尺寸」两个派生列**已删**：尺寸那格本来就是「一眼数出配了几套」的复选框组，
  *   再挂两个数字列是重复表达，还占宽度。
  * - 「画面方向 / 画面适配」是整批三选一，不是某一条记录的字段 → 留在分区里、不进表。
- * - 「纯净版」不是渠道（不产渠道变体，也没有独立的导出位置）→ 表外单列一栏。
+ * - 表里**只有渠道**：原先表外还单列一栏「纯净版」，那条产出路径已拆掉（ADR-0020）。
  */
 
 import { useCallback, useMemo, useState } from 'react'
@@ -62,7 +62,6 @@ import { useStore } from '../../../store'
 import { buildPostprocessMediaSizeId, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import {
   MAX_POSTPROCESS_OUTPUT_DIRS,
-  PURE_MEDIA_ID,
   formatInheritedOutputDirsHint,
   normalizeOutputDirList,
   type PostprocessMediaSize,
@@ -156,8 +155,13 @@ export function ConsoleMediaTables({
    */
   const [extraOpen, setExtraOpen] = useState<string[]>([])
 
-  /** 纯净版不是渠道（它不产渠道变体），规格与位置表里都不出现——它的「尺寸」概念也不同。 */
-  const channelRows = useMemo(() => media.filter((item) => item.id !== PURE_MEDIA_ID), [media])
+  /**
+   * 规格与位置表的行 = 媒体表本身。
+   *
+   * 原先这里还要滤掉「纯净版」（它不产渠道变体、连「尺寸」的概念都不同），该产出路径已拆掉
+   * （ADR-0020），媒体表里不会再出现它。
+   */
+  const channelRows = media
 
   const closeExtra = useCallback(
     (mediaId: string) => setExtraOpen((current) => current.filter((id) => id !== mediaId)),
@@ -362,7 +366,7 @@ export function ConsoleMediaTables({
         key: 'applied',
         header: '参与产出',
         // 作用域名写进说明里：同一个开关在全局层和在方向层改的是两份数据，不说清就会改错地方
-        help: `勾上这个渠道才产出变体。当前作用域：${participationScopeLabel}。纯净版是单独一项，在表下面。`,
+        help: `勾上这个渠道才产出变体。当前作用域：${participationScopeLabel}。`,
         editor: 'switch',
         width: 88,
         align: 'center',

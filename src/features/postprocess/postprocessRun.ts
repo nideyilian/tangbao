@@ -346,7 +346,7 @@ export function formatPostprocessRunProgress(run: PostprocessRun): string {
  * 紧凑进度（窄位置用）：只有「跑了多少 + 百分比」，**不带当前产出文件名**。
  *
  * 为什么必须有这么一份（2026-09-21 报障）：`run.currentLabel` 是写盘文件名，
- * 像 `20260921-快手-网赚-纯净版-陈泽杰-1280x720-1.jpg` 有几十个字符 ——
+ * 像 `20260921-快手-网赚-广点通-陈泽杰-1280x720-1.jpg` 有几十个字符 ——
  * 直接铺在工具栏上会把整条工具栏占满、把其它按钮挤走。工具栏只回答「跑到哪了」，
  * 「正在写哪个文件」属于详情，归悬浮提示（`formatPostprocessRunProgress`）与进度面板。
  */

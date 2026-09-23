@@ -42,6 +42,9 @@
   2. **空对象渠道整个键丢掉**（`normalizeByMediaOverride`）—— 否则界面会出现"配置了但没内容"的项。
   3. 解析**必须 `??` 不能 `||`**：`outputDir: ''` 与 `watermarkPresetIds: []` 都是**有效值**。
   4. `taskPostprocess` 要**按渠道拆桶**，纯净版单独一桶且 `autoCompanionClean = false`。
+     > ⚠️ **2026-09-23 起这条只剩前半句**：`autoCompanionClean` 字段已删（TB-107），
+     > 「纯净版」这条产出路径也整条拆掉（[ADR-0020](0020-postprocess-drop-pure-media.md)）
+     > ⇒ 现在就是「一个渠道一桶」，没有那个例外桶。
 - **对后续代码的约束**：
   - 想给 `byMedia` 加第三个字段，必须先有业务表格证据，并按 ADR 流程新开一条记录。
   - `PresetProjectTree` 上「按渠道 N」chip 只展示**与通用值不同的渠道**

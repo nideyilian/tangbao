@@ -100,7 +100,9 @@ export function createDefaultPostprocessMedia(): PostprocessMedia[] {
 export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
   return {
     media: createDefaultPostprocessMedia(),
-    selectedMediaIds: [PURE_MEDIA_ID],
+    // 默认一个渠道都不勾：产出什么由用户自己勾。
+    // （原先默认勾的是「纯净版」，而那栏在界面上从来渲染不出来 —— 见 ADR-0020 / TB-120。）
+    selectedMediaIds: [],
     selectedCollectionIds: [],
     // 默认没记住任何产出目标 → 按图片归属方向产出（与历史行为一致）
     savedTargetCollectionIds: [],
@@ -246,7 +248,10 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
 
   return {
     media,
-    selectedMediaIds: selectedMediaIds.filter((id) => !legacyDisabledMediaIds.has(id)),
+    // 两道过滤：① 旧数据里被「启用」开关关掉的渠道（ADR-0013 折过来的）；
+    // ② 历史的 `clean`（ADR-0020）—— 媒体表里根本没有它的行，留着只会让每次后处理
+    // 都白多产一份「纯净版」，而界面上连取消它的入口都渲染不出来。
+    selectedMediaIds: selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID && !legacyDisabledMediaIds.has(id)),
     selectedCollectionIds: normalizeStringList(input.selectedCollectionIds) ?? defaults.selectedCollectionIds,
     // 缺字段（旧数据 / 从没点过「记住配置」）→ 空数组 = 按归属方向走，与旧行为完全一致，
     // 所以**不需要 bump persist.version**：没有需要折算的旧语义。
@@ -264,14 +269,17 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
 }
 
 /**
- * 选择列表只保留 `clean` 与当前确实存在的媒体，避免删媒体后留下悬空勾选。
+ * 选择列表只保留当前确实存在的媒体，避免删媒体后留下悬空勾选。
  *
  * 导出给**节点级**参与渠道用：那份列表存在项目树参数里（不在本 store），写入前要跟全局一个口径，
  * 否则「删掉一个渠道」之后节点上会留着它的 id，产出时只能报「选中的媒体已被删除」。
+ *
+ * 原先这里额外放行 `clean`（它是保留项、不在媒体表里）；该产出路径已拆掉（ADR-0020），
+ * 于是「不存在就剪掉」成了唯一规则。
  */
 export function pruneSelectedMediaIds(media: PostprocessMedia[], selectedMediaIds: string[]): string[] {
   const existing = new Set(media.map((item) => item.id))
-  return selectedMediaIds.filter((id) => id === PURE_MEDIA_ID || existing.has(id))
+  return selectedMediaIds.filter((id) => existing.has(id))
 }
 
 function createCustomMediaId(): string {
@@ -493,7 +501,10 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
       // 新增 `fitMode`（画面适配模式）**刻意不 bump**：纯新增字段，且默认值 `crop-fill`
       // 恰好就是旧行为（当时写死在产出链路里），旧数据缺这个字段时浅合并直接拿到默认值。
       // 没有需要折算的旧语义，无谓 bump 只会让所有用户的数据白过一遍 `migrate`。
-      version: 3,
+      // v4：`clean`（当年的「纯净版」）退出产出维度（ADR-0020），归一化会把它从
+      // `selectedMediaIds` 里剔掉。**必须 bump** —— 版本号不变时 zustand 不跑 `migrate`，
+      // 用户库里那条 `clean` 会原样留着，于是「改了代码但什么都没发生」（R-63 家族，静默失效）。
+      version: 4,
       storage: createDesktopJsonStorage('postprocessMedia'),
       partialize: (state) => ({
         media: state.media,
@@ -546,9 +557,10 @@ export type PostprocessOutputSource = { width: number; height: number }
 /**
  * 产出计划：`勾选的项目 × 勾选的媒体 × 尺寸 × 水印预设`。
  *
- * **纯净版只在显式勾选时进列**（2026-09-23 去掉「自动伴随」）：原先「勾了任一渠道就额外多产
- * 一份无水印原图」产出的其实是「无水印 + 沿用生成尺寸 + 不压缩」的 JPEG —— 而素材库里那张
- * 原图**本来就是无水的**，尺寸也没适配过渠道要求，等于把原图有损重编一份，白占磁盘。
+ * **不再有「纯净版」这一维**（ADR-0020）：那条路径产出的就是素材库里那张原图有损重编的一份
+ * ——「无水印 + 沿用生成尺寸 + 不压缩」，而素材库里的原图本来就是无水的，尺寸也没适配过渠道。
+ * 旧配置里残留的 `clean` 由归一化与 `buildPostprocessOutputs` 的入口过滤清掉，这里不再特殊照顾；
+ * 产出顺序 = 勾选顺序，`{seq}` 按文件夹各自计数（见 `postprocessRunner`），不受影响。
  *
  * `projects` 由调用方从项目树解析后传入（store 不依赖 assetLibrary，避免循环/耦合）；
  * 不传则不展开项目维度，单元里也不带 `project` 字段。
@@ -560,14 +572,8 @@ export function selectPostprocessOutputPlan(
   projects: PostprocessProjectTarget[] = [],
   presetNames: Record<string, string> = {},
 ): PostprocessOutputPlan {
-  // 勾了 `clean` 就把它提到最前：顺序即产出顺序，维持旧实现的顺序以免 `{seq}` 编号漂移
-  const includeClean = config.selectedMediaIds.includes(PURE_MEDIA_ID)
-  const mediaIds = includeClean
-    ? [PURE_MEDIA_ID, ...config.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)]
-    : [...config.selectedMediaIds]
-
   return buildPostprocessOutputs({
-    mediaIds,
+    mediaIds: config.selectedMediaIds,
     media: config.media,
     sourceWidth: source.width,
     sourceHeight: source.height,

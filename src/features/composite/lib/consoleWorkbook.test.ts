@@ -12,7 +12,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PostprocessMediaConfig } from '../../../lib/postprocessMedia'
 import { DEFAULT_POSTPROCESS_DISTRIBUTION } from '../../../lib/postprocessDistribution'
-import { PURE_MEDIA_ID } from '../../../lib/postprocessMedia'
 import type { AssetCollection } from '../../../types'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import {
@@ -35,15 +34,15 @@ const COLLECTIONS: AssetCollection[] = [
 
 function makeGlobalConfig(overrides: Partial<PostprocessMediaConfig> = {}): PostprocessMediaConfig {
   return {
+    // 媒体表里没有「纯净版」（ADR-0020）：它不是渠道，也从来不在内置媒体表里
     media: [
       {
         id: 'gdt',
         name: '广点通',
         sizes: [{ id: 'gdt-1280x720', width: 1280, height: 720, maxSizeKb: 399, enabled: true }],
       },
-      { id: PURE_MEDIA_ID, name: '纯净版', sizes: [] },
     ],
-    selectedMediaIds: [PURE_MEDIA_ID, 'gdt'],
+    selectedMediaIds: ['gdt'],
     selectedCollectionIds: ['direction-a'],
     savedTargetCollectionIds: [],
     direction: null,
@@ -146,11 +145,11 @@ describe('buildConsoleSheets', () => {
     expect(rows.find((row) => row.collectionId === 'direction-b')?.sourcedFrom).toBe('全局')
   })
 
-  it('渠道表排除纯净版（它不是渠道），并导出产出顺序', () => {
+  it('渠道表原样导出媒体表（不再有要单独排除的「纯净版」），并导出产出顺序', () => {
     const rows = sheetNamed(makeInput(), 'channels').rows
     expect(rows.map((row) => row.id)).toEqual(['gdt'])
-    // selectedMediaIds = [clean, gdt] → gdt 的下标是 1，顺序要如实导出（它决定产出次序）
-    expect(rows[0]?.appliedIndex).toBe(1)
+    // selectedMediaIds = ['gdt'] → 下标 0，顺序要如实导出（它决定产出次序）
+    expect(rows[0]?.appliedIndex).toBe(0)
     expect(rows[0]?.applied).toBe(true)
   })
 

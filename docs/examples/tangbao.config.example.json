@@ -62,13 +62,12 @@
 
     "watermarkPresetIds": [],
 
-    "selectedMediaIds": ["clean"],
+    "selectedMediaIds": ["gdt"],
     "selectedCollectionIds": ["line-home", "prod-vacuum", "dir-moon"],
     "savedTargetCollectionIds": ["dir-moon", "dir-sun"],
 
     "direction": null,
     "fitMode": "crop-fill",
-    "autoCompanionClean": true,
 
     "distribution": {
       "enabled": false,

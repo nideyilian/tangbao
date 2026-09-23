@@ -652,7 +652,10 @@ export interface TaskPostprocessOutput {
   sizeId: string
   width: number
   height: number
-  /** 纯净版（未叠水印） */
+  /**
+   * 历史标记：这条记录是不是当年那份「纯净版」（未叠水印、沿用生成尺寸）。
+   * 产出链路已不再产生 `true`（ADR-0020），字段留着只为让旧记录在列表里还能显示对标签。
+   */
   clean: boolean
   /** 归属项目（`AssetCollection` id）；未启用项目维度时缺省 */
   collectionId?: string

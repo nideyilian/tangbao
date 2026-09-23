@@ -140,7 +140,7 @@ async function paintAndEncode(
   return { ...outcome, stats: { paintMs, encodeCount, encodeMs } }
 }
 
-/** 单次高质量编码：不限体积的产出（纯净版）走这条，不进体积搜索。 */
+/** 单次高质量编码：不限体积（`maxSizeKb <= 0`）的产出走这条，不进体积搜索。 */
 export async function renderOnce(
   input: CompositeV2RenderInput,
   quality: number,

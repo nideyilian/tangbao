@@ -26,7 +26,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { DEFAULT_POSTPROCESS_NAME_PATTERN } from '../../../lib/postprocessNaming'
-import { PURE_MEDIA_ID } from '../../../lib/postprocessMedia'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import { createDefaultPostprocessMediaConfig, usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import type { AssetCollection } from '../../../types'
@@ -200,7 +199,7 @@ describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名
     expect(usePostprocessMediaStore.getState().creator).toBe('糖包工作室')
   })
 
-  it('产出预览按全局作用域展开文件名（渠道 + 尺寸 + 水印）', () => {
+  it('产出预览按全局作用域展开文件名（渠道 + 尺寸）', () => {
     act(() => {
       usePostprocessMediaStore.getState().toggleSelectedCollection('product-a')
       usePostprocessMediaStore.getState().toggleSelectedMedia('gdt')
@@ -209,7 +208,6 @@ describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名
     expect(body).toContain('产出预览')
     expect(body).toContain('广点通')
     expect(body).toContain('1280×720')
-    expect(body).toContain('纯净版')
   })
 
   it('⭐ 产出预览的序号按文件夹分组：两个渠道各自从 1 开始（跟真实产出同一套编排）', () => {
@@ -225,7 +223,7 @@ describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名
      * 整串断言会随日期变红。
      */
     const fileNames = body.match(/[\w\u4e00-\u9fa5-]+\.jpg/g) ?? []
-    // 纯净版 / 广点通 / 百度×2 落在**四个不同文件夹** → 都是 `-1`（先断数量，防 `every` 空数组假绿）
+    // 广点通 / 百度的每个尺寸各落一个文件夹 → 都是 `-1`（先断数量，防 `every` 空数组假绿）
     expect(fileNames.length).toBeGreaterThanOrEqual(4)
     expect(fileNames.every((name) => name.endsWith('-1.jpg'))).toBe(true)
     // 预览自己数下标时（TB-104 之前）第二个渠道会显示成 `-2` —— 这条就是那个缺陷的反向验证
@@ -234,7 +232,9 @@ describe('中控台 · 渠道与输出分区：输出侧（导出目录 / 命名
 
   it('产出预览跟随作用域：全局层展开全部方向（不再依赖启用范围），节点层按该节点展开', () => {
     // 2026-09-23：撤掉「启用范围」白名单之后，全局层不再看任何勾选 —— 树上的方向全都在列，
-    // 旧的那句「还没有启用任何方向」也随之消失（它的触发条件已经不存在了）
+    // 旧的那句「还没有启用任何方向」也随之消失（它的触发条件已经不存在了）。
+    // 预览本身仍要有可产出的单元才会列文件，而默认一个渠道都不勾 → 这里先勾一个。
+    act(() => usePostprocessMediaStore.getState().toggleSelectedMedia('gdt'))
     const globalBody = render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     expect(globalBody).not.toContain('还没有启用任何方向')
     expect(globalBody).toContain('智能客服 / 机器人 / 竖版展示')
@@ -382,7 +382,7 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     render(<ChannelSection scope={GLOBAL_NODE_ID} />)
 
     const table = container.querySelector<HTMLTableElement>('table[aria-label="渠道与输出"]')!
-    const channelCount = usePostprocessMediaStore.getState().media.filter((item) => item.id !== PURE_MEDIA_ID).length
+    const channelCount = usePostprocessMediaStore.getState().media.length
     // 百度配了两个位置 → 它占两行，所以总行数比渠道数多 1
     expect(table.querySelectorAll('tbody tr')).toHaveLength(channelCount + 1)
 
@@ -432,7 +432,7 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     // 行 = 渠道，格子里横排复选框 —— 扫一眼就知道每个渠道配了哪几套、哪几套是开的。
     render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     const table = container.querySelector<HTMLTableElement>('table[aria-label="渠道与输出"]')!
-    const channelCount = usePostprocessMediaStore.getState().media.filter((item) => item.id !== PURE_MEDIA_ID).length
+    const channelCount = usePostprocessMediaStore.getState().media.length
     // 行粒度是**位置槽**：默认没配导出位置，所以每个渠道正好占一行（配了双写才占两行）
     expect(table.querySelectorAll('tbody tr')).toHaveLength(channelCount)
 
@@ -548,11 +548,12 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
 
     const override = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess
     expect(override?.selectedMediaIds).toContain('gdt')
-    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([PURE_MEDIA_ID])
+    // 全局基线的初值是「一个渠道都没勾」，改节点不该动它
+    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([])
   })
 
   it('⭐ 开关显示的是**生效值**：全局勾了、方向没表态时，方向下看到的也是勾上的', () => {
-    act(() => usePostprocessMediaStore.getState().setSelectedMediaIds([PURE_MEDIA_ID, 'gdt']))
+    act(() => usePostprocessMediaStore.getState().setSelectedMediaIds(['gdt']))
     render(<ChannelSection scope="direction-a" />)
 
     const sw = container.querySelector<HTMLInputElement>('[aria-label="参与产出：广点通"]')
@@ -563,7 +564,7 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
 
   it('⭐「改为跟随上级」把本级值置为「没表态」，而不是空数组（空数组 = 一个渠道都不投）', () => {
     act(() => {
-      usePostprocessMediaStore.getState().setSelectedMediaIds([PURE_MEDIA_ID, 'gdt'])
+      usePostprocessMediaStore.getState().setSelectedMediaIds(['gdt'])
       useProjectTreeParamsStore.getState().setPostprocessOverride('direction-a', { selectedMediaIds: ['baidu'] })
     })
     render(<ChannelSection scope="direction-a" />)

@@ -45,10 +45,17 @@ export interface PostprocessMedia {
  * **别再把它加回来** —— 「这个渠道暂时不投」就是「不勾参与产出」。
  */
 
-/** 「纯净版」的保留媒体 id：无水印、不压缩、沿用生成尺寸。 */
+/**
+ * 历史遗留的「纯净版」媒体 id。**产出链路已不再支持它**（2026-09-23，ADR-0020）。
+ *
+ * 只剩两个用处：① 归一化旧配置时把它剔出去；② 认出历史产出记录里那份「纯净版」。
+ * 它原本产出的是「无水印 + 沿用生成尺寸 + 不压缩」的原图，而素材库里那张原图本来就是无水的、
+ * 尺寸也没适配过渠道 —— 等于把原图有损重编一份白占磁盘（程序本身即素材库）。
+ * **别把它加回产出计划**。
+ */
 export const PURE_MEDIA_ID = 'clean'
 
-/** 「纯净版」的展示名。 */
+/** 「纯净版」的展示名。只用于展示**历史**产出记录；新产出不会再出现它。 */
 export const PURE_MEDIA_NAME = '纯净版'
 
 /**
@@ -234,7 +241,7 @@ export interface PostprocessProjectTarget {
    * 同上，但**按渠道**细分（键为媒体 id）；命中时优先于 `watermarkPresetIds`。
    *
    * 同一个方向的厂商 / 百度 / 头条叠的合规水印常常不同，而水印是「每个渠道尺寸各出一份」的
-   * 维度之一，不按渠道给就算不出正确的产出条数。纯净版不叠水印，所以它不在这张表里。
+   * 维度之一，不按渠道给就算不出正确的产出条数。`clean` 已从产出维度移除（ADR-0020），不在任何水印表里。
    */
   watermarkPresetIdsByMedia?: Record<string, string[]>
 }
@@ -254,13 +261,16 @@ export interface PostprocessOutputUnit {
   height: number
   /** KB；0 = 不压缩 */
   maxSizeKb: number
-  /** 纯净版：不叠水印 */
+  /**
+   * 当年那份「纯净版」的标记。**产出链路已不再产生 `true`**（ADR-0020），字段留着是因为
+   * 产出记录要喂历史列表的标签（「纯净版」角标）；新产出一律 `false`。
+   */
   clean: boolean
   direction: OutputDirection
   /** 归属项目；未启用项目维度时**不存在**该字段（不是 undefined） */
   project?: PostprocessProjectTarget
   /**
-   * 该单元叠加的水印预设；纯净版与「未选任何预设」时**不存在**该字段。
+   * 该单元叠加的水印预设；「未选任何预设」时**不存在**该字段。
    *
    * 预设是**单元维度**而不是配置维度：同一方向可配多个预设，每个预设各出一套完整尺寸规格。
    */
@@ -281,7 +291,7 @@ export interface PostprocessOutputPlan {
 export interface PostprocessMediaConfig {
   /** 媒体（渠道）表；内置 4 媒体 15 尺寸仅为起点，用户可增删改 */
   media: PostprocessMedia[]
-  /** 勾选的媒体 id（含 `clean`） */
+  /** 勾选的媒体 id（产出顺序即此顺序） */
   selectedMediaIds: string[]
   /** 勾选的项目（`AssetCollection` id）；复用内置三级项目树 */
   selectedCollectionIds: string[]
@@ -324,7 +334,6 @@ export interface PostprocessMediaConfig {
    *
    * - 缺键或空数组 = 该渠道用 `outputDir`（**默认输出位置始终保留**，渠道配置只是覆盖）。
    * - 配 2 个位置 = 该渠道双写：同一份产物两处各写一份，文件名相同。
-   * - 纯净版没有渠道，因此不在这张表里，固定沿用 `outputDir`。
    *
    * 这是「全局渠道层」，与项目树节点上的同名覆盖（`PostprocessNodeOverride.byMedia`）是同一件事的
    * 两个层级，生效顺序见 `applyPostprocessOverride`。
@@ -547,7 +556,7 @@ export interface PostprocessNodeOverride {
   /** 水印预设 id 列表；`[]` = 该方向不加水印（显式覆盖），`undefined` = 继承 */
   watermarkPresetIds?: string[]
   /**
-   * 该方向投哪几个渠道（媒体 id，含 `clean`）；**`[]` = 这个方向一个渠道都不投**，
+   * 该方向投哪几个渠道（媒体 id）；**`[]` = 这个方向一个渠道都不投**，
    * `undefined` = 继承。
    *
    * 数组顺序即产出顺序（与全局同字段一个口径，`buildPostprocessOutputs` 按它迭代）。
@@ -628,10 +637,10 @@ export function applyPostprocessOverride(
 }
 
 export interface BuildPostprocessOutputsInput {
-  /** 勾选的媒体 id（含 `clean`）；重复项会被去重，顺序即产出顺序 */
+  /** 勾选的媒体 id；重复项会被去重，顺序即产出顺序 */
   mediaIds: string[]
   media?: PostprocessMedia[]
-  /** 生成原图尺寸，供纯净版与方向判定使用 */
+  /** 生成原图尺寸，供方向判定使用 */
   sourceWidth: number
   sourceHeight: number
   /** 手选方向；缺省则按源图尺寸自动判定 */
@@ -688,7 +697,10 @@ function dedupeMediaIds(mediaIds: string[]): string[] {
  * 纯函数，无副作用；幂等输入必得幂等输出（顺序稳定）。选择「先定方向、再筛尺寸」而不是反过来。
  * 项目维度缺省时不展开（单元里不带 `project`），保持「只按媒体产出」的旧行为。
  * 水印预设与媒体、项目同为**维度**：配了 N 个预设，每个渠道尺寸就出 N 份。
- * 纯净版是原图本身，**不随预设倍增**（同一张原图存 N 份毫无意义）。
+ *
+ * `clean`（当年的「纯净版」）已从产出维度移除（ADR-0020）：它产出的是「无水印 + 沿用生成尺寸 +
+ * 不压缩」的原图，而素材库里那张原图本来就是无水的 —— 等于把原图有损重编一份白占磁盘。
+ * 入口仍会把旧配置里残留的 `clean` 剔掉，见下方 `mediaIds`。
  */
 export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): PostprocessOutputPlan {
   const media = input.media ?? DEFAULT_POSTPROCESS_MEDIA
@@ -699,7 +711,10 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
     input.sourceHeight > 0
   const sourceDirection = resolveOutputDirection(input.sourceWidth, input.sourceHeight)
   const direction = input.direction ?? (sizeValid ? sourceDirection : 'landscape')
-  const mediaIds = dedupeMediaIds(input.mediaIds)
+  // 入口就把历史的 `clean` 剔掉：旧配置（以及升级那一次迁移漏掉的节点级参数）里可能还挂着它，
+  // 不清掉的话下面查不到这个媒体，会变成一条「选中的媒体已被删除」的提示 —— 而用户根本没有
+  // 这个东西可以删，只会照着提示去翻配置。产出维度里它已经不存在了（ADR-0020）。
+  const mediaIds = dedupeMediaIds(input.mediaIds).filter((id) => id !== PURE_MEDIA_ID)
   const watermarks = dedupeWatermarks(input.watermarks)
   const presetNames = input.presetNames ?? {}
   // 项目维度缺省用单个 null 占位，让下面的循环只有一份实现
@@ -722,23 +737,6 @@ export function buildPostprocessOutputs(input: BuildPostprocessOutputsInput): Po
     }
 
     for (const mediaId of mediaIds) {
-      if (mediaId === PURE_MEDIA_ID) {
-        // 纯净版沿用生成尺寸，且不压缩；源尺寸不可用时无法产出，跳过不报错
-        if (!sizeValid) continue
-        units.push({
-          mediaId: PURE_MEDIA_ID,
-          mediaName: PURE_MEDIA_NAME,
-          sizeId: `${PURE_MEDIA_ID}-${input.sourceWidth}x${input.sourceHeight}`,
-          width: input.sourceWidth,
-          height: input.sourceHeight,
-          maxSizeKb: 0,
-          clean: true,
-          direction: sourceDirection,
-          ...projectField,
-        })
-        continue
-      }
-
       const target = findPostprocessMedia(media, mediaId)
       if (!target) {
         // 同一个找不到的媒体在多项目下只上报一次

@@ -310,7 +310,8 @@ export function planConsoleImport(
         continue
       }
       if (id === PURE_MEDIA_ID) {
-        // 纯净版是保留渠道，它的名字与尺寸都由程序管；允许改「参与产出」，不许改名
+        // 旧配置包里的「纯净版」行：那条产出路径已拆掉（ADR-0020），这里**忽略它** ——
+        // 既不当渠道建、也不往回写 `selectedMediaIds`（写回去等于「导入一次就把它打开了」）。
         skip += 1
         continue
       }
@@ -820,9 +821,9 @@ export async function applyConsoleImport(
       const ordered = appliedIds
         .sort((a, b) => (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER))
         .map((item) => item.id)
-      // 纯净版始终在列（它是保留项，不参与渠道表）
-      const currentSelected = context.media.some((item) => item.id === PURE_MEDIA_ID)
-      actions.setSelectedMediaIds(currentSelected ? [PURE_MEDIA_ID, ...ordered] : ordered)
+      // 原先这里无条件把 `clean` 塞到队首（它是保留项、不参与渠道表）。该产出路径已拆掉
+      // （ADR-0020），导入只认表里勾了什么 —— 否则「导入一次配置」就等于又偷偷把纯净版打开。
+      actions.setSelectedMediaIds(ordered)
     }
   }
 

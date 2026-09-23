@@ -119,11 +119,6 @@
           "default": "crop-fill",
           "description": "源图适配到目标尺寸的方式，全局一套（不参与方向级继承）。crop-fill = 等比放大填满 + 裁边（默认）；contain-blur = 完整画面居中 + 四周补模糊底；stretch = 填满但比例被改变。"
         },
-        "autoCompanionClean": {
-          "type": "boolean",
-          "default": true,
-          "description": "纯净版自动伴随：勾了任一渠道时，额外多产一份无水印原图。"
-        },
         "distribution": {
           "$ref": "#/definitions/distribution"
         }

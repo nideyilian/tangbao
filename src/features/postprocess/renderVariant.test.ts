@@ -150,7 +150,7 @@ describe('renderOnce · 单次高质量编码', () => {
     mocks.encode.mockClear()
   })
 
-  it('只编码一次，不进体积搜索（纯净版 / 不限体积走这条）', async () => {
+  it('只编码一次，不进体积搜索（不限体积走这条）', async () => {
     mocks.encode.mockResolvedValue(blobOfKb(900))
 
     const result = await renderOnce(baseInput, 0.92)

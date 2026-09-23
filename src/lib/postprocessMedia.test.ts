@@ -132,25 +132,16 @@ describe('buildPostprocessOutputs', () => {
     expect(plan.units.every((unit) => unit.direction === 'portrait')).toBe(true)
   })
 
-  it('纯净版沿用生成尺寸且不压缩', () => {
+  it('⭐ 历史的 clean 不再产出，也不计入 skipped（ADR-0020：这条产出路径整条拆掉）', () => {
     const plan = buildPostprocessOutputs({
       mediaIds: [PURE_MEDIA_ID],
       sourceWidth: 1024,
       sourceHeight: 1024,
     })
 
-    expect(plan.units).toEqual([
-      {
-        mediaId: 'clean',
-        mediaName: '纯净版',
-        sizeId: 'clean-1024x1024',
-        width: 1024,
-        height: 1024,
-        maxSizeKb: 0,
-        clean: true,
-        direction: 'square',
-      },
-    ])
+    expect(plan.units).toEqual([])
+    // 报「选中的媒体已被删除」是错的方向：它压根不在媒体表里，用户也修不了
+    expect(plan.skippedMediaIds).toEqual([])
   })
 
   it('方向可手选覆盖自动判定', () => {
@@ -175,17 +166,18 @@ describe('buildPostprocessOutputs', () => {
     expect(plan.skippedMediaIds).toEqual(['not-a-channel'])
   })
 
-  it('去重勾选的媒体并保持首次出现顺序', () => {
+  it('去重勾选的媒体，并顺手滤掉历史的 clean', () => {
     const plan = buildPostprocessOutputs({
       mediaIds: ['gdt', 'gdt', PURE_MEDIA_ID, 'clean'],
       sourceWidth: 1280,
       sourceHeight: 720,
     })
 
-    expect(plan.units.map((unit) => unit.sizeId)).toEqual(['gdt-1280x720', 'clean-1280x720'])
+    expect(plan.units.map((unit) => unit.sizeId)).toEqual(['gdt-1280x720'])
+    expect(plan.skippedMediaIds).toEqual([])
   })
 
-  it('源尺寸不可用时只跳过纯净版，渠道尺寸照常产出', () => {
+  it('源尺寸不可用时渠道尺寸照常产出（方向退回横版）', () => {
     const plan = buildPostprocessOutputs({
       mediaIds: [PURE_MEDIA_ID, 'gdt'],
       sourceWidth: Number.NaN,
@@ -245,7 +237,7 @@ describe('buildPostprocessOutputs 的项目维度', () => {
     expect(plan.units[1].project?.direction).toBe('')
   })
 
-  it('纯净版每个项目各产出一份（沿用各自的原图尺寸）', () => {
+  it('历史的 clean 在项目维度下同样不产出', () => {
     const plan = buildPostprocessOutputs({
       mediaIds: [PURE_MEDIA_ID],
       sourceWidth: 1080,
@@ -253,8 +245,7 @@ describe('buildPostprocessOutputs 的项目维度', () => {
       projects,
     })
 
-    expect(plan.units.map((unit) => unit.project?.collectionId)).toEqual(['p1', 'p2'])
-    expect(plan.units.every((unit) => unit.clean && unit.sizeId === 'clean-1080x1920')).toBe(true)
+    expect(plan.units).toEqual([])
   })
 
   it('未传项目或传空数组时不展开，单元里不含 project 字段', () => {
@@ -313,17 +304,16 @@ describe('多水印预设展开', () => {
     expect(plan.units.every((unit) => unit.sizeId === 'gdt-1280x720')).toBe(true)
   })
 
-  it('纯净版不随预设倍增：同一张原图只出一份', () => {
+  it('历史的 clean 混在勾选里时既不多产，也不影响渠道的预设展开', () => {
     const plan = buildPostprocessOutputs({
-      mediaIds: [PURE_MEDIA_ID],
-      sourceWidth: 1024,
-      sourceHeight: 1024,
+      mediaIds: [PURE_MEDIA_ID, 'gdt'],
+      sourceWidth: 1280,
+      sourceHeight: 720,
       watermarks,
     })
 
-    expect(plan.units).toHaveLength(1)
-    expect(plan.units[0].clean).toBe(true)
-    expect('watermark' in plan.units[0]).toBe(false)
+    expect(plan.units.map((unit) => unit.watermark?.id)).toEqual(['wm-a', 'wm-b'])
+    expect(plan.units.every((unit) => unit.clean === false)).toBe(true)
   })
 
   it('不传预设时每个尺寸只出一份，且单元不含 watermark 字段', () => {
@@ -564,8 +554,6 @@ describe('导出位置：全局渠道表 + 双写', () => {
     const config = { ...baseConfig(), mediaOutputDirs: { baidu: ['D:/b1', 'D:/b2'] } }
     expect(resolvePostprocessOutputDirs(config, 'baidu')).toEqual(['D:/b1', 'D:/b2'])
     expect(resolvePostprocessOutputDirs(config, 'toutiao')).toEqual(['全局默认目录'])
-    // 纯净版没有渠道，固定沿用默认位置
-    expect(resolvePostprocessOutputDirs(config, PURE_MEDIA_ID)).toEqual(['全局默认目录'])
   })
 
   it('渠道表为空/空串时仍然回退全局默认位置（默认位置不会被弄丢）', () => {

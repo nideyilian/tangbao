@@ -44,7 +44,7 @@ export interface PostprocessVariantPlan {
 /**
  * 该单元是否要走体积压缩。
  *
- * `maxSizeKb <= 0` 语义是**不限体积**（纯净版），必须显式判断——写成隐式真值判断会把
+ * `maxSizeKb <= 0` 语义是**不限体积**（渠道自己配的「不压缩」），必须显式判断——写成隐式真值判断会把
  * 「不限体积」误当成「压到 0KB」，渲染器会把质量一路压到 0.01 还报超限。
  */
 export function shouldCompressPostprocessUnit(unit: Pick<PostprocessOutputUnit, 'maxSizeKb'>): boolean {

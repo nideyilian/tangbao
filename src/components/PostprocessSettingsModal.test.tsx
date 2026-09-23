@@ -228,7 +228,8 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     expect(body).toContain('输出目录')
     expect(body).toContain('水印归属')
     const panel = panelText()
-    for (const globalOnly of ['媒体表', '命名模板', '创作者', '画面方向', '分发', '纯净版自动伴随', '产出预览']) {
+    // 「纯净版」已随产出路径拆掉（ADR-0020），这里仍钉住它不该出现在方向面板里
+    for (const globalOnly of ['媒体表', '命名模板', '创作者', '画面方向', '分发', '纯净版', '产出预览']) {
       expect(panel, `全局独有参数「${globalOnly}」不该出现在方向面板里`).not.toContain(globalOnly)
     }
   })

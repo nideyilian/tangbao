@@ -12,6 +12,7 @@ import {
   applyPostprocessOverride,
   normalizeOutputDirList,
   normalizePostprocessDistributionOverride,
+  PURE_MEDIA_ID,
   type PostprocessMediaConfig,
   type PostprocessMediaOverride,
   type PostprocessNodeOverride,
@@ -337,7 +338,11 @@ export function normalizePostprocessNodeOverride(raw: unknown): PostprocessNodeO
   // 同上：`[]` = 这个方向一个渠道都不投，是有效值，不能与「没表态」合并。
   // （ADR-0013 把它放回节点层；ADR-0011 期间写过的值曾被丢弃，这里重新认它。）
   if (Array.isArray(input.selectedMediaIds)) {
-    result.selectedMediaIds = normalizeIdList(input.selectedMediaIds)
+    // 顺手剔掉历史的 `clean`（当年的「纯净版」，ADR-0020）：节点级这份是各自落盘的，
+    // 全局那份的迁移清不到它 —— 实测库里 54 个方向都还挂着 `clean`，不清掉就还是每次多产一份。
+    // 只剩 `clean` 的方向会变成 `[]` = 「一个渠道都不投」（而不是退回继承）：那才是用户当年的
+    // 本意「只要那份原图，别的都不要」；改成继承会凭空继承出一堆渠道来。
+    result.selectedMediaIds = normalizeIdList(input.selectedMediaIds).filter((id) => id !== PURE_MEDIA_ID)
   }
   if (typeof input.enabled === 'boolean') result.enabled = input.enabled
   const byMedia = normalizeByMediaOverride(input.byMedia)

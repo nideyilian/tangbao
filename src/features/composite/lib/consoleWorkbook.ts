@@ -40,7 +40,7 @@ import {
   resolveProjectNodeKind,
 } from '../../projectTree/params'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
-import { PURE_MEDIA_ID, resolveOutputDirection } from '../../../lib/postprocessMedia'
+import { resolveOutputDirection } from '../../../lib/postprocessMedia'
 import { resolveCollectionPath } from '../../../lib/postprocessProjectTree'
 
 /** 导出用的一列：`key` 是字段协议，`header` 只给人看。 */
@@ -186,8 +186,8 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
     }),
   }
 
-  // ---- ③ channels：渠道表（纯净版不是渠道，单独一行也不放，它的语义不同） ----
-  const channelMedia = globalConfig.media.filter((item) => item.id !== PURE_MEDIA_ID)
+  // ---- ③ channels：渠道表（媒体表原样导；「纯净版」那条产出路径已拆掉，见 ADR-0020） ----
+  const channelMedia = globalConfig.media
   const channels: ConsoleSheet = {
     name: 'channels',
     columns: [

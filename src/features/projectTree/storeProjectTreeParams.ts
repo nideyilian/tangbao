@@ -120,7 +120,10 @@ export const useProjectTreeParamsStore = create<ProjectTreeParamsStore>()(
       // **必须 bump** —— 版本号不变时 zustand 不调 `migrate`，节点上的旧值会被 `normalize` 直接丢弃，
       // 用户在方向节点上配好的命名模板 / 分发排期会凭空消失且不可逆（R-63）。
       // v1 → v2 的迁移做两件事：① 归一化时顺手丢掉节点上的旧字段；② 把值提升到 `promotedGlobals`。
-      version: 2,
+      // v3：节点级 `selectedMediaIds` 里的 `clean`（当年的「纯净版」）被归一化剔掉
+      // （ADR-0020 / TB-120）。**同样必须 bump** —— 与 v2 同一条理由：不跑 `migrate` 就清不掉，
+      // 库里几十个方向会继续每次多产一份谁都没勾过的「纯净版」。
+      version: 3,
       storage: createDesktopJsonStorage('projectTreeParams'),
       partialize: (state) => ({ params: state.params, promotedGlobals: state.promotedGlobals }),
       migrate: (persisted, version) => {

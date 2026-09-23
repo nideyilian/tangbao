@@ -19,7 +19,7 @@ import {
   sanitizeFolderName,
   saveCompositeImage,
 } from '../../lib/localSave'
-import { PURE_MEDIA_ID, type PostprocessMediaConfig, type PostprocessProjectTarget } from '../../lib/postprocessMedia'
+import { type PostprocessMediaConfig, type PostprocessProjectTarget } from '../../lib/postprocessMedia'
 import { resolvePostprocessProjectTargets } from '../../lib/postprocessProjectTree'
 import {
   runPostprocessDistribution,
@@ -50,7 +50,7 @@ import type { PostprocessProgressPatch, PostprocessRunDiagnostics, PostprocessRu
 import type { CompositeV2FitMode, CompositeV2Preset } from '../composite/lib/compositeV2Types'
 import { useCompositeV2Store } from '../composite/storeV2'
 
-/** 单次高质量编码的质量；纯净版不限体积时使用。 */
+/** 单次高质量编码的质量；不限体积（`maxSizeKb <= 0`）的渠道使用。 */
 const UNLIMITED_QUALITY = 0.92
 
 /**
@@ -404,19 +404,11 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
 
       // 按渠道拆桶：输出目录与水印预设都能按渠道覆盖（一个方向的厂商/百度/头条可能交付到
       // 完全不同的目录、叠不同的合规水印），一份配置展开不了全部渠道。
-      // 纯净版没有渠道，用通用配置单独成桶。
-      const channelIds = slice.config.selectedMediaIds.filter((id) => id !== PURE_MEDIA_ID)
-      // 纯净版只在**显式勾选**时单独成桶（2026-09-23 去掉「自动伴随」）：它产出的就是
-      // 「无水印 + 沿用生成尺寸 + 不压缩」的原图，而素材库里那张原图本来就是无水的 ——
-      // 「勾了渠道就顺手多产一份」等于把原图有损重编一份白占磁盘。
-      const wantClean = slice.config.selectedMediaIds.includes(PURE_MEDIA_ID)
-      if (wantClean) {
-        jobBuckets.push({
-          project,
-          config: { ...slice.config, selectedMediaIds: [PURE_MEDIA_ID] },
-        })
-      }
-      for (const mediaId of channelIds) {
+      //
+      // 原先这里还给「纯净版」单独开一个桶（它没有渠道、也没有渠道级导出位置）。该产出路径已
+      // 整条拆掉（ADR-0020）：它产出的就是素材库里那张原图有损重编的一份。旧配置里残留的
+      // `clean` 由归一化与产出计划的入口过滤清掉，走到这里时 `selectedMediaIds` 里不会有它。
+      for (const mediaId of slice.config.selectedMediaIds) {
         const perChannel = resolveProjectPostprocessSlice(input.collections, params, targetId, baseConfig, mediaId)
         jobBuckets.push({
           project,
@@ -426,7 +418,8 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     }
 
     for (const { project, config: bucketConfig } of jobBuckets) {
-      const bucketMediaId = bucketConfig.selectedMediaIds[0] ?? PURE_MEDIA_ID
+      // 桶一定至少有一个媒体（`[]` 的桶根本不会建出来），兜底空串只为让类型收窄
+      const bucketMediaId = bucketConfig.selectedMediaIds[0] ?? ''
       // 逐个解析本渠道引用的预设（一个渠道可以挂多套水印）。
       // 任何一个不存在就跳过这一桶——刻意**不**静默降级成无水印，那等于给用户交付了错误的投放素材。
       const bucketPresets = new Map<string, CompositeV2Preset>()
@@ -493,7 +486,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
         // 会让取消延迟到下一个源图才有反应（体感上就是「点了没动静」）
         throwIfPostprocessCanceled(input.signal)
         const plan = plans[planIndex]
-        // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
+        // 每个单元自带自己的水印预设；「未选预设」的单元是 null（不叠水印）
         const planPreset = plan.unit.watermark ? (bucketPresets.get(plan.unit.watermark.id) ?? null) : null
         const written = await writeVariant(api, outputRoots, plan, source.dataUrl, planPreset, baseConfig.fitMode, {
           acc: result,
@@ -509,7 +502,7 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
           producedFiles,
           // 目录跟着进度走，中途被取消 / 崩溃时上层才拿得到「已经产出的那几张在哪」
           outputDirs: [...result.outputDirs],
-          currentLabel: `${plan.unit.clean ? '纯净版' : plan.unit.mediaName} ${plan.unit.width}x${plan.unit.height} · ${plan.fileName}`,
+          currentLabel: `${plan.unit.mediaName} ${plan.unit.width}x${plan.unit.height} · ${plan.fileName}`,
         })
         if (written.length === 0) continue
         // 产出记录只登记**第一个**位置：清单是「产出了哪些变体」，双写的第二份是同一张图，
@@ -775,7 +768,7 @@ function messageOf(error: unknown): string {
 /**
  * 渲染一个变体。
  *
- * 不限体积（`maxSizeKb <= 0`，即纯净版）时**不能**走 `renderWithMaxKb`：
+ * 不限体积（`maxSizeKb <= 0`）时**不能**走 `renderWithMaxKb`：
  * 那里的 0 会被当成「压到 0KB」，质量一路压到 0.01 仍报超限。单次高质量编码即可。
  */
 async function renderVariant(

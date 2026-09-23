@@ -19,6 +19,7 @@
 | TB-116 | 撤「启用范围」白名单 + 总开关（默认关）+ 删旧项目树 | DONE  | 主写线 | 2026-09-23 |
 | TB-117 | 分发：按排期日整装（撤「原地套一层」+ 撤复制） | DONE  | 主写线 | 2026-09-23 |
 | TB-119 | 图片删除：软删退槽 + 删任务卡进回收站 + 清空即彻底清 | DONE  | 主写线 | 2026-09-23 |
+| TB-120 | 后处理不再产出「纯净版」（产出路径拆掉） | DONE  | 主写线 | 2026-09-23 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -40,6 +41,50 @@
 ---
 
 ## M1 · 后处理与水体系统一
+
+### TB-120 后处理不再产出「纯净版」（那条产出路径整条拆掉）
+
+- **来源**：杰哥 2026-09-23 报障原话「后处理流程中目前会自动导出一份『纯净版』文件，但该功能已无必要，
+  因为程序本身即作为素材库使用」。
+- **诊断（它为什么「自动」—— 默认勾着，而界面上根本没有取消它的入口）**
+  1. **默认值就带着它**：`createDefaultPostprocessMediaConfig()` 的
+     `selectedMediaIds: [PURE_MEDIA_ID]`（`src/storePostprocessMedia.ts`）。
+  2. **界面里没有那个开关**：内置媒体表 `DEFAULT_POSTPROCESS_MEDIA` 只有广点通 / 百度 / 厂商 / 头条，
+     **没有 `clean` 这一行**；而中控台那栏是条件渲染 `{pureMedia && …}`（`ChannelSection.tsx`）
+     ⇒ 找不到就整块不画。用户看得见渠道的勾，看不见纯净版的勾。
+  3. **还有两处在往里加**：`pruneSelectedMediaIds` 明确写着「保 `clean` 不被剪掉」；
+     Excel 导入（`consoleImport.ts`）在落勾选顺序时**无条件**把它塞到队首。
+  - 实测（dev 库 `%APPDATA%\tangbao` 只读直查）：全局 `['clean','baidu','vendor','toutiao','gdt']`；
+    项目树里 **54 个方向节点**的 `postprocess.selectedMediaIds` 全部以 `clean` 打头。
+- **改法**（方案 A，杰哥确认后实施）
+  - `clean` **退出产出维度**（不是「默认关但留着开关」）：`buildPostprocessOutputs` 入口过滤
+    + 删除 clean 单元分支；`taskPostprocess` 不再给纯净版单独开桶。
+  - 默认 `selectedMediaIds: []` —— 不预勾任何渠道。
+  - **两处归一化各剔一次，并各自 bump 版本号**：`postprocessMedia` v3 → v4、
+    `projectTreeParams` v2 → v3。节点级那份是各自落盘的，全局那次迁移清不到它；
+    不 bump 就是 R-63 家族 ——「改了代码但什么都没发生」。
+  - **产出记录的 `clean` 字段保留**：历史记录与任务卡还要靠它显示「纯净版」角标，新产出一律 `false`。
+  - 界面那栏删除；Excel 导入遇到旧包里的 `clean` 行**忽略**、导出不再单独特判。
+  - **不动磁盘上已经落盘的历史文件**。
+- **验收证据（2026-09-23）**
+  - `npx tsc -b` + `npx tsc -p electron/tsconfig.json --noEmit` **双端零错误**。
+  - 定向测试全绿：`storePostprocessMedia` / `lib/postprocessMedia` / `ConsolePostprocessSections` /
+    `consoleImport` / `consoleWorkbook` / `features/postprocess` / `features/projectTree` /
+    `lib/postprocessRunner`，**19 文件 273 用例**；含 4 条新守卫
+    （「历史的 clean 不产出，也不计入 `skippedMediaIds`」×2、「归一化剔掉 clean」、
+    「勾上 clean 也不再产出」）。
+  - 全量：**268 文件 3247 用例全绿**（5 分 32 秒，Node 24 直跑 vitest；`npx vitest` 会撞 vite.config 的
+    `MIN_NODE_MAJOR = 24` 守卫，跑法见 runbook §5）。
+  - **反向验证**（把修复改回旧行为，确认守卫真的会红）：产出计划入口过滤 → 2 条；
+    全局归一化 → 3 条；节点级归一化 → 1 条；`pruneSelectedMediaIds` 的 clean 特例 → 1 条。
+    合计精确命中 7 条，恢复后 192 用例复绿、`grep NV-PROBE` 无残留。
+  - 决策记 `docs/adr/0020-postprocess-drop-pure-media.md`。
+- **行为变更（发布时务必写进 `RELEASE.md`）**
+  - 升级后后处理**少一份产出**：不再有 `…-纯净版-…jpg`。这是本次的目的，需明说，否则会被当成产出坏了。
+  - **渠道产出的文件名与序号一个字不变**：`{seq}` 按文件夹各自计数，而文件夹名里带 `{media}` 段
+    （`postprocessRunner.ts`）⇒ 纯净版与渠道天然落在不同文件夹，各数各的。
+    唯一例外：把 `{media}` 从命名模板里删掉的人，两者同文件夹，序号会整体前移一位。
+  - 只剩 `clean` 的方向变成「一个渠道都不投」（**不**退回继承）—— 那更接近它当年的本意。
 
 ### TB-116 撤掉「启用范围」白名单 + 加「自动后处理」总开关（默认关）+ 删旧项目树
 

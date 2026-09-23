@@ -26,9 +26,11 @@ beforeEach(() => {
 })
 
 describe('默认配置', () => {
-  it('默认只勾纯净版，方向自动，纯净版自动伴随开启', () => {
+  it('默认一个渠道都不勾，方向自动', () => {
     const state = usePostprocessMediaStore.getState()
-    expect(state.selectedMediaIds).toEqual([PURE_MEDIA_ID])
+    // `clean`（当年的「纯净版」）已退出产出维度（ADR-0020）：默认不再预勾任何东西，
+    // 产出什么由用户在渠道表里自己勾。
+    expect(state.selectedMediaIds).toEqual([])
     expect(state.selectedCollectionIds).toEqual([])
     expect(state.direction).toBeNull()
     // 画面适配默认「裁剪填满」：与改动前写死在产出链路里的行为一致（默认改了就是改了所有人的产出）
@@ -143,11 +145,11 @@ describe('媒体表增删改', () => {
 
   it('删除媒体会同时清掉它的勾选，删不存在的媒体是 no-op', () => {
     const store = usePostprocessMediaStore.getState()
-    store.setSelectedMediaIds([PURE_MEDIA_ID, 'gdt', 'baidu'])
+    store.setSelectedMediaIds(['gdt', 'baidu'])
     store.deleteMedia('gdt')
     const state = usePostprocessMediaStore.getState()
     expect(state.media.map((item) => item.id)).toEqual(['baidu', 'vendor', 'toutiao'])
-    expect(state.selectedMediaIds).toEqual([PURE_MEDIA_ID, 'baidu'])
+    expect(state.selectedMediaIds).toEqual(['baidu'])
 
     const before = state.media
     usePostprocessMediaStore.getState().deleteMedia('gdt')
@@ -210,13 +212,13 @@ describe('媒体表增删改', () => {
   it('resetMedia 恢复内置表，并把自定义媒体的勾选清掉', () => {
     const store = usePostprocessMediaStore.getState()
     const customId = store.addMedia('小红书')!
-    usePostprocessMediaStore.getState().setSelectedMediaIds([PURE_MEDIA_ID, customId, 'gdt'])
+    usePostprocessMediaStore.getState().setSelectedMediaIds([customId, 'gdt'])
     usePostprocessMediaStore.getState().deleteMedia('baidu')
 
     usePostprocessMediaStore.getState().resetMedia()
     const state = usePostprocessMediaStore.getState()
     expect(state.media.map((item) => item.id)).toEqual(['gdt', 'baidu', 'vendor', 'toutiao'])
-    expect(state.selectedMediaIds).toEqual([PURE_MEDIA_ID, 'gdt'])
+    expect(state.selectedMediaIds).toEqual(['gdt'])
   })
 
   it('buildPostprocessMediaSizeId 与表内既有 id 规则一致', () => {
@@ -228,16 +230,16 @@ describe('选择与开关', () => {
   it('切换媒体勾选', () => {
     const store = usePostprocessMediaStore.getState()
     store.toggleSelectedMedia('gdt')
-    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([PURE_MEDIA_ID, 'gdt'])
+    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual(['gdt'])
     usePostprocessMediaStore.getState().toggleSelectedMedia('gdt')
-    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([PURE_MEDIA_ID])
+    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([])
     usePostprocessMediaStore.getState().toggleSelectedMedia('   ')
-    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([PURE_MEDIA_ID])
+    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual([])
   })
 
-  it('setSelectedMediaIds 去重、去空，并剔除不存在的媒体（clean 例外）', () => {
+  it('setSelectedMediaIds 去重、去空，并剔除不存在的媒体（含历史的 clean）', () => {
     usePostprocessMediaStore.getState().setSelectedMediaIds(['gdt', 'gdt', '', '  ', 'ghost', PURE_MEDIA_ID])
-    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual(['gdt', PURE_MEDIA_ID])
+    expect(usePostprocessMediaStore.getState().selectedMediaIds).toEqual(['gdt'])
   })
 
   it('切换项目勾选', () => {
@@ -314,20 +316,29 @@ describe('归一化（持久化与备份恢复共用）', () => {
         { id: 'on', name: '在用的', enabled: true, sizes: [] },
         { id: 'off', name: '停用过的', enabled: false, sizes: [] },
       ],
-      selectedMediaIds: [PURE_MEDIA_ID, 'on', 'off'],
+      selectedMediaIds: ['on', 'off'],
     })
 
     // 字段本身消失：留着它就是一个界面上看不见、却能把渠道整个杀掉的开关
     expect(normalized.media[1]).toEqual({ id: 'off', name: '停用过的', sizes: [] })
     expect('enabled' in normalized.media[1]).toBe(false)
     // 但它当时表达的「不产出」必须保住 —— 直接从勾选里去掉，而不是让渠道悄悄复活
-    expect(normalized.selectedMediaIds).toEqual([PURE_MEDIA_ID, 'on'])
+    expect(normalized.selectedMediaIds).toEqual(['on'])
+  })
+
+  it('⭐ 历史的 clean 在归一化时被剔掉（ADR-0020：它已退出产出维度）', () => {
+    // 实测：库里全局那份与 54 个方向节点都还挂着 `clean`，而它压根不在媒体表里 ——
+    // 不剔掉的话每次后处理都会多产一份谁都没勾过的「纯净版」。
+    expect(normalizePostprocessMediaConfig({ selectedMediaIds: [PURE_MEDIA_ID, 'gdt'] }).selectedMediaIds).toEqual([
+      'gdt',
+    ])
+    expect(normalizePostprocessMediaConfig({ selectedMediaIds: [PURE_MEDIA_ID] }).selectedMediaIds).toEqual([])
   })
 
   it('非法方向归 null，非法选择列表走默认值', () => {
     expect(normalizePostprocessMediaConfig({ direction: 'diagonal' }).direction).toBeNull()
     expect(normalizePostprocessMediaConfig({ selectedCollectionIds: 'x' }).selectedCollectionIds).toEqual([])
-    expect(normalizePostprocessMediaConfig({ selectedMediaIds: 'x' }).selectedMediaIds).toEqual([PURE_MEDIA_ID])
+    expect(normalizePostprocessMediaConfig({ selectedMediaIds: 'x' }).selectedMediaIds).toEqual([])
   })
 
   it('旧版单值 watermarkPresetId 迁移成数组（升级后不丢用户已配的水印）', () => {
@@ -363,7 +374,7 @@ describe('归一化（持久化与备份恢复共用）', () => {
     snapshot.selectedMediaIds.push('baidu')
     const state = usePostprocessMediaStore.getState()
     expect(state.media[0].name).toBe('广点通')
-    expect(state.selectedMediaIds).toEqual([PURE_MEDIA_ID])
+    expect(state.selectedMediaIds).toEqual([])
   })
 })
 
@@ -377,17 +388,23 @@ describe('产出计划', () => {
     expect(plan.skippedMediaIds).toEqual([])
   })
 
-  it('显式勾选纯净版时排在渠道之前产出', () => {
-    usePostprocessMediaStore.getState().setSelectedMediaIds(['gdt', PURE_MEDIA_ID])
+  it('⭐ 勾上历史的 clean 也不再产出纯净版（ADR-0020：这条产出路径整条拆掉）', () => {
+    // `setSelectedMediaIds` 会先把 clean 剪掉（它不在媒体表里），所以这里直接写 state，
+    // 模拟「旧备份 / 迁移没覆盖到」的真实形态，验证产出计划自己也不认它。
+    usePostprocessMediaStore.setState({ selectedMediaIds: [PURE_MEDIA_ID, 'gdt'] })
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })
-    expect(plan.units[0]).toMatchObject({ mediaId: PURE_MEDIA_ID, clean: true, maxSizeKb: 0, width: 1280, height: 720 })
-    expect(plan.units.slice(1).map((unit) => unit.sizeId)).toEqual(['gdt-1280x720'])
+    expect(plan.units.map((unit) => unit.mediaId)).toEqual(['gdt'])
+    expect(plan.units.every((unit) => unit.clean === false)).toBe(true)
+    // 刻意**不**把它计进 skippedMediaIds：它不是「勾了但被删掉的渠道」，
+    // 报一句「选中的媒体已被删除」只会让人去翻一个根本不存在的设置。
+    expect(plan.skippedMediaIds).toEqual([])
   })
 
-  it('只勾纯净版时不重复添加', () => {
+  it('只勾纯净版（历史的 clean）→ 一个单元都产不出来', () => {
+    usePostprocessMediaStore.setState({ selectedMediaIds: [PURE_MEDIA_ID] })
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 512, height: 512 })
-    expect(plan.units).toHaveLength(1)
-    expect(plan.units[0].sizeId).toBe('clean-512x512')
+    expect(plan.units).toEqual([])
+    expect(plan.skippedMediaIds).toEqual([])
   })
 
   it('选择里存在悬空媒体 id（如备份导入后）→ 计入 skippedMediaIds 交 UI 提示', () => {
@@ -396,7 +413,7 @@ describe('产出计划', () => {
     usePostprocessMediaStore.setState({ selectedMediaIds: ['ghost'] })
     const plan = selectPostprocessOutputPlan(usePostprocessMediaStore.getState(), { width: 1280, height: 720 })
     expect(plan.skippedMediaIds).toEqual(['ghost'])
-    // 没勾纯净版、也没有「自动伴随」了 ⇒ 一个单元都产不出来（这正是 skippedMediaIds 要提醒的事）
+    // 勾的东西一个都不存在 ⇒ 一个单元都产不出来（这正是 skippedMediaIds 要提醒的事）
     expect(plan.units).toEqual([])
   })
 
@@ -449,7 +466,7 @@ describe('产出计划的项目维度', () => {
       { collectionId: 'c1', line: '线一', product: '品一', direction: '' },
       { collectionId: 'c2', line: '线二', product: '品二', direction: '' },
     ])
-    // 每个项目只有勾选的 gdt 横版一份（纯净版不再自动伴随）
+    // 每个项目各出一份勾选的 gdt 横版
     expect(plan.units.map((unit) => unit.project?.collectionId)).toEqual(['c1', 'c2'])
     expect(plan.units.map((unit) => unit.mediaId)).toEqual(['gdt', 'gdt'])
   })

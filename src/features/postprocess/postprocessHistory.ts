@@ -54,7 +54,7 @@ export const POSTPROCESS_HISTORY_ISSUE_LIMIT = 10
 /**
  * 单条记录里保留的输出目录数。
  *
- * 一个方向下可能有多桶（纯净版桶 + 各渠道桶），每桶 1~2 个位置，所以目录数**可能大于 2**。
+ * 一个方向下按渠道拆成多个桶，每桶 1~2 个位置，所以目录数**可能大于 2**。
  * 8 是「够用且可控」的折中：真配到 8 个以上位置时，最先的那几个（= 主交付位置）已经在里面了。
  */
 export const POSTPROCESS_HISTORY_OUTPUT_DIR_LIMIT = 8

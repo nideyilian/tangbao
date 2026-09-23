@@ -22,7 +22,7 @@ import {
   findUnknownPostprocessNameTokens,
   validateNamePattern,
 } from '../../lib/postprocessNaming'
-import { PURE_MEDIA_ID, resolveOutputDirection } from '../../lib/postprocessMedia'
+import { resolveOutputDirection } from '../../lib/postprocessMedia'
 import { POSTPROCESS_OUTPUT_EXTENSION } from '../../lib/postprocessRunner'
 import {
   resolveNodeWatermarkBinding,
@@ -88,9 +88,9 @@ export default function PostprocessNamingFields() {
     [collections, globalConfig, params, scopeId, selectedMediaIds],
   )
 
-  /** 示例渠道：优先已在产出的（勾选里第一个非纯净版） */
+  /** 示例渠道：优先已在产出的（勾选里第一个） */
   const sampleMedia = useMemo(() => {
-    const selected = media.filter((item) => effectiveSelectedMediaIds.includes(item.id) && item.id !== PURE_MEDIA_ID)
+    const selected = media.filter((item) => effectiveSelectedMediaIds.includes(item.id))
     // 没有勾选的渠道时退回渠道表第一个：预览必须永远有值，否则模板看着像坏了
     return selected[0] ?? media[0]
   }, [effectiveSelectedMediaIds, media])

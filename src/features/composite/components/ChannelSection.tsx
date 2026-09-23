@@ -9,8 +9,11 @@
  * 合并前：渠道与尺寸 tab  → 渠道表 + 尺寸表 + 参与产出 + 纯净版
  *        输出位置 tab    → 按渠道的导出位置 + 文件命名 + 分发 + 产出预览
  * 合并后：渠道与输出 tab  → 一张表（渠道名 / 详细尺寸 / 参与产出 / 导出位置，双写占两行）
- *                          + 画面方向 + 画面适配 + 纯净版 + 文件命名 + 分发 + 产出预览
+ *                          + 画面方向 + 画面适配 + 文件命名 + 分发 + 产出预览
  * ```
+ *
+ * ⚠️ 「纯净版」那一栏在 2026-09-23 随产出路径一起拆掉了（ADR-0020），所以上面这张合并前的
+ * 图只是迁移史，不再对应现在的界面。
  *
  * 内容来源（合并时逐块搬的，不是重写）：
  * - 表格本体 `ConsoleMediaTables`（TB-060 做的，TB-093 加了导出位置列）；
@@ -31,11 +34,10 @@
  */
 
 import { useMemo } from 'react'
-import { Alert, Badge, Button, Checkbox, Inline, SectionHeader, SegmentedControl } from '../../../design-system'
+import { Alert, Badge, Button, Inline, SectionHeader, SegmentedControl } from '../../../design-system'
 import {
   DIRECTION_OPTIONS,
   FIT_MODE_OPTIONS,
-  PURE_MEDIA_ID,
   normalizeOutputDirList,
   resolvePostprocessOutputDirs,
   type PostprocessNodeOverride,
@@ -255,9 +257,6 @@ export function ChannelSection({ scope }: Props) {
     return { count, names }
   }, [collections, params, isGlobal, scope])
 
-  /** 纯净版不是渠道（不产渠道变体、也没有独立的导出位置），但同样是一个可勾选的产出项。 */
-  const pureMedia = media.find((item) => item.id === PURE_MEDIA_ID) ?? null
-
   const defaultDirLabel = outputDir.trim() || '本地保存目录下的 postprocess'
 
   return (
@@ -405,26 +404,9 @@ export function ChannelSection({ scope }: Props) {
           onPickError={() => showToast('选择导出位置失败，请重试', 'error')}
         />
 
-        {/* 纯净版单独一栏：它不是渠道（不产渠道变体），塞进渠道表会让「详细尺寸」那格对它失去意义；
-            它的导出位置也没有渠道级的说法，固定沿用默认输出位置。 */}
-        {pureMedia && (
-          <section
-            data-layout="console-pure-media"
-            className="mt-4 rounded-ds-lg border border-ds-border bg-ds-surface px-3 py-2 dark:border-ds-border dark:bg-ds-scrim"
-          >
-            <label className="flex cursor-pointer items-center gap-2">
-              <Checkbox
-                checked={effectiveSelectedMediaIds.includes(pureMedia.id)}
-                onChange={(next) => toggleSelected(pureMedia.id, next)}
-                aria-label={`${effectiveSelectedMediaIds.includes(pureMedia.id) ? '取消应用' : '应用'}纯净版`}
-              />
-              <span className="text-sm font-medium text-ds-text dark:text-ds-text">{pureMedia.name}</span>
-              <span className="text-xs text-ds-muted dark:text-ds-muted">
-                不产渠道变体，只产一份无水印原图；输出到默认输出位置
-              </span>
-            </label>
-          </section>
-        )}
+        {/* 原先这里是「纯净版」独一栏（它不是渠道、也没有渠道级导出位置，所以塞不进渠道表）。
+            该产出路径已整条拆掉（ADR-0020）：它产出的就是素材库里那张原图有损重编的一份，
+            而这一栏在媒体表里找不到对应行、本来就没渲染出来过 —— 界面上看不见的开关是最坏的一种。 */}
 
         {/*
          * 下面三节是**全局一套**的参数（命名 / 分发 / 产出预览），不随作用域切换而变。

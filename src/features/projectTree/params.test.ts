@@ -278,6 +278,18 @@ describe('normalizeProjectNodeParamsMap', () => {
     )
   })
 
+  it('⭐ 节点级的历史 clean 被剔掉；只剩它时变成「一个渠道都不投」（ADR-0020）', () => {
+    // 全局那份迁移清不到节点 —— 实测库里 54 个方向的 selectedMediaIds 全都以 `clean` 打头。
+    // 剔完若剩空数组，要保持 `[]`（= 明确不投）而不是退回 `undefined`：退回继承会凭空
+    // 继承出一堆渠道，产出反而暴增。
+    expect(
+      normalizeProjectNodeParamsMap({ node: { postprocess: { selectedMediaIds: ['clean', 'gdt'] } } }).node.postprocess,
+    ).toEqual({ selectedMediaIds: ['gdt'] })
+    expect(
+      normalizeProjectNodeParamsMap({ node: { postprocess: { selectedMediaIds: ['clean'] } } }).node.postprocess,
+    ).toEqual({ selectedMediaIds: [] })
+  })
+
   it('保留 null 语义（不带水印）与 enabled=false 语义', () => {
     const result = normalizeProjectNodeParamsMap({
       node: { postprocess: { watermarkPresetIds: [], enabled: false } },

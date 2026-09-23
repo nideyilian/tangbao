@@ -188,7 +188,7 @@ function coverSize(base: Size, target: Size): Size {
  * ## 这里**不**再补署名层（2026-09-23，TB-018 口径）
  *
  * 曾经：一个能出字的文字层都没有时，在左下角造一个独立文字层写标识符。
- * 它把「就是没有水印」（未绑预设 / 纯净版）和「有图标但没文字层」（TB-018 的纯图标水印）
+ * 它把「就是没有水印」（未绑预设）和「有图标但没文字层」（TB-018 的纯图标水印）
  * 当成同一件事 —— 前者本该什么都不画。收回的推导与它为什么长期不可见（1×1 基准画布导致的
  * 几何巧合）写在 `compositeIdentifier.ts` 头注。**别在这里加回兜底层。**
  */
@@ -395,12 +395,12 @@ export async function renderCompositeV2ToCanvas(
   const background = input.backgroundDataUrl ? await loadImage(input.backgroundDataUrl) : null
   if (options?.isStale?.()) return canvas
   /*
-   * 没有可见图层的预设（后处理的 `PLAIN_PRESET`、纯净版）**不造覆盖层**。
+   * 没有可见图层的预设（后处理的 `PLAIN_PRESET` —— 渠道一个水印都没绑）**不造覆盖层**。
    *
    * 空覆盖层是一张全透明的整尺寸画布，合成上去等于把目标尺寸整张重画一遍 —— 纯白工，
    * 而且每次还要先分配一张同尺寸 canvas（1280×720 = 3.7MB 位图）。
-   * 后处理里「纯净版 + 未绑水印的渠道」按实测占**一半**的产出量（每张源图 clean 与渠道各一），
-   * 所以这条短路省的不只是 1~3ms/变体，还有一半的覆盖层内存分配。
+   * 后处理里「没绑水印的渠道」按实测占相当一部分产出量，所以这条短路省的不只是 1~3ms/变体，
+   * 还有那些覆盖层的内存分配。
    */
   const hasOverlayContent = input.preset.layers.some((layer) => layer.visible)
   const overlay = hasOverlayContent ? await renderCombinedOverlay(input.preset, input.targetSize) : null

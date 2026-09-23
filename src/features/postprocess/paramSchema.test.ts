@@ -40,7 +40,7 @@ describe('paramSchema · 单一来源约束', () => {
 
 describe('paramSchema · 只描述方向级参数', () => {
   it('表里只有方向级可覆盖字段；全局独有参数一律不在（它们在中控台分区）', () => {
-    // 全局独有参数：渠道与尺寸、画面方向、命名模板、创作者、分发、纯净版伴随、产出预览。
+    // 全局独有参数：渠道与尺寸、画面方向、命名模板、创作者、分发、产出预览。
     // 它们一旦回到这张表，就又变成「同一参数两个入口」，那正是这次收窄要消除的重复。
     expect(selectParamFields().map((field) => field.control)).toEqual(['enabled', 'outputDir', 'watermarkBinding'])
   })

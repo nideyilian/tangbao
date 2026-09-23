@@ -5,7 +5,7 @@ import {
   shouldCompressPostprocessUnit,
   type PostprocessSourceImage,
 } from './postprocessRunner'
-import { PURE_MEDIA_ID, type PostprocessOutputUnit, type PostprocessProjectTarget } from './postprocessMedia'
+import { type PostprocessOutputUnit, type PostprocessProjectTarget } from './postprocessMedia'
 
 function makeUnit(patch: Partial<PostprocessOutputUnit> = {}): PostprocessOutputUnit {
   return {
@@ -118,20 +118,20 @@ describe('buildSourceVariantPlans', () => {
     expect(startSequences).toEqual({ '百度-1140x640': 5 })
   })
 
-  it('纯净版不限体积，不参与体积二分', () => {
-    const cleanUnit = makeUnit({
-      mediaId: PURE_MEDIA_ID,
-      mediaName: '纯净版',
+  it('不限体积的单元（maxSizeKb = 0）不参与体积二分', () => {
+    // 渠道自己就能配「不压缩」（`maxSizeKb: 0`），走的就是这条短路
+    const unlimitedUnit = makeUnit({
+      mediaId: 'gdt',
+      mediaName: '广点通',
       width: 2048,
       height: 1152,
       maxSizeKb: 0,
-      clean: true,
+      clean: false,
     })
-    const { plans } = buildSourceVariantPlans({ source, config: shortPattern, units: [cleanUnit] })
+    const { plans } = buildSourceVariantPlans({ source, config: shortPattern, units: [unlimitedUnit] })
 
     expect(plans).toHaveLength(1)
     expect(plans[0].compress).toBe(false)
-    expect(plans[0].unit.clean).toBe(true)
   })
 
   it('渠道单元按 maxSizeKb 标记为需要压缩', () => {
@@ -250,11 +250,11 @@ describe('多水印预设时的文件夹归属', () => {
     expect(plans.map((plan) => plan.fileName)).toEqual(['百度-1140x640-客户甲-1.jpg', '百度-1140x640-客户乙-1.jpg'])
   })
 
-  it('纯净版（不叠水印）的文件夹名照旧不含预设名', () => {
+  it('不叠水印的单元，文件夹名照旧不含预设名', () => {
     const { plans } = buildSourceVariantPlans({
       source,
       config: shortPattern,
-      units: [makeUnit({ clean: true, maxSizeKb: 0 }), makeUnit({ watermark: watermarks[0] })],
+      units: [makeUnit({ clean: false, maxSizeKb: 0 }), makeUnit({ watermark: watermarks[0] })],
     })
 
     expect(plans.map((plan) => plan.subFolders)).toEqual([['百度-1140x640'], ['百度-1140x640']])

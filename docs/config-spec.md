@@ -204,7 +204,9 @@ config.json
 | -------------------- | -------------- | ---- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `direction`          | string \| null | —    | `null`      | `landscape` / `portrait` / `square` / `null`。**`null` = 按源图尺寸自动判定**。                                                                                                                                                                                                                               |
 | `fitMode`            | string         | —    | `crop-fill` | `crop-fill` = 等比放大填满 + 裁边；`contain-blur` = 完整画面居中 + 四周补模糊底；`stretch` = 填满但比例被改变。<br>**全局一套，不参与节点继承**（做成方向级会让"为什么这张变形"要递归推理）。<br>未知值**必须回落默认值**，不能原样传下去 —— 渲染器遇到不认识的模式会中途抛错，整张产出作废且坏值会一直留着。 |
-| `autoCompanionClean` | boolean        | —    | `true`      | 勾了任一渠道时，额外多产一份无水印原图。                                                                                                                                                                                                                                                                      |
+
+> `autoCompanionClean`（勾了渠道就额外多产一份无水印原图）**字段已删**：TB-107 删掉「自动伴随」，
+> 2026-09-23 ADR-0020 把「纯净版」这条产出路径整条拆掉。旧配置里残留的 `clean` 勾选由归一化剔除。
 
 #### ⑦ 分发
 
@@ -390,13 +392,12 @@ defaults（全局默认）
 
     "watermarkPresetIds": [], // 全局默认不加水印，由各方向自己表态
 
-    "selectedMediaIds": ["clean"], // 默认只产纯净版
+    "selectedMediaIds": ["gdt"], // 参与产出的渠道（历史的 "clean" 已随 ADR-0020 移除）
     "selectedCollectionIds": ["line-home", "prod-vacuum", "dir-moon"],
     "savedTargetCollectionIds": ["dir-moon", "dir-sun"],
 
     "direction": null, // 按源图尺寸自动判定
     "fitMode": "crop-fill",
-    "autoCompanionClean": true,
 
     "distribution": { "enabled": false, "days": 1, "mode": "copy" /* … */ },
   },

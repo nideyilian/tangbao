@@ -238,7 +238,7 @@ export interface PostprocessIssue {
   /** 源图 id 与它在本次批次里的下标 */
   sourceImageId?: string
   sourceIndex?: number
-  /** 渠道（`PURE_MEDIA_ID` 表示纯净版） */
+  /** 渠道（媒体 id） */
   mediaId?: string
   mediaName?: string
   /** 涉及的目录（导出位置 / 子目录 / 分发目标） */

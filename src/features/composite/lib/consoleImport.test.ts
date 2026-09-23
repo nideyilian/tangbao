@@ -11,7 +11,6 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { PostprocessMedia } from '../../../lib/postprocessMedia'
-import { PURE_MEDIA_ID } from '../../../lib/postprocessMedia'
 import type { AssetCollection } from '../../../types'
 import { GLOBAL_NODE_ID } from '../../postprocess/paramSchema'
 import { buildConsoleSheets, writeConsoleWorkbook, type ConsoleSheetName } from './consoleWorkbook'
@@ -37,13 +36,13 @@ const COLLECTIONS: AssetCollection[] = [
   collection('direction-a', '竖版展示', 'line-a', 0),
 ]
 
+// 媒体表里没有「纯净版」（ADR-0020）：它不是渠道，也从来不在内置媒体表里
 const MEDIA: PostprocessMedia[] = [
   {
     id: 'gdt',
     name: '广点通',
     sizes: [{ id: 'gdt-1280x720', width: 1280, height: 720, maxSizeKb: 0, enabled: true }],
   },
-  { id: PURE_MEDIA_ID, name: '纯净版', sizes: [] },
 ]
 
 function makeContext(overrides: Partial<ConsoleImportContext> = {}): ConsoleImportContext {
@@ -261,7 +260,7 @@ describe('applyConsoleImport', () => {
     expect(actions.addMediaSize).toHaveBeenCalled()
   })
 
-  it('产出顺序按 appliedIndex 排，且纯净版始终保留', async () => {
+  it('产出顺序按 appliedIndex 排', async () => {
     const channels = table(
       'channels',
       ['id', 'name', 'applied', 'appliedIndex', 'enabled'],
@@ -273,7 +272,8 @@ describe('applyConsoleImport', () => {
     const plan = planConsoleImport(tablesOf(['channels', channels]), makeContext())
     const actions = makeActions()
     await applyConsoleImport(plan, actions, makeContext())
-    expect(actions.setSelectedMediaIds).toHaveBeenCalledWith([PURE_MEDIA_ID, 'baidu', 'gdt'])
+    // 导入只认表里勾了什么：原先这里会无条件把 `clean` 塞到队首，等于「导入一次就把纯净版打开」
+    expect(actions.setSelectedMediaIds).toHaveBeenCalledWith(['baidu', 'gdt'])
   })
 
   it('⭐ 旧包的「启用 = 否」折成「不参与产出」，并在导入报告里说清（ADR-0013）', async () => {
@@ -291,7 +291,7 @@ describe('applyConsoleImport', () => {
     const actions = makeActions()
     await applyConsoleImport(plan, actions, makeContext())
 
-    expect(actions.setSelectedMediaIds).toHaveBeenCalledWith([PURE_MEDIA_ID, 'baidu'])
+    expect(actions.setSelectedMediaIds).toHaveBeenCalledWith(['baidu'])
     // 而且要**说出来**：用户看到的是「这个渠道没被勾上」，不解释就像导入漏了东西
     const report = formatImportPlan(plan)
     expect(report).toContain('启用 = 否')
@@ -323,7 +323,7 @@ describe('往返：导出的工作簿能被导入解析回同样的数据', () =
     const input = {
       globalConfig: {
         media: MEDIA,
-        selectedMediaIds: [PURE_MEDIA_ID, 'gdt'],
+        selectedMediaIds: ['gdt'],
         selectedCollectionIds: ['direction-a'],
         savedTargetCollectionIds: [],
         direction: null,
@@ -333,7 +333,6 @@ describe('往返：导出的工作簿能被导入解析回同样的数据', () =
         namePattern: '{date}',
         creator: '小王',
         watermarkPresetIds: ['preset-a'],
-        autoCompanionClean: true,
         distribution: {
           enabled: false,
           startDate: '',
