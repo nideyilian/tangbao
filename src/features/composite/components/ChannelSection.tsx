@@ -52,6 +52,7 @@ import { isGlobalScope, type ConsoleScope } from '../lib/controlConsoleSections'
 import { ConsoleMediaTables } from './ConsoleMediaTables'
 import { DistributionSection } from './DistributionSection'
 import PostprocessOutputPreview from './PostprocessOutputPreview'
+import PostprocessHistoryList from '../../postprocess/PostprocessHistoryList'
 
 interface Props {
   /** 当前作用域：`GLOBAL_NODE_ID`（全局基线）或某个方向节点 id，由左侧树驱动 */
@@ -89,6 +90,13 @@ export function ChannelSection({ scope }: Props) {
   const showToast = useStore((state) => state.showToast)
 
   const isGlobal = isGlobalScope(scope)
+  /**
+   * 历史产出块只看**当前作用域**那个方向；全局作用域传 `undefined`（= 全部方向）。
+   *
+   * 用 `useMemo` 是为了给子组件一个**稳定引用**：内联写 `[scope]` 每次渲染都是新数组，
+   * 会让子组件的 `useMemo` 每次都重算（历史列表不便宜）。
+   */
+  const historyDirectionIds = useMemo(() => (isGlobal ? undefined : [scope]), [isGlobal, scope])
   const override = isGlobal ? undefined : params[scope]?.postprocess
   const scopeNode = useMemo(
     () => (isGlobal ? undefined : collections.find((item) => item.id === scope)),
@@ -443,6 +451,25 @@ export function ChannelSection({ scope }: Props) {
 
         <div className="mt-5 border-t border-ds-border pt-4">
           <PostprocessOutputPreview scope={scope} />
+        </div>
+
+        {/*
+          历史产出（TB-115）：**跟着作用域走** —— 左边树点哪个方向，这里就是哪个方向的历史。
+          与上面「产出预览」配成事前 / 事后一对：预览回答「再跑会出什么」，这里回答「上次实际出了什么、
+          写到哪了」。与素材库那个「后处理进度」面板不重复：那边一屏看全部方向，这边只看手上这个。
+        */}
+        <div className="mt-5 border-t border-ds-border pt-4">
+          <SectionHeader
+            title="历史产出"
+            description={
+              isGlobal
+                ? '全部方向的历史：每次产到哪几个方向、写到哪些目录、有没有出错。长期保留，重启后仍在。'
+                : '这个方向的历史：每次产到哪几个方向、写到哪些目录、有没有出错。长期保留；每条都能直接打开产出所在位置。'
+            }
+          />
+          <div className="mt-3">
+            <PostprocessHistoryList directionIds={historyDirectionIds} />
+          </div>
         </div>
       </div>
     </div>

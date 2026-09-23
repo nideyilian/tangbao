@@ -29,6 +29,7 @@ import type { PostprocessMediaConfig } from './lib/postprocessMedia'
 // 与 composite 侧的循环初始化冲突（store.test.ts 曾因此拿到 undefined 的 useCompositeV2Store）。
 import type { TaskPostprocessResult, TaskPostprocessSource } from './features/postprocess/taskPostprocess'
 import {
+  POSTPROCESS_CANCEL_CODE,
   createPostprocessIssue,
   describePostprocessIssueCode,
   formatPostprocessIssue,
@@ -45,6 +46,19 @@ import {
   acquirePostprocessDirection,
   releasePostprocessDirection,
 } from './features/postprocess/postprocessDirectionGate'
+// 取消（TB-115）：句柄按方向登记在这里，界面点「取消」时按方向打过来。
+// 只能放在编排层 —— 它必须与并发闸的「拿到名额 → 跑完释放」同生命周期（见 runDirection）。
+import {
+  isPostprocessCanceledError,
+  registerPostprocessCancel,
+  releasePostprocessCancel,
+} from './features/postprocess/postprocessCancel'
+import {
+  appendPostprocessHistoryEntry,
+  createPostprocessHistoryId,
+  getPostprocessHistoryState,
+} from './storePostprocessHistory'
+import { collectHistoryOutputDirs, createHistoryEntryFromRun } from './features/postprocess/postprocessHistory'
 import { resolvePostprocessProjectTargets } from './lib/postprocessProjectTree'
 import {
   DEFAULT_CONTROL_CONSOLE_SECTION,
@@ -293,6 +307,7 @@ import {
   getLocalImageSaveDirectory,
   getLocalImageSaveDirectoryForSegments,
   getExplicitImageSaveDirectory,
+  authorizeOutputDirectory,
   getDirectoryBaseName,
   readDirectory,
   joinPath,
@@ -1037,6 +1052,7 @@ function resolvePostprocessDirectionConcurrency(): number {
 function emptyPostprocessResult(): TaskPostprocessResult {
   return {
     outputs: [],
+    outputDirs: [],
     skippedMediaIds: [],
     issues: [],
     pendingDistribution: [],
@@ -1116,6 +1132,52 @@ function recordPostprocessPrepareCrash(input: {
     producedFiles: 0,
   })
   return { ...emptyPostprocessResult(), issues, warnings: issuesToWarnings(issues) }
+}
+
+/**
+ * 把一条已收尾的 run 落到**方向级历史**里（TB-115）。
+ *
+ * 为什么在收尾**之后**再读一次 run：`finishPostprocessRun` 已经把状态、问题、耗时、产出数
+ * 全部写进了记录，历史要存的就是那份**终态快照** —— 拿参数另拼一份，两处必然分叉
+ * （状态判定一改、这边没跟上，历史里就会出现「显示成功、实际失败」这类谎报）。
+ *
+ * 读不到 run（已被会话内 60 条上限挤掉、或已被用户清掉）时静默跳过：历史只是留档，
+ * 不该因为一条内存记录不在了就中断收尾流程。
+ */
+function recordDirectionPostprocessHistory(input: {
+  runId: string
+  targetDirectionIds: string[]
+  /** 本次实际写入的目录；不传则取 run 上进度里累积的那些 */
+  outputDirs?: string[]
+}): void {
+  const run = getPostprocessRun(input.runId)
+  if (!run) return
+  const entry = createHistoryEntryFromRun(run, {
+    id: createPostprocessHistoryId(),
+    targetDirectionIds: input.targetDirectionIds,
+    outputDirs: input.outputDirs ?? run.outputDirs ?? [],
+  })
+  if (entry) appendPostprocessHistoryEntry(entry)
+}
+
+/**
+ * 把历史记录里出现过的输出目录逐个重新放行（启动时调用，见 `initStore` 的第一句）。
+ *
+ * 逐条 fire-and-forget、单条失败即跳过：这是启动期的补齐动作，任何一个目录不可达
+ * （共享盘没挂上、目录被手删）都不该拖住启动，更不该弹错 —— 真正需要它的那一刻
+ * （用户点「打开输出位置」）主进程自己会给出可读的结果。
+ */
+async function authorizeHistoryOutputDirs(): Promise<void> {
+  // 上限是防御性的：理论上历史里不会攒出几百个目录，但一条被外部改坏的记录
+  // 不该让启动时发出去几百次 IPC
+  const dirs = collectHistoryOutputDirs(getPostprocessHistoryState()).slice(0, 200)
+  for (const dir of dirs) {
+    try {
+      await authorizeOutputDirectory(dir)
+    } catch {
+      // 放行失败不是错误：只说明这个目录现在用不了，其它目录照常
+    }
+  }
 }
 
 /**
@@ -1289,6 +1351,13 @@ async function executePostprocessImageIds(
       queued: true,
     })
 
+    /**
+     * 登记取消句柄（TB-115）。**必须早于 `acquire`**：排队中的方向也要能取消 ——
+     * 否则用户点了「取消」，界面还得挂着「排队中」几十秒（要等它拿到名额那一刻才发现自己该停），
+     * 而这段时间里他不知道自己在等什么。
+     */
+    const signal = registerPostprocessCancel(directionId)
+
     let acquired = false
     try {
       /**
@@ -1301,7 +1370,8 @@ async function executePostprocessImageIds(
        */
       acquired = useRuntimeStore.getState().tryAdmitPostprocessDirection(directionId, maxConcurrent)
       if (!acquired) {
-        await acquirePostprocessDirection(directionId, maxConcurrent)
+        // 排队等待期间也响应取消（TB-115）：`acquire` 里 race 了 abort 源，abort 立刻抛取消错误
+        await acquirePostprocessDirection(directionId, maxConcurrent, signal)
         acquired = true
       }
       useRuntimeStore.getState().markPostprocessRunStarted(runId)
@@ -1323,6 +1393,8 @@ async function executePostprocessImageIds(
         createdAt,
         // 来源决定方向级「自动后处理」开关是否生效（手动跑不该被它拦）——见执行体的 `source` 注释
         source: options.source,
+        // 取消信号（TB-115）：执行体在每个可中断点查它，已取消就抛专属的取消错误
+        signal,
         readSource,
         // 进度上报：绝对值补丁，直接落到**这个方向**的运行记录上（界面订阅它显示「3/12」）
         onProgress: (patch) => useRuntimeStore.getState().updatePostprocessRun(runId, patch),
@@ -1332,25 +1404,47 @@ async function executePostprocessImageIds(
         producedFiles: result.outputs.length,
         diagnostics: result.diagnostics,
       })
+      // 收尾之后落一条方向级历史（TB-115）：实时进度归 runtimeStore（内存态），长期留档归
+      // 历史 store（落盘）—— 同一份数据的两个生命周期，而不是两处各自记账
+      recordDirectionPostprocessHistory({
+        runId,
+        targetDirectionIds: [directionId],
+        outputDirs: result.outputDirs,
+      })
       return result
     } catch (error) {
-      // 异常必须走「可上报结果」而不是抛出去：调用方是 `void x()`（fire-and-forget），
-      // 抛出去只会变成一条没人看见的未处理 rejection —— 这正是「点了没反应」的来源之一。
-      // 而且这里吞掉异常还保证**别的方向不受牵连**（并发闸的释放走 finally）。
-      console.error('后处理产出失败', directionId, error)
-      const issues = [createPostprocessIssue({ code: 'PP-CRASH-001', stage: 'prepare', cause: messageOfError(error) })]
-      // 产出数**沿用进度里已经写下的值**，不写 0：异常可能发生在已经写出若干文件之后
-      // （某次 IPC 掉链子、目录授权被拒），磁盘上产物是齐的，写 0 会让记录谎报
+      /**
+       * 取消**不是**崩溃（TB-115）：走专属码，也不往 console 打「后处理产出失败」。
+       *
+       * 不分开的话，用户点「取消」会得到一条 `PP-CRASH-001`（「出现未预期的错误，这一批没有跑完」）
+       * —— 而他明明是主动停的，产物也好好地留在磁盘上。
+       */
+      const canceled = isPostprocessCanceledError(error)
+      if (!canceled) console.error('后处理产出失败', directionId, error)
+      const issues = [
+        canceled
+          ? createPostprocessIssue({ code: POSTPROCESS_CANCEL_CODE, stage: 'finish' })
+          : createPostprocessIssue({ code: 'PP-CRASH-001', stage: 'prepare', cause: messageOfError(error) }),
+      ]
+      // 产出数**沿用进度里已经写下的值**，不写 0：中断可能发生在已经写出若干文件之后
+      // （某次 IPC 掉链子、目录授权被拒、用户按了取消），磁盘上产物是齐的，写 0 会让记录谎报
       // 「失败：没有产出文件」—— 又是一条「显示失败、实际成功」（2026-09-21 排查）。
       const interrupted = getPostprocessRun(runId)
       useRuntimeStore.getState().finishPostprocessRun(runId, {
         issues,
         producedFiles: interrupted?.producedFiles ?? 0,
       })
+      // 中断（含取消）同样要留档：那一刻「已经产出的那几张在哪」正是用户最想知道的事，
+      // 而目录只能从进度里累积的那份拿 —— 执行体是抛出去的，收尾结果根本没返回
+      recordDirectionPostprocessHistory({ runId, targetDirectionIds: [directionId] })
       return { ...emptyPostprocessResult(), issues, warnings: issuesToWarnings(issues) }
     } finally {
       // 名额必须成对释放：漏掉会让别的方向**永远**排不上队，且只表现为「一直在排队」
       if (acquired) releasePostprocessDirection(directionId)
+      // 取消句柄同样成对释放：漏掉会让**下一次**触发的「取消」打到一条已经跑完的 run 上
+      // （用户点了毫无反应，其实按错了对象）。传 signal 是为了核对身份 ——
+      // 同一方向连续两次触发时，先收尾的那一次不该把后一次的句柄删掉。
+      releasePostprocessCancel(directionId, signal)
     }
   }
 
@@ -5651,6 +5745,21 @@ export async function retryGeneratedAssetLibraryMigration(
 
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore(options: { safeMode?: boolean } = {}) {
+  /**
+   * 重新放行历史记录里出现过的输出目录（TB-115）。放在**最前面**：用户一进界面就可能去点
+   * 历史记录上的「打开输出位置」，那时白名单必须已经补齐。
+   *
+   * 修的是一个**只在重启后才暴露**的坑：主进程路径白名单里的 `sessionAllowedRoots` 是内存 Set、
+   * 重启即清空；`localSavePath` / `configSyncPath` 两条会从本地设置读回来，而后处理的自定义
+   * 输出目录（多半是内网共享盘）**不属于这两条** —— 产出那一次靠
+   * `composite:authorize-output-directory` 放行，重启后就再没人放行它了。于是历史记录上那个
+   * 按钮会被 `assertAllowedPath` 拒掉，用户看到的是「昨天还能打开，今天点不动了」。
+   *
+   * 刻意**不**放行「配置里写的目录」而是「历史里真的写出过文件的目录」：后者是可信来源
+   * （用户亲自配过、产出确实落在那里），前者可能只是一条手滑打错的路径。
+   */
+  if (!options.safeMode) void authorizeHistoryOutputDirs()
+
   const legacyAgentConversations = normalizeAgentConversations(useStore.getState().agentConversations)
   const storedTasks = await loadTasksIncrementally((task) => getPersistableTask(normalizeTaskRecordFields(task)))
   const storedAgentConversations = normalizeAgentConversations(await getAllAgentConversations())

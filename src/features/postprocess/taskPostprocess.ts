@@ -38,6 +38,7 @@ import { mergePromotedGlobals, useProjectTreeParamsStore } from '../projectTree/
 import type { ProjectNodeParamsMap } from '../projectTree/types'
 import { renderOnce, renderWithMaxKb, type RenderVariantOutcome } from './renderVariant'
 import { resolveBucketOutputRoots } from './outputRoots'
+import { isPostprocessCanceledError, throwIfPostprocessCanceled } from './postprocessCancel'
 import { createOutputRootResolver } from './outputRootResolver'
 import {
   createPostprocessIssue,
@@ -121,6 +122,14 @@ export interface RunTaskPostprocessInput {
    * TB-107 刚定的口径）。所以**产出并行、分发收敛成一次**：批次层收齐各方向的待分发项后统一执行。
    */
   deferDistribution?: boolean
+  /**
+   * 取消信号（TB-115）。已取消就在下一个可中断点抛出 `PostprocessCanceledError` ——
+   * 刻意**不是**「返回一份空结果」：调用方要能把「用户取消」与「本来就没产出」分开
+   * （前者状态记「已取消」、不报错；后者是配置问题，要报出来让人去查）。
+   *
+   * 抛出时**已写出的文件一律保留** —— 这里不删任何东西，产物是用户要的。
+   */
+  signal?: AbortSignal
   /** 取源图像素数据；返回 null 表示这张图不可用（跳过并记 warning） */
   readSource: (imageId: string, index: number) => Promise<TaskPostprocessSource | null>
   /**
@@ -163,6 +172,14 @@ export interface TaskPostprocessResult {
    */
   warnings: string[]
   /**
+   * 本次**实际写入**的输出目录（去重保序，第一个是主位置）。
+   *
+   * 为什么不从 `outputs[].path` 现推：产出记录只登记双写的**第一个**位置（见写盘循环里的注释），
+   * 而「这次写到哪几个目录」正是历史记录上那个「打开输出位置」按钮要回答的问题。
+   * 另外，一条**零产出**的记录（整批被跳过）也能说清「本该写到哪」—— 那同样是排查线索。
+   */
+  outputDirs: string[]
+  /**
    * 本次的耗时构成（绘制 / 编码 / 编码轮数 / 写盘）。
    *
    * 存在的理由：这条链的耗时**差异极大**（实测单变体 168ms ~ 1312ms，慢的是「每张图都走满
@@ -175,12 +192,13 @@ export interface TaskPostprocessResult {
 /** 执行过程中的累加器：问题先以结构化形式收着，返回前统一派生 `warnings`。 */
 type PostprocessAccumulator = Pick<
   TaskPostprocessResult,
-  'outputs' | 'skippedMediaIds' | 'issues' | 'pendingDistribution' | 'diagnostics'
+  'outputs' | 'outputDirs' | 'skippedMediaIds' | 'issues' | 'pendingDistribution' | 'diagnostics'
 >
 
 function emptyAccumulator(): PostprocessAccumulator {
   return {
     outputs: [],
+    outputDirs: [],
     skippedMediaIds: [],
     issues: [],
     pendingDistribution: [],
@@ -300,6 +318,9 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   >()
 
   for (let index = 0; index < input.imageIds.length; index += 1) {
+    // 每张图开跑前查一次取消：取消发生在「两张图之间」时立刻收工，而不是把剩下几十张跑完
+    // （那正是用户按停止要避免的事）。渲染途中那个更细的可中断点在 `paintAndEncode` 里。
+    throwIfPostprocessCanceled(input.signal)
     const imageId = input.imageIds[index]
     // 每张图开跑先报一次：`completedImages` 取下标——每轮恰好处理一张（产出或跳过），
     // 所以「已完成」不需要另设计数器，也不会与真实的处理顺序脱节。
@@ -489,6 +510,9 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
       })
 
       for (let planIndex = 0; planIndex < plans.length; planIndex += 1) {
+        // 每个产出单元开跑前再查一次：一张源图能展开出几十个变体，只在「两张图之间」查
+        // 会让取消延迟到下一个源图才有反应（体感上就是「点了没动静」）
+        throwIfPostprocessCanceled(input.signal)
         const plan = plans[planIndex]
         // 每个单元自带自己的水印预设；纯净版与「未选预设」的单元是 null（不叠水印）
         const planPreset = plan.unit.watermark ? (bucketPresets.get(plan.unit.watermark.id) ?? null) : null
@@ -497,12 +521,15 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
           dirCache,
           sourceImageId: imageId,
           sourceIndex: index,
+          signal: input.signal,
         })
         producedFiles += written.length
         reportProgress({
           imageUnits: plans.length,
           imageUnitsDone: planIndex + 1,
           producedFiles,
+          // 目录跟着进度走，中途被取消 / 崩溃时上层才拿得到「已经产出的那几张在哪」
+          outputDirs: [...result.outputDirs],
           currentLabel: `${plan.unit.clean ? '纯净版' : plan.unit.mediaName} ${plan.unit.width}x${plan.unit.height} · ${plan.fileName}`,
         })
         if (written.length === 0) continue
@@ -680,6 +707,8 @@ interface WriteVariantContext {
   /** 定位线索：出问题时用户要靠「哪张源图的哪个文件」去查 */
   sourceImageId: string
   sourceIndex: number
+  /** 取消信号：渲染途中（编码轮之间）的中断点靠它，见 `renderVariant` */
+  signal?: AbortSignal
 }
 
 /**
@@ -710,8 +739,16 @@ async function writeVariant(
 
   let rendered: RenderVariantOutcome
   try {
-    rendered = await renderVariant(sourceDataUrl, plan, preset, fitMode)
+    rendered = await renderVariant(sourceDataUrl, plan, preset, fitMode, ctx.signal)
   } catch (error) {
+    /**
+     * 取消**不是**渲染失败 —— 往上抛给主循环（它记 `PP-CANCEL-001` 并收尾）。
+     *
+     * 早先这里一律记 `PP-RENDER-001`，于是用户点了「取消」会在记录里得到一条
+     * 「渲染失败，多半是这套水印里的图片 / LOGO 素材失效了」—— 而产物好好地留在磁盘上，
+     * 他只会拿这句话去白查一遍水印。
+     */
+    if (isPostprocessCanceledError(error)) throw error
     // 渲染抛异常：以前这里只留一条「全部导出位置写入失败」，真因（异常本身）只在 console 里。
     reportIssue(ctx.acc, { code: 'PP-RENDER-001', stage: 'render', ...locator, cause: messageOf(error) })
     console.error('后处理产出失败', plan.fileName, error)
@@ -744,6 +781,9 @@ async function writeVariant(
     }
     fileName = filePath.split(/[\\/]/).pop() ?? fileName
     written.push({ path: filePath, root })
+    // 登记这个目录（去重保序）：历史记录上的「打开输出位置」按钮、以及「重启后重新放行
+    // 这些目录」两件事都靠它。放在写成功**之后** —— 写都没写成的目录不该进历史。
+    if (!ctx.acc.outputDirs.includes(root)) ctx.acc.outputDirs.push(root)
   }
   ctx.acc.diagnostics.writeMs += performance.now() - writeStart
   return written
@@ -764,6 +804,7 @@ async function renderVariant(
   plan: PostprocessVariantPlan,
   preset: CompositeV2Preset | null,
   fitMode: CompositeV2FitMode,
+  signal?: AbortSignal,
 ): Promise<RenderVariantOutcome> {
   const renderInput = {
     backgroundDataUrl: sourceDataUrl,
@@ -771,10 +812,16 @@ async function renderVariant(
     targetSize: { width: plan.unit.width, height: plan.unit.height },
     fitMode,
   }
+  /**
+   * 取消探针交给渲染链。编码一轮实测 ≈127ms、一张图最多三枪，不在这一层给出中断点的话，
+   * 「取消」的粒度会粗到「整张图」—— 体感就是「点了停止，它还在编」。
+   * `paintAndEncode` 会在绘制前与**每次编码前**各查一次。
+   */
+  const options = { shouldCancel: () => signal?.aborted === true }
   if (!plan.compress) {
-    return await renderOnce(renderInput, UNLIMITED_QUALITY)
+    return await renderOnce(renderInput, UNLIMITED_QUALITY, options)
   }
-  return await renderWithMaxKb(renderInput, plan.unit.maxSizeKb)
+  return await renderWithMaxKb(renderInput, plan.unit.maxSizeKb, options)
 }
 
 /**

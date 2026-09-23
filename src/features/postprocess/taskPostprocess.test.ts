@@ -19,10 +19,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_POSTPROCESS_DISTRIBUTION } from '../../lib/postprocessDistribution'
 import { DEFAULT_POSTPROCESS_MEDIA } from '../../lib/postprocessMedia'
-import { usePostprocessMediaStore } from '../../storePostprocessMedia'
+import { createDefaultPostprocessMedia, usePostprocessMediaStore } from '../../storePostprocessMedia'
 import type { AssetCollection } from '../../types'
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
 import type { ProjectNodeParamsMap } from '../projectTree/types'
+import { PostprocessCanceledError } from './postprocessCancel'
 import { runTaskPostprocess, mergePendingPostprocessDistribution } from './taskPostprocess'
 
 /**
@@ -434,5 +435,145 @@ describe('目录链缓存与耗时诊断', () => {
     expect(result.diagnostics.encodeCount).toBe(2)
     expect(result.diagnostics.paintMs).toBeCloseTo(MOCK_STATS.paintMs * 2)
     expect(result.diagnostics.encodeMs).toBeCloseTo(MOCK_STATS.encodeMs * 2)
+  })
+})
+
+/**
+ * 取消导出（TB-115）。
+ *
+ * 守两件事：
+ * ① 取消要在**可中断点**上真的断掉（主循环里每张源图、每个产出变体各查一次），
+ *    而不是把整批跑完再回头看 flag；
+ * ② 断掉时抛的是**专属取消错误**，不是 `PP-RENDER-001` / `PP-CRASH-001` ——
+ *    后者会让「我自己按的停止」在记录里变成一条看起来像故障的记录。
+ *
+ * 「已写出的文件不回收」在实现里就是「什么都不做」，所以这里用**第一张的产出照写**来钉住它：
+ * 产物是用户要的东西，停在哪里就留到哪里，替用户删是最不可逆的一种「帮忙」。
+ */
+describe('取消导出：在可中断点断掉，且不误报成失败', () => {
+  function stubCancelApi() {
+    const saveBytes = vi.fn(async (_filePath: string, _bytes: Uint8Array) => true)
+    vi.stubGlobal('window', {
+      electronAPI: {
+        isElectron: true,
+        getLocalSavePath: vi.fn(async () => 'D:\\LocalSaves'),
+        pathJoin: vi.fn(async (base: string, name: string) => `${base}\\${name}`),
+        ensureDir: vi.fn(async () => true),
+        authorizeCompositeOutputDirectory: vi.fn(async () => true),
+        checkExists: vi.fn(async () => false),
+        saveCompositeImageBytes: saveBytes,
+        saveCompositeImage: vi.fn(async () => true),
+      },
+    })
+    return { saveBytes }
+  }
+
+  /**
+   * `read` 的签名写成**两个参数**（而不是 `typeof readSource`）。
+   *
+   * `readSource` 是单参数函数，它的类型窄；而执行体会按两参数调用。拿窄类型当入口类型，
+   * 传不进「要看下标」的实现（取消用例正需要按第几张图来决定何时 abort）。
+   */
+  function runWithSignal(
+    imageIds: string[],
+    signal: AbortSignal,
+    read: (imageId: string, index: number) => ReturnType<typeof readSource>,
+  ) {
+    return runTaskPostprocess({
+      taskId: 'task-cancel',
+      imageIds,
+      collections: [DIRECTION],
+      projectParams: {},
+      resolveImageCollectionId: () => 'direction-a',
+      readSource: read,
+      source: 'manual',
+      signal,
+    })
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+    usePostprocessMediaStore.setState({
+      media: createDefaultPostprocessMedia(),
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: ['direction-a'],
+      outputDir: '',
+      mediaOutputDirs: {},
+      watermarkPresetIds: [],
+      savedTargetCollectionIds: [],
+    })
+  })
+
+  it('⭐ 开工前就已取消：一个文件都不写，抛的是专属取消错误', async () => {
+    const { saveBytes } = stubCancelApi()
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(runWithSignal(['image-a'], controller.signal, readSource)).rejects.toBeInstanceOf(
+      PostprocessCanceledError,
+    )
+
+    expect(saveBytes).not.toHaveBeenCalled()
+  })
+
+  it('⭐ 第二张图之前取消：第一张的产出**留在磁盘上**，然后抛取消（不删文件）', async () => {
+    const { saveBytes } = stubCancelApi()
+    const controller = new AbortController()
+    /**
+     * 用 `readSource` 当钩子：它是主循环里每张图必经的一步，在第 2 张（index=1）时触发取消。
+     * 于是「第一张已产出、第二张还没开工」这个时刻被精确构造出来。
+     */
+    const cancelOnSecondImage = async (imageId: string, index: number) => {
+      if (index === 1) controller.abort()
+      return await readSource(imageId)
+    }
+
+    await expect(runWithSignal(['image-a', 'image-b'], controller.signal, cancelOnSecondImage)).rejects.toBeInstanceOf(
+      PostprocessCanceledError,
+    )
+
+    // 第一张（2 个渠道尺寸变体）已经写出去了；取消**不回收**它们
+    expect(saveBytes).toHaveBeenCalledTimes(2)
+  })
+
+  it('没有 signal 时行为不变（单测与脚本仍可不关心取消）', async () => {
+    const { saveBytes } = stubCancelApi()
+
+    const result = await runWithSignal(['image-a'], new AbortController().signal, readSource)
+
+    expect(result.outputs).toHaveLength(2)
+    expect(saveBytes).toHaveBeenCalledTimes(2)
+    // 新字段：写成功的目录被记下来了（历史记录上的「打开输出位置」靠它）
+    expect(result.outputDirs).toEqual(['D:\\LocalSaves\\postprocess'])
+  })
+
+  /**
+   * ⭐ 取消与真失败必须分开（探针 + 对照两条）。
+   *
+   * 渲染链在编码途中被取消时抛的是取消错误，它必须**穿透**到上层；若写成一律记
+   * `PP-RENDER-001`，用户点了取消会得到一条「渲染失败，多半是这套水印里的图片 / LOGO 素材失效了」
+   * —— 而产物好好地留在磁盘上，他只会拿这句话去白查一遍水印。
+   */
+  it('⭐ 渲染链抛取消错误 → 穿透到上层（不记成渲染失败）', async () => {
+    stubCancelApi()
+    const { renderWithMaxKb } = await import('./renderVariant')
+    vi.mocked(renderWithMaxKb).mockRejectedValueOnce(new PostprocessCanceledError())
+
+    await expect(runWithSignal(['image-a'], new AbortController().signal, readSource)).rejects.toBeInstanceOf(
+      PostprocessCanceledError,
+    )
+  })
+
+  it('对照：渲染链抛**普通**错误 → 记 PP-RENDER-001 并正常返回（证明上面那条不是「一律抛出」）', async () => {
+    stubCancelApi()
+    const { renderWithMaxKb } = await import('./renderVariant')
+    vi.mocked(renderWithMaxKb).mockRejectedValueOnce(new Error('水印素材失效'))
+
+    const result = await runWithSignal(['image-a'], new AbortController().signal, readSource)
+
+    // 第一个变体失败（普通错误 → 记 PP-RENDER-001），第二个照常产出 ——
+    // 与上一条的关键区别是：它**没有把错误穿透出去**，而是留在了结果的问题清单里
+    expect(result.issues.map((issue) => issue.code)).toContain('PP-RENDER-001')
+    expect(result.outputs).toHaveLength(1)
   })
 })

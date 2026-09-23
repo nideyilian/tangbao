@@ -1021,9 +1021,16 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/postprocess/PostprocessRunsDialog.tsx',
     responsibility:
-      '后处理进度面板：正在跑的那一次（进度条 + 计数 + 阶段 + 当前产出）与最近几次运行记录（状态 / 来源 / 时间 / 结论 / 问题入口），补上「在素材库之外看不到进度」这块空白',
+      '后处理进度面板（TB-115 起分三段）：正在跑的各方向（进度条 + 计数 + 阶段 + 当前产出 + **按方向取消**）、不属于某个方向的结果（分发 / 准备阶段的批次级问题）、以及按方向的长期历史记录',
     decision: 'compose',
     targets: ['Dialog', 'Progress', 'StatusIndicator', 'Button', 'IconButton', 'EmptyState'],
+  },
+  {
+    module: 'src/features/postprocess/PostprocessHistoryList.tsx',
+    responsibility:
+      '方向级后处理历史列表（落盘、长期保留）：按方向分组可折叠；每条显示状态 / 时间 / 来源 / 源图数→产出数 / 耗时构成 / 问题入口，并带「打开输出位置」按钮（单目录直接打开、多目录先展开清单；没有目录时置灰并说明原因）。进度面板看全部方向，中控台「输出位置」分区按左树作用域只看一个方向',
+    decision: 'compose',
+    targets: ['StatusIndicator', 'Button', 'IconButton', 'EmptyState'],
   },
   {
     module: 'src/features/postprocess/PostprocessTargetsDialog.tsx',

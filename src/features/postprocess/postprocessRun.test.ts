@@ -10,7 +10,7 @@ import {
   resolvePostprocessRunStatus,
   summarizePostprocessRun,
 } from './postprocessRun'
-import { createPostprocessIssue } from './postprocessIssue'
+import { POSTPROCESS_CANCEL_CODE, createPostprocessIssue } from './postprocessIssue'
 
 function run(totalImages = 4) {
   return createPostprocessRun({ id: 'run-1', source: 'manual', totalImages, startedAt: 1000 })
@@ -78,6 +78,33 @@ describe('后处理运行记录', () => {
     expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [skipped] })).toBe('skipped')
     expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [skipped, error] })).toBe('failed')
     expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [] })).toBe('succeeded')
+  })
+
+  /**
+   * ⭐ 取消优先于一切（TB-115）。
+   *
+   * 用户主动按的停止，状态必须说「已取消」。不这么判它会掉进下面两档里：有产出 + 有真错 ⇒
+   * 「部分完成」、零产出 ⇒ 「失败」；而中途取消往往两档都沾（停之前写出的文件可能带着 warning、
+   * 停之后自然没产出）—— 于是「我自己按的停止」在记录里变成一条红色失败，用户只会以为软件坏了。
+   */
+  it('⭐ 取消优先：不论有没有产出、哪怕还带着真错，状态都是「已取消」', () => {
+    const canceled = createPostprocessIssue({ code: POSTPROCESS_CANCEL_CODE, stage: 'finish' })
+    const error = createPostprocessIssue({ code: 'PP-WRITE-001', stage: 'write', file: 'a.jpg' })
+
+    expect(resolvePostprocessRunStatus({ producedFiles: 0, issues: [canceled] })).toBe('canceled')
+    expect(resolvePostprocessRunStatus({ producedFiles: 5, issues: [canceled] })).toBe('canceled')
+    // 停之前那批里正好有过一次写盘失败 → 也还是「已取消」，不该被染成「部分完成」
+    expect(resolvePostprocessRunStatus({ producedFiles: 5, issues: [canceled, error] })).toBe('canceled')
+  })
+
+  it('取消的记录说的是「停在哪了」，不是「失败了」', () => {
+    const canceled = createPostprocessIssue({ code: POSTPROCESS_CANCEL_CODE, stage: 'finish' })
+    const withFiles = finishPostprocessRun(run(4), { issues: [canceled], producedFiles: 7 })
+    const withoutFiles = finishPostprocessRun(run(4), { issues: [canceled], producedFiles: 0 })
+
+    expect(summarizePostprocessRun(withFiles)).toBe('已取消：停止前已产出 7 个文件')
+    expect(summarizePostprocessRun(withoutFiles)).toBe('已取消：本次没有产出文件')
+    expect(summarizePostprocessRun(withFiles)).not.toContain('失败')
   })
 
   it('收尾：写问题清单与产出数，清掉「当前产出」，记完成时间', () => {

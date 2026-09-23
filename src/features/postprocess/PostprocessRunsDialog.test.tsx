@@ -18,9 +18,13 @@ import { resolvePostprocessRunStatus } from './postprocessRun'
 import PostprocessRunsDialog from './PostprocessRunsDialog'
 
 const fixtures = vi.hoisted(() => ({ runs: [] as unknown[] }))
+/** 方向历史（落盘那一份）的替身：面板下半段与上半段是两个数据源。 */
+const historyFixtures = vi.hoisted(() => ({ byDirection: {} as Record<string, unknown[]> }))
 const spies = vi.hoisted(() => ({
   dismissPostprocessRun: vi.fn(),
   showPostprocessIssuesDialog: vi.fn(),
+  showToast: vi.fn(),
+  cancelPostprocessDirection: vi.fn(),
 }))
 
 vi.mock('../../stores/runtimeStore', () => ({
@@ -29,8 +33,19 @@ vi.mock('../../stores/runtimeStore', () => ({
     selector({ dismissPostprocessRun: spies.dismissPostprocessRun }),
 }))
 
+vi.mock('../../storePostprocessHistory', () => ({
+  usePostprocessHistoryByDirection: () => historyFixtures.byDirection,
+}))
+
+vi.mock('./postprocessCancel', () => ({
+  cancelPostprocessDirection: spies.cancelPostprocessDirection,
+}))
+
 vi.mock('../../store', () => ({
   showPostprocessIssuesDialog: spies.showPostprocessIssuesDialog,
+  // 历史列表（TB-115）会在「打开输出位置」失败时用 showToast 给出可见原因，
+  // 所以这个 mock 必须带上 `useStore` —— 少一个键就是整个面板在渲染时炸掉
+  useStore: (selector: (value: { showToast: () => void }) => unknown) => selector({ showToast: spies.showToast }),
 }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -81,6 +96,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
   fixtures.runs = []
+  historyFixtures.byDirection = {}
 })
 
 describe('后处理进度面板', () => {
@@ -145,7 +161,7 @@ describe('后处理进度面板', () => {
     ]
     render()
 
-    const clearButton = document.querySelector<HTMLButtonElement>('[aria-label="清空已完成的后处理记录"]')
+    const clearButton = document.querySelector<HTMLButtonElement>('[aria-label="清空这些不分方向的结果"]')
     expect(clearButton).not.toBeNull()
     act(() => {
       clearButton?.click()
@@ -191,5 +207,74 @@ describe('后处理进度面板', () => {
     fixtures.runs = [run({ id: 'run-no-timing', status: 'succeeded', producedFiles: 1 })]
 
     expect(render()).not.toContain('耗时')
+  })
+
+  /**
+   * 方向历史（TB-115）：面板下半段是**落盘**的长期记录。
+   *
+   * 与上半段是两个数据源（内存的实时进度 / 落盘的历史），所以这组用另一份 fixture。
+   */
+  it('⭐ 历史记录按方向分组：方向名、源图数→产出数、「打开位置」入口都在', () => {
+    historyFixtures.byDirection = {
+      'direction-a': [
+        {
+          id: 'h1',
+          directionId: 'direction-a',
+          directionLabel: '产品线 / 产品 / 方向A',
+          source: 'manual',
+          startedAt: NOW,
+          finishedAt: NOW + 3000,
+          status: 'succeeded',
+          totalImages: 2,
+          producedFiles: 4,
+          targetDirectionIds: ['direction-a'],
+          outputDirs: ['D:\\交付\\A'],
+          issues: [],
+          issueCount: 0,
+        },
+      ],
+    }
+    const text = render()
+
+    expect(text).toContain('历史记录（按方向，长期保留）')
+    expect(text).toContain('产品线 / 产品 / 方向A')
+    // 源图数与产出数并排：只看「产出 4 个」回答不了「本该是几个」
+    expect(text).toContain('2 张 → 4 个文件')
+    expect(text).toContain('打开位置')
+  })
+
+  it('历史为空时说明「跑过一次就有」，而不是留一片空白', () => {
+    expect(render()).toContain('还没有历史记录')
+  })
+
+  /**
+   * 取消按钮（TB-115）：**按方向**取消 —— 传出去的必须是这条 run 的方向 id。
+   * 传错（或传空）会让用户点了取消却停掉别的方向，而界面上看不出发生过什么。
+   */
+  it('⭐ 在跑的方向给「取消」，且把该方向 id 传出去', () => {
+    fixtures.runs = [
+      run({
+        id: 'run-running',
+        status: 'running',
+        totalImages: 3,
+        directionId: 'direction-a',
+        directionLabel: '方向A',
+      }),
+    ]
+    render()
+
+    const cancelButton = document.querySelector<HTMLButtonElement>('[data-testid="postprocess-cancel-run"]')
+    expect(cancelButton).not.toBeNull()
+    act(() => {
+      cancelButton?.click()
+    })
+    expect(spies.cancelPostprocessDirection).toHaveBeenCalledWith('direction-a')
+  })
+
+  it('没有方向的批次级记录不给取消按钮（取消是按方向的动作）', () => {
+    fixtures.runs = [run({ id: 'run-batch', status: 'running', totalImages: 1 })]
+    render()
+
+    expect(document.querySelector('[data-testid="postprocess-cancel-run"]')).toBeNull()
   })
 })

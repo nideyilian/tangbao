@@ -42,6 +42,7 @@
 
 import { blobToDataUrl, canvasToBlob } from '../../lib/canvasImage'
 import { renderCompositeV2ToCanvas, type CompositeV2RenderInput } from '../composite/lib/compositeRendererV2'
+import { createPostprocessCanceledError } from './postprocessCancel'
 
 /** 首选质量：内容不复杂的图按它一次编码就达标（最常走的一条路）。 */
 const HIGH_QUALITY = 0.9
@@ -95,6 +96,19 @@ function nowMs(): number {
 }
 
 /**
+ * 把「要不要取消」折成一个「不该继续就抛」的检查函数。
+ *
+ * 抛的是 `PostprocessCanceledError` 而**不是** `new Error('渲染被取消')`（早先的写法）：
+ * 消息是给用户看的、会随文案改，拿它当判据等于把「取消」与「渲染失败」的区分建在一句中文上 ——
+ * 而这两件事的处理完全不同（前者不报错、产物保留，后者要记 `PP-RENDER-001` 让人去查）。
+ */
+function createCancelGate(shouldCancel?: () => boolean): () => void {
+  return () => {
+    if (shouldCancel?.()) throw createPostprocessCanceledError()
+  }
+}
+
+/**
  * 「画 + 编」的公共骨架：两个对外入口（单次编码 / 压到体积以内）共用它，
  * 保证计时口径与画布生命周期只有一份实现。
  */
@@ -132,9 +146,7 @@ export async function renderOnce(
   quality: number,
   options?: RenderWithMaxKbOptions,
 ): Promise<RenderVariantOutcome> {
-  const throwIfCanceled = () => {
-    if (options?.shouldCancel?.()) throw new Error('渲染被取消')
-  }
+  const throwIfCanceled = createCancelGate(options?.shouldCancel)
   return await paintAndEncode(input, throwIfCanceled, async (encode) => ({
     dataUrl: await blobToDataUrl(await encode(quality)),
   }))
@@ -176,9 +188,7 @@ export async function renderWithMaxKb(
   maxSizeKb: number,
   options?: RenderWithMaxKbOptions,
 ): Promise<RenderVariantOutcome> {
-  const throwIfCanceled = () => {
-    if (options?.shouldCancel?.()) throw new Error('渲染被取消')
-  }
+  const throwIfCanceled = createCancelGate(options?.shouldCancel)
 
   return await paintAndEncode(input, throwIfCanceled, async (encode) => {
     const high = await encode(HIGH_QUALITY)

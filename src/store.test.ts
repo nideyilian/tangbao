@@ -5884,6 +5884,7 @@ describe('手动后处理入口', () => {
 
     const skippedOnly: TaskPostprocessResult = {
       outputs: [],
+      outputDirs: [],
       skippedMediaIds: [],
       issues: [createPostprocessIssue({ code: 'PP-SCOPE-002', stage: 'prepare' })],
       pendingDistribution: [],
@@ -5905,6 +5906,7 @@ describe('手动后处理入口', () => {
     showToast.mockClear()
     const failed: TaskPostprocessResult = {
       outputs: [],
+      outputDirs: [],
       skippedMediaIds: [],
       issues: [createPostprocessIssue({ code: 'PP-WRITE-001', stage: 'write', file: 'a.jpg' })],
       pendingDistribution: [],

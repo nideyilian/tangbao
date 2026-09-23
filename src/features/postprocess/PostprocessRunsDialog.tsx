@@ -1,13 +1,23 @@
 /**
- * 后处理进度面板：正在跑的那一次 + 最近几次运行记录。
+ * 后处理进度面板：正在跑的 + 方向级历史记录。
  *
  * 为什么需要它：TB-069 把进度落成了「素材库工具栏上的一行文本」与任务卡上的小徽章 ——
  * 那行文本只在**素材库视图、且工具栏在视野里**时才存在。用户在画廊或中控台里批量出图时，
  * 后台自动后处理跑了多少、跑到哪、成了没，界面没有任何答复（2026-09-21 报障
- * 「真正的处理进度弹窗为什么没有实现，我要从哪里查看进度」）。
+ * 「真正的处理进度弹窗为什么没有实现，我要从哪里查进度」）。
  *
  * 与 toast 的分工：toast 是「刚发生」的一次性播报，几秒即逝且**是单槽**（连发互相顶掉）；
- * 这里是**可查询的常驻记录**，主动打开就能看到全量（会话内最近 `POSTPROCESS_RUN_KEEP` 条）。
+ * 这里是**可查询的常驻记录**，主动打开就能看到全量。
+ *
+ * 面板里是**三段**，别混：
+ * 1. 「正在跑」= 内存态实时进度（`runtimeStore`），重启即失；
+ * 2. 「不属于某个方向的结果」= 批次级问题（分发失败、准备阶段崩溃）—— 没有方向，
+ *    因此进不了方向历史，只能在这里显示；
+ * 3. 「历史记录」= 落盘的长期留档（`storePostprocessHistory`），按方向分桶、重启仍在，
+ *    也是「这次产到哪几个目录」的查询入口（带「打开输出位置」按钮）。
+ *
+ * ⚠️ 第 2 段刻意**只留没有方向的记录**：有方向的那些都已落进第 3 段，两段同时显示同一次运行
+ * 会让人以为它跑了两次（TB-115 之前那段「最近记录」就是这个症状）。
  *
  * 条目自己不渲染错误码清单，点「查看问题」走统一的问题清单弹窗：一份清单只有一处渲染实现，
  * 才不会出现「弹窗里说 A、别处说 B」。
@@ -26,79 +36,31 @@ import {
 import { showPostprocessIssuesDialog } from '../../store'
 import { usePostprocessRuns, useRuntimeStore } from '../../stores/runtimeStore'
 import { POSTPROCESS_STAGE_LABELS } from './postprocessIssue'
+import { cancelPostprocessDirection } from './postprocessCancel'
+import PostprocessHistoryList from './PostprocessHistoryList'
 import {
+  POSTPROCESS_RUN_SOURCE_LABELS,
   POSTPROCESS_RUN_STATUS_LABELS,
+  POSTPROCESS_RUN_STATUS_TONES,
   countPostprocessIssues,
+  describePostprocessDiagnostics,
+  formatPostprocessDuration,
   formatPostprocessRunCount,
+  formatPostprocessRunTime,
   getPostprocessRunPercent,
   isRunInFlight,
   summarizePostprocessRun,
   type PostprocessRun,
-  type PostprocessRunStatus,
 } from './postprocessRun'
-
-/**
- * 状态 → 指示灯色调。「跳过/部分完成」是警告不是错误，别一律红。
- *
- * `skipped` 用中性灰、不走警告黄：它的含义是「这次一张都没产，但原因是配置 / 参与范围」，
- * 与 `partial`（产出不全，可能真要去修）不是一回事。黄色会把人往「出故障了」带，
- * 而这类记录的正确反应是「看一眼跳过的原因，决定要不要手动跑」。
- * `queued` 同样中性：它在等名额，不是故障（配小了「最多并发数」时必然会看到它）。
- */
-const STATUS_TONE: Record<PostprocessRunStatus, 'neutral' | 'info' | 'success' | 'warning' | 'danger'> = {
-  queued: 'neutral',
-  running: 'info',
-  succeeded: 'success',
-  partial: 'warning',
-  failed: 'danger',
-  skipped: 'neutral',
-}
-
-const SOURCE_LABELS = { auto: '自动触发', manual: '手动触发' } as const
 
 /**
  * 方向段（`产品线 / 产品 / 方向`）。
  *
- * 每条 run 只服务一个方向，而记录列表里同时会有好几个方向的记录 —— 不带方向的话，
+ * 每条 run 只服务一个方向，而这里同时会有好几个方向的记录 —— 不带方向的话，
  * 「三条同时跑的记录」在用户眼里是三份无法区分的东西。
  */
 function directionOf(run: PostprocessRun): string {
   return run.directionLabel ?? (run.directionId ? run.directionId : '未指定方向')
-}
-
-function formatRunTime(timestamp: number): string {
-  // 带日期：会话可能跨天（午夜后还在跑），只给时刻会让人误读成今天
-  return new Date(timestamp).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-}
-
-/** 毫秒给人看：一秒以下给整数毫秒，以上给秒（两位小数够区分钟级以内的差别）。 */
-function formatDuration(ms: number): string {
-  if (ms >= 10_000) return `${(ms / 1000).toFixed(1)}s`
-  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
-  return `${Math.round(ms)}ms`
-}
-
-/**
- * 耗时构成：`画 X · 编码 Y（N 轮）· 写盘 Z`。
- *
- * 为什么直接摊开而不是只报一个总耗时：「慢」有三种成因，处理方式完全不同 ——
- * 画得多 ⇒ 图层 / 尺寸问题（而且是**卡界面**的那一类）；编码多 ⇒ 体积上限压得紧
- * （`N 轮` 一眼看出，正常应是 1 轮或 3 轮）；写盘多 ⇒ 磁盘或共享盘慢，与渲染无关。
- * 只给总耗时等于这三种都得重新猜一遍。
- *
- * 返回 null 表示这条记录没有可看的数字（收尾前收尾、或整批被跳过所以没走到渲染）。
- */
-function describeDiagnostics(run: PostprocessRun): string | null {
-  const d = run.diagnostics
-  if (!d) return null
-  if (d.paintMs === 0 && d.encodeMs === 0 && d.writeMs === 0) return null
-  return `画 ${formatDuration(d.paintMs)} · 编码 ${formatDuration(d.encodeMs)}（${d.encodeCount} 轮）· 写盘 ${formatDuration(d.writeMs)}`
 }
 
 function ActiveRunBlock({ run }: { run: PostprocessRun }) {
@@ -114,8 +76,25 @@ function ActiveRunBlock({ run }: { run: PostprocessRun }) {
         showValue={percent !== undefined}
         value={percent}
       />
-      <div className="text-xs text-ds-muted">
-        {`${directionOf(run)} · ${POSTPROCESS_RUN_STATUS_LABELS[run.status]} · ${POSTPROCESS_STAGE_LABELS[run.stage]} · ${SOURCE_LABELS[run.source]} · 共 ${run.totalImages} 张 · 已产出 ${run.producedFiles} 个文件 · 开始于 ${formatRunTime(run.startedAt)}`}
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1 text-xs text-ds-muted">
+          {`${directionOf(run)} · ${POSTPROCESS_RUN_STATUS_LABELS[run.status]} · ${POSTPROCESS_STAGE_LABELS[run.stage]} · ${POSTPROCESS_RUN_SOURCE_LABELS[run.source]} · 共 ${run.totalImages} 张 · 已产出 ${run.producedFiles} 个文件 · 开始于 ${formatPostprocessRunTime(run.startedAt)}`}
+        </div>
+        {/*
+          取消按钮**按方向**（TB-115）：后处理是一方向一条独立 run，停一个不该牵连别的方向 ——
+          这与「方向之间互不阻塞」是同一条口径。排队中的也能取消（`acquire` 里 race 了 abort 源）。
+        */}
+        {run.directionId && (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="postprocess-cancel-run"
+            title="停掉这个方向的产出。已经写出的文件会保留，不会删除。"
+            onClick={() => cancelPostprocessDirection(run.directionId!)}
+          >
+            取消
+          </Button>
+        )}
       </div>
       {/* 写盘文件名正是工具栏里被压掉的那一段：这里要能完整读到，长名字换行而不是溢出 */}
       {run.currentLabel && <div className="break-all text-xs text-ds-text-subtle">{`正在写：${run.currentLabel}`}</div>}
@@ -125,8 +104,8 @@ function ActiveRunBlock({ run }: { run: PostprocessRun }) {
 
 function RunRow({ run }: { run: PostprocessRun }) {
   const { errors, skipped } = countPostprocessIssues(run)
-  const summary = `${formatRunTime(run.startedAt)} · ${directionOf(run)} · ${SOURCE_LABELS[run.source]} · ${summarizePostprocessRun(run)}`
-  const diagnostics = describeDiagnostics(run)
+  const summary = `${formatPostprocessRunTime(run.startedAt)} · ${directionOf(run)} · ${POSTPROCESS_RUN_SOURCE_LABELS[run.source]} · ${summarizePostprocessRun(run)}`
+  const diagnostics = describePostprocessDiagnostics(run.diagnostics)
   const elapsed = run.finishedAt ? run.finishedAt - run.startedAt : undefined
   return (
     <div
@@ -134,7 +113,9 @@ function RunRow({ run }: { run: PostprocessRun }) {
       className="flex flex-col gap-1 rounded-ds-lg border border-ds-border px-3 py-2"
     >
       <div className="flex items-center gap-2">
-        <StatusIndicator tone={STATUS_TONE[run.status]}>{POSTPROCESS_RUN_STATUS_LABELS[run.status]}</StatusIndicator>
+        <StatusIndicator tone={POSTPROCESS_RUN_STATUS_TONES[run.status]}>
+          {POSTPROCESS_RUN_STATUS_LABELS[run.status]}
+        </StatusIndicator>
         {/* 行内为了紧凑会截断，全文挂在 title 上（hover 即得） */}
         <div title={summary} className="min-w-0 flex-1 truncate text-xs text-ds-muted">
           {summary}
@@ -146,7 +127,7 @@ function RunRow({ run }: { run: PostprocessRun }) {
         )}
       </div>
       {diagnostics && (
-        <div className="text-xs text-ds-text-subtle">{`耗时 ${formatDuration(elapsed ?? 0)} · ${diagnostics}`}</div>
+        <div className="text-xs text-ds-text-subtle">{`耗时 ${formatPostprocessDuration(elapsed ?? 0)} · ${diagnostics}`}</div>
       )}
     </div>
   )
@@ -159,7 +140,14 @@ export default function PostprocessRunsDialog({ open, onClose }: { open: boolean
   // 在飞的**全部**方向（含排队）：后处理按方向独立运行，同时有好几条是正常状态，
   // 只显示一条会让另外几条看起来不存在。
   const activeRuns = runs.filter(isRunInFlight)
-  const history = runs.filter((run) => !isRunInFlight(run))
+  const finished = runs.filter((run) => !isRunInFlight(run))
+  /**
+   * 只留**没有方向**的批次级记录（分发失败、准备阶段崩溃）。
+   *
+   * 有方向的那些已经落进下面的方向历史里了。两段都显示同一次运行，用户看到的是
+   * 「同一条记录出现两次」—— 次数一多，他会开始怀疑是不是真的跑了两次。
+   */
+  const batchLevel = finished.filter((run) => !run.directionId)
 
   return (
     <Dialog
@@ -169,7 +157,7 @@ export default function PostprocessRunsDialog({ open, onClose }: { open: boolean
       }}
       size="md"
       title="后处理进度"
-      description="每个方向各自跑一条，互不阻塞（同时跑几个由设置里的「最多并发数」决定，超出的排队）。这里是它们跑到哪了，以及最近几次的结果（只保留本次会话）。"
+      description="每个方向各自跑一条，互不阻塞（同时跑几个由设置里的「最多并发数」决定，超出的排队）。下面是每个方向的历史记录：长期保留、重启后仍在，每条都能直接打开产出所在位置。"
     >
       <div className="flex flex-col gap-4">
         {activeRuns.map((run) => (
@@ -182,22 +170,29 @@ export default function PostprocessRunsDialog({ open, onClose }: { open: boolean
             description="生成任务完成后会自动产出变体；没有归属方向的素材可以在素材库选中后手动跑一次。"
           />
         )}
-        {history.length > 0 && (
+        {batchLevel.length > 0 && (
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-ds-muted">{`最近记录（${history.length}）`}</span>
+              <span className="text-xs font-medium text-ds-muted">
+                {`不属于某个方向的结果（${batchLevel.length}）`}
+              </span>
               <IconButton
-                aria-label="清空已完成的后处理记录"
+                aria-label="清空这些不分方向的结果"
                 icon={<CloseIcon size={15} />}
                 size="sm"
-                onClick={() => history.forEach((run) => dismissPostprocessRun(run.id))}
+                onClick={() => batchLevel.forEach((run) => dismissPostprocessRun(run.id))}
               />
             </div>
-            {history.map((run) => (
+            {batchLevel.map((run) => (
               <RunRow key={run.id} run={run} />
             ))}
           </div>
         )}
+
+        <div className="flex flex-col gap-2 border-t border-ds-border pt-4">
+          <span className="text-xs font-medium text-ds-muted">历史记录（按方向，长期保留）</span>
+          <PostprocessHistoryList />
+        </div>
       </div>
     </Dialog>
   )

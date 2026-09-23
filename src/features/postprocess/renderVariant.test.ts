@@ -22,6 +22,7 @@ vi.mock('../../lib/canvasImage', () => ({
   blobToDataUrl: mocks.toDataUrl,
 }))
 
+import { PostprocessCanceledError } from './postprocessCancel'
 import { renderOnce, renderWithMaxKb } from './renderVariant'
 
 /** 假 Blob：只需要 `size`（体积判定读它），不必真的分配字节。 */
@@ -114,9 +115,32 @@ describe('renderWithMaxKb · 画布只画一次、编码只打几枪', () => {
     expect(result.stats.encodeMs).toBeGreaterThanOrEqual(0)
   })
 
-  it('取消：渲染前就抛错，一张画布都不建', async () => {
-    await expect(renderWithMaxKb(baseInput, 200, { shouldCancel: () => true })).rejects.toThrow('渲染被取消')
+  it('取消：渲染前就抛错（按**类型**识别，不靠消息字符串），一张画布都不建', async () => {
+    // 断言类型而不是消息：消息是给用户看的、会随文案改，而上层要靠**类型**决定「这是取消还是失败」
+    // —— 取消不报错、产物保留；失败要记 PP-RENDER-001 让人去查
+    await expect(renderWithMaxKb(baseInput, 200, { shouldCancel: () => true })).rejects.toBeInstanceOf(
+      PostprocessCanceledError,
+    )
     expect(mocks.renderCanvas).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 取消的**粒度**（TB-115）：编码一枪实测 ≈127ms、一张图最多三枪。若只在「开始画之前」查一次，
+   * 用户点停止时它还在编 —— 体感就是「点了没反应」。`paintAndEncode` 在**每次编码前**也查，
+   * 所以编到一半取消能在下一枪之前断掉。
+   */
+  it('⭐ 编码途中取消：下一枪之前断掉，不返回半成品', async () => {
+    let encoded = 0
+    mocks.encode.mockImplementation(async () => {
+      encoded += 1
+      return blobOfKb(500)
+    })
+    // 第一枪打完之后用户点了停止 → 第二枪之前必须抛
+    const shouldCancel = () => encoded >= 1
+
+    await expect(renderWithMaxKb(baseInput, 100, { shouldCancel })).rejects.toBeInstanceOf(PostprocessCanceledError)
+    expect(mocks.renderCanvas).toHaveBeenCalledTimes(1)
+    expect(mocks.encode).toHaveBeenCalledTimes(1)
   })
 })
 

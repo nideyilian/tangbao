@@ -134,6 +134,38 @@
   （别在组件里自己拼字符串）；文件名一类的详情归悬浮提示（`formatPostprocessRunProgress`）
   与点开的面板。数字加 `tabular-nums`：`0/100` 涨到 `100/100` 时宽度不变，工具栏不抖。
 
+### 4.4.3 方向级历史记录与取消（TB-115，2026-09-23）
+
+- **两套记录分工，别合并**：`PostprocessRun`（`stores/runtimeStore`）= **正在跑**（内存态、实时上报、
+  重启即失、只留会话内 60 条）；`PostprocessHistoryEntry`（`storePostprocessHistory`）= **跑完了**
+  （落盘、按**方向**分桶、长期保留、每方向 50 条）。收尾时在 `finishPostprocessRun` **之后**读一次
+  run 生成历史条目（`createHistoryEntryFromRun`）—— 从参数另拼一份必然与记录分叉
+  （状态判定一改、那边没跟上，历史里就会出现「显示成功、实际失败」）。
+- **没有方向的批次级记录不进方向历史**（分发失败、准备阶段崩溃）：桶键就是方向 id，
+  塞进某个方向的桶会让「这个方向出了问题」变成假话。这类记录只在进度弹窗里显示，且**不落盘**。
+- **历史里的是快照，不是引用**：方向名 / 产出目标方向 / 实际输出目录都是**当时**的值 ——
+  记录的价值就是事后还原当时发生了什么；读当前配置只能得到今天的答案（输出目录与水印都在节点层
+  可覆盖，ADR-0003 实测 25/61 个方向目录不同，改一次全变）。
+- **产出目标的配置语义不动**：`savedTargetCollectionIds` 仍是全局一份（4.4.1）。历史里的
+  `targetDirectionIds` 是**记录快照**，不是「按方向各存一份配置」——杰哥 2026-09-23 选的就是这条。
+- **问题只存上下文、不存文案**：`PostprocessHistoryIssue` 刻意缺 `message` / `hint` / `severity`，
+  读回时由 `createPostprocessIssue` 从码表补。文案的真相源始终只有 `ISSUE_TEMPLATES` 一处。
+- **取消是专属错误类型**（`PostprocessCanceledError`），**不是**布尔返回值、也**不用消息字符串判定**
+  （曾经的 `new Error('渲染被取消')` 就是靠消息判的）。理由：`paintAndEncode` 只能在 `toBlob`
+  之间靠抛出来中断，而「取消」与「渲染失败」的处理完全不同 —— 取消不报错、产物保留；
+  失败要记 `PP-RENDER-001` 让人去查。
+- **取消优先于一切状态判定**：`resolvePostprocessRunStatus` **先**判取消码 → `canceled`。
+  不然中途取消会掉进「有产出 + 有真错 ⇒ 部分完成」「零产出 ⇒ 失败」两档里 —— 用户明明是自己
+  按的停止，界面却报一条红色失败。
+- **取消句柄按方向登记，且必须与 run 同生命周期**：漏释放不会崩溃，而是让**下一次**触发的
+  「取消」打到一条已经跑完的记录上（点了毫无反应，而新的那次照样跑到底）。
+- **取消不回收任何已写出的文件**：产物是用户要的东西，停在哪里就留到哪里；替用户删是最不可逆的
+  一种「帮忙」。
+- ⚠️ **启动时必须重新放行历史里出现过的输出目录**（`store.ts` 的 `authorizeHistoryOutputDirs`，
+  在 `initStore` 第一句）。主进程的 `sessionAllowedRoots` 是内存 Set、**重启即清空**，而
+  `localSavePath` / `configSyncPath` 之外的后处理输出目录（多半是内网共享盘）不再有人放行 ——
+  少了这一步，历史记录上的「打开输出位置」会在重启后报「路径不在允许范围」（R-95）。
+
 ### 4.5 水印模型
 
 - **水印预设 = `CompositeV2Preset`**（`src/features/composite/storeV2.ts`，落盘 **version 5**，存 **localStorage**）。

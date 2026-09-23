@@ -16,6 +16,7 @@
  */
 
 import { useRuntimeStore } from '../../stores/runtimeStore'
+import { createPostprocessCanceledError, throwIfPostprocessCanceled } from './postprocessCancel'
 
 /** 兜底重试间隔（ms）：只在广播漏掉时才会真正起作用。 */
 const WAITER_RECHECK_MS = 2000
@@ -39,21 +40,53 @@ function wakeWaiters(): void {
 }
 
 /**
- * 申请某个方向的开工资格；拿不到就等着（**不会失败、不会抛错**）。
+ * 申请某个方向的开工资格；拿不到就等着。
  *
  * 返回时该调用方**已经拿到名额**，用完必须 `releasePostprocessDirection` ——
  * 漏掉释放会让这个方向永久占着一个名额，症状是「别的方向一直排不上队」。
+ *
+ * `signal` 给出时支持**中途取消**（TB-115）：abort 会让等待**立刻**中断并抛出取消错误，
+ * 而不是「等它拿到名额再自己退出」—— 后者用户看到的是「点了取消，界面还挂着『排队中』
+ * 几十秒」，而他并不知道自己在等什么。
  */
-export async function acquirePostprocessDirection(directionKey: string, maxConcurrent: number): Promise<void> {
+export async function acquirePostprocessDirection(
+  directionKey: string,
+  maxConcurrent: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  throwIfPostprocessCanceled(signal)
+  /**
+   * 取消唤醒源：整个等待期间只建**一次**。
+   *
+   * 逐轮迭代新建会让 `addEventListener` 攒下几十个一次性监听（abort 之前一个都不会被移除）。
+   * 无 signal 时它就是一个永不 settle 的 promise —— 挂在 `race` 里不占资源、不影响任何分支。
+   *
+   * ⚠️ 末尾那个空 `catch` 不是多余的：acquire **第一次就抢到名额**时（最常见的情形）
+   * 这个 promise 从未进过 `race`，之后执行体阶段用户再点取消，它的 reject 就没人接了 ——
+   * 表现为一条未处理拒绝。挂上空处理即可。
+   */
+  const canceled = new Promise<never>((_resolve, reject) => {
+    if (!signal) return
+    signal.addEventListener('abort', () => reject(createPostprocessCanceledError()), { once: true })
+  })
+  canceled.catch(() => undefined)
+
   while (true) {
     const waiter = registerWaiter()
-    if (useRuntimeStore.getState().tryAdmitPostprocessDirection(directionKey, maxConcurrent)) {
+    try {
+      // 注册等待与抢名额**相邻且同步**：中间不会被插入广播，也就没有「注册之前名额已被释放」的丢唤醒窗口
+      if (useRuntimeStore.getState().tryAdmitPostprocessDirection(directionKey, maxConcurrent)) return
+      await Promise.race([
+        waiter.promise,
+        new Promise<void>((resolve) => setTimeout(resolve, WAITER_RECHECK_MS)),
+        canceled,
+      ])
+      // 醒来后先看是不是被取消了：取消的语义是「别再开跑」，而不是「抢到名额再退出」
+      throwIfPostprocessCanceled(signal)
+    } finally {
+      // 取消抛错时也必须清掉等待者，否则它会一直留在 Set 里等下一次广播（白醒一次）
       waiter.cancel()
-      return
     }
-    await Promise.race([waiter.promise, new Promise<void>((resolve) => setTimeout(resolve, WAITER_RECHECK_MS))])
-    // 兜底超时或广播醒来后都回到循环头重新抢；抢不到就重新注册等待
-    waiter.cancel()
   }
 }
 

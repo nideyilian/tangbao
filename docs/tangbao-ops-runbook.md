@@ -1649,3 +1649,65 @@ mv dist .dist-prebuild-bak && mv .dist-prebuild-bak ../.tb-bak-dist
 - 报错**列号动辄三、四位**且集中在同一行 → 先怀疑「扫到了打包产物」，别去读源码。
 - `ls -d .dist*` 秒查有没有漏在项目根。
 - 顺带：`dist/` 与 `dist-electron/` 是构建产物，别提交；备份目录更别落在根目录里过夜。
+
+---
+
+## 二十六、「只在新会话里失效」的功能怎么查（2026-09-23 TB-115 定稿）
+
+### 1. 判据：先问「上一次会话里它好不好用」
+
+症状长这样：**同一个按钮、同一条路径，昨天点了能打开，今天点了报「路径不在允许范围」**。
+这类「只在新会话里失效」的功能，**先怀疑内存态的授权 / 缓存**，别去查按钮、路径拼接或 IPC 通道 ——
+那些地方坏了不会「昨天好今天坏」。
+
+本仓库的内存态授权（重启即空）：
+
+| 位置                              | 内容                       | 谁会在新会话里重新填它                                                                                    |
+| --------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `ipc-handlers.ts` 白名单（`sessionAllowedRoots`） | 用户授权过的路径（`Set`） | `initLocalSavePath()` 只补 `localSavePath` / `configSyncPath`（从本地设置读，**跨重启**）；其余靠用户再走一次对话框 |
+| 后处理输出目录                    | 产出时由 `composite:authorize-output-directory` 放行 | **只有产出那一次** ⇒ 跑完重启就没了（**R-95**，要补）                                                     |
+| `reservedOutputPaths`（`taskPostprocess.ts`） | 本会话已分配的输出路径     | 只为撞名兜底，重启清空是**正确**的（不用补）                                                              |
+
+### 2. 查法
+
+```bash
+# ① 这条路径到底在不在白名单里（五个系统目录 + sessionAllowedRoots + localSavePath + configSyncPath）
+grep -n "function getAllowedRoots" -A 15 electron/ipc-handlers.ts
+
+# ② 报错是不是 assertAllowedPath 抛的（它只回一句通用文案，界面那行字多半被换过说法）
+grep -n "assertAllowedPath" electron/ipc-handlers.ts
+```
+
+判断要点：`assertAllowedPath` 的报错文案是**通用**的（`Path is outside allowed application directories`），
+界面侧往往被翻译成一句更好听的话 —— 所以「照界面那句话去查」查不到，要按
+**「只在新会话里失效」**这条线索走。
+
+### 3. 修法：把「可信来源」持久化，启动时重新放行
+
+不要放宽 `assertAllowedPath`（那是对所有路径开门，连 `shell.openPath` 能启动的 exe 一起放进来）；
+也不要放行「配置里写的目录」（可能只是手滑打错的路径）。做法是**只放行「确实用过」的那些**：
+
+```ts
+// store.ts —— 必须在 initStore 的**第一句**：用户一进界面就可能去点那个按钮
+if (!options.safeMode) void authorizeHistoryOutputDirs()
+```
+
+```ts
+async function authorizeHistoryOutputDirs(): Promise<void> {
+  const dirs = collectHistoryOutputDirs(getPostprocessHistoryState()).slice(0, 200)
+  for (const dir of dirs) {
+    try {
+      await authorizeOutputDirectory(dir) // IPC composite:authorize-output-directory → addAllowedRoot
+    } catch {
+      // 放行失败不是错误：只说明这个目录现在用不了，其它目录照常
+    }
+  }
+}
+```
+
+⚠️ 三个容易踩的点：
+
+1. **逐条 `await`、整体 fire-and-forget**，别把整个循环 `await` 在启动路径上 —— 共享盘没挂上时
+   `ensureDir` 会一直等到超时。
+2. **失败即跳过**：一个不可达的旧目录不该拖住启动，更不该弹错。
+3. **给上限**（这里 200）：历史是落盘数据，一条被外部改坏的记录不该让启动发出去上千次 IPC。

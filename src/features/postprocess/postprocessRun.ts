@@ -14,11 +14,11 @@
  *   见 `resolvePostprocessRunStatus`。
  */
 
-import { isErrorIssue, type PostprocessIssue, type PostprocessStage } from './postprocessIssue'
+import { POSTPROCESS_CANCEL_CODE, isErrorIssue, type PostprocessIssue, type PostprocessStage } from './postprocessIssue'
 
 export type PostprocessRunSource = 'auto' | 'manual'
 
-export type PostprocessRunStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
+export type PostprocessRunStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped' | 'canceled'
 
 export const POSTPROCESS_RUN_STATUS_LABELS: Record<PostprocessRunStatus, string> = {
   /** 方向级并发闸名额满了：这条 run 已建好记录，等别的方向跑完就开工 */
@@ -29,6 +29,13 @@ export const POSTPROCESS_RUN_STATUS_LABELS: Record<PostprocessRunStatus, string>
   failed: '失败',
   /** 零产出、但一条真错都没有：只是这次全被跳过了（方向没启用 / 关了自动产出 / 源图已清理） */
   skipped: '已跳过',
+  /**
+   * 用户主动停的。
+   *
+   * 与「失败」「部分完成」分开是刻意的：那两种会把人往「软件出问题了」带，而这一种
+   * 的正确反应是「知道停在哪了、产物还在、想接着跑就重跑一次」。已经写出的文件一律保留。
+   */
+  canceled: '已取消',
 }
 
 /** 在飞状态（还没落终态）：排队与进行中都属于「这条 run 还占着这个方向」。 */
@@ -90,6 +97,14 @@ export interface PostprocessRun {
   imageUnitsDone: number
   /** 已写成的文件数（双写时按实际写成的份数算） */
   producedFiles: number
+  /**
+   * 本次**已经写出过文件**的目录（去重保序，第一个是主位置）。
+   *
+   * 进度里就带着它（而不是只在收尾结果里）是为了「中途中断」那一档：取消或崩溃时执行体是
+   * **抛出去**的，`TaskPostprocessResult.outputDirs` 根本没机会返回 —— 而那一刻用户最想知道的
+   * 恰恰是「已经产出的那几张在哪」。历史记录上的「打开输出位置」在一条取消记录上只能靠它。
+   */
+  outputDirs?: string[]
   /** 当前正在处理的那个产出（「头条 1080x1920 · xxx.jpg」） */
   currentLabel?: string
   issues: PostprocessIssue[]
@@ -111,6 +126,8 @@ export interface PostprocessProgressPatch {
   imageUnits?: number
   imageUnitsDone?: number
   producedFiles?: number
+  /** 已经写出过文件的目录（绝对值，去重保序）；见 `PostprocessRun.outputDirs` */
+  outputDirs?: string[]
   currentLabel?: string
 }
 
@@ -170,6 +187,10 @@ export function applyPostprocessProgress(run: PostprocessRun, patch: Postprocess
   if (patch.imageUnits !== undefined) next.imageUnits = Math.max(0, patch.imageUnits)
   if (patch.imageUnitsDone !== undefined) next.imageUnitsDone = Math.max(0, patch.imageUnitsDone)
   if (patch.producedFiles !== undefined) next.producedFiles = Math.max(0, patch.producedFiles)
+  // 空数组等于「还没写出过任何目录」→ 收回 undefined，避免记录里挂一个「有值但为空」的字段
+  if (patch.outputDirs !== undefined) {
+    next.outputDirs = patch.outputDirs.length > 0 ? [...patch.outputDirs] : undefined
+  }
   if (patch.currentLabel !== undefined) next.currentLabel = patch.currentLabel
   return next
 }
@@ -219,6 +240,15 @@ export function resolvePostprocessRunStatus(input: {
   producedFiles: number
   issues: PostprocessIssue[]
 }): PostprocessRunStatus {
+  /**
+   * **取消优先于一切**（2026-09-23）。
+   *
+   * 不这么判的话它会掉进下面两档里：有产出 + 有真错 ⇒ 「部分完成」，零产出 ⇒ 「失败」。
+   * 而中途取消往往两档都沾（停之前写出去的文件可能带着 warning、停之后自然没产出），
+   * 于是「我自己按的停止」在记录里变成一条红色的失败，用户只会以为软件坏了 ——
+   * 而这类记录的正确反应是「知道停在哪、产物还在、想接着跑就重跑一次」。
+   */
+  if (input.issues.some((issue) => issue.code === POSTPROCESS_CANCEL_CODE)) return 'canceled'
   if (input.producedFiles > 0) return input.issues.some(isErrorIssue) ? 'partial' : 'succeeded'
   if (input.issues.some(isErrorIssue)) return 'failed'
   return input.issues.length > 0 ? 'skipped' : 'succeeded'
@@ -279,6 +309,9 @@ export function summarizePostprocessRun(run: PostprocessRun): string {
     // 「没有产出」但一条真错都没有：说清是「被跳过」，不然用户以为软件坏了
     case 'skipped':
       return `后处理没有产出：${skipped} 项被跳过`
+    // 「停在哪了」是这条记录唯一要说的事：产物一个没少，只是没跑完
+    case 'canceled':
+      return run.producedFiles > 0 ? `已取消：停止前已产出 ${run.producedFiles} 个文件` : '已取消：本次没有产出文件'
     case 'failed':
     default:
       return errors > 0 ? `后处理失败：没有产出文件（错误 ${errors}）` : '后处理失败：没有产出文件'
@@ -306,4 +339,73 @@ export function formatPostprocessRunBadge(run: PostprocessRun): string | undefin
   if (!count) return undefined
   const percent = getPostprocessRunPercent(run)
   return percent === undefined ? count : `${count} ${percent}%`
+}
+
+/**
+ * 运行时刻（给人看）。
+ *
+ * 带日期：会话可能跨天（午夜后还在跑），只给时刻会让人误读成今天。
+ *
+ * 从 `PostprocessRunsDialog` 搬到这里并导出（TB-115）：进度面板与「方向历史记录」两处都要
+ * 显示同一批时间与耗时 —— 各写一份的话，同一个时刻在两个界面里长得不一样，而这种不一致
+ * 最难解释（用户会以为是两次不同的运行）。
+ */
+export function formatPostprocessRunTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+/** 毫秒给人看：一秒以下给整数毫秒，以上给秒（两位小数够区分钟级以内的差别）。 */
+export function formatPostprocessDuration(ms: number): string {
+  if (ms >= 10_000) return `${(ms / 1000).toFixed(1)}s`
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
+  return `${Math.round(ms)}ms`
+}
+
+/** 触发来源的展示名（进度面板与历史记录共用；「自动/手动」的口径只在这一处）。 */
+export const POSTPROCESS_RUN_SOURCE_LABELS: Record<PostprocessRunSource, string> = {
+  auto: '自动触发',
+  manual: '手动触发',
+}
+
+/** 状态指示灯色调的取值域，与 design-system 的 `StatusIndicator` 对齐。 */
+export type PostprocessStatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+
+/**
+ * 状态 → 色调。定义在这里而不是各组件里（TB-115 提取）：
+ * 进度面板与方向历史记录两处各写一份，必然出现「同一次运行在两个界面颜色不一样」——
+ * 而那是最难解释的一种不一致（用户会以为它们不是同一次）。
+ */
+export const POSTPROCESS_RUN_STATUS_TONES: Record<PostprocessRunStatus, PostprocessStatusTone> = {
+  // 排队用中性：它在等名额，不是故障（把「最多并发数」配小了必然会看到它）
+  queued: 'neutral',
+  running: 'info',
+  succeeded: 'success',
+  partial: 'warning',
+  failed: 'danger',
+  // 跳过与取消都用中性灰、**不走警告黄**：它们的正确反应是「看一眼原因，决定要不要手动跑」，
+  // 而黄色会把人往「出故障了」带（2026-09-21 为 `skipped` 定的口径，取消同理）。
+  skipped: 'neutral',
+  canceled: 'neutral',
+}
+
+/**
+ * 耗时构成：`画 X · 编码 Y（N 轮）· 写盘 Z`。
+ *
+ * 为什么直接摊开而不是只报一个总耗时：「慢」有三种成因，处理方式完全不同 ——
+ * 画得多 ⇒ 图层 / 尺寸问题（而且是**卡界面**的那一类）；编码多 ⇒ 体积上限压得紧
+ * （`N 轮` 一眼看出，正常应是 1 或 3 轮）；写盘多 ⇒ 磁盘或共享盘慢，与渲染无关。
+ * 只给总耗时等于这三种都得重新猜一遍。
+ *
+ * 返回 null 表示没有可看的数字（收尾前中断、或整批被跳过所以没走到渲染）。
+ */
+export function describePostprocessDiagnostics(diagnostics: PostprocessRunDiagnostics | undefined): string | null {
+  if (!diagnostics) return null
+  if (diagnostics.paintMs === 0 && diagnostics.encodeMs === 0 && diagnostics.writeMs === 0) return null
+  return `画 ${formatPostprocessDuration(diagnostics.paintMs)} · 编码 ${formatPostprocessDuration(diagnostics.encodeMs)}（${diagnostics.encodeCount} 轮）· 写盘 ${formatPostprocessDuration(diagnostics.writeMs)}`
 }

@@ -76,6 +76,17 @@ export type PostprocessIssueCode =
   | 'PP-EMPTY-001'
   /** 执行体整体抛异常（兜底；真因在 cause 里） */
   | 'PP-CRASH-001'
+  /** 用户主动取消了这次产出 */
+  | 'PP-CANCEL-001'
+
+/**
+ * 「本次产出被用户取消」的码。
+ *
+ * 单独提成常量而不是就地写字面量：**三处**都要认它 —— `resolvePostprocessRunStatus` 据此把状态
+ * 判成「已取消」（而不是「失败」）、`writeVariant` 据此不把它记成渲染失败、界面据此给它一个
+ * 中性色调。三处各写一遍字符串，改码名时必然漏一处，而漏掉的表现是「点了取消却显示失败」。
+ */
+export const POSTPROCESS_CANCEL_CODE: PostprocessIssueCode = 'PP-CANCEL-001'
 
 interface IssueTemplate {
   message: string
@@ -198,6 +209,13 @@ const ISSUE_TEMPLATES: Record<PostprocessIssueCode, IssueTemplate> = {
     message: '后处理过程中出现未预期的错误，这一批没有跑完',
     hint: '看下面的原始错误定位；重跑一次通常能排除偶发的读图 / 写盘失败，反复出现再查该环节。',
     severity: 'error',
+  },
+  'PP-CANCEL-001': {
+    message: '已取消，本次产出提前结束',
+    // severity 必须是 skipped：它是「用户主动停的」，不是故障。写成 error 会让自动触发的
+    // 播报逻辑把取消当失败报出来，也会让「有产出」的记录被算成「部分完成」。
+    hint: '已经写出的文件都留在原处，不会删除。要接着产出剩下的，重新跑一次即可（同一张图不会重复产出）。',
+    severity: 'skipped',
   },
 }
 

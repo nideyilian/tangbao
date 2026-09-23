@@ -50,6 +50,7 @@ const APP_DATA_NAMESPACES = new Set([
   'zustand',
   'postprocess',
   'postprocessMedia',
+  'postprocessHistory',
   'projectTreeParams',
   'compositeWorkspace',
   'requirementPrototype',
