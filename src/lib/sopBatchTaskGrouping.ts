@@ -50,7 +50,16 @@ function sortBatchTasks(tasks: TaskRecord[]) {
   })
 }
 
-function keepLatestPromptAttempts(tasks: TaskRecord[]) {
+/**
+ * 同一提示词只保留**最新一次尝试**。
+ *
+ * 单张重试（`retryTask`）沿用同组批次号，会在同一批次里留下同一 `promptId` 的第二条任务；
+ * 不去重的话「整批 N 条提示词」会随重试次数虚涨。
+ *
+ * 导出供 `assetBatchGrouping.buildAssetBatchGroups` 复用 —— 批次详情弹窗与批次卡片必须
+ * 用同一套去重口径，否则同一批次又会出现两个数字（TB-121 的同一类问题）。
+ */
+export function keepLatestPromptAttempts(tasks: TaskRecord[]) {
   const latestByPrompt = new Map<string, TaskRecord>()
   for (const task of tasks) {
     const promptKey = task.sopBatch?.promptId || String(task.sopBatch?.promptIndex ?? task.id)

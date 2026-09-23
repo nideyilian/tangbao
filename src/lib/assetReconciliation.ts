@@ -1,6 +1,7 @@
-import type { TaskRecord, WorkspaceTab } from '../types'
+import type { GeneratedAsset, TaskRecord, WorkspaceTab } from '../types'
 import { upsertFromTask } from './assetLibraryRepository'
 import { getTaskSourceMode } from './generatedAssetOrigin'
+import { getPrimaryOrigin } from './assetBatchGrouping'
 
 export interface AssetReconciliationOptions {
   tasks: TaskRecord[]
@@ -152,4 +153,46 @@ export async function reconcileGeneratedAssets(
   }
 
   return { processed, updatedAssets, failedTasks, failedTaskIds, nextCursor, pendingTaskIds: stillPending }
+}
+
+export interface OrphanAssetReport {
+  /** 扫描过的素材条数（含非 active 的，用于判断扫描是否完整） */
+  scanned: number
+  /**
+   * **来源任务已不存在**的素材 id。
+   *
+   * 这批图在「任务卡片」视图里没有归属：`AssetBatchView` 会把整组孤儿滤掉
+   * （只有回收站作用域放行），表现就是「图片模式看得见、卡片模式看不见」。
+   * 来源任务消失的常见原因：任务记录整体落盘失败（`persistTaskWithRetry` 两次都失败）、
+   * 或用户删掉了任务卡。
+   */
+  orphanAssetIds: string[]
+  /** 连来源任务 id 都没有的素材（来源快照字段缺失），同样归不了组。 */
+  sourceMissingAssetIds: string[]
+}
+
+/**
+ * **反向**对账：素材在、来源任务不在。
+ *
+ * `reconcileGeneratedAssets` 只做「任务 → 素材」这一个方向（任务写了、素材没写时补齐）。
+ * 反方向此前**没有任何机制**：一旦任务记录丢了，它的图会静默落进孤儿组、从卡片视图消失，
+ * 界面上看不出是「没加载」还是「真没有」（2026-09-23 报障：卡片模式少图、数量对不上）。
+ *
+ * 这里只负责**把它们找出来并留痕**，不改任何数据 —— 孤儿组的隐藏是刻意的
+ * （`AssetBatchView` 注释：按用户要求不展示「任务已删除」状态），
+ * 但「有多少张、是哪些」必须能看见，否则下次再出同类问题仍然只能靠猜。
+ */
+export function findOrphanAssets(assets: readonly GeneratedAsset[], taskIds: ReadonlySet<string>): OrphanAssetReport {
+  const orphanAssetIds: string[] = []
+  const sourceMissingAssetIds: string[] = []
+  for (const asset of assets) {
+    if (asset.status !== 'active') continue
+    const taskId = getPrimaryOrigin(asset)?.taskId
+    if (!taskId) {
+      sourceMissingAssetIds.push(asset.id)
+      continue
+    }
+    if (!taskIds.has(taskId)) orphanAssetIds.push(asset.id)
+  }
+  return { scanned: assets.length, orphanAssetIds, sourceMissingAssetIds }
 }

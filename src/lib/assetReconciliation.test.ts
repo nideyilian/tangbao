@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TaskParams, TaskRecord, WorkspaceTab } from '../types'
-import { cursorForTask, splitTaskCursor } from './assetReconciliation'
+import type { GeneratedAsset, GeneratedAssetOrigin, TaskParams, TaskRecord, WorkspaceTab } from '../types'
+import { cursorForTask, findOrphanAssets, splitTaskCursor } from './assetReconciliation'
 
 const mock = vi.hoisted(() => ({
   upsertFromTask: vi.fn(),
@@ -162,5 +162,70 @@ describe('reconcileGeneratedAssets', () => {
     const task = makeTask('task-42', 123456789)
     const cursor = cursorForTask(task)
     expect(splitTaskCursor(cursor)).toEqual({ createdAt: 123456789, taskId: 'task-42' })
+  })
+})
+
+function makeOrigin(taskId: string): GeneratedAssetOrigin {
+  return {
+    key: `${taskId}:0`,
+    taskId,
+    outputSlot: 0,
+    taskCreatedAt: 1000,
+    taskFinishedAt: 2000,
+    sourceMode: 'gallery',
+    prompt: 'p',
+    requestedParams: {} as TaskParams,
+    inputImageIds: [],
+  }
+}
+
+function makeAsset(id: string, taskId: string, status: GeneratedAsset['status'] = 'active'): GeneratedAsset {
+  const origin = makeOrigin(taskId)
+  return {
+    id,
+    imageId: id,
+    status,
+    createdAt: 1000,
+    updatedAt: 1000,
+    trashedAt: null,
+    favorite: false,
+    rating: 0,
+    collectionIds: [],
+    tagIds: [],
+    origins: [origin],
+    primaryOriginKey: origin.key,
+    parentAssetIds: [],
+    metadataVersion: 1,
+  }
+}
+
+/** 反向对账：素材在、来源任务不在 —— 这批图在卡片视图里没有归属，此前完全静默。 */
+describe('findOrphanAssets', () => {
+  it('把「来源任务已不存在」的素材挑出来', () => {
+    const report = findOrphanAssets(
+      [makeAsset('a', 't1'), makeAsset('b', 'gone-task'), makeAsset('c', 't1')],
+      new Set(['t1']),
+    )
+    expect(report.orphanAssetIds).toEqual(['b'])
+    expect(report.sourceMissingAssetIds).toEqual([])
+    expect(report.scanned).toBe(3)
+  })
+
+  it('来源快照连 taskId 都没有的素材单独归一类', () => {
+    const report = findOrphanAssets([makeAsset('a', ''), makeAsset('b', 't1')], new Set(['t1']))
+    expect(report.orphanAssetIds).toEqual([])
+    expect(report.sourceMissingAssetIds).toEqual(['a'])
+  })
+
+  it('回收站里的素材不算孤儿（它们本来就不该出现在卡片视图）', () => {
+    const report = findOrphanAssets([makeAsset('trashed', 'gone-task', 'trashed')], new Set())
+    expect(report.orphanAssetIds).toEqual([])
+    expect(report.sourceMissingAssetIds).toEqual([])
+    expect(report.scanned).toBe(1)
+  })
+
+  it('全部有来源时两个清单都为空', () => {
+    const report = findOrphanAssets([makeAsset('a', 't1'), makeAsset('b', 't2')], new Set(['t1', 't2']))
+    expect(report).toEqual({ scanned: 2, orphanAssetIds: [], sourceMissingAssetIds: [] })
   })
 })

@@ -120,7 +120,15 @@ import {
   validateApiProfile,
 } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
-import { reconcileGeneratedAssets } from './lib/assetReconciliation'
+import { findOrphanAssets, reconcileGeneratedAssets } from './lib/assetReconciliation'
+import {
+  PENDING_TASK_PERSIST_JOURNAL_ID,
+  parsePendingTaskPersistJournal,
+  replayPendingTaskPersists,
+  serializePendingTaskPersistJournal,
+  upsertPendingTaskPersist,
+  type PendingTaskPersistEntry,
+} from './lib/taskPersistJournal'
 import { runGeneratedAssetLibraryMigration } from './lib/migrations/generatedAssetLibraryV1'
 import {
   identifyShadowFavoriteTasks,
@@ -165,7 +173,7 @@ import {
   normalizeTombstone,
 } from './lib/assetLibraryModel'
 import { getTaskSourceMode, type AssetTaskContext } from './lib/generatedAssetOrigin'
-import { upsertFromTask } from './lib/assetLibraryRepository'
+import { listAssets, upsertFromTask } from './lib/assetLibraryRepository'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
 import {
   pickDeepestCollectionId,
@@ -5135,6 +5143,36 @@ export async function putTasks(tasks: TaskRecord[]): Promise<void> {
 }
 
 /**
+ * 待重放的任务落盘补偿清单（内存镜像）。落盘与重放见 `rememberFailedTaskPersist` /
+ * `retryGeneratedAssetLibraryMigration`。
+ */
+let pendingTaskPersistEntries: PendingTaskPersistEntry[] = []
+
+/**
+ * 记一条「两次重试都写不进去」的任务。
+ *
+ * 光打日志不够：这条任务只活在内存里，重启后就没了 —— 而正向对账
+ * (`reconcileGeneratedAssets`) 遍历的是内存里的 tasks，同样救不回来。
+ * 所以必须把**任务快照**落到 journal，下次启动重放。
+ *
+ * 这里落盘本身失败只记日志、不递归重试：那说明库整体写不进去，递归只会加剧。
+ */
+function rememberFailedTaskPersist(task: TaskRecord): void {
+  pendingTaskPersistEntries = upsertPendingTaskPersist(pendingTaskPersistEntries, task, Date.now())
+  void putMigrationJournal({
+    id: PENDING_TASK_PERSIST_JOURNAL_ID,
+    status: 'running',
+    sourceBackup: serializePendingTaskPersistJournal(pendingTaskPersistEntries),
+    updatedAt: Date.now(),
+  }).catch((error) => {
+    console.error('[task-persist] 补偿清单写入失败（进程崩溃时这条任务将无法恢复）', {
+      taskId: task.id,
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    })
+  })
+}
+
+/**
  * 任务落盘带一次重试。
  *
  * `putTask` 是 fire-and-forget 的跨进程写（渲染 → 主进程 → UtilityProcess → SQLite），
@@ -5161,6 +5199,8 @@ async function persistTaskWithRetry(task: TaskRecord): Promise<void> {
         firstError: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
         retryError: retryError instanceof Error ? `${retryError.name}: ${retryError.message}` : String(retryError),
       })
+      // 光留日志不够：把任务快照记进补偿清单，下次启动重放（见 rememberFailedTaskPersist）。
+      rememberFailedTaskPersist(task)
     }
   }
 }
@@ -5723,6 +5763,48 @@ export async function retryGeneratedAssetLibraryMigration(
       getMigrationJournal(reconcileJournalId),
       getMigrationJournal(pendingJournalId),
     ])
+    // 先重放「上次落盘失败」的任务。必须排在对账**之前**：正向对账遍历的是内存里的 tasks，
+    // 而落盘失败的任务一旦重启就不在内存里了 —— 不先写回磁盘，那张卡片就永久消失
+    // （它的素材还留在库里的情况下，表现就是「素材在、任务卡不在」）。
+    const pendingPersistJournal = await getMigrationJournal(PENDING_TASK_PERSIST_JOURNAL_ID)
+    const pendingPersistEntries = parsePendingTaskPersistJournal(pendingPersistJournal?.sourceBackup)
+    if (pendingPersistEntries.length > 0) {
+      const replay = await replayPendingTaskPersists(
+        pendingPersistEntries,
+        // 用 dbPutTask 而非 putTask：这里要显式等素材补齐，不再绕素材同步队列。
+        async (task) => {
+          await dbPutTask(getPersistableTask(task))
+        },
+        Date.now(),
+      )
+      pendingTaskPersistEntries = replay.stillPending
+      await putMigrationJournal({
+        id: PENDING_TASK_PERSIST_JOURNAL_ID,
+        status: replay.stillPending.length > 0 ? 'running' : 'completed',
+        sourceBackup: serializePendingTaskPersistJournal(replay.stillPending),
+        updatedAt: Date.now(),
+      })
+      // 这批任务的素材多半也没入库（素材同步跟着任务走），顺手补一遍，别等到下次启动。
+      const replayedIds = new Set(replay.persisted)
+      for (const entry of pendingPersistEntries) {
+        if (!replayedIds.has(entry.task.id)) continue
+        try {
+          await upsertFromTask(entry.task, { sourceMode: getTaskSourceMode(entry.task) })
+        } catch (error) {
+          console.warn('[task-persist] 重放任务的素材补齐失败（下次启动对账会重试）', {
+            taskId: entry.task.id,
+            error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+          })
+        }
+      }
+      if (replay.persisted.length > 0 || replay.stillPending.length > 0) {
+        console.warn('[task-persist] 重放落盘失败的任务', {
+          persisted: replay.persisted.length,
+          stillPending: replay.stillPending.length,
+        })
+      }
+    }
+
     let pendingTaskIds: string[] = []
     try {
       pendingTaskIds = prevPendingJournal?.sourceBackup ? (JSON.parse(prevPendingJournal.sourceBackup) as string[]) : []
@@ -5758,6 +5840,33 @@ export async function retryGeneratedAssetLibraryMigration(
       sourceBackup: result.pendingTaskIds.length > 0 ? JSON.stringify(result.pendingTaskIds) : undefined,
       updatedAt: Date.now(),
     })
+    // 反向对账：**素材在、来源任务不在**（任务记录整体落盘失败，或用户删了任务卡）。
+    // 这批图在「任务卡片」视图里没有归属 —— `AssetBatchView` 会把孤儿组整组滤掉（这是刻意的，
+    // 不展示「任务已删除」状态），于是表现为「图片模式看得见、卡片模式看不见」。
+    // 这里只把它们**找出来留痕**：数量、样本进日志与 journal，下次再出同类问题不必靠猜。
+    try {
+      const orphanReport = findOrphanAssets(await listAssets(), new Set(tasks.map((task) => task.id)))
+      if (orphanReport.orphanAssetIds.length > 0 || orphanReport.sourceMissingAssetIds.length > 0) {
+        console.warn('[asset-reconcile] 无来源任务的素材（卡片视图不可见、图片模式可见）', {
+          orphanCount: orphanReport.orphanAssetIds.length,
+          sourceMissingCount: orphanReport.sourceMissingAssetIds.length,
+          sample: orphanReport.orphanAssetIds.slice(0, 5),
+        })
+        await putMigrationJournal({
+          id: 'generated-asset-orphans-v1',
+          status: 'completed',
+          sourceBackup: JSON.stringify({
+            orphanAssetIds: orphanReport.orphanAssetIds.slice(-200),
+            sourceMissingAssetIds: orphanReport.sourceMissingAssetIds.slice(-200),
+            scanned: orphanReport.scanned,
+            updatedAt: Date.now(),
+          }),
+          updatedAt: Date.now(),
+        })
+      }
+    } catch (error) {
+      console.warn('[asset-reconcile] 孤儿素材扫描失败（不影响启动）', error)
+    }
     await useAssetLibraryStore.getState().hydrate()
     // 内置「产品线 - 产品 - 方向」三级结构：首次启动写入一次（走迁移 journal，
     // 用户此后删除/改名/移动的内置文件夹不会被自动重建），需要找回时走设置页的显式补齐入口。

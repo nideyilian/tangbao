@@ -344,6 +344,29 @@ describe('buildAssetBatchGroups', () => {
       expect(buildAssetBatchGroups([], new Map([['t1', empty]]), new Map())).toEqual([])
     })
 
+    it('同一提示词重试过只算一条（与批次详情弹窗同一套去重口径）', () => {
+      // 单张重试（retryTask）沿用同组批次号，会在同一批次留下同一 promptIndex 的第二条任务。
+      // 卡片若不去重，「整批 N 条提示词」会随重试次数虚涨 —— 又变成与弹窗不一致的两个数字。
+      const firstAttempt = makeTask('t1', { sopBatch: sopBatchMeta(0), createdAt: 1000 })
+      const retried = makeTask('t1-retry', { sopBatch: sopBatchMeta(0), createdAt: 5000 })
+      const secondPrompt = makeTask('t2', { sopBatch: sopBatchMeta(1), createdAt: 2000 })
+
+      const groups = buildAssetBatchGroups(
+        [makeAsset('img-a', makeOrigin('t1', 0), 1000), makeAsset('img-b', makeOrigin('t1-retry', 0), 5000)],
+        new Map([
+          ['t1', firstAttempt],
+          ['t1-retry', retried],
+          ['t2', secondPrompt],
+        ]),
+        new Map([['snap-1', snapshot]]),
+      )
+
+      expect(groups).toHaveLength(1)
+      // 保留最新一次尝试，旧的那条不再计入「整批 N 条」
+      expect(groups[0]?.taskIds).toEqual(['t1-retry', 't2'])
+      expect(groups[0]?.summary.total).toBe(2)
+    })
+
     it('批次位置按组内最早提交时间算（补进来的成员也算）', () => {
       const later = makeTask('t1', { sopBatch: sopBatchMeta(0), createdAt: 8000 })
       const earliest = makeTask('t2', { sopBatch: sopBatchMeta(1), createdAt: 1000, status: 'done', outputImages: [] })

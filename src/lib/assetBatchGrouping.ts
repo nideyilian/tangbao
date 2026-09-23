@@ -1,5 +1,6 @@
 import type { GeneratedAsset, GeneratedAssetOrigin, SopBatchSnapshot, TaskRecord } from '../types'
 import { hasCompletedTaskOutputs } from './taskProgressDisplay'
+import { keepLatestPromptAttempts } from './sopBatchTaskGrouping'
 
 /**
  * 素材库「生成批次」展现方式的分组纯函数。
@@ -311,14 +312,16 @@ export function buildAssetBatchGroups(
       return slotDelta || a.createdAt - b.createdAt
     })
     if (group.kind === 'sop-batch' && group.taskIds.length > 0) {
-      const batchTasks = group.taskIds
-        .map((id) => tasksById.get(id))
-        .filter((task): task is TaskRecord => task != null)
-        .sort(
-          (a, b) =>
-            (a.sopBatch?.promptIndex ?? Number.MAX_SAFE_INTEGER) -
-              (b.sopBatch?.promptIndex ?? Number.MAX_SAFE_INTEGER) || a.createdAt - b.createdAt,
-        )
+      // 单张重试会沿用同组批次号，在同一批次里留下同一 `promptId` 的第二条任务。
+      // 去重口径必须与批次详情弹窗一致（`groupSopBatchTasks` 用的是同一个函数），
+      // 否则「整批 N 条提示词」会随重试次数虚涨，又变成两个数字。
+      const batchTasks = keepLatestPromptAttempts(
+        group.taskIds.map((id) => tasksById.get(id)).filter((task): task is TaskRecord => task != null),
+      ).sort(
+        (a, b) =>
+          (a.sopBatch?.promptIndex ?? Number.MAX_SAFE_INTEGER) - (b.sopBatch?.promptIndex ?? Number.MAX_SAFE_INTEGER) ||
+          a.createdAt - b.createdAt,
+      )
       group.taskIds = batchTasks.map((task) => task.id)
       if (!group.task) group.task = batchTasks[0] ?? null
       group.summary = summarizeTasks(batchTasks)
