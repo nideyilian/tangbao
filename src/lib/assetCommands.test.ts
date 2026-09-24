@@ -327,6 +327,77 @@ describe('searchAllAssetIds', () => {
     expect(result.truncated).toBe(true)
   })
 
+  it('底层每页只给 200 条时也能翻页收全 450 条（全选不受页大小限制）', async () => {
+    const assets = new Map<string, GeneratedAsset>(
+      Array.from({ length: 450 }, (_, i) => {
+        const id = `asset-${String(i).padStart(4, '0')}`
+        return [id, makeAsset(id)]
+      }),
+    )
+    // 模拟主进程当年的 200 夹子：不管上层要多少，一页最多 200 条
+    const clamped = vi.fn(async (input: { cursor?: string | null; limit?: number }) => {
+      const all = [...assets.keys()].sort((a, b) => a.localeCompare(b))
+      const start = input.cursor ? Number(input.cursor) : 0
+      const size = Math.min(input.limit ?? 500, 200)
+      const page = all.slice(start, start + size).map((id) => assets.get(id)!)
+      return {
+        assets: page,
+        totalCount: all.length,
+        nextCursor: start + page.length < all.length ? String(start + page.length) : null,
+        counts: {
+          all: all.length,
+          recent: 0,
+          favorites: 0,
+          unorganized: 0,
+          trash: 0,
+          byCollection: {},
+        },
+      }
+    })
+    const service = createAssetCommandService(makeDependencies({ queryCatalog: clamped }))
+
+    const result = await service.searchAllAssetIds({ ...baseInput, query: '' })
+
+    expect(result.ids).toHaveLength(450)
+    expect(new Set(result.ids).size).toBe(450)
+    expect(result.truncated).toBe(false)
+  })
+
+  it('游标不推进（下一页重复同一批 id）时立刻收手并报截断，不把结果缩成一小撮', async () => {
+    const assets = new Map<string, GeneratedAsset>(
+      Array.from({ length: 450 }, (_, i) => {
+        const id = `asset-${String(i).padStart(4, '0')}`
+        return [id, makeAsset(id)]
+      }),
+    )
+    // 坏游标：永远返回第一页（且 nextCursor 恒非空），旧实现会白翻 64 轮、
+    // 堆积 12800 条重复 id，最后被上层去重成 200 条 —— 看起来像「全选只能选 200 张」。
+    const stuck = vi.fn(async (input: { cursor?: string | null; limit?: number }) => {
+      const all = [...assets.keys()].sort((a, b) => a.localeCompare(b))
+      const size = Math.min(input.limit ?? 500, 200)
+      return {
+        assets: all.slice(0, size).map((id) => assets.get(id)!),
+        totalCount: all.length,
+        nextCursor: 'stuck',
+        counts: {
+          all: all.length,
+          recent: 0,
+          favorites: 0,
+          unorganized: 0,
+          trash: 0,
+          byCollection: {},
+        },
+      }
+    })
+    const service = createAssetCommandService(makeDependencies({ queryCatalog: stuck }))
+
+    const result = await service.searchAllAssetIds({ ...baseInput, query: '' })
+
+    expect(stuck.mock.calls.length).toBe(2)
+    expect(result.ids).toHaveLength(200)
+    expect(result.truncated).toBe(true)
+  })
+
   it('falls back to a full in-memory query when no catalog backend exists', async () => {
     const assets = new Map<string, GeneratedAsset>([['asset-a', makeAsset('asset-a')]])
     const service = createAssetCommandService(

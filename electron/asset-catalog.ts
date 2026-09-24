@@ -13,6 +13,7 @@ import type {
 } from '../src/types'
 import { AppDataStore, type AppDataStoreMap } from './app-data-store'
 import { materializeAssetRecords } from '../src/lib/assetIdentity'
+import { resolveAssetPageSize } from '../src/lib/assetPaging'
 import { resolveGeneratedAssetBatch, resolveGeneratedAssetNameBase } from '../src/lib/generatedImageFilename'
 import { createTextVector, rankAssetCandidates } from '../src/lib/assetSemanticSearch'
 
@@ -566,7 +567,8 @@ export class AssetCatalog {
   }
 
   query(input: AssetCatalogQuery): AssetCatalogCursorPage {
-    const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 100)))
+    // 页大小按调用方要的给（「全选全部结果」按 500/页翻页，见 src/lib/assetPaging.ts）
+    const limit = resolveAssetPageSize(input.limit)
     if (
       input.semantic?.enabled &&
       input.scope === 'all' &&

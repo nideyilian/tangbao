@@ -128,6 +128,33 @@ describe('SQLite asset catalog', () => {
     expect(new Set([...first.assets, ...second.assets].map((asset) => asset.id)).size).toBe(75)
   })
 
+  it('按调用方请求的页大小返回：全选要 500/页就给 500，不再被夹到 200', () => {
+    const catalog = new AssetCatalog(':memory:')
+    catalogs.push(catalog)
+    catalog.upsertAssets(
+      Array.from({ length: 450 }, (_, index) => ({
+        asset: makeAsset(`page-${String(index).padStart(3, '0')}`, `第 ${index} 张`, 1000 - index),
+      })),
+    )
+
+    // 渲染进程「全选全部结果」按 500/页翻页（assetCommands.searchAllAssetIds 的 PAGE_SIZE）。
+    // 旧实现把页大小夹到 200：450 张库要翻 3 轮才收齐，而且 HTTP 素材 API 的 `?limit=` 永远
+    // 拿不到 200 以上 —— 界面上看着就是「结果被限死在 200 条」。
+    const page = catalog.query({
+      scope: 'all',
+      query: '',
+      filters: {},
+      sortKey: 'updatedAt',
+      sortOrder: 'desc',
+      limit: 500,
+    })
+
+    expect(page.assets).toHaveLength(450)
+    expect(page.totalCount).toBe(450)
+    expect(new Set(page.assets.map((asset) => asset.id)).size).toBe(450)
+    expect(page.nextCursor).toBeNull()
+  })
+
   it('keeps collections, tags and tombstones as authoritative metadata tables', () => {
     const catalog = new AssetCatalog(':memory:')
     catalogs.push(catalog)

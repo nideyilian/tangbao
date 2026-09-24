@@ -16,6 +16,7 @@ import {
   normalizeTag,
   normalizeTombstone,
 } from './assetLibraryModel'
+import { resolveAssetPageSize } from './assetPaging'
 import {
   batchGetAssetTombstones,
   batchGetGeneratedAssets,
@@ -283,7 +284,7 @@ export async function queryAssetCatalog(input: AssetCatalogQuery): Promise<Asset
   const snapshot = await hydrate()
   const result = queryAssets(snapshot, input)
   const offset = input.cursor ? Number.parseInt(input.cursor, 10) || 0 : 0
-  const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 100)))
+  const limit = resolveAssetPageSize(input.limit)
   const assets = result.assets.slice(offset, offset + limit)
   return {
     assets,

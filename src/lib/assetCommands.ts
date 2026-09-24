@@ -254,20 +254,31 @@ class AssetCommandService {
       return { ids: result.assets.map((asset) => asset.id), totalCount: result.totalCount, truncated: false }
     }
     const ids: string[] = []
+    // 边收边去重：上层 `selectAllVisibleAssets` 也会去重，但这里先做一遍，才不会出现
+    // 「收集了 8000 条、去重后只剩 200 条」这种看着像「全选被限死在 200」的结果。
+    const seen = new Set<string>()
     let cursor: string | null = null
     let truncated = false
     const PAGE_SIZE = 500
     for (let round = 0; round < 64; round++) {
       const page = await this.deps.queryCatalog({ ...input, cursor, limit: PAGE_SIZE })
+      let added = 0
       for (const asset of page.assets) {
-        if (ids.length >= maxIds) {
+        if (seen.has(asset.id)) continue
+        if (seen.size >= maxIds) {
           truncated = true
           break
         }
+        seen.add(asset.id)
         ids.push(asset.id)
+        added += 1
       }
       if (truncated) break
       if (!page.nextCursor) return { ids, totalCount: page.totalCount, truncated }
+      // 游标没往前走（下一页又是同一批 id）时立刻收手并如实报截断：继续翻 64 轮只会拿回
+      // 一模一样的页，白跑一串 IPC，最后去重成一小撮 —— 用户看到的是「全选只选到前 N 张，
+      // 而且没有任何提示」，比直接说「被截断」更难查。
+      if (added === 0) return { ids, totalCount: ids.length, truncated: true }
       cursor = page.nextCursor
     }
     return { ids, totalCount: ids.length, truncated }
