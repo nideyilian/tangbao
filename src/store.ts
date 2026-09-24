@@ -11651,11 +11651,45 @@ export async function retryTask(
   }
 }
 
+/**
+ * 「再次生成」的受理闸（2026-09-24）。
+ *
+ * 原先这个按钮的 `disabled` 接的是「任务还在跑」—— 也就是整批出完图才能再点。
+ * 但点击的真实语义是**把这一批需求整体交出去**：`retryTask` 建完卡就 `void executeTask`，
+ * 生图本来就是丢到后台自己跑的，点击从不等待出图。闸门接在「任务跑完没」上，
+ * 等于让用户为一个已经交出去的活儿干等几分钟，还顺带挡掉了正当的「再开一轮」。
+ *
+ * 闸门真正该挡的只有一件事：**同一批被重复受理**。从点击到 N 张卡建完（每张一次写库）
+ * 这段窗口里再点，会建出两批任务。所以闸的粒度是「源批次」而不是「任务」——
+ * 不同批次各自独立、互不阻塞（与后处理的 `postprocessDirectionQueue` 同一口径）。
+ */
+const rerunSopBatchInFlight = new Set<string>()
+
+/** 源批次的受理键：优先 batchId，历史数据缺它时退回首个任务 id。 */
+function getSopBatchRerunKey(task: TaskRecord): string {
+  return task.sopBatch?.batchId || `task:${task.id}`
+}
+
 export async function rerunSopBatchTasks(tasks: TaskRecord[]) {
+  const batchTasks = tasks.filter((task) => task.sopBatch)
+  if (!batchTasks.length) return
+  const rerunKey = getSopBatchRerunKey(batchTasks[0])
+  if (rerunSopBatchInFlight.has(rerunKey)) {
+    // 闸门分支必须给反馈：静默 return 会被读成「点了没反应」（R-57 的教训）
+    useStore.getState().showToast('这一批正在重新生成中，请稍候', 'info')
+    return
+  }
+  // 「还在写提示词 / 写词就失败」的卡重建不了：`retryTask` 会逐张拒绝并 toast，
+  // 结果是「半批成功 + 一排红字」。先把它们摘出去；整批都停在这一步时给一句明确的提示。
+  const runnableTasks = batchTasks.filter((task) => !task.promptPending && !task.promptFailed)
+  if (!runnableTasks.length) {
+    useStore.getState().showToast('这一批还在编写提示词，写完才能再次生成', 'info')
+    return
+  }
+
+  rerunSopBatchInFlight.add(rerunKey)
   try {
-    const batchTasks = tasks.filter((task) => task.sopBatch)
-    if (!batchTasks.length) return
-    const firstMeta = batchTasks[0].sopBatch!
+    const firstMeta = runnableTasks[0].sopBatch!
     const batchId = `sop-batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
     let snapshotId: string | undefined
     if (firstMeta.snapshotId) {
@@ -11680,7 +11714,7 @@ export async function rerunSopBatchTasks(tasks: TaskRecord[]) {
     }
     const createdTaskIds = (
       await Promise.all(
-        batchTasks.map((task) =>
+        runnableTasks.map((task) =>
           retryTask(task, {
             sopBatch: {
               ...task.sopBatch!,
@@ -11706,7 +11740,7 @@ export async function rerunSopBatchTasks(tasks: TaskRecord[]) {
       useStore.getState().showToast('SOP 批次重新生成失败，没有创建新任务', 'error')
       return
     }
-    const failedCount = batchTasks.length - createdTaskIds.length
+    const failedCount = runnableTasks.length - createdTaskIds.length
     useStore
       .getState()
       .showToast(
@@ -11718,6 +11752,8 @@ export async function rerunSopBatchTasks(tasks: TaskRecord[]) {
   } catch (error) {
     console.error('SOP 批次重新生成失败:', error)
     useStore.getState().showToast('SOP 批次重新生成失败', 'error')
+  } finally {
+    rerunSopBatchInFlight.delete(rerunKey)
   }
 }
 

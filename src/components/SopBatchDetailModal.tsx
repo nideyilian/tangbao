@@ -229,9 +229,21 @@ export default function SopBatchDetailModal({
     return batch?.kind === 'sop-batch' ? batch.tasks : tasks
   }, [allTasks, batchGroupId, tasks])
   const allResults = useMemo(() => currentTasks.flatMap(getTaskResultItems), [currentTasks])
-  const isRunning = currentTasks.some(
-    (task) => task.status === 'running' || task.falRecoverable || task.customRecoverable,
-  )
+  /**
+   * 「再次生成整批」的受理中状态（2026-09-24）。
+   *
+   * 按钮的 `disabled` 只绑这个，**不绑「这一批还在跑」** —— 点击的语义是把这一批需求交出去，
+   * `retryTask` 建完卡就丢给 `executeTask` 在后台跑，交完就该恢复可点、好接着开下一轮。
+   * 原先绑「还在跑」时，用户得为一批已经丢出去的活儿干等几分钟，而且连新一轮都开不了。
+   * 防重复受理由 `rerunSopBatchTasks` 里的受理闸兜底（同一批重复受理会被挡下并提示）。
+   */
+  const [rerunPending, setRerunPending] = useState(false)
+  const rerunCurrentBatch = () => {
+    if (rerunPending) return
+    setRerunPending(true)
+    // 包 Promise.resolve：单测里这个函数被 mock 成同步返回，直接 `.finally` 会炸
+    void Promise.resolve(rerunSopBatchTasks(currentTasks)).finally(() => setRerunPending(false))
+  }
   const modalSizeStyle = largeView
     ? LARGE_MODAL_SIZE_STYLE
     : {
@@ -415,12 +427,17 @@ export default function SopBatchDetailModal({
               </button>
               <button
                 type="button"
-                onClick={() => void rerunSopBatchTasks(currentTasks)}
-                disabled={isRunning}
+                onClick={rerunCurrentBatch}
+                disabled={rerunPending}
+                aria-busy={rerunPending}
                 className="flex h-ds-control-lg items-center gap-1.5 rounded-lg px-3 text-xs font-medium text-ds-primary transition hover:bg-ds-primary-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ds-focus disabled:cursor-not-allowed disabled:opacity-40 dark:text-ds-primary dark:hover:bg-ds-primary/30"
               >
-                <RefreshCw size={14} />
-                再次生成整批
+                {rerunPending ? (
+                  <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                {rerunPending ? '受理中…' : '再次生成整批'}
               </button>
               <div className="flex rounded-lg bg-ds-surface p-1 dark:bg-ds-subtle" aria-label="结果视图">
                 <button

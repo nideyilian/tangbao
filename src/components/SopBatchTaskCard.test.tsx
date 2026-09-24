@@ -205,4 +205,84 @@ describe('SopBatchTaskCard', () => {
       ),
     ).toHaveLength(1)
   })
+
+  it('这一批还在出图时，「再次生成」仍然可点（交出去就能再开一轮）', async () => {
+    storeMocks.ensureImageThumbnailCached.mockResolvedValue(undefined)
+    const onRerun = vi.fn()
+    const runningTask = { ...task('task-1', 1), status: 'running', outputImages: [] } as TaskRecord
+    let renderer: ReturnType<typeof create>
+
+    act(() => {
+      renderer = create(
+        <SopBatchTaskCard
+          sopName="天体图"
+          tasks={[runningTask]}
+          summary={{ total: 1, running: 1, completed: 0, failed: 0 }}
+          onClick={vi.fn()}
+          onOpenBatch={vi.fn()}
+          onOpenImage={vi.fn()}
+          onRerun={onRerun}
+          onDelete={vi.fn()}
+        />,
+      )
+    })
+    mountedRenderers.push(renderer!)
+
+    // 按钮的 `disabled` 只绑「受理动作」，**不绑任务是否还在跑** ——
+    // 绑后者时用户得为一批已经丢到后台的活儿干等几分钟，还点不动（2026-09-24 改）
+    const rerunButton = renderer!.root.findByProps({ 'aria-label': '再次生成 SOP 批量任务 天体图' })
+    expect(rerunButton.props.disabled).toBe(false)
+    await act(async () => {
+      rerunButton.props.onClick({ stopPropagation: vi.fn() })
+    })
+    expect(onRerun).toHaveBeenCalledOnce()
+  })
+
+  it('受理期间按钮显示进行中并挡住连点，受理结束恢复可点', async () => {
+    storeMocks.ensureImageThumbnailCached.mockResolvedValue(undefined)
+    let releaseAccept: (() => void) | null = null
+    const acceptPromise = new Promise<void>((resolve) => {
+      releaseAccept = resolve
+    })
+    const onRerun = vi.fn(() => acceptPromise)
+    let renderer: ReturnType<typeof create>
+
+    act(() => {
+      renderer = create(
+        <SopBatchTaskCard
+          sopName="天体图"
+          tasks={[task('task-1', 1)]}
+          summary={{ total: 1, running: 0, completed: 1, failed: 0 }}
+          onClick={vi.fn()}
+          onOpenBatch={vi.fn()}
+          onOpenImage={vi.fn()}
+          onRerun={onRerun}
+          onDelete={vi.fn()}
+        />,
+      )
+    })
+    mountedRenderers.push(renderer!)
+
+    const findRerun = () => renderer!.root.findByProps({ 'aria-label': '再次生成 SOP 批量任务 天体图' })
+    await act(async () => {
+      findRerun().props.onClick({ stopPropagation: vi.fn() })
+    })
+    expect(onRerun).toHaveBeenCalledOnce()
+
+    const pendingButton = findRerun()
+    expect(pendingButton.props.disabled).toBe(true)
+    expect(pendingButton.props['aria-busy']).toBe(true)
+    // 受理中的第二下不再触发：同一批只被受理一次（闸门再由 store 兜底）
+    await act(async () => {
+      pendingButton.props.onClick({ stopPropagation: vi.fn() })
+    })
+    expect(onRerun).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      releaseAccept?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(findRerun().props.disabled).toBe(false)
+  })
 })

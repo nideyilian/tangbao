@@ -6067,3 +6067,53 @@ trashed），得再进回收站点一次「永久删除」才是真删。用户�
    本轮没动；要改成「按 taskIds 取全量」需要新增一个按任务查素材的接口，等你发话。
 3. 这条口径与 TB-128（后处理进度弹窗）同期落地，两者的未提交改动混在同一工作区 ——
    提交时**只 add 本轮文件**（R-09 / R-79）。
+
+## TB-131 「再次生成」受理即恢复：按钮不看任务跑没跑完（2026-09-24 阿伟）
+
+**需求（杰哥原话，2026-09-24）**
+
+> 不能点击时就将整个需求发出去，让它自己跑，然后再恢复成可点击的状态，可以开始新的一轮任务这种吗
+
+**病根：闸门绑错了对象**
+
+三个入口共用一行 `disabled={isRunning}`：素材库批次行（`AssetBatchView.tsx:1260`）、
+画廊批次卡（`SopBatchTaskCard.tsx:244`）、批次详情弹窗（`SopBatchDetailModal.tsx:419`）。
+但点击的语义是**把这一批需求整体交出去** —— `retryTask` 建完卡就 `void executeTask`（`store.ts:11634`），
+生图从来是丢后台自己跑的，点击从不等待出图。把闸门接在「任务跑完没」上，等于让用户为一个
+已经交出去的活儿干等几分钟，还顺带挡掉了正当的「再开一轮」。
+
+**做了什么**
+
+1. **受理闸**（`rerunSopBatchTasks`，`store.ts`）：模块级 in-flight `Set`，键 = 源批次 `batchId`。
+   只挡**同一批被重复受理**（从点击到 N 张卡建完的窗口），不同批次互不阻塞 ——
+   与后处理 `postprocessDirectionQueue` 同一口径。命中时 toast「这一批正在重新生成中，请稍候」，
+   **不静默 return**（R-57 的教训）。
+2. **写词阶段不参与重建**：过滤掉 `promptPending` / `promptFailed` 的卡 ——
+   `retryTask:11556` 会逐张拒绝并 toast，硬走的结果是「半批成功 + 一排红字」。
+   整批都停在这一步时给一句明确提示，而不是硬跑出半批。
+3. **三个按钮的 `disabled` 换成「受理中」**，受理期间换转圈图标 + `aria-busy`，
+   常态 tooltip 文案不变（`再生成` 按钮的 title 仍是「再次生成」）。
+4. **卡片把 `onRerun` 的返回 promise 当作受理窗口**：`AssetBatchView` 的 `handleRerunBatch`
+   由 `void rerunSopBatchTasks(...)` 改为 `return` 它，卡片据此显示受理中。
+
+**验收证据**
+
+- **`npm run verify`**：`tsc` 双端 + `lint` + `format:check` **全绿**；
+  `test` **270 文件 / 3346 用例**。
+- ⚠️ 同一次 verify 有 1 条失败，与本次改动无关：`electron/legacy-data-migration.test.ts`
+  的 `beforeEach` 并跑时 hook 超 10s，**单文件跑 19 passed** —— 与 TB-130 记录的是同一条环境 flaky。
+- **反向验证（三处守卫改回旧行为 → 精确红）**：`disabled={isRunning || rerunPending}` +
+  关掉闸门分支 + 去掉 `promptPending` 过滤 → **恰好 4 条红**（3 条 store 新用例 + 1 条卡片新用例），
+  复原后已 `grep`/`sed` 回读校验。
+- **新增 6 条守卫**：store 3 条（重复受理被挡并给提示 / 整批写词给明确提示 / 只跳过写词中的卡）、
+  卡片 2 条（运行中仍可点 / 受理期间挡连点且结束恢复）、另有组件级文案回归。
+
+**未做 / 待确认**
+
+1. **跨轮并发峰值没管**：闸的粒度是「批次」而不是「任务」。连开 3 轮 = 3 批任务同时在途，
+   而生图侧**没有全局任务闸**（只有单任务内的 `maxConcurrent`，带参考图时压到 2）。
+   要做到「不限数量 + 最多并发数 + 排队」需另做一轮，配方可照 `postprocessDirectionQueue.ts`
+   （纯逻辑闸 + waiter 唤醒 + 中途可取消）。
+2. **两轮跑完会有两个同名批次**：`assetBatchGrouping.ts:196` 的标题取 `snapshot.title`/`sopName`，
+   不含轮次。素材库里靠创建时间戳区分；要不要加「第 N 轮」待杰哥定。
+3. **未经真机确认**：本机无法做渲染验证（runbook 二十七节），观感需你在 dev 里过目。

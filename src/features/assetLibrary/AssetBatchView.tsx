@@ -304,7 +304,8 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
   const handleRerunBatch = useCallback(() => {
     const taskList = batchTasks(group)
     if (taskList.length === 0) return
-    void rerunSopBatchTasks(taskList)
+    // 返回 promise：`SopBatchTaskCard` 的「再次生成」按钮靠它维持「受理中」并挡住连点
+    return rerunSopBatchTasks(taskList)
   }, [group, batchTasks])
 
   const handleDeleteGroup = useCallback(() => {
@@ -436,6 +437,14 @@ function AssetGroupedView({
   const gridDensity = useAssetLibraryStore((state) => state.gridDensity)
   const collections = useAssetLibraryStore((state) => state.collections)
 
+  /**
+   * 正在受理「再次生成」的批次（2026-09-24）。
+   *
+   * 与画廊批次卡同一个口径：按钮只看**受理动作**是否还在跑，不看任务跑没跑完 ——
+   * 需求交出去就该恢复可点，好接着开下一轮。防重复受理由 `rerunSopBatchTasks`
+   * 里的受理闸兜底（同一批重复受理会被挡下并提示），这里只管按钮自己的视觉状态。
+   */
+  const [rerunPendingGroupId, setRerunPendingGroupId] = useState<string | null>(null)
   const suppressClickUntilRef = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const layoutRef = useRef<HTMLDivElement>(null)
@@ -900,7 +909,10 @@ function AssetGroupedView({
   const handleRerunBatch = (group: AssetBatchGroup) => {
     const taskList = batchTasks(group)
     if (taskList.length === 0) return
-    void rerunSopBatchTasks(taskList)
+    if (rerunPendingGroupId) return
+    setRerunPendingGroupId(group.id)
+    // 包 Promise.resolve：单测里这个函数被 mock 成同步返回，直接 `.finally` 会炸
+    void Promise.resolve(rerunSopBatchTasks(taskList)).finally(() => setRerunPendingGroupId(null))
   }
 
   const handleDeleteGroup = (group: AssetBatchGroup) => {
@@ -1257,11 +1269,12 @@ function AssetGroupedView({
                                 type="button"
                                 title="再次生成"
                                 aria-label={`再次生成 ${group.title}`}
-                                disabled={isRunning}
+                                aria-busy={rerunPendingGroupId === group.id}
+                                disabled={rerunPendingGroupId === group.id}
                                 onClick={() => handleRerunBatch(group)}
                                 className="rounded-md border border-ds-border px-2 py-1 text-xs text-ds-muted outline-none hover:bg-ds-muted/10 hover:text-ds-text focus-visible:ring-2 focus-visible:ring-ds-focus/50 disabled:opacity-40"
                               >
-                                再次生成
+                                {rerunPendingGroupId === group.id ? '受理中…' : '再次生成'}
                               </button>
                             )}
                             {group.kind !== 'orphan' && (

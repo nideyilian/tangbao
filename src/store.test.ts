@@ -1626,6 +1626,97 @@ describe('mask draft lifecycle in store actions', () => {
     dbMockState.putTaskFailuresRemaining = 0
   })
 
+  it('同一批重复受理被闸门挡下，并给出提示（不静默 return）', async () => {
+    const first = task({
+      id: 'task-rerun-dup',
+      prompt: '第一条',
+      sopBatch: {
+        batchId: 'batch-rerun-dup',
+        sopId: 'sop-1',
+        sopName: '天体图',
+        promptId: 'prompt-1',
+        promptIndex: 1,
+        promptCount: 1,
+      },
+    })
+    const tab = workspaceTab({ id: 'tab-rerun-dup', name: 'SOP', tasks: [first] })
+    const showToast = vi.fn()
+    useStore.setState({
+      tasks: [first],
+      workspaceTabs: [tab],
+      activeWorkspaceTabId: tab.id,
+      showToast,
+    })
+
+    // 第一次受理还在飞（建卡要逐张写库），此时再点一次必须被挡下 **并给出反馈** ——
+    // 闸门分支静默 return 会被读成「点了没反应」（R-57 的教训）。
+    const inFlight = rerunSopBatchTasks([first])
+    await rerunSopBatchTasks([first])
+    expect(showToast).toHaveBeenCalledWith('这一批正在重新生成中，请稍候', 'info')
+    await inFlight
+
+    // 只建出一批：重复受理没有产生第二份任务
+    expect(useStore.getState().tasks).toHaveLength(2)
+  })
+
+  it('整批还在写提示词时给明确提示，而不是建出半批', async () => {
+    const writing = task({
+      id: 'task-rerun-writing',
+      prompt: '第一条',
+      promptPending: true,
+      sopBatch: {
+        batchId: 'batch-rerun-writing',
+        sopId: 'sop-1',
+        sopName: '天体图',
+        promptId: 'prompt-1',
+        promptIndex: 1,
+        promptCount: 1,
+      },
+    })
+    const showToast = vi.fn()
+    useStore.setState({ tasks: [writing], showToast })
+
+    await rerunSopBatchTasks([writing])
+
+    expect(showToast).toHaveBeenCalledWith('这一批还在编写提示词，写完才能再次生成', 'info')
+    expect(useStore.getState().tasks).toHaveLength(1)
+  })
+
+  it('只跳过还在写提示词的卡，其余照常重建', async () => {
+    const writing = task({
+      id: 'task-rerun-mixed-1',
+      prompt: '第一条',
+      promptPending: true,
+      sopBatch: {
+        batchId: 'batch-rerun-mixed',
+        sopId: 'sop-1',
+        sopName: '天体图',
+        promptId: 'prompt-1',
+        promptIndex: 1,
+        promptCount: 2,
+      },
+    })
+    const ready = task({
+      id: 'task-rerun-mixed-2',
+      prompt: '第二条',
+      sopBatch: { ...writing.sopBatch!, promptId: 'prompt-2', promptIndex: 2 },
+    })
+    const tab = workspaceTab({ id: 'tab-rerun-mixed', name: 'SOP', tasks: [writing, ready] })
+    const showToast = vi.fn()
+    useStore.setState({
+      tasks: [writing, ready],
+      workspaceTabs: [tab],
+      activeWorkspaceTabId: tab.id,
+      showToast,
+    })
+
+    await rerunSopBatchTasks([writing, ready])
+
+    // 写词中的那张不参与重建：硬走 retryTask 会被逐张拒绝，结果是「半批 + 一排红字」
+    expect(useStore.getState().tasks).toHaveLength(3)
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('已创建新的 SOP 批次'), 'success')
+  })
+
   it('updates task progress when submitting a gallery task', async () => {
     vi.mocked(callImageApi).mockImplementationOnce(() => new Promise(() => {}))
 
