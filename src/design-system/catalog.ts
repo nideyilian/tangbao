@@ -1030,9 +1030,9 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/postprocess/PostprocessRunsDialog.tsx',
     responsibility:
-      '后处理进度面板（TB-115 起分三段）：正在跑的各方向（进度条 + 计数 + 阶段 + 当前产出 + **按方向取消**）、不属于某个方向的结果（分发 / 准备阶段的批次级问题）、以及按方向的长期历史记录',
+      '后处理进度面板（TB-115 分三段 · 2026-09-24 起按范围分两页）：标签条在「当前方向」（= 素材库当时所在的文件夹，与产出目标弹窗同一个上下文）与「全部方向」之间切换，**在飞的进度与历史记录都跟着这一页过滤**（杰哥定：要看别的方向在跑就切到全部）；不在具体文件夹里打开时不渲染标签条。三段内容 = 正在跑的各方向（进度条 + 计数 + 阶段 + 当前产出 + **按方向取消**）、不属于某个方向的结果（分发 / 准备阶段的批次级问题，只在全部页）、按方向的长期历史记录',
     decision: 'compose',
-    targets: ['Dialog', 'Progress', 'StatusIndicator', 'Button', 'IconButton', 'EmptyState'],
+    targets: ['Dialog', 'Tabs', 'Progress', 'StatusIndicator', 'Button', 'IconButton', 'EmptyState'],
   },
   {
     module: 'src/features/postprocess/PostprocessHistoryList.tsx',
