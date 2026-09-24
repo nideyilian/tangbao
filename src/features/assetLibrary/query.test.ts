@@ -617,6 +617,28 @@ describe('resolveEffectiveAssets', () => {
     expect(resolveEffectiveAssets([snapshot], {}, options).map((asset) => asset.id)).toEqual(['a'])
   })
 
+  it('剔除已永久删除的素材：即使它不在内存里（删除墓碑）', () => {
+    // 永久删除会把素材从 assetsById 摘掉 → 它和上一条「内存窗口之外的素材」长得一模一样，
+    // 于是被同一条兜底当成老素材留在网格里；而图片字节与缩略图都已真删，
+    // 界面上只剩一张再也加载不出图的空壳卡（2026-09-24 图片模式报障）。
+    // 墓碑是区分「刚被删掉」与「从没进过内存」的唯一凭据。
+    const result = resolveEffectiveAssets(
+      [makeAsset('a'), makeAsset('b')],
+      {},
+      { ...options, purgedAssetIds: new Set(['a']) },
+    )
+    expect(result.map((asset) => asset.id)).toEqual(['b'])
+  })
+
+  it('墓碑只剔自己：同页其它素材与「窗口外兜底」都不受影响（TB-106 不回归）', () => {
+    const page = [makeAsset('a'), makeAsset('b')]
+    expect(
+      resolveEffectiveAssets(page, {}, { ...options, purgedAssetIds: new Set(['a']) }).map((asset) => asset.id),
+    ).toEqual(['b'])
+    // 没有墓碑时，窗口外素材照旧按数据库那一页保留
+    expect(resolveEffectiveAssets(page, {}, options)).toHaveLength(2)
+  })
+
   it('keeps snapshot objects when the asset is not in memory (defensive fallback)', () => {
     // 内存里只有 b：a 不在缓存窗口内，必须按数据库那一页保留（TB-106）。
     // 旧断言的标题写的就是 keeps，断言却写成 drop —— 正好把 bug 钉成了「预期行为」。

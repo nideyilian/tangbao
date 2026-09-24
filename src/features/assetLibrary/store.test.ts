@@ -128,6 +128,7 @@ function resetState() {
     similarToAssetId: null,
     undoStack: [],
     redoStack: [],
+    purgedAssetIds: new Set<string>(),
   })
 }
 
@@ -158,6 +159,16 @@ describe('hydrate', () => {
     mock.hydrate.mockRejectedValue(new Error('db failure'))
     await useAssetLibraryStore.getState().hydrate()
     expect(useAssetLibraryStore.getState().hydrationStatus).toBe('error')
+  })
+
+  it('清空删除墓碑 —— 全量重读后一切以库为准', async () => {
+    // 墓碑只活一个会话：重读之后「库里没有的就是真没有」，留着会误伤后来同名重建的素材
+    useAssetLibraryStore.setState({ purgedAssetIds: new Set(['stale']) })
+    mock.hydrate.mockResolvedValue({ assets: [makeAsset('a')], collections: [], tags: [], tombstones: [] })
+
+    await useAssetLibraryStore.getState().hydrate()
+
+    expect(useAssetLibraryStore.getState().purgedAssetIds.size).toBe(0)
   })
 })
 
@@ -307,6 +318,37 @@ describe('mutation actions', () => {
 
     useAssetLibraryStore.getState().removeAssetLocal('a')
     expect(useAssetLibraryStore.getState().mutationVersion).toBe(before + 4)
+  })
+
+  // ===== 永久删除的内存墓碑（2026-09-24 报障：图片模式删完只剩余空壳卡）=====
+  // 分页快照的复检有一条兜底「内存里没有 → 按快照保留」（为 TB-106 的 200 条内存窗口准备），
+  // 而被删素材也被从内存里摘掉了 —— 两者在这条兜底眼里完全一样。不留墓碑就会被当成
+  // 「窗口外的老素材」留在网格里，而图片字节与缩略图都已真删，界面上只剩一张再也加载不出图的空壳卡。
+
+  it('removeAssetLocal 无条件记墓碑（素材可能从没进过内存窗口）', () => {
+    useAssetLibraryStore.setState({ assetsById: {}, assetOrder: [], purgedAssetIds: new Set<string>() })
+
+    useAssetLibraryStore.getState().removeAssetLocal('ghost')
+
+    expect(useAssetLibraryStore.getState().purgedAssetIds.has('ghost')).toBe(true)
+  })
+
+  it('同一 id 重复删除不换墓碑引用（避免订阅方无谓重渲染）', () => {
+    useAssetLibraryStore.getState().removeAssetLocal('a')
+    const before = useAssetLibraryStore.getState().purgedAssetIds
+
+    useAssetLibraryStore.getState().removeAssetLocal('a')
+
+    expect(useAssetLibraryStore.getState().purgedAssetIds).toBe(before)
+  })
+
+  it('素材重新写回内存时清掉墓碑（删除后 Ctrl+Z 撤销，不能让它永久隐身）', () => {
+    useAssetLibraryStore.setState({ assetsById: {}, assetOrder: [], purgedAssetIds: new Set(['a']) })
+
+    useAssetLibraryStore.getState().applyUpsertedAssets([makeAsset('a')])
+
+    expect(useAssetLibraryStore.getState().purgedAssetIds.has('a')).toBe(false)
+    expect(useAssetLibraryStore.getState().assetsById.a).toBeDefined()
   })
 
   it('bumps mutationVersion when applyUpsertedAssets brings a new asset', () => {
@@ -1201,6 +1243,12 @@ describe('persist boundary', () => {
     expect(hasAssets).toBe(false)
     expect(persisted.scope).toBe('favorites')
     expect(persisted.query).toBe('dog')
+  })
+
+  it('不持久化删除墓碑 —— 它是本会话的内存态，落盘后会跨重启误伤素材', () => {
+    useAssetLibraryStore.setState({ purgedAssetIds: new Set(['a']) })
+    const persisted = partializeAssetLibraryStore(useAssetLibraryStore.getState())
+    expect('purgedAssetIds' in persisted).toBe(false)
   })
 })
 

@@ -40,6 +40,8 @@ function serializeScope(scope: AssetLibraryScope): string {
 function AssetLibraryWorkspaceInner() {
   const assetsById = useAssetLibraryStore((state) => state.assetsById)
   const assetOrder = useAssetLibraryStore((state) => state.assetOrder)
+  // 本会话内已永久删除的素材 id（内存墓碑）：分页快照里剔除它们，避免只剩余空壳卡
+  const purgedAssetIds = useAssetLibraryStore((state) => state.purgedAssetIds)
   const collections = useAssetLibraryStore((state) => state.collections)
   const tags = useAssetLibraryStore((state) => state.tags)
   const hydrationStatus = useAssetLibraryStore((state) => state.hydrationStatus)
@@ -518,6 +520,7 @@ function AssetLibraryWorkspaceInner() {
         query: deferredQuery,
         filters: effectiveFilters,
         similarToAssetId,
+        purgedAssetIds,
       }),
     }
   }, [
@@ -527,6 +530,7 @@ function AssetLibraryWorkspaceInner() {
     deferredQuery,
     effectiveFilters,
     filterFavorite,
+    purgedAssetIds,
     queryResult,
     queryScope,
     similarToAssetId,

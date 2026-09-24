@@ -190,9 +190,20 @@ export function resolveEffectiveAssets(
     filters: AssetLibraryFilters
     /** 相似搜索结果是跨范围推荐，不受当前文件夹范围/筛选约束，仅按状态过滤 */
     similarToAssetId?: string | null
+    /**
+     * 本会话内已被永久删除的素材 id（内存墓碑，见 `AssetLibraryStoreState.purgedAssetIds`）。
+     *
+     * 为什么必须有这一份：永久删除会把素材从 `assetsById` 摘掉，于是它和下面那条
+     * 「内存里没有 → 以数据库分页结果为准保留」的兜底**长得一模一样**（都是为了 TB-106
+     * 的缓存窗口），结果被当成「窗口外的老素材」留在网格里 —— 而图片字节与缩略图已经真删了，
+     * 用户看到的就是一张再也加载不出图、只剩「N 个来源」的空壳卡（2026-09-24 报障）。
+     * 有墓碑的一律剔除，那条兜底只留给「从未进过内存」的素材。
+     */
+    purgedAssetIds?: ReadonlySet<string>
   },
 ): GeneratedAsset[] {
   return catalogAssets
+    .filter((asset) => !options.purgedAssetIds?.has(asset.id))
     .map((asset) => liveById[asset.id] ?? asset)
     .filter((asset) => {
       const live = liveById[asset.id]

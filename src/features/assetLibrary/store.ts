@@ -263,6 +263,20 @@ export interface AssetLibraryStoreState {
   /** 从回收站恢复素材。⚠️ 回收站已撤除（ADR-0021），无 UI 入口 */
   restoreAssets: (ids: string[], onProgress?: (done: number, total: number) => void) => Promise<void>
   removeAssetLocal: (id: string) => void
+  /**
+   * 本会话内已被永久删除的素材 id（**内存墓碑，不持久化**）。
+   *
+   * 为什么需要：永久删除只把素材从 `assetsById` 摘掉，而图片网格渲染的是
+   * 「SQLite 分页快照 + 内存最新态复检」的结果（`resolveEffectiveAssets`）。那条复检里有一条
+   * 兜底 —— 「内存里查不到就按快照保留」，它是为 TB-106 的 200 条内存窗口准备的（窗口外的
+   * 老素材不能整批消失）。于是被删的素材正好被这条兜底当成「窗口外的老素材」留下：图片字节与
+   * 缩略图都真删了，界面上只剩一张再也加载不出图、带「N 个来源」的空壳卡，且切走再切回才消失
+   * （2026-09-24 报障）。有墓碑的素材一律从分页快照里剔除。
+   *
+   * 生命周期：`removeAssetLocal` 记入；素材重新写回内存（撤销删除 / 重新导入 / 入库）时由
+   * `applyAssetsToState` 清除；`hydrate` 全量重读时清空（一切以库为准）。
+   */
+  purgedAssetIds: Set<string>
   trashSelectedAssets: () => Promise<void>
   restoreSelectedAssets: () => Promise<void>
   purgeSelectedAssets: () => Promise<{ purged: string[]; blocked: unknown[] }>
@@ -381,18 +395,32 @@ export interface CollectionFolderInfo {
 }
 
 function applyAssetsToState(
-  state: Pick<AssetLibraryStoreState, 'assetsById' | 'assetOrder'>,
+  state: Pick<AssetLibraryStoreState, 'assetsById' | 'assetOrder' | 'purgedAssetIds'>,
   assets: GeneratedAsset[],
 ) {
   let assetsById: Record<string, GeneratedAsset> | null = null
   let assetOrder: string[] | null = null
+  let purgedAssetIds: Set<string> | null = null
   const ensureCopy = () => {
     if (!assetsById) {
       assetsById = { ...state.assetsById }
       assetOrder = [...state.assetOrder]
     }
   }
+  /**
+   * 素材被写回内存 = 它又存在了，清掉它的删除墓碑。
+   * 不清的话，「删除 → Ctrl+Z 撤销」把记录写回库了，网格里却永远看不到它。
+   * 只清被触碰的那几个 id：整份重建 Set 会让所有订阅方无谓重渲染。
+   */
+  const clearPurgedMark = (id: string) => {
+    if (!purgedAssetIds) {
+      if (!state.purgedAssetIds.has(id)) return
+      purgedAssetIds = new Set(state.purgedAssetIds)
+    }
+    purgedAssetIds.delete(id)
+  }
   for (const asset of assets) {
+    clearPurgedMark(asset.id)
     const prev = state.assetsById[asset.id]
     // 内容与现有记录完全一致（同一份查询结果被重复回写）时不替换：
     // assetsById 必须保持引用稳定，否则每次回写都会让派生 assets 数组换引用，
@@ -402,9 +430,11 @@ function applyAssetsToState(
     if (!(asset.id in assetsById!)) assetOrder!.push(asset.id)
     assetsById![asset.id] = asset
   }
-  return assetsById && assetOrder
-    ? { assetsById, assetOrder }
-    : { assetsById: state.assetsById, assetOrder: state.assetOrder }
+  return {
+    assetsById: assetsById ?? state.assetsById,
+    assetOrder: assetOrder ?? state.assetOrder,
+    purgedAssetIds: purgedAssetIds ?? state.purgedAssetIds,
+  }
 }
 
 /** 回写去重的内容指纹缓存：同一对象只序列化一次（内存态对象长期命中，查询结果算一次）。 */
@@ -650,6 +680,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       selectedFolderIds: [],
       folderEditRequest: null,
       pendingPurgeRequest: null,
+      purgedAssetIds: new Set<string>(),
 
       hydrate: async () => {
         set({ hydrationStatus: 'loading' })
@@ -666,6 +697,8 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
             assetOrder,
             collections: sortCollections(snapshot.collections),
             tags: sortTags(snapshot.tags),
+            // 全量重读：库里没有的就是没有，墓碑作废（否则会误伤同名重建的素材）
+            purgedAssetIds: new Set<string>(),
             hydrationStatus: 'ready',
           })
           // 启动补齐（幂等，失败不影响水合）：
@@ -1071,6 +1104,10 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       removeAssetLocal: (id) =>
         set((state) => {
           const { [id]: _removed, ...assetsById } = state.assetsById
+          // 墓碑无条件记：素材可能从没进过内存（200 条窗口之外），却仍留在分页快照里。
+          const purgedAssetIds = state.purgedAssetIds.has(id)
+            ? state.purgedAssetIds
+            : new Set(state.purgedAssetIds).add(id)
           return {
             assetsById,
             assetOrder: state.assetOrder.filter((assetId) => assetId !== id),
@@ -1080,6 +1117,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
             viewerAssetIds: state.viewerAssetIds.filter((assetId) => assetId !== id),
             quickPreviewAssetId: state.quickPreviewAssetId === id ? null : state.quickPreviewAssetId,
             hoveredAssetId: state.hoveredAssetId === id ? null : state.hoveredAssetId,
+            purgedAssetIds,
             mutationVersion: state.mutationVersion + 1,
           }
         }),
