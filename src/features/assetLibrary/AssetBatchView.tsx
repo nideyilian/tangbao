@@ -30,6 +30,7 @@ import { formatSopBatchElapsed, getSopBatchElapsedMs } from '../../lib/sopBatchT
 import {
   buildAssetBatchGroups,
   buildAssetBatchOverview,
+  countLiveTaskOutputs,
   getPrimaryOrigin,
   hasTaskFailure,
   type AssetBatchGroup,
@@ -1100,7 +1101,7 @@ function AssetGroupedView({
                     role="button"
                     tabIndex={0}
                     aria-pressed={groupSelected}
-                    aria-label={`${group.title}，${group.assets.length} 张`}
+                    aria-label={`${group.title}，${group.outputCount} 张`}
                     onDoubleClick={(event) => {
                       event.preventDefault()
                       openGroupViewer(group)
@@ -1143,7 +1144,7 @@ function AssetGroupedView({
                   const taskList = batchTasks(group)
                   const isRunning = group.summary.running > 0
                   const repTask = getRepresentativeTask(group)
-                  const imageCompleted = taskList.reduce((total, task) => total + (task.outputImages?.length ?? 0), 0)
+                  const imageCompleted = taskList.reduce((total, task) => total + countLiveTaskOutputs(task), 0)
                   const imageTotal = taskList.reduce(
                     (total, task) =>
                       total +
@@ -1174,7 +1175,7 @@ function AssetGroupedView({
                           role="button"
                           tabIndex={0}
                           aria-pressed={groupSelected}
-                          aria-label={`${group.title}，${group.assets.length} 张`}
+                          aria-label={`${group.title}，${group.outputCount} 张`}
                           data-testid="asset-group-header"
                           onClick={(event) => {
                             event.stopPropagation()
@@ -1212,9 +1213,10 @@ function AssetGroupedView({
                                 失败 {group.summary.failed}
                               </span>
                             )}
-                            <span className="shrink-0 text-xs tabular-nums text-ds-muted">
-                              {group.assets.length} 张
-                            </span>
+                            {/* 「N 张」读组的 `outputCount`（= 任务记录里仍在的产出数）。
+                                不要再写成 `group.assets.length` —— 那是「当前能查到的图」，
+                                切范围/分页/把图拖走都会让它变，卡片数字就会自己跳。 */}
+                            <span className="shrink-0 text-xs tabular-nums text-ds-muted">{group.outputCount} 张</span>
                             <span className="hidden shrink-0 text-xs tabular-nums text-ds-muted sm:inline">
                               {formatGroupTime(group.createdAt)}
                             </span>

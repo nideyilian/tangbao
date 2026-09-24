@@ -37,6 +37,11 @@ const storeMocks = vi.hoisted(() => {
     getCachedThumbnail: vi.fn(() => null),
     prefetchImageThumbnails: vi.fn(),
     subscribeImageThumbnail: vi.fn(() => () => {}),
+    // `TaskCard` 的缩略图兜底会调它（`TaskCard.tsx` 的 loadOriginalFallback）。
+    // 漏了这个导出，任何真的渲染出卡片的用例都会抛
+    // 「No "resolveImageDisplaySrc" export is defined on the "../../store" mock」——
+    // 它是个 unhandled rejection，最终会以「莫名其妙的连带失败」形式把后面的用例一起带红。
+    resolveImageDisplaySrc: vi.fn(async () => undefined),
   }
 })
 
@@ -438,14 +443,23 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
     act(() => renderer.unmount())
   })
 
-  it('shows an empty state when there are no assets', () => {
+  it('没有素材但有任务记录时，显示任务卡而不是空态（TB-129：卡片不因图不可见而消失）', () => {
+    const createNode = (element: { props?: unknown }) => {
+      const props = (element.props ?? {}) as Record<string, unknown>
+      if (props['data-testid'] === 'asset-batch-view')
+        return { clientHeight: 600, scrollTop: 0, scrollIntoView: vi.fn() }
+      return { clientWidth: 800, scrollIntoView: vi.fn(), style: {} }
+    }
     let renderer: ReactTestRenderer
     act(() => {
+      // 素材查询结果为空，但 mock 的任务记录（t1 / t2）里都有产出 ⇒ 卡片必须还在。
+      // 旧口径下建卡的主体是素材，这里会落进空态 —— 那正是「图一被拖走卡就没了」。
       renderer = create(createElement(AssetGroupedView, { assets: [], libraryAssetCount: 0 }), {
-        createNodeMock: () => ({}),
+        createNodeMock: createNode,
       })
     })
-    expect(renderer!.root.findAllByProps({ 'data-testid': 'asset-batch-empty' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'asset-batch-empty' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'asset-batch-card' }).length).toBeGreaterThan(0)
     act(() => renderer!.unmount())
   })
 
@@ -503,15 +517,21 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
     // 生成中：每张新图入库都是一次 assets 变化 ⇒ groups 引用必然更新。
     // 原实现把 groups 当无条件重跑信号，这里会被反复拉动（用户手动滚走又被拽回来）。
     let running = assets
+    let streamOutputs = taskB.outputImages
     for (let index = 0; index < 3; index += 1) {
       running = [...running, makeAsset(`stream-${index}`, 't2')]
+      // ⚠️ 真实场景里「又出了一张图」是**两件事同时发生**：素材入库 + 任务记录的
+      // `outputImages` 追加一个槽位。两个都必须动 —— TB-129 之后数量以任务记录为准，
+      // 只加素材的话概览数字不会变，这条用例的「确实重渲染了」探针就失效了（假绿）。
+      streamOutputs = [...streamOutputs, `stream-${index}`]
+      setStoreTasks([taskA, { ...taskB, outputImages: streamOutputs } as unknown as TaskRecord])
       act(() => {
         renderer!.update(createElement(AssetGroupedView, { assets: running, libraryAssetCount: running.length }))
       })
     }
     // 先证明这 3 次 update 真的重渲染了 —— 否则「没再滚」是假绿：
     // AssetGroupedView 是 memo，props 全等会 bailout，那就等于什么都没测。
-    // 每次传的都是新 assets 引用，概览素材数必须从 4 一路涨到 7。
+    // 每次传的都是新 assets 引用，概览图片数必须从 4 一路涨到 7。
     const overview = () => collectTextOf(renderer!.root.findAllByProps({ 'data-testid': 'asset-batch-overview' })[0])
     expect(overview()).toContain('7 张素材')
     expect(scrollIntoViewMock.mock.calls.length).toBe(afterFocus)
@@ -547,11 +567,14 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
         vi.advanceTimersByTime(1000)
       })
       const next = [...assets, makeAsset('stream-x', 't2')]
+      // 与上面「只滚一次」那条同理：真实场景里素材入库时任务记录的 outputImages 也在追加，
+      // TB-129 之后数量以任务记录为准，只加素材的话概览数字不会变（探针失效）。
+      setStoreTasks([taskA, { ...taskB, outputImages: [...taskB.outputImages, 'stream-x'] } as unknown as TaskRecord])
       act(() => {
         renderer!.update(createElement(AssetGroupedView, { assets: next, libraryAssetCount: next.length }))
       })
       // 证明这次 update 真的重渲染了（否则「计时没被重置」是假绿：memo 在 props 全等时
-      // 直接 bailout，effect 压根不会重跑）。素材数 4 → 5 就是重渲染发生的证据。
+      // 直接 bailout，effect 压根不会重跑）。图片数 4 → 5 就是重渲染发生的证据。
       expect(collectTextOf(renderer!.root.findAllByProps({ 'data-testid': 'asset-batch-overview' })[0])).toContain(
         '5 张素材',
       )

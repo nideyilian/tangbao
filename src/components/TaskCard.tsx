@@ -27,6 +27,7 @@ import { getParamDisplay, ActualValueBadge } from './paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getTaskProgressDisplay, hasCompletedTaskOutputs } from '../lib/taskProgressDisplay'
+import { countLiveTaskOutputs } from '../lib/assetBatchGrouping'
 import { CodeIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 import PromptVariableEditor from './PromptVariableEditor'
@@ -128,8 +129,8 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
    */
   const purgedOutputSlots = task.purgedOutputSlots ?? []
   const coverPurged = purgedOutputSlots.includes(0)
-  /** 仍在的产出张数：被删的槽位不计入，否则角标会报一个用户点不开的数字 */
-  const liveOutputCount = (task.outputImages ?? []).filter(Boolean).length
+  /** 仍在的产出张数：被删的槽位不计入，否则角标会报一个用户点不开的数字（唯一实现见 `countLiveTaskOutputs`） */
+  const liveOutputCount = countLiveTaskOutputs(task)
   /** 后处理产出数量；只在有产出时渲染徽章，卡片高度不受影响（列表按固定行高虚拟化） */
   const postprocessCount = task.postprocessOutputs?.length ?? 0
   /**
@@ -588,16 +589,16 @@ function TaskCard({ task, onReuse, onEditOutputs, onDelete, onClick, isSelected,
                     onError={handleThumbError}
                     alt=""
                   />
-                  {(task.outputImages?.length ?? 0) > 1 && (
+                  {liveOutputCount > 1 && (
                     <span className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
                       {task.batchItemStatuses
                         ? `${task.batchItemStatuses.filter((s) => s === 'done').length}/${task.batchItemStatuses.length}`
-                        : (task.outputImages?.length ?? 0)}
+                        : liveOutputCount}
                     </span>
                   )}
                   {task.batchItemStatuses &&
                     task.batchItemStatuses.some((s) => s === 'error') &&
-                    (task.outputImages?.length ?? 0) <= 1 && (
+                    liveOutputCount <= 1 && (
                       <span className="absolute bottom-1 right-1 bg-black/60 text-ds-warning text-xs px-1.5 py-0.5 rounded">
                         {task.batchItemStatuses.filter((s) => s === 'done').length}/{task.batchItemStatuses.length}
                       </span>

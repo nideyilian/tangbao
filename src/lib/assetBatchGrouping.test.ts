@@ -10,6 +10,7 @@ import {
   buildAssetBatchGroups,
   buildAssetBatchOverview,
   collectTaskCardAssets,
+  countLiveTaskOutputs,
   getPrimaryOrigin,
   hasTaskFailure,
   resolveTaskCardScopeKey,
@@ -382,6 +383,82 @@ describe('buildAssetBatchGroups', () => {
 
       expect(groups[0]?.createdAt).toBe(1000)
     })
+  })
+})
+
+/**
+ * 任务卡「不因素材不可见而消失 / 缩水」（TB-129，杰哥 2026-09-24）。
+ *
+ * 需求原文：「任务卡禁止自动消失，数量必须持续存在，只有当我手动删除整张卡片或删除卡内的
+ * 某些图片时，才根据我的操作相应地改变和显示数量」。
+ *
+ * 修之前的病根：建卡的主体是**素材**，任务只是挂在素材上的标签 ⇒ 图一被拖到别的文件夹、
+ * 或在还没加载的分页里，卡就凭空消失（`includeTaskless` 当时还把已成功完成的任务整类跳过）。
+ */
+describe('任务卡以任务记录为准（TB-129）', () => {
+  it('有产出的已完成任务：图不在查询结果里也建卡，数量按任务记录算', () => {
+    const task = makeTask('t1', { outputImages: ['img-1', 'img-2', 'img-3'] })
+    // 查询结果里只挂着 1 张 —— 另外 2 张被拖到了别的文件夹 / 落在没加载的分页里
+    const groups = buildAssetBatchGroups(
+      [makeAsset('img-1', makeOrigin('t1', 0))],
+      new Map([['t1', task]]),
+      new Map(),
+      {
+        includeTaskless: () => true,
+      },
+    )
+
+    expect(groups).toHaveLength(1)
+    // 挂图仍然只渲染查得到的那 1 张（图片真实性优先）
+    expect(groups[0]?.assets).toHaveLength(1)
+    // 但**数量**以任务记录为准，不随「这张图现在能不能查到」缩水
+    expect(groups[0]?.outputCount).toBe(3)
+  })
+
+  it('卡内的图一张都查不到时，卡片仍然在（不再凭空消失）', () => {
+    const task = makeTask('t1', { outputImages: ['img-1', 'img-2'] })
+    const groups = buildAssetBatchGroups([], new Map([['t1', task]]), new Map(), {
+      includeTaskless: () => true,
+    })
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.kind).toBe('task')
+    expect(groups[0]?.assets).toHaveLength(0)
+    expect(groups[0]?.outputCount).toBe(2)
+  })
+
+  it('删掉卡内某张图（槽位被置空）后数量减一 —— 而槽位数组长度不变', () => {
+    // `patchTaskForPurgedSlots` 的产物：槽位置空、数组长度保持 3
+    const task = makeTask('t1', { outputImages: ['img-1', undefined as never, 'img-3'] })
+
+    expect(countLiveTaskOutputs(task)).toBe(2)
+    expect(task.outputImages).toHaveLength(3)
+
+    const groups = buildAssetBatchGroups(
+      [makeAsset('img-1', makeOrigin('t1', 0)), makeAsset('img-3', makeOrigin('t1', 2))],
+      new Map([['t1', task]]),
+      new Map(),
+      { includeTaskless: () => true },
+    )
+    expect(groups[0]?.outputCount).toBe(2)
+  })
+
+  it('从未产出的历史空任务仍然不建卡（守住「不被历史任务刷屏」）', () => {
+    const empty = makeTask('t-empty', { status: 'done', outputImages: [] })
+    const groups = buildAssetBatchGroups([], new Map([['t-empty', empty]]), new Map(), {
+      includeTaskless: () => true,
+    })
+    expect(groups).toHaveLength(0)
+  })
+
+  it('速览的图片数与卡片同一个口径（不退回可见素材数）', () => {
+    const task = makeTask('t1', { outputImages: ['img-1', 'img-2', 'img-3'] })
+    const tasksById = new Map([['t1', task]])
+    const groups = buildAssetBatchGroups([makeAsset('img-1', makeOrigin('t1', 0))], tasksById, new Map(), {
+      includeTaskless: () => true,
+    })
+
+    expect(buildAssetBatchOverview(groups, tasksById).assetCount).toBe(3)
   })
 })
 
