@@ -321,13 +321,20 @@ describe('assetScopeMatches', () => {
     expect(assetScopeMatches('recent', old, now)).toBe(false)
   })
 
-  it('matches favorites / unorganized / trash', () => {
+  it('matches favorites / unorganized', () => {
     expect(assetScopeMatches('favorites', makeAsset({ favorite: true }), now)).toBe(true)
     expect(assetScopeMatches('favorites', makeAsset(), now)).toBe(false)
     expect(assetScopeMatches('unorganized', makeAsset(), now)).toBe(true)
     expect(assetScopeMatches('unorganized', makeAsset({ collectionIds: ['c1'] }), now)).toBe(false)
-    expect(assetScopeMatches('trash', makeAsset({ status: 'trashed' }), now)).toBe(true)
-    expect(assetScopeMatches('trash', makeAsset(), now)).toBe(false)
+  })
+
+  it('已回收素材对任何范围都不可见（回收站已撤除，ADR-0021）', () => {
+    const trashed = makeAsset({ status: 'trashed', trashedAt: 2000 })
+    expect(assetScopeMatches('all', trashed, now)).toBe(false)
+    expect(assetScopeMatches('recent', trashed, now)).toBe(false)
+    expect(assetScopeMatches('favorites', { ...trashed, favorite: true }, now)).toBe(false)
+    expect(assetScopeMatches('unorganized', trashed, now)).toBe(false)
+    expect(assetScopeMatches({ kind: 'collection', id: 'c1' }, { ...trashed, collectionIds: ['c1'] }, now)).toBe(false)
   })
 
   it('matches collection and tag scopes', () => {

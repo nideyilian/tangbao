@@ -58,7 +58,6 @@ export interface AssetListViewProps {
   onLoadMore?: () => void
   onOpenViewer?: (assetId: string) => void
   onQuickPreview?: (assetId: string) => void
-  onPurgeRequest?: (assetIds: string[]) => void
   onFindSimilar?: (assetId: string) => void
 }
 
@@ -148,7 +147,6 @@ export const AssetListRow = memo(function AssetListRow({
               {ASSET_STATUS_MARK_LABELS[statusMark]}
             </span>
           )}
-          {asset.status === 'trashed' && <span className="text-ds-danger">回收站</span>}
         </p>
       </div>
       <span className="hidden w-28 shrink-0 tabular-nums text-ds-muted sm:block">
@@ -172,7 +170,6 @@ function AssetListView({
   onLoadMore,
   onOpenViewer,
   onQuickPreview,
-  onPurgeRequest,
   onFindSimilar,
 }: AssetListViewProps) {
   const selectedAssetIds = useAssetLibraryStore((state) => state.selectedAssetIds)
@@ -415,7 +412,6 @@ function AssetListView({
           assetIds={menu.assetIds}
           actionScope={menu.actionScope}
           assetIdList={assets.map((asset) => asset.id)}
-          onPurgeRequest={onPurgeRequest}
           onFindSimilar={onFindSimilar}
           onClose={() => setMenu(null)}
         />

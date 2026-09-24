@@ -45,7 +45,7 @@ const groupA = { assets: [makeAsset('a1'), makeAsset('a2'), makeAsset('a3')], av
 const groupB = { assets: [makeAsset('b1'), makeAsset('b2')], avgHamming: 5 }
 
 let nearDuplicates: Mock
-let moveToTrash: Mock
+let deleteAssets: Mock
 let showToast: Mock
 
 beforeEach(() => {
@@ -53,8 +53,8 @@ beforeEach(() => {
   ;(window as unknown as { electronAPI?: { assetCatalogNearDuplicates?: typeof nearDuplicates } }).electronAPI = {
     assetCatalogNearDuplicates: nearDuplicates,
   }
-  moveToTrash = vi.fn().mockResolvedValue(undefined)
-  assetLibraryStoreMock.getState.mockReturnValue({ moveToTrash })
+  deleteAssets = vi.fn().mockResolvedValue({ deleted: [], blocked: [] })
+  assetLibraryStoreMock.getState.mockReturnValue({ deleteAssets })
   showToast = vi.fn()
   storeMocks.useStore.getState = () => ({ showToast })
 })
@@ -116,24 +116,23 @@ describe('AssetDuplicateModal', () => {
     }
   })
 
-  it('trashes all non-kept assets in one click', async () => {
+  it('deletes all non-kept assets in one click', async () => {
     await mount()
     const button = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('全部处理'))!
     await act(async () => {
       button.click()
     })
-    // 默认每组保留第一张：a1、b1 → 其余 3 张全部移入回收站
-    expect(moveToTrash).toHaveBeenCalledWith(['a2', 'a3', 'b2'])
-    expect(showToast).toHaveBeenCalled()
+    // 默认每组保留第一张：a1、b1 → 其余 3 张全部删除
+    expect(deleteAssets).toHaveBeenCalledWith(['a2', 'a3', 'b2'])
     expect(groupCount()).toBe(0)
   })
 
-  it('trashes the other assets of a single group', async () => {
+  it('deletes the other assets of a single group', async () => {
     await mount()
-    const button = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('移入回收站'))!
+    const button = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('删除'))!
     await act(async () => {
       button.click()
     })
-    expect(moveToTrash).toHaveBeenCalledWith(['a2', 'a3'])
+    expect(deleteAssets).toHaveBeenCalledWith(['a2', 'a3'])
   })
 })

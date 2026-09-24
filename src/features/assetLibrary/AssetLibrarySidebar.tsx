@@ -67,14 +67,13 @@ import { isCollectionTrashed } from '../../lib/assetLibraryModel'
 import CollectionInfoModal from './CollectionInfoModal'
 import { TAG_COLORS_EXTENDED } from './colorLabels'
 
-type SystemScopeValue = 'all' | 'recent' | 'favorites' | 'unorganized' | 'trash'
+type SystemScopeValue = 'all' | 'recent' | 'favorites' | 'unorganized'
 
 const SYSTEM_SCOPES: Array<{ value: SystemScopeValue; label: string; icon: ReactNode }> = [
   { value: 'all', label: '全部素材', icon: <Layers3Icon size={15} /> },
   { value: 'recent', label: '最近生成', icon: <Clock3Icon size={15} /> },
   { value: 'favorites', label: '收藏', icon: <StarIcon size={15} /> },
   { value: 'unorganized', label: '未整理', icon: <Grid2X2Icon size={15} /> },
-  { value: 'trash', label: '回收站', icon: <TrashIcon size={15} /> },
 ]
 
 const SIDEBAR_WIDTH_STORAGE_KEY = 'tangbao.asset-library-panel-width'
@@ -1748,7 +1747,6 @@ function AssetLibrarySidebar({
     recent: counts.recent,
     favorites: counts.favorites,
     unorganized: counts.unorganized,
-    trash: counts.trash,
   }
 
   const toggleCollection = (id: string) => {

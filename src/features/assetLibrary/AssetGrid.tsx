@@ -116,8 +116,6 @@ export interface AssetGridProps {
   onOpenLightbox?: (assetId: string) => void
   /** 空格按住快速预览（Eagle 式） */
   onQuickPreview?: (assetId: string) => void
-  /** 请求打开永久删除确认弹窗 */
-  onPurgeRequest?: (assetIds: string[]) => void
   /** 以该素材为基准查找相似图片 */
   onFindSimilar?: (assetId: string) => void
   /**
@@ -136,7 +134,6 @@ export default function AssetGrid({
   onLoadMore,
   onOpenLightbox,
   onQuickPreview,
-  onPurgeRequest,
   onFindSimilar,
   resetScrollKey,
 }: AssetGridProps) {
@@ -533,7 +530,6 @@ export default function AssetGrid({
           assetIds={menu.assetIds}
           actionScope={menu.actionScope}
           assetIdList={assets.map((asset) => asset.id)}
-          onPurgeRequest={onPurgeRequest}
           onFindSimilar={onFindSimilar}
           onClose={() => setMenu(null)}
         />

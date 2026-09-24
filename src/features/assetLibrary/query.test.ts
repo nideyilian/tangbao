@@ -36,13 +36,12 @@ describe('queryAssets scopes', () => {
     makeAsset('c', { collectionIds: ['c1'], tagIds: ['t1'], createdAt: Date.now(), updatedAt: Date.now() }),
   ]
 
-  it('filters by system scopes and isolates trash', () => {
+  it('filters by system scopes', () => {
     // 默认 updatedAt 降序：c 的 updatedAt 最新
     expect(queryAssets({ assets, collections }, baseState({ scope: 'all' })).assets.map((a) => a.id)).toEqual([
       'c',
       'a',
     ])
-    expect(queryAssets({ assets, collections }, baseState({ scope: 'trash' })).assets.map((a) => a.id)).toEqual(['b'])
     expect(queryAssets({ assets, collections }, baseState({ scope: 'favorites' })).assets.map((a) => a.id)).toEqual([
       'a',
     ])
@@ -364,7 +363,6 @@ describe('queryAssets counts', () => {
     expect(counts.all).toBe(2)
     expect(counts.favorites).toBe(1)
     expect(counts.recent).toBe(2)
-    expect(counts.trash).toBe(1)
     expect(counts.byCollection.get('c1')).toBe(1)
     expect(counts.byCollection.get('c2')).toBe(1)
     // 空集合也保留
@@ -533,10 +531,9 @@ describe('assetMatchesQueryState', () => {
     )
   })
 
-  it('rejects assets whose status changed (trashed) outside trash scope', () => {
+  it('rejects trashed assets in every scope（回收站已撤除，trashed 一律不可见）', () => {
     const trashed = makeAsset('a', { status: 'trashed', trashedAt: 2000 })
     expect(assetMatchesQueryState(trashed, collections, baseState({ scope: 'all' }))).toBe(false)
-    expect(assetMatchesQueryState(trashed, collections, baseState({ scope: 'trash' }))).toBe(true)
   })
 
   it('rejects assets that no longer match the active search query', () => {

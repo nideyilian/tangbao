@@ -1,10 +1,12 @@
 # 0019 删任务卡 = 产出图进回收站（不再永久删除）+ 素材进回收站必须与任务卡退槽
 
+> ⚠️ **本 ADR 已作废（2026-09-24）**：回收站整体撤除，删除即永久删除 —— 见
+> [0021](0021-delete-is-permanent.md)。本文只作历史记录保留，**不要照它改回去**。
+
 - **日期**：2026-09-23
-- **状态**：**生效中（已实现）**
+- **状态**：**已作废**（2026-09-24 被 [0021](0021-delete-is-permanent.md) 推翻）
 - **决策者**：杰哥（产品负责人）
-- **相关**：[0012](0012-watermark-library-per-product.md)（同一套「回收站是软删」的数据模型）、
-  TB-108（每日批量生成，产出会大量进回收站）、TB-119
+- **相关**：**被作废** → [0021](0021-delete-is-permanent.md)（删除即永久删除）；TB-119 / TB-127
 
 ---
 
@@ -78,10 +80,10 @@
 
 ## 落地位置
 
-| 文件 | 改了什么 |
-| --- | --- |
-| `src/store.ts` | `purgeTaskOutputAssets` → `trashTaskOutputAssets`（改走回收站）；新增 `detachTrashedAssetsFromTasks`；新增 `clearImageDerivedCaches` / `purgeImageDerivedData`；`deleteImageIfUnreferenced` / `deleteUnreferencedImageIds` / `cleanupAllOrphanedImages` / `cleanupMissingImageRecords` / 永久删除的 `deleteImages` 统一到新入口 |
-| `src/features/assetLibrary/store.ts` | `moveToTrash` 内调 `detachTrashedAssetsFromTasks`（失败不回滚回收站，只留痕） |
-| `src/features/assetLibrary/AssetBatchView.tsx` | 回收站作用域放行孤儿组；两处确认文案改口径 |
-| `src/components/{DetailModal,InputBar,TaskCard}.tsx` | 确认文案改口径 |
-| `src/store.test.ts` / `src/features/assetLibrary/store.test.ts` / `AssetBatchView.test.tsx` | 6 条新守卫（见 BACKLOG TB-119 的验收证据） |
+| 文件                                                                                        | 改了什么                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/store.ts`                                                                              | `purgeTaskOutputAssets` → `trashTaskOutputAssets`（改走回收站）；新增 `detachTrashedAssetsFromTasks`；新增 `clearImageDerivedCaches` / `purgeImageDerivedData`；`deleteImageIfUnreferenced` / `deleteUnreferencedImageIds` / `cleanupAllOrphanedImages` / `cleanupMissingImageRecords` / 永久删除的 `deleteImages` 统一到新入口 |
+| `src/features/assetLibrary/store.ts`                                                        | `moveToTrash` 内调 `detachTrashedAssetsFromTasks`（失败不回滚回收站，只留痕）                                                                                                                                                                                                                                                   |
+| `src/features/assetLibrary/AssetBatchView.tsx`                                              | 回收站作用域放行孤儿组；两处确认文案改口径                                                                                                                                                                                                                                                                                      |
+| `src/components/{DetailModal,InputBar,TaskCard}.tsx`                                        | 确认文案改口径                                                                                                                                                                                                                                                                                                                  |
+| `src/store.test.ts` / `src/features/assetLibrary/store.test.ts` / `AssetBatchView.test.tsx` | 6 条新守卫（见 BACKLOG TB-119 的验收证据）                                                                                                                                                                                                                                                                                      |

@@ -267,7 +267,7 @@ describe('AssetCardMenu action scope (图片模式单选 / 多选)', () => {
     expect(countButton(root, '添加到项目（2 张）')).toBe(1)
     expect(countButton(root, '用作水印预览底图（2 张）')).toBe(1)
     expect(countButton(root, '导出原图（2 张）')).toBe(1)
-    expect(countButton(root, '移入回收站（2 张）')).toBe(1)
+    expect(countButton(root, '删除（2 张）')).toBe(1)
 
     await act(async () => renderer!.unmount())
   })

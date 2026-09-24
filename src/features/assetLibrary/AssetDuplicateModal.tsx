@@ -64,7 +64,7 @@ function AssetDuplicateModalInner({ onOpenChange, open }: AssetDuplicateModalPro
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [keepByGroup, setKeepByGroup] = useState<Record<string, string>>({})
-  // 当前正在执行的处理操作：'single' = 单组移入回收站，'all' = 一键全部处理
+  // 当前正在执行的处理操作：'single' = 单组删除，'all' = 一键全部处理
   const [busyAction, setBusyAction] = useState<'single' | 'all' | null>(null)
   // 重复阈值：感知哈希 Hamming 差异 ≤ N bit（越小越严格；0 = 仅完全一致，8 = 最宽松）
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD)
@@ -132,39 +132,38 @@ function AssetDuplicateModalInner({ onOpenChange, open }: AssetDuplicateModalPro
     }
   }, [open])
 
-  const trashOthers = async (group: DuplicateGroup, keepId: string) => {
+  const deleteOthers = async (group: DuplicateGroup, keepId: string) => {
     const others = group.assets.filter((asset) => asset.id !== keepId).map((asset) => asset.id)
     if (others.length === 0 || busyAction) return
     setBusyAction('single')
     try {
-      await useAssetLibraryStore.getState().moveToTrash(others)
+      // 删除 = 永久删除（ADR-0021）：能删的当场删掉，被别的任务/会话引用的那几张弹确认。
+      await useAssetLibraryStore.getState().deleteAssets(others)
       setGroups((current) => current?.filter((item) => item !== group) ?? null)
-      useStore.getState().showToast(`已将 ${others.length} 张重复素材移入回收站`, 'success')
     } catch {
-      useStore.getState().showToast('移入回收站失败，请重试', 'error')
+      useStore.getState().showToast('删除失败，请重试', 'error')
     } finally {
       setBusyAction(null)
     }
   }
 
-  /** 一键批量：每组保留当前选中的一张，其余全部移入回收站。 */
-  const trashAllOthers = async () => {
+  /** 一键批量：每组保留当前选中的一张，其余全部删除。 */
+  const deleteAllOthers = async () => {
     if (!groups || groups.length === 0 || busyAction) return
-    const toTrash: string[] = []
+    const toDelete: string[] = []
     for (const group of groups) {
       const keepId = keepByGroup[group.assets[0]!.id] ?? group.assets[0]!.id
       for (const asset of group.assets) {
-        if (asset.id !== keepId) toTrash.push(asset.id)
+        if (asset.id !== keepId) toDelete.push(asset.id)
       }
     }
-    if (toTrash.length === 0) return
+    if (toDelete.length === 0) return
     setBusyAction('all')
     try {
-      await useAssetLibraryStore.getState().moveToTrash(toTrash)
+      await useAssetLibraryStore.getState().deleteAssets(toDelete)
       setGroups(null)
-      useStore.getState().showToast(`已将 ${toTrash.length} 张重复素材移入回收站`, 'success')
     } catch {
-      useStore.getState().showToast('移入回收站失败，请重试', 'error')
+      useStore.getState().showToast('删除失败，请重试', 'error')
     } finally {
       setBusyAction(null)
     }
@@ -177,7 +176,7 @@ function AssetDuplicateModalInner({ onOpenChange, open }: AssetDuplicateModalPro
       open={open}
       onOpenChange={onOpenChange}
       title="重复素材检测"
-      description={`按相似程度分组（当前：${similarityLabel(threshold)}）；每组保留一张，其余可一键移入回收站。`}
+      description={`按相似程度分组（当前：${similarityLabel(threshold)}）；每组保留一张，其余可一键删除。`}
       size="lg"
       footer={
         <div className="flex w-full flex-wrap items-center justify-between gap-3">
@@ -205,7 +204,7 @@ function AssetDuplicateModalInner({ onOpenChange, open }: AssetDuplicateModalPro
                 leadingIcon={<TrashIcon size={12} />}
                 loading={busyAction === 'all'}
                 disabled={trashableCount === 0 || busyAction !== null}
-                onClick={() => void trashAllOthers()}
+                onClick={() => void deleteAllOthers()}
               >
                 全部处理（{trashableCount}）
               </Button>
@@ -242,9 +241,9 @@ function AssetDuplicateModalInner({ onOpenChange, open }: AssetDuplicateModalPro
                   leadingIcon={<TrashIcon size={12} />}
                   loading={busyAction === 'single'}
                   disabled={group.assets.length <= 1 || busyAction !== null}
-                  onClick={() => void trashOthers(group, keepId)}
+                  onClick={() => void deleteOthers(group, keepId)}
                 >
-                  移入回收站
+                  删除
                 </Button>
               </div>
               <div className="flex flex-wrap gap-2">

@@ -4100,12 +4100,12 @@ describe('agent context for removed outputs', () => {
     expect(serializedConversations).not.toContain('batch-deleted-base64')
   })
 
-  it('把任务卡删掉时，它的产出图移入回收站而不是永久删除（TB-119）', async () => {
+  it('把任务卡删掉时，它的产出图一并永久删除（ADR-0021，回收站已撤除）', async () => {
     dbMockState.assetsByImage.clear()
     dbMockState.purgedAssetIds.length = 0
     // 素材 id 与 imageId 取同一个值：测试环境的素材读取最终落到
     // `batchGetGeneratedAssetsByImageIds`（db mock 只按 imageId 建索引），
-    // 两套键一致，回收站的真实写入路径（getAssetsByIds → applyTrashStatus）才跑得通。
+    // 两套键一致，永久删除的真实路径（getAssetsByIds → planAssetPurge）才跑得通。
     const cascadeAsset: GeneratedAsset = {
       id: 'img-cascade',
       imageId: 'img-cascade',
@@ -4124,9 +4124,9 @@ describe('agent context for removed outputs', () => {
     }
     dbMockState.assetsByImage.set('img-cascade', cascadeAsset)
     const cascadeTask = task({ id: 'task-cascade', outputImages: ['img-cascade'] })
-    // 幸存任务也引用了同一张图且保存过本地导出文件：旧口径下这张图被永久删除时，
-    // 指向同一原图的导出文件会一并删掉；现在图只是进回收站（字节还在），
-    // 所以**别的任务**的导出文件一个都不能动。
+    // 幸存任务也引用了同一张图且保存过本地导出文件：图被永久删除后，指向同一原图的导出副本
+    // 会被一并清掉（沿用 ADR-0019 之前的旧口径 —— 原图字节都没了，那些副本只会变成死路径）。
+    // ⚠️ 这条连带行为记在 BACKLOG TB-127 的「未做 / 待确认」里，将来若改要先拍板。
     const survivorTask = task({
       id: 'task-survivor',
       outputImages: ['img-cascade'],
@@ -4143,12 +4143,10 @@ describe('agent context for removed outputs', () => {
 
       await removeTask(cascadeTask)
 
-      // 不再永久删除（没有墓碑、没有删素材记录）
-      expect(dbMockState.purgedAssetIds).not.toContain('img-cascade')
-      // 素材真的进了回收站 —— 可恢复，这是本次改动的核心
-      expect(useAssetLibraryStore.getState().assetsById['img-cascade']?.status).toBe('trashed')
-      // 涉及的其他任务：导出文件保持原样（图还在，删用户磁盘上的副本就说不通了）
-      expect(deleteLocalImageFilesMock).not.toHaveBeenCalledWith(
+      // 真删：素材进入永久删除列表（不再是「进回收站」）
+      expect(dbMockState.purgedAssetIds).toContain('img-cascade')
+      // 同一原图的导出副本一并清掉（旧口径）
+      expect(deleteLocalImageFilesMock).toHaveBeenCalledWith(
         expect.arrayContaining(['D:\\LocalSaves\\images\\cascade-export.png']),
       )
     } finally {

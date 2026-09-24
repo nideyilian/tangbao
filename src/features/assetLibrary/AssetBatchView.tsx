@@ -311,7 +311,7 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
       const taskList = batchTasks(group)
       setConfirmDialog({
         title: '删除 SOP 批量任务',
-        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。`,
+        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并删除（不可恢复）；被其他任务/会话引用的图片会保留。`,
         action: () =>
           removeMultipleTasks(taskList.map((task) => task.id)).catch(() =>
             useStore.getState().showToast('删除失败，请重试', 'error'),
@@ -324,7 +324,7 @@ const AssetGroupCardBody = memo(function AssetGroupCardBody({
     setConfirmDialog({
       title: '删除任务',
       message:
-        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。',
+        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并删除（不可恢复）；被其他任务/会话引用的图片会保留。',
       action: () => removeTask(task).catch(() => useStore.getState().showToast('删除失败，请重试', 'error')),
     })
   }, [group, batchTasks, setConfirmDialog])
@@ -386,7 +386,6 @@ export interface AssetBatchViewProps {
   hasMore?: boolean
   loadingMore?: boolean
   onLoadMore?: () => void
-  onPurgeRequest?: (assetIds: string[]) => void
   onFindSimilar?: (assetId: string) => void
   /** 查询上下文签名：变化时重置滚动到顶部；assets 内容更新不重置（避免批量操作跳动） */
   resetScrollKey?: string
@@ -417,7 +416,6 @@ function AssetGroupedView({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
-  onPurgeRequest,
   onFindSimilar,
   resetScrollKey,
   scope,
@@ -483,7 +481,7 @@ function AssetGroupedView({
   }, [])
 
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks])
-  // 无素材任务的可见性按作用域过滤：收藏/未整理/回收站/标签是素材专属作用域 → 不补；
+  // 无素材任务的可见性按作用域过滤：收藏/未整理/标签是素材专属作用域 → 不补；
   // 项目作用域 → 只补该项目提交的任务（生成中 / 失败 / 已停止，全部按 defaultCollectionId
   // 归属过滤，不再跨文件夹放行）；全部/最近 → 补全部活跃任务。
   // 「包含子文件夹」开关与素材查询口径一致：关闭时只放行直接在该文件夹提交的任务
@@ -491,9 +489,9 @@ function AssetGroupedView({
   // 或其他文件夹的任务卡出现，与图片模式（严格按素材 collectionIds 过滤）一致。
   const includeTaskless = useMemo(() => {
     const current = scope ?? ''
-    if (current === 'trash' || current === 'favorite' || current === 'unorganized' || current.startsWith('tag:')) {
+    if (current === 'favorite' || current === 'unorganized' || current.startsWith('tag:')) {
       // 素材专属作用域：失败任务（含部分失败）仍保留任务卡——避免「任务失败后切换到
-      // 收藏/未整理/回收站/标签时失败任务卡消失、用户看不到失败原因」。
+      // 收藏/未整理/标签时失败任务卡消失、用户看不到失败原因」。
       return (task: TaskRecord) => hasTaskFailure(task)
     }
     if (current.startsWith('collection:')) {
@@ -513,19 +511,16 @@ function AssetGroupedView({
     }
     return () => true
   }, [collections, includeSubcollections, scope])
-  // 任务卡视图不再展示「任务已删除」孤儿组（按用户要求，禁止出现该状态）：
-  // 只过滤展示，不自动改动任何数据——这些图片仍在「图片」视图与回收站中可见、可操作。
+  // 任务卡视图不展示「任务已删除」孤儿组（按用户要求，禁止出现该状态）：只过滤展示，不自动改动任何数据。
   //
-  // **例外：回收站作用域放行孤儿组**（2026-09-23）。删任务卡现在会把它的产出图移入回收站
-  // （见 store.ts 的 trashTaskOutputAssets），那些图的来源任务已经没了 ⇒ 全部落进孤儿组。
-  // 这里若一并滤掉，用户按「删掉任务卡 → 去回收站把图捞回来」走就会看到空的回收站
-  // （只有切到图片模式才看得见），与上面那句「回收站中可见、可操作」正好相反。
+  // 2026-09-24 起删任务卡会连同产出图一起永久删除（ADR-0021），来源任务与图同时消失，
+  // 不再有「任务没了、图还留着」的孤儿；此前「回收站作用域放行孤儿组」的例外随之撤除。
   const groups = useMemo(
     () =>
       buildAssetBatchGroups(assets, tasksById, snapshots, { includeTaskless }).filter(
-        (group) => group.kind !== 'orphan' || scope === 'trash',
+        (group) => group.kind !== 'orphan',
       ),
-    [assets, includeTaskless, scope, snapshots, tasksById],
+    [assets, includeTaskless, snapshots, tasksById],
   )
   const overview = useMemo(() => buildAssetBatchOverview(groups, tasksById), [groups, tasksById])
   /**
@@ -912,7 +907,7 @@ function AssetGroupedView({
       const taskList = batchTasks(group)
       setConfirmDialog({
         title: '删除 SOP 批量任务',
-        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。`,
+        message: `确定要删除这 ${taskList.length} 个 SOP 子任务吗？这些任务生成的图片会一并删除（不可恢复）；被其他任务/会话引用的图片会保留。`,
         action: () =>
           removeMultipleTasks(taskList.map((task) => task.id)).catch(() =>
             useStore.getState().showToast('删除失败，请重试', 'error'),
@@ -925,7 +920,7 @@ function AssetGroupedView({
     setConfirmDialog({
       title: '删除任务',
       message:
-        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。',
+        '确定要删除这个任务吗？任务的提示词、参数和它生成的图片会一并删除（不可恢复）；被其他任务/会话引用的图片会保留。',
       action: () => removeTask(task).catch(() => useStore.getState().showToast('删除失败，请重试', 'error')),
     })
   }
@@ -1375,7 +1370,6 @@ function AssetGroupedView({
           assetIds={menu.assetIds}
           actionScope={menu.actionScope}
           assetIdList={assets.map((asset) => asset.id)}
-          onPurgeRequest={onPurgeRequest}
           onFindSimilar={onFindSimilar}
           onClose={() => setMenu(null)}
         />

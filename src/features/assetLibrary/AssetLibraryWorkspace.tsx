@@ -231,7 +231,7 @@ function AssetLibraryWorkspaceInner() {
   // 否则会出现「提示 3 个任务失败，点进去却看不到任何失败任务卡」的不一致。
   const runningFailedCounts = useMemo(() => {
     const current = serializeScope(scope)
-    if (current === 'trash' || current === 'favorite' || current === 'unorganized' || current.startsWith('tag:')) {
+    if (current === 'favorite' || current === 'unorganized' || current.startsWith('tag:')) {
       // 素材专属作用域：与任务卡视图一致，失败任务（含部分失败）仍计入/保留
       let failed = 0
       for (const task of mainTasks) if (hasTaskFailure(task)) failed += 1
@@ -569,12 +569,26 @@ function AssetLibraryWorkspaceInner() {
     null,
   )
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
-  const requestPurge = useCallback((ids: string[], title?: string, forceByDefault = false) => {
-    if (ids.length === 0) return
-    setPurgeRequest({ ids, title, forceByDefault })
-  }, [])
 
-  // Eagle 式全局快捷键：空格/Enter 打开查看器、Esc 取消选择、Delete 回收站、1-5/F/C 评分/收藏/颜色
+  /**
+   * 带引用冲突的删除请求由素材库 store 转一手（`deleteAssets` 判定后挂起），这里消费并弹确认。
+   *
+   * 为什么走 store 而不是 props：删除入口分散在卡片菜单 / Delete 键 / 大图查看器 / 重复素材弹窗，
+   * 它们都拿不到本组件的 state（查看器尤其 —— 确认弹窗挂在本组件上）。转一手之后，
+   * 「删除」在哪儿点都是同一条路：能删的当场删掉，只有被引用的那几张才弹确认。
+   */
+  const pendingPurgeRequest = useAssetLibraryStore((state) => state.pendingPurgeRequest)
+  useEffect(() => {
+    if (!pendingPurgeRequest || pendingPurgeRequest.ids.length === 0) return
+    setPurgeRequest({
+      ids: pendingPurgeRequest.ids,
+      title: pendingPurgeRequest.title,
+      forceByDefault: pendingPurgeRequest.forceByDefault,
+    })
+    useAssetLibraryStore.getState().clearPendingPurgeRequest()
+  }, [pendingPurgeRequest])
+
+  // Eagle 式全局快捷键：空格/Enter 打开查看器、Esc 取消选择、Delete 删除、1-5/F/C 评分/收藏/颜色
   const searchInputRef = useRef<HTMLInputElement>(null)
   const openViewerFromShortcut = useCallback(
     (assetId: string) => {
@@ -673,24 +687,6 @@ function AssetLibraryWorkspaceInner() {
     return [...providers].sort((a, b) => a.localeCompare(b, 'zh-CN'))
   }, [assets])
 
-  const isTrashScope = scope === 'trash'
-  const emptyTrash = useCallback(() => {
-    void import('../../lib/assetLibraryRepository')
-      .then(({ hydrateFull }) => hydrateFull())
-      .then((full) => {
-        const trashedIds = full.assets.filter((asset) => asset.status === 'trashed').map((asset) => asset.id)
-        // 清空回收站默认勾选「解除引用并彻底删除」：被任务/工作区等引用的素材也一并清空
-        requestPurge(trashedIds, '清空回收站', true)
-      })
-      .catch(() => {
-        // 读取失败回退到内存快照（至少能清理当前已加载的回收站素材）
-        const trashedIds = Object.values(useAssetLibraryStore.getState().assetsById)
-          .filter((asset) => asset.status === 'trashed')
-          .map((asset) => asset.id)
-        requestPurge(trashedIds, '清空回收站', true)
-      })
-  }, [requestPurge])
-
   if (hydrationStatus === 'loading' || hydrationStatus === 'idle') {
     return (
       <main
@@ -783,8 +779,6 @@ function AssetLibraryWorkspaceInner() {
             totalCount={inFavoritesOverview ? favoriteCollections.length : effectiveResult.totalCount}
             visibleCount={inFavoritesOverview ? favoriteCollections.length : effectiveResult.assets.length}
             onSelectAll={selectAllVisible}
-            trashCount={counts.trash}
-            onEmptyTrash={isTrashScope ? emptyTrash : undefined}
             providerOptions={providerOptions}
             similarLabel={similarLabel}
             onClearSimilar={similarToAssetId ? () => setSimilarToAsset(null) : undefined}
@@ -908,11 +902,10 @@ function AssetLibraryWorkspaceInner() {
           ) : groupBy !== 'none' ? (
             <AssetGroupedView
               assets={effectiveResult.assets}
-              libraryAssetCount={desktopCatalog ? counts.all + counts.trash : assets.length}
+              libraryAssetCount={desktopCatalog ? counts.all : assets.length}
               hasMore={Boolean(catalogPage?.nextCursor)}
               loadingMore={loadingMore}
               onLoadMore={loadMore}
-              onPurgeRequest={(ids) => requestPurge(ids)}
               onFindSimilar={(assetId) => setSimilarToAsset(assetId)}
               resetScrollKey={resetScrollKey}
               scope={selectedScope}
@@ -921,7 +914,7 @@ function AssetLibraryWorkspaceInner() {
           ) : viewMode === 'list' ? (
             <AssetListView
               assets={effectiveResult.assets}
-              libraryAssetCount={desktopCatalog ? counts.all + counts.trash : assets.length}
+              libraryAssetCount={desktopCatalog ? counts.all : assets.length}
               hasMore={Boolean(catalogPage?.nextCursor)}
               loadingMore={loadingMore}
               onLoadMore={loadMore}
@@ -931,13 +924,12 @@ function AssetLibraryWorkspaceInner() {
                 if (asset) useAssetLibraryStore.getState().openViewer(asset.id, assetIdList)
               }}
               onQuickPreview={(assetId) => useAssetLibraryStore.getState().setQuickPreviewAsset(assetId)}
-              onPurgeRequest={(ids) => requestPurge(ids)}
               onFindSimilar={(assetId) => setSimilarToAsset(assetId)}
             />
           ) : (
             <AssetGrid
               assets={effectiveResult.assets}
-              libraryAssetCount={desktopCatalog ? counts.all + counts.trash : assets.length}
+              libraryAssetCount={desktopCatalog ? counts.all : assets.length}
               hasMore={Boolean(catalogPage?.nextCursor)}
               loadingMore={loadingMore}
               onLoadMore={loadMore}
@@ -947,7 +939,6 @@ function AssetLibraryWorkspaceInner() {
                 if (asset) useAssetLibraryStore.getState().openViewer(asset.id, assetIdList)
               }}
               onQuickPreview={(assetId) => useAssetLibraryStore.getState().setQuickPreviewAsset(assetId)}
-              onPurgeRequest={(ids) => requestPurge(ids)}
               onFindSimilar={(assetId) => setSimilarToAsset(assetId)}
               resetScrollKey={resetScrollKey}
             />

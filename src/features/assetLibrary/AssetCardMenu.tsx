@@ -41,8 +41,6 @@ export interface AssetCardMenuProps {
   actionScope?: AssetMenuActionScope
   /** 当前查询结果中的素材 id 列表，用于查看器前后浏览 */
   assetIdList?: string[]
-  /** 请求打开永久删除确认弹窗（展示引用冲突） */
-  onPurgeRequest?: (assetIds: string[]) => void
   /** 以该素材为基准查找相似图片 */
   onFindSimilar?: (assetId: string) => void
   onClose: () => void
@@ -57,7 +55,6 @@ function AssetCardMenuInner({
   assetIdList = [],
   onClose,
   onFindSimilar,
-  onPurgeRequest,
   x,
   y,
 }: AssetCardMenuProps) {
@@ -186,20 +183,15 @@ function AssetCardMenuInner({
     onClose()
   }
 
-  const trashAll = () => {
-    void assetCommands
-      .trashAssets(targetIds)
-      .then(() => showToast(multi ? `已移入回收站 ${targetIds.length} 张` : '已移入回收站', 'success'))
-      .catch(() => showToast('操作失败，请重试', 'error'))
-    onClose()
-  }
-
-  const restoreAll = () => {
+  /**
+   * 删除 = 永久删除（2026-09-24，ADR-0021）：无引用冲突的当场彻底删掉，被别的任务/会话引用的
+   * 那几张由工作区弹确认。成功提示统一由 `deleteAssets` 给（保证各入口文案一致），这里只兜异常。
+   */
+  const deleteAll = () => {
     void useAssetLibraryStore
       .getState()
-      .restoreAssets(targetIds)
-      .then(() => showToast(multi ? `已恢复 ${targetIds.length} 张` : '已恢复', 'success'))
-      .catch(() => showToast('操作失败，请重试', 'error'))
+      .deleteAssets(targetIds)
+      .catch(() => showToast('删除失败，请重试', 'error'))
     onClose()
   }
 
@@ -374,24 +366,9 @@ function AssetCardMenuInner({
             </MenuItem>
           )}
           <MenuSeparator />
-          {asset.status === 'trashed' ? (
-            <>
-              <MenuItem onClick={restoreAll}>恢复{batchLabel}</MenuItem>
-              <MenuItem
-                tone="danger"
-                onClick={() => {
-                  onClose()
-                  onPurgeRequest?.(targetIds)
-                }}
-              >
-                永久删除{batchLabel}
-              </MenuItem>
-            </>
-          ) : (
-            <MenuItem tone="danger" onClick={trashAll} icon={<TrashIcon size={14} />}>
-              移入回收站{batchLabel}
-            </MenuItem>
-          )}
+          <MenuItem tone="danger" onClick={deleteAll} icon={<TrashIcon size={14} />}>
+            删除{batchLabel}
+          </MenuItem>
         </Menu>
       )}
     </div>

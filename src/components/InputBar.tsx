@@ -1192,7 +1192,7 @@ export default function InputBar() {
   const handleDeleteSelected = useCallback(() => {
     setConfirmDialog({
       title: '批量删除',
-      message: `确定要删除选中的 ${selectedTaskIds.length} 个任务吗？这些任务生成的图片会一并移入回收站（可恢复）；被其他任务/会话引用的图片会保留。`,
+      message: `确定要删除选中的 ${selectedTaskIds.length} 个任务吗？这些任务生成的图片会一并删除（不可恢复）；被其他任务/会话引用的图片会保留。`,
       action: () => {
         removeMultipleTasks(selectedTaskIds)
       },

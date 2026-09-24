@@ -1058,7 +1058,6 @@ export interface AssetCatalogCursorPage {
     recent: number
     favorites: number
     unorganized: number
-    trash: number
     byCollection: Record<string, number>
     /** 兼容字段：标签体系已移除（数据保留），桌面端 SQLite 仍返回该计数，渲染端不再消费。 */
     byTag?: Record<string, number>
@@ -1199,13 +1198,7 @@ export type AssetPatch = Partial<{
 }>
 
 export type AssetLibraryScope =
-  | 'all'
-  | 'recent'
-  | 'favorites'
-  | 'unorganized'
-  | 'trash'
-  | { kind: 'collection'; id: string }
-  | { kind: 'tag'; id: string }
+  'all' | 'recent' | 'favorites' | 'unorganized' | { kind: 'collection'; id: string } | { kind: 'tag'; id: string }
 
 /**
  * 素材排序键。

@@ -449,22 +449,21 @@ export function assetScopeMatches(
   now = Date.now(),
   recentWindowMs = 7 * 24 * 60 * 60 * 1000,
 ): boolean {
-  // 回收站与普通视图严格隔离：除 trash 外的所有范围都排除已回收素材
+  // 已回收素材对**所有**范围都不可见。回收站入口已于 2026-09-24 撤除（见 ADR-0021「删除即永久删除」），
+  // 这条判断保留为存量数据的安全网：启动迁移会把残留的 trashed 素材恢复成正常素材。
   const isTrashed = asset.status === 'trashed'
+  if (isTrashed) return false
   switch (scope) {
     case 'all':
-      return !isTrashed
+      return true
     case 'recent':
-      return !isTrashed && now - asset.createdAt <= recentWindowMs
+      return now - asset.createdAt <= recentWindowMs
     case 'favorites':
-      return !isTrashed && asset.favorite === true
+      return asset.favorite === true
     case 'unorganized':
-      return !isTrashed && asset.collectionIds.length === 0
-    case 'trash':
-      return isTrashed
+      return asset.collectionIds.length === 0
   }
   if (typeof scope === 'object') {
-    if (isTrashed) return false
     if (scope.kind === 'collection') return asset.collectionIds.includes(scope.id)
     if (scope.kind === 'tag') return asset.tagIds.includes(scope.id)
   }

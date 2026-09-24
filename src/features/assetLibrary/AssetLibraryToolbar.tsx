@@ -25,7 +25,6 @@ import {
   ListChecksIcon,
   PinIcon,
   StarIcon,
-  TrashIcon,
   XIcon,
 } from '../../design-system/icons'
 import { useAssetLibraryStore, type AssetGridDensity, type AssetGroupBy } from './store'
@@ -61,9 +60,6 @@ export interface AssetLibraryToolbarProps {
   /** 当前查询结果可见素材数（用于全选） */
   visibleCount?: number
   onSelectAll?: () => void
-  /** 回收站素材数；大于 0 时显示清空回收站 */
-  trashCount?: number
-  onEmptyTrash?: () => void
   /** 服务商筛选选项（来自素材来源） */
   providerOptions?: string[]
   /** 相似图片搜索标签；存在时显示可清除的徽章 */
@@ -144,8 +140,6 @@ function AssetLibraryToolbar({
   totalCount,
   visibleCount = 0,
   onSelectAll,
-  trashCount = 0,
-  onEmptyTrash,
   providerOptions = [],
   similarLabel,
   onClearSimilar,
@@ -605,19 +599,6 @@ function AssetLibraryToolbar({
             >
               <CheckCircleIcon size={13} />
               全选全部结果
-            </button>
-          </Badge>
-        )}
-        {onEmptyTrash && trashCount > 0 && (
-          <Badge tone="danger">
-            <button
-              type="button"
-              className="flex items-center gap-1.5"
-              data-testid="asset-empty-trash"
-              onClick={onEmptyTrash}
-            >
-              <TrashIcon size={13} />
-              清空回收站
             </button>
           </Badge>
         )}

@@ -30,8 +30,6 @@ export function formatAssetLibraryScopeLabel(
       return '收藏'
     case 'unorganized':
       return '未整理'
-    case 'trash':
-      return '回收站'
     default:
       return '素材库'
   }

@@ -36,7 +36,6 @@ export interface AssetSidebarCounts {
   recent: number
   favorites: number
   unorganized: number
-  trash: number
   byCollection: Map<string, number>
   /** 标签计数（仅统计 active 素材；空标签由侧栏按标签列表零填充展示） */
   byTag: Map<string, number>
@@ -253,13 +252,11 @@ function computeCounts(assets: GeneratedAsset[], collections: AssetCollection[],
   let recent = 0
   let favorites = 0
   let unorganized = 0
-  let trash = 0
 
   for (const asset of assets) {
-    if (asset.status === 'trashed') {
-      trash++
-      continue
-    }
+    // 已回收素材不计入任何计数：回收站入口已于 2026-09-24 撤除（ADR-0021，删除即永久删除），
+    // 残留的 trashed 素材由启动迁移恢复成正常素材。
+    if (asset.status === 'trashed') continue
     all++
     if (now - asset.createdAt <= ASSET_RECENT_WINDOW_MS) recent++
     if (asset.favorite) favorites++
@@ -272,7 +269,7 @@ function computeCounts(assets: GeneratedAsset[], collections: AssetCollection[],
   for (const collection of collections) {
     if (!byCollection.has(collection.id)) byCollection.set(collection.id, 0)
   }
-  return { all, recent, favorites, unorganized, trash, byCollection, byTag }
+  return { all, recent, favorites, unorganized, byCollection, byTag }
 }
 
 /** 纯函数查询：筛选 + 搜索 + 排序 + 侧栏计数；不访问 IndexedDB。 */

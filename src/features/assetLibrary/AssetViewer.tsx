@@ -18,7 +18,7 @@
  *
  * - **不要「项目归属」模块**：右键菜单的「添加到项目」就是改归属的地方，弹窗里再来一块是重复。
  * - **操作按钮只放右键菜单没有的**：其余（查看大图 / 找相似 / 复制 / 收藏 / 添加到项目 /
- *   用作水印预览底图 / 复用提示词与参数 / 导出原图 / 打开文件位置 / 移入回收站）右键都能点到，
+ *   用作水印预览底图 / 复用提示词与参数 / 导出原图 / 打开文件位置 / 删除）右键都能点到，
  *   弹窗里不再各放一份。这里的「查看来源任务」正是右键没有的那个。
  *
  * ## 底部缩略图条（2026-09-21 改）
@@ -198,21 +198,20 @@ function AssetViewerInner() {
             useStore.getState().showToast('操作失败', 'error'),
           )
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
-        // Eagle 式：删除当前素材（移入回收站），自动切换到下一张；删完最后一张则关闭弹窗
+        // Eagle 式：删除当前素材（= 永久删除，ADR-0021），自动切换到下一张；删完最后一张则关闭弹窗
         event.preventDefault()
         event.stopImmediatePropagation()
         void (async () => {
           const assetStore = useAssetLibraryStore.getState()
           try {
-            await assetStore.moveToTrash([viewerAssetId])
-            useStore.getState().showToast('已移入回收站', 'success')
+            await assetStore.deleteAssets([viewerAssetId])
             const remaining = useAssetLibraryStore
               .getState()
               .viewerAssetIds.filter((id) => id !== viewerAssetId && useAssetLibraryStore.getState().assetsById[id])
             if (remaining.length > 0) setViewerAsset(remaining[0])
             else closeViewer()
           } catch {
-            useStore.getState().showToast('操作失败，请重试', 'error')
+            useStore.getState().showToast('删除失败，请重试', 'error')
           }
         })()
       }
@@ -433,13 +432,12 @@ function AssetViewerInner() {
               <button
                 type="button"
                 className={actionButtonClass}
-                aria-label="移入回收站"
+                aria-label="删除素材"
                 onClick={() => {
                   void useAssetLibraryStore
                     .getState()
-                    .moveToTrash([asset.id])
-                    .then(() => useStore.getState().showToast('已移入回收站', 'success'))
-                    .catch(() => useStore.getState().showToast('操作失败', 'error'))
+                    .deleteAssets([asset.id])
+                    .catch(() => useStore.getState().showToast('删除失败', 'error'))
                   closeViewer()
                 }}
               >
@@ -714,46 +712,19 @@ function AssetViewerInner() {
           </div>
 
           <div className="shrink-0 border-t border-ds-border p-2">
-            {asset.status === 'trashed' ? (
-              <div className="space-y-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void useAssetLibraryStore
-                      .getState()
-                      .restoreAssets([asset.id])
-                      .then(() => useStore.getState().showToast('已恢复', 'success'))
-                      .catch(() => useStore.getState().showToast('恢复失败', 'error'))
-                  }}
-                  className="flex min-h-ds-control-lg w-full items-center justify-center rounded-ds-md border border-ds-border px-2 text-xs"
-                >
-                  恢复
-                </button>
-                {/*
-                 * 「永久删除」刻意不放在这里：它必须先弹引用冲突确认（`AssetPurgeModal`），
-                 * 而那个确认弹窗挂在素材库工作区上（要读它的 `requestPurge`），弹窗拿不到。
-                 * 回收站素材的**右键菜单**里有这个入口，所以不是丢功能。
-                 */}
-                <p className="text-center text-xs text-ds-muted">永久删除请用右键菜单</p>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  void useAssetLibraryStore
-                    .getState()
-                    .moveToTrash([asset.id])
-                    .then(() => {
-                      useStore.getState().showToast('已移入回收站', 'success')
-                      closeViewer()
-                    })
-                    .catch(() => useStore.getState().showToast('操作失败', 'error'))
-                }}
-                className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-ds-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
-              >
-                <TrashIcon size={13} /> 移入回收站
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                void useAssetLibraryStore
+                  .getState()
+                  .deleteAssets([asset.id])
+                  .catch(() => useStore.getState().showToast('删除失败', 'error'))
+                closeViewer()
+              }}
+              className="flex min-h-ds-control-lg w-full items-center justify-center gap-1 rounded-ds-md border border-ds-danger/35 text-xs text-ds-danger outline-none hover:bg-ds-danger/10 focus-visible:ring-2 focus-visible:ring-ds-focus/70"
+            >
+              <TrashIcon size={13} /> 删除
+            </button>
           </div>
         </aside>
 

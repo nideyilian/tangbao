@@ -178,19 +178,16 @@ afterEach(() => {
 function renderGrouped(layoutWidth = 800, scope?: string) {
   let renderer: ReactTestRenderer
   act(() => {
-    renderer = create(
-      createElement(AssetGroupedView, { assets, libraryAssetCount: assets.length, onPurgeRequest: vi.fn(), scope }),
-      {
-        createNodeMock: (element) => {
-          const props = element.props as Record<string, unknown>
-          if (props['data-testid'] === 'asset-batch-view')
-            return { clientHeight: 600, scrollTop: 0, scrollIntoView: vi.fn() }
-          if (props['data-testid'] === 'asset-grouped-layout') return { clientWidth: layoutWidth }
-          // TaskCard 的 swipe 副作用会写 cardRef.current.style.transform
-          return { scrollIntoView: vi.fn(), style: {} }
-        },
+    renderer = create(createElement(AssetGroupedView, { assets, libraryAssetCount: assets.length, scope }), {
+      createNodeMock: (element) => {
+        const props = element.props as Record<string, unknown>
+        if (props['data-testid'] === 'asset-batch-view')
+          return { clientHeight: 600, scrollTop: 0, scrollIntoView: vi.fn() }
+        if (props['data-testid'] === 'asset-grouped-layout') return { clientWidth: layoutWidth }
+        // TaskCard 的 swipe 副作用会写 cardRef.current.style.transform
+        return { scrollIntoView: vi.fn(), style: {} }
       },
-    )
+    })
   })
   return renderer!
 }
@@ -307,16 +304,14 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
     act(() => renderer.unmount())
   })
 
-  it('回收站作用域放行孤儿组：删掉任务卡后的图能在回收站里找到（TB-119）', () => {
-    // 删任务卡现在把它的产出图移入回收站（来源任务随之消失）⇒ 那些图只会归进孤儿组。
-    // 回收站里若也一并滤掉孤儿组，用户按「删任务卡 → 去回收站捞图」走就会看到空回收站
-    // （只有切回图片模式才看得见），与「回收站中可见、可操作」的原意相反。
+  it('孤儿组在任何作用域都不显示（含已废弃的回收站作用域，ADR-0021）', () => {
+    // 2026-09-24 撤除回收站：删任务卡会连同产出图一起永久删除，不再产生「任务没了、图还留着」的
+    // 孤儿；此前「回收站作用域放行孤儿组」的例外随之撤除。这里刻意传旧的 'trash' 作用域做反向验证——
+    // 升级后残留在持久化里的 scope 也不能把这些图重新放出来。
     const renderer = renderGrouped(800, 'trash')
     try {
-      expect(renderer.root.findAllByProps({ 'data-group-id': 'orphan:t9' }).length).toBeGreaterThan(0)
-      expect(collectText(renderer)).toContain('任务已删除')
-      // 孤儿卡不给「删除/复用配置」这类入口（任务没了，入口点了也没用）
-      expect(renderer.root.findAll((node) => node.props.title === '删除任务')).toHaveLength(0)
+      expect(renderer.root.findAllByProps({ 'data-group-id': 'orphan:t9' })).toHaveLength(0)
+      expect(collectText(renderer)).not.toContain('任务已删除')
     } finally {
       act(() => renderer.unmount())
     }
@@ -359,7 +354,6 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
         createElement(AssetGroupedView, {
           assets: assets.map((asset) => ({ ...asset })),
           libraryAssetCount: assets.length,
-          onPurgeRequest: vi.fn(),
         }),
       )
     })
@@ -389,7 +383,6 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
         createElement(AssetGroupedView, {
           assets: remaining,
           libraryAssetCount: remaining.length,
-          onPurgeRequest: vi.fn(),
         }),
       )
     })
@@ -438,7 +431,6 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
         createElement(AssetGroupedView, {
           assets: nextAssets,
           libraryAssetCount: nextAssets.length,
-          onPurgeRequest: vi.fn(),
         }),
       )
     })
@@ -826,7 +818,6 @@ describe('AssetGroupedView（项目文件夹作用域 · 「包含子文件夹�
           // 父文件夹内至少有一张已归档素材 → 视图非空，无素材任务卡由 includeTaskless 补入
           assets: assetsOverride ?? [makeAsset('x', 't1')],
           libraryAssetCount: (assetsOverride ?? [makeAsset('x', 't1')]).length,
-          onPurgeRequest: vi.fn(),
           scope: 'collection:col-parent',
           includeSubcollections,
         }),

@@ -79,7 +79,7 @@ export interface AssetLibraryStoreState {
   /** 标签列表（水合；树形结构由 parentId 表达，排序见 sortTags） */
   tags: AssetTag[]
   /**
-   * 素材数据变更版本号：素材归属/状态（collectionIds、收藏、评分、回收站等）变化时 +1。
+   * 素材数据变更版本号：素材归属/状态（collectionIds、收藏、评分等）变化时 +1。
    * 桌面端侧栏计数来自 SQLite 聚合，工作区目录查询依赖该版本号重新拉取，保证计数即时更新。
    */
   mutationVersion: number
@@ -258,14 +258,28 @@ export interface AssetLibraryStoreState {
     updates: Array<{ id: string; collectionIds: string[] }>,
     label: string,
   ) => Promise<number>
+  // ===== 软删能力（无 UI 入口，仅为将来「撤销删除」保留；日常删除走 deleteAssets 真删）=====
   moveToTrash: (ids: string[], onProgress?: (done: number, total: number) => void) => Promise<void>
+  /** 从回收站恢复素材。⚠️ 回收站已撤除（ADR-0021），无 UI 入口 */
   restoreAssets: (ids: string[], onProgress?: (done: number, total: number) => void) => Promise<void>
   removeAssetLocal: (id: string) => void
   trashSelectedAssets: () => Promise<void>
   restoreSelectedAssets: () => Promise<void>
   purgeSelectedAssets: () => Promise<{ purged: string[]; blocked: unknown[] }>
-  /** 清空回收站：永久删除全部回收站素材，返回删除结果与引用冲突项 */
+  /** 清空回收站：永久删除全部回收站素材。⚠️ 回收站已撤除（ADR-0021），无 UI 入口 */
   emptyTrashAssets: () => Promise<{ purged: string[]; blocked: unknown[] }>
+  /**
+   * 统一的「删除」入口（2026-09-24 起 = 永久删除，见 ADR-0021）。
+   *
+   * 无引用冲突的素材**当场彻底删除**（记录 + 图片字节 + 磁盘缩略图一起清）；被其他任务输入 /
+   * 工作区 / Agent 会话等拥有型引用的素材**不静默强删** —— 挂起到 `pendingPurgeRequest`，
+   * 由素材库工作区弹出「解除引用并彻底删除」确认弹窗，用户确认后才走 force 删除。
+   * 返回本次已删除的 id 与因引用而挂起的项。
+   */
+  deleteAssets: (ids: string[]) => Promise<{ deleted: string[]; blocked: unknown[] }>
+  /** 待确认的删除请求（有引用冲突时由 deleteAssets 挂起，工作区消费后清空）。不持久化。 */
+  pendingPurgeRequest: { ids: string[]; title?: string; forceByDefault?: boolean } | null
+  clearPendingPurgeRequest: () => void
 
   createCollection: (name: string, parentId?: string | null) => Promise<AssetCollection | null>
   renameCollection: (id: string, name: string) => Promise<void>
@@ -635,6 +649,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
       redoStack: [],
       selectedFolderIds: [],
       folderEditRequest: null,
+      pendingPurgeRequest: null,
 
       hydrate: async () => {
         set({ hydrationStatus: 'loading' })
@@ -1097,6 +1112,37 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
         const { purgeGeneratedAssets } = await import('../../store')
         return purgeGeneratedAssets(ids)
       },
+
+      /**
+       * 统一删除入口。先按「非 force」删一遍：能删的当场删掉（引用冲突安全，替用户改别人卡片
+       * 的数据是最不可逆的一种「帮忙」），删不掉的（被别的任务/会话引用）挂起来等用户确认，
+       * 绝不静默强删。
+       */
+      deleteAssets: async (ids) => {
+        if (ids.length === 0) return { deleted: [], blocked: [] }
+        const { purgeGeneratedAssets, useStore } = await import('../../store')
+        const showToast = useStore.getState().showToast
+        const result = await purgeGeneratedAssets(ids, { reason: 'user-delete' })
+        const blockedIds = result.blocked.map((item) => item.assetId)
+        if (blockedIds.length > 0) {
+          set({
+            pendingPurgeRequest: {
+              ids: blockedIds,
+              title: blockedIds.length > 1 ? '这些素材正被引用' : '这张素材正被引用',
+              forceByDefault: false,
+            },
+          })
+          if (result.purged.length > 0) {
+            showToast(`已删除 ${result.purged.length} 张；另有 ${blockedIds.length} 张被引用，待确认`, 'info')
+          }
+          return { deleted: result.purged, blocked: result.blocked }
+        }
+        if (result.purged.length > 0) showToast(`已删除 ${result.purged.length} 张`, 'success')
+        else showToast('没有可删除的素材', 'info')
+        return { deleted: result.purged, blocked: result.blocked }
+      },
+
+      clearPendingPurgeRequest: () => set({ pendingPurgeRequest: null }),
 
       createCollection: async (name, parentId = null) => {
         const { useStore } = await import('../../store')
@@ -2131,7 +2177,7 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
           >
         > & { viewStyle?: 'images' | 'batch'; groupBy?: unknown }
         return {
-          scope: state.scope ?? 'all',
+          scope: normalizePersistedScope(state.scope),
           query: state.query ?? '',
           filters: state.filters ?? {},
           sortKey: state.sortKey ?? 'updatedAt',
@@ -2157,6 +2203,24 @@ export const useAssetLibraryStore = create<AssetLibraryStoreState>()(
 export function normalizeGroupBy(value: unknown): AssetGroupBy {
   if (value === 'grouped' || value === 'batch' || value === 'task') return 'grouped'
   return 'none'
+}
+
+/**
+ * 持久化作用域的归一化：已废弃的 `'trash'`（回收站，2026-09-24 撤除，ADR-0021）与任何未知值
+ * 一律回落到「全部素材」。
+ *
+ * 为什么必须做：`scope` 是**持久化**的。旧版本停回收站时退出，升级后重启会停在一个不存在的
+ * 范围上 —— 界面空空如也，侧栏也没有那个入口能切回来，用户只能自己想到去点别的项。
+ */
+export function normalizePersistedScope(value: unknown): AssetLibraryScope {
+  if (value === 'all' || value === 'recent' || value === 'favorites' || value === 'unorganized') return value
+  if (value && typeof value === 'object') {
+    const record = value as { kind?: unknown; id?: unknown }
+    if ((record.kind === 'collection' || record.kind === 'tag') && typeof record.id === 'string') {
+      return { kind: record.kind, id: record.id }
+    }
+  }
+  return 'all'
 }
 
 export function getVisibleAssets(state: Pick<AssetLibraryStoreState, 'assetsById' | 'assetOrder'>): GeneratedAsset[] {

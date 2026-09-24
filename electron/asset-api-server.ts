@@ -94,7 +94,9 @@ function json(response: ServerResponse, status: number, body: unknown) {
 function parseScope(value: string | null): AssetCatalogQuery['scope'] {
   if (value?.startsWith('collection:')) return { kind: 'collection', id: value.slice(11) }
   if (value?.startsWith('tag:')) return { kind: 'tag', id: value.slice(4) }
-  return value === 'recent' || value === 'favorites' || value === 'unorganized' || value === 'trash' ? value : 'all'
+  // 已废弃的 'trash'（2026-09-24 撤回收站，ADR-0021）与任何未知值一律归一为「全部素材」，
+  // 免得旧持久化里的作用域把界面卡在一个不存在的范围上。
+  return value === 'recent' || value === 'favorites' || value === 'unorganized' ? value : 'all'
 }
 
 function publicAssetDetails(details: CatalogAssetDetails) {

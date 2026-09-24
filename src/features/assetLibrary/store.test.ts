@@ -477,6 +477,35 @@ describe('mutation actions', () => {
     expect(result.purged).toEqual(['a'])
   })
 
+  it('deleteAssets 无引用冲突时当场真删，不挂起确认（ADR-0021）', async () => {
+    mainStoreMock.purgeGeneratedAssets.mockResolvedValue({ purged: ['a', 'b'], blocked: [] })
+    const result = await useAssetLibraryStore.getState().deleteAssets(['a', 'b'])
+    expect(mainStoreMock.purgeGeneratedAssets).toHaveBeenCalledWith(['a', 'b'], { reason: 'user-delete' })
+    expect(result.deleted).toEqual(['a', 'b'])
+    // 没有冲突就不弹确认 —— 删除就是要干脆，别打断日常操作
+    expect(useAssetLibraryStore.getState().pendingPurgeRequest).toBeNull()
+  })
+
+  it('deleteAssets 被引用的素材挂起确认，绝不静默 force 强删（ADR-0021）', async () => {
+    mainStoreMock.purgeGeneratedAssets.mockResolvedValue({
+      purged: [],
+      blocked: [{ assetId: 'b', imageId: 'img-b', references: [] }],
+    })
+    const result = await useAssetLibraryStore.getState().deleteAssets(['b'])
+    // 只调「非 force」那一档：删不掉就交回用户决定，不替用户改别的卡片的数据
+    expect(mainStoreMock.purgeGeneratedAssets).toHaveBeenCalledTimes(1)
+    expect(mainStoreMock.purgeGeneratedAssets).toHaveBeenCalledWith(['b'], { reason: 'user-delete' })
+    expect(result.deleted).toEqual([])
+    expect(useAssetLibraryStore.getState().pendingPurgeRequest).toEqual({
+      ids: ['b'],
+      title: '这张素材正被引用',
+      forceByDefault: false,
+    })
+    // 工作区消费后必须清空，否则同一批素材会被反复弹窗
+    useAssetLibraryStore.getState().clearPendingPurgeRequest()
+    expect(useAssetLibraryStore.getState().pendingPurgeRequest).toBeNull()
+  })
+
   it('selects and replaces the visible selection', () => {
     useAssetLibraryStore.setState({ assetsById: { a: makeAsset('a'), b: makeAsset('b') }, assetOrder: ['a', 'b'] })
     useAssetLibraryStore.getState().selectAllVisibleAssets(['a', 'b'])

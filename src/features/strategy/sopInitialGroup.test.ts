@@ -42,14 +42,7 @@ describe('resolveInitialSopGroupId', () => {
   })
 
   it('指针不是具体文件夹（全部 / 收藏 / 标签）⇒ 全部', () => {
-    const scopes: AssetLibraryScope[] = [
-      'all',
-      'recent',
-      'favorites',
-      'unorganized',
-      'trash',
-      { kind: 'tag', id: 't1' },
-    ]
+    const scopes: AssetLibraryScope[] = ['all', 'recent', 'favorites', 'unorganized', { kind: 'tag', id: 't1' }]
     for (const scope of scopes) {
       expect(resolveInitialSopGroupId({ groups, collections, scope })).toBe(SOP_ALL_GROUPS_ID)
     }

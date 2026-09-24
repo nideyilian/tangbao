@@ -38,8 +38,8 @@ export interface AssetLibraryShortcutOptions {
  * - 空格：按住快速预览（鼠标悬停的素材优先，无需先点选；无悬停时预览选中素材）
  * - 空格 / Enter：打开查看器（焦点在素材元素上时由元素自身处理）
  * - Esc：取消选择（查看器打开时由查看器处理）
- * - Delete / Backspace：选中素材移入回收站；无选中素材且位于文件夹中时删除当前文件夹
- *   （回收站视图不响应，避免误永久删除；文件夹树行聚焦时由树行处理）
+ * - Delete / Backspace：删除选中素材（= 永久删除，见 ADR-0021）；无选中素材且位于文件夹中时删除当前文件夹
+ *   （文件夹树行聚焦时由树行处理）
  * - F2：重命名当前文件夹（树行聚焦时由树行处理）
  * - Ctrl/Cmd+N：在当前文件夹下新建子文件夹
  * - 1–5 / 0：对选中素材评分 / 清除评分
@@ -223,14 +223,11 @@ export function useAssetLibraryShortcuts({ onFocusSearch, onOpenViewer }: AssetL
       }
       if (key === 'Delete' || key === 'Backspace') {
         event.preventDefault()
-        // 回收站视图不响应 Delete（永久删除需走确认流程）
-        if (state.scope === 'trash') return
         if (targets.length > 0) {
-          // 有选中素材：移入回收站（Eagle 语义）
-          void state
-            .moveToTrash(targets)
-            .then(() => useStore.getState().showToast(`已移入回收站（${targets.length} 张）`, 'success'))
-            .catch(() => useStore.getState().showToast('移入回收站失败', 'error'))
+          // 有选中素材：删除（Eagle 语义）。删除 = 永久删除（ADR-0021）——
+          // 能删的当场删掉，被其他任务/会话引用的那几张由工作区弹确认；
+          // 成功/失败/待确认的提示统一由 `deleteAssets` 给，避免各入口文案不一致。
+          void state.deleteAssets(targets)
           return
         }
         // 无素材选中：快速预览打开时先关闭预览，不做删除（避免误删当前文件夹）

@@ -11907,37 +11907,35 @@ export function moveTasksToWorkspaceTab(taskIds: string[], targetTabId: string, 
 
 /** 删除多条任务 */
 /**
- * 删除任务时把它的产出图**移入回收站**（2026-09-23 起不再永久删除）：
- * 按任务输出图片找到对应素材，仍被其他任务输入 / Agent 会话 / 工作区等拥有型引用的图片
- * **保留不动**（不回收、不强解引用 —— 替用户改别人卡片的数据是最不可逆的一种「帮忙」），
- * 其余移入回收站，用户可以在回收站里恢复或显式清空。
+ * 删除任务时连同其产出图一起**永久删除**（2026-09-24 起收回回收站方案，见 ADR-0021）：
+ * 按任务输出图片找到对应素材，走统一的永久删除计划（引用冲突安全——
+ * 被其他任务输入 / Agent 会话等拥有型引用的图片保留，**不自动改动任何数据**，
+ * 不强制解除引用）。
  *
- * 为什么不再永久删除：「这批图不要了」和「这张卡不要了」是两件事，而删任务卡是高频操作。
- * 永久删除只保留在回收站的显式入口（清空回收站 / 永久删除按钮），语义单一、后果自明。
- * 返回 { trashed: 已移入回收站图片数, kept: 因被引用而保留的图片数 }。
+ * 任务卡侧的收尾（输出槽位置空 + 记 `purgedOutputSlots`）由 `executeAssetPurge`
+ * 内的 `patchTaskForPurgedSlots` 完成，卡片据此显示「已删除」。
+ * 返回 { purged: 已永久删除图片数, kept: 因被引用而保留的图片数 }。
  */
-async function trashTaskOutputAssets(
+async function purgeTaskOutputAssets(
   deletedTasks: TaskRecord[],
   graph: ImageReferenceGraph,
-): Promise<{ trashed: number; kept: number }> {
+): Promise<{ purged: number; kept: number }> {
   const outputImageIds = new Set<string>()
   for (const t of deletedTasks) {
     for (const id of t.outputImages ?? []) {
       if (id) outputImageIds.add(id)
     }
   }
-  if (outputImageIds.size === 0) return { trashed: 0, kept: 0 }
+  if (outputImageIds.size === 0) return { purged: 0, kept: 0 }
 
   // 桌面端素材权威存储是 SQLite，必须走 getAssetsByImageIds（Electron 下走 SQLite、
   // 浏览器下才回退 IndexedDB）；不能再用 db 层的 batchGetGeneratedAssetsByImageIds（只查 IndexedDB），
   // 否则 Electron 下查不到素材，删除任务时图片不会被一起回收。
   const assetsByImage = await getAssetsByImageIds([...outputImageIds])
-  // 已在回收站里的不再回收一次：重复写 status/trashedAt 会让回收站排序与「已恢复到什么时间」抖动
-  const assets = [...assetsByImage.values()].filter((asset) => asset.status === 'active')
-  if (assets.length === 0) return { trashed: 0, kept: 0 }
+  const assets = [...assetsByImage.values()]
+  if (assets.length === 0) return { purged: 0, kept: 0 }
 
-  // 谁能动、谁被保留仍复用永久删除的计划器：它已经处理好「素材自身引用不算阻断」这条口径，
-  // 于是本函数与旧行为只差最后一步 —— 同一批图片，从「永久删除」变成「移入回收站」。
+  // 谁能动、谁被保留复用永久删除的计划器：它已经处理好「素材自身引用不算阻断」这条口径。
   const plan = planAssetPurge({
     assetIds: assets.map((asset) => asset.id),
     assets,
@@ -11945,9 +11943,12 @@ async function trashTaskOutputAssets(
     graph,
   })
   if (plan.allowedAssetIds.length > 0) {
-    await useAssetLibraryStore.getState().moveToTrash(plan.allowedAssetIds)
+    await purgeGeneratedAssets(
+      assets.map((asset) => asset.id),
+      { plan, reason: 'task-deleted' },
+    )
   }
-  return { trashed: plan.allowedAssetIds.length, kept: plan.blocked.length }
+  return { purged: plan.allowedAssetIds.length, kept: plan.blocked.length }
 }
 
 /**
@@ -12074,8 +12075,8 @@ export async function removeMultipleTasks(taskIds: string[]) {
   }
   await purgeImageDerivedData(removedImageIds)
 
-  // 删任务卡时把它的产出图移入回收站（被其他任务/会话引用的图片安全保留，不自动改动数据）
-  const { trashed, kept } = await trashTaskOutputAssets(deletedTasks, graph)
+  // 删任务卡时连同产出图一起永久删除（被其他任务/会话引用的图片安全保留，不自动改动数据）
+  const { purged, kept } = await purgeTaskOutputAssets(deletedTasks, graph)
 
   // 如果删除的任务在选中列表中，则移除
   const newSelection = selectedTaskIds.filter((id) => !toDelete.has(id))
@@ -12084,7 +12085,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   }
 
   const summaryParts: string[] = []
-  if (trashed > 0) summaryParts.push(`${trashed} 张图已移入回收站`)
+  if (purged > 0) summaryParts.push(`${purged} 张产出图已一并删除`)
   if (kept > 0) summaryParts.push(`${kept} 张被其他任务/会话引用，已保留`)
   showToast(
     summaryParts.length > 0
@@ -12137,11 +12138,11 @@ export async function removeTask(task: TaskRecord) {
   }
   await purgeImageDerivedData(removedImageIds)
 
-  // 删任务卡时把它的产出图移入回收站（被其他任务/会话引用的图片安全保留，不自动改动数据）
-  const { trashed, kept } = await trashTaskOutputAssets([task], graph)
+  // 删任务卡时连同产出图一起永久删除（被其他任务/会话引用的图片安全保留，不自动改动数据）
+  const { purged, kept } = await purgeTaskOutputAssets([task], graph)
 
   const summaryParts: string[] = []
-  if (trashed > 0) summaryParts.push(`${trashed} 张图已移入回收站`)
+  if (purged > 0) summaryParts.push(`${purged} 张产出图已一并删除`)
   if (kept > 0) summaryParts.push(`${kept} 张被其他任务/会话引用，已保留`)
   showToast(summaryParts.length > 0 ? `已删除任务（${summaryParts.join('；')}）` : '已删除任务', 'success')
 }

@@ -104,7 +104,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                   <li>成功生成的图片会自动进入素材库，无需手动保存；删除生成任务不会删除素材。</li>
                   <li>
                     生图由任务卡承载：工具栏默认「任务卡片」视图，每次生成对应一张任务卡（提示词、参数、图片与进度都在这张卡上），
-                    可随时切到「图片」大图模式只看图（同一批结果，两种展示形式）；左侧按全部、最近、收藏、未整理、项目和回收站浏览。
+                    可随时切到「图片」大图模式只看图（同一批结果，两种展示形式）；左侧按全部、最近、收藏、未整理和项目浏览。
                   </li>
                   <li>搜索支持提示词、模型与项目；筛选支持评分、形状、来源、服务商、模型、日期和宽度。</li>
                   <li>
@@ -125,14 +125,14 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                     <kbd className="px-1.5 py-0.5 rounded-md bg-ds-surface dark:bg-ds-subtle border border-ds-border dark:border-ds-border-strong text-xs font-sans">
                       A
                     </kbd>{' '}
-                    全选当前结果；底部批量栏支持收藏、评分、项目、下载、回收站。
+                    全选当前结果；选中多张后可用右键菜单批量收藏、评分、加入项目、下载或删除。
                   </li>
                   <li>
                     双击素材打开详情弹窗（左图右参数，可缩放、可前后切换；单击只做选中）；右键菜单可复制图片、加入参考图、复用提示词与参数、用作水印预览底图、下载原图。
                   </li>
                   <li>
-                    回收站中的素材仍占用原图空间，恢复或永久删除后才释放；永久删除前会提示被其他任务、工作区或 SOP
-                    引用的素材，「清空回收站」默认勾选「解除引用并彻底删除」，可连同被引用的素材一并清空。
+                    删除即永久删除：图片记录、原图与缩略图会一并清除，删了就找不回来。若这张图正被其他任务、工作区或 SOP
+                    引用，删除前会弹窗提示，确认「解除引用并彻底删除」后才会删掉。
                   </li>
                   <li>
                     <strong className="text-ds-primary dark:text-ds-primary font-medium">快捷键（Eagle 式）</strong>：
@@ -175,7 +175,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                     <kbd className="px-1.5 py-0.5 rounded-md bg-ds-surface dark:bg-ds-subtle border border-ds-border dark:border-ds-border-strong text-xs font-sans">
                       Delete
                     </kbd>
-                    移入回收站；
+                    删除（永久删除，不可恢复）；
                     <kbd className="px-1.5 py-0.5 rounded-md bg-ds-surface dark:bg-ds-subtle border border-ds-border dark:border-ds-border-strong text-xs font-sans">
                       Ctrl/Cmd+C / X
                     </kbd>

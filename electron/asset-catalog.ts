@@ -42,7 +42,6 @@ const EMPTY_COUNTS: AssetCatalogCursorPage['counts'] = {
   recent: 0,
   favorites: 0,
   unorganized: 0,
-  trash: 0,
   byCollection: {},
   byTag: {},
 }
@@ -82,7 +81,7 @@ const ASSET_SORT_BACKFILL_KEY = 'asset_sort_columns_backfill_v1'
  * 只改建表 SQL 而不升版本，等于让已经升过级的用户库拿不到这一步 ——
  * 版本号已是最新的库不会再跑迁移链，新列永远不会补上，用户看到的是"功能莫名其妙没生效"。
  */
-export const CATALOG_SCHEMA_VERSION = 1
+export const CATALOG_SCHEMA_VERSION = 2
 
 /** 结构版本号在 `catalog_meta` 表里的键名（读写走 `getMeta` / `setMeta`）。 */
 export const CATALOG_SCHEMA_VERSION_KEY = 'schema_version'
@@ -112,6 +111,13 @@ export const CATALOG_MIGRATIONS: CatalogMigration[] = [
       catalog.ensureTagTreeColumns()
       catalog.ensureCollectionExtraColumns()
       catalog.ensureAssetSortColumns()
+    },
+  },
+  {
+    version: 2,
+    description: '回收站撤除：把残留的 trashed 素材恢复为正常素材（ADR-0021，删除即永久删除）',
+    run: (catalog) => {
+      catalog.restoreTrashedAssets()
     },
   },
 ]
@@ -390,8 +396,7 @@ export class AssetCatalog {
     if (!columns.has('trashed_at')) this.db.exec('ALTER TABLE collections ADD COLUMN trashed_at INTEGER')
   }
 
-  /** 旧库升级：为 tags 表补齐树形列（parent_id / sort_order）。由 `CATALOG_MIGRATIONS` v1 调用。 */
-  ensureTagTreeColumns() {
+  /** 旧库升级：为 tags 表补齐树形列（parent_id / sort_order）。由 `CATALOG_MIGRATIONS` v1 调用。 */ ensureTagTreeColumns() {
     const columns = new Set(
       (this.db.prepare('PRAGMA table_info(tags)').all() as Array<{ name: string }>).map((row) => row.name),
     )
@@ -402,6 +407,18 @@ export class AssetCatalog {
       this.db.exec('ALTER TABLE tags ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0')
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS tags_parent ON tags(parent_id, sort_order, normalized_name)')
+  }
+
+  /**
+   * 回收站撤除（2026-09-24，ADR-0021「删除即永久删除」）：把库里残留的 trashed 素材恢复正常。
+   *
+   * 为什么必须做：新版没有任何入口能看到 / 恢复 / 永久删除回收站素材 —— 不迁移的话这些素材
+   * 会变成「素材库看不见、回收站也进不去、还继续占磁盘」的幽灵。恢复成正常素材是最保守的处置：
+   * 想要的留着，不想要的直接删（删除本身现在是彻底的）。由 `CATALOG_MIGRATIONS` v2 调用。
+   * 幂等：没有 trashed 记录时是一条 no-op UPDATE。
+   */
+  restoreTrashedAssets(): void {
+    this.db.exec("UPDATE assets SET status='active', trashed_at=NULL WHERE status='trashed'")
   }
 
   upsertAssets(records: AssetCatalogUpsert[]): void {
@@ -616,19 +633,17 @@ export class AssetCatalog {
 
   private addScopeWhere(input: AssetCatalogQuery, where: string[], params: Array<string | number>) {
     const scope = input.scope
-    if (scope === 'trash') where.push("a.status = 'trashed'")
-    else {
-      where.push("a.status = 'active'")
-      if (scope === 'recent') {
-        where.push('a.created_at >= ?')
-        params.push(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      } else if (scope === 'favorites') where.push('a.favorite = 1')
-      else if (scope === 'unorganized') where.push('json_array_length(a.collection_ids) = 0')
-      else if (typeof scope === 'object') {
-        const column = scope.kind === 'collection' ? 'a.collection_ids' : 'a.tag_ids'
-        where.push(`EXISTS (SELECT 1 FROM json_each(${column}) WHERE value = ?)`)
-        params.push(scope.id)
-      }
+    // 只查正常素材：回收站作用域已于 2026-09-24 撤除（ADR-0021，删除即永久删除）。
+    where.push("a.status = 'active'")
+    if (scope === 'recent') {
+      where.push('a.created_at >= ?')
+      params.push(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    } else if (scope === 'favorites') where.push('a.favorite = 1')
+    else if (scope === 'unorganized') where.push('json_array_length(a.collection_ids) = 0')
+    else if (typeof scope === 'object') {
+      const column = scope.kind === 'collection' ? 'a.collection_ids' : 'a.tag_ids'
+      where.push(`EXISTS (SELECT 1 FROM json_each(${column}) WHERE value = ?)`)
+      params.push(scope.id)
     }
   }
 
@@ -706,8 +721,7 @@ export class AssetCatalog {
       SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS all_count,
       SUM(CASE WHEN status='active' AND created_at >= ? THEN 1 ELSE 0 END) AS recent_count,
       SUM(CASE WHEN status='active' AND favorite=1 THEN 1 ELSE 0 END) AS favorites_count,
-      SUM(CASE WHEN status='active' AND json_array_length(collection_ids)=0 THEN 1 ELSE 0 END) AS unorganized_count,
-      SUM(CASE WHEN status='trashed' THEN 1 ELSE 0 END) AS trash_count FROM assets`,
+      SUM(CASE WHEN status='active' AND json_array_length(collection_ids)=0 THEN 1 ELSE 0 END) AS unorganized_count FROM assets`,
       )
       .get(Date.now() - 7 * 24 * 60 * 60 * 1000) as Record<string, number | null> | undefined
     if (!row) return { ...EMPTY_COUNTS, byCollection: {}, byTag: {} }
@@ -730,7 +744,6 @@ export class AssetCatalog {
       recent: Number(row.recent_count ?? 0),
       favorites: Number(row.favorites_count ?? 0),
       unorganized: Number(row.unorganized_count ?? 0),
-      trash: Number(row.trash_count ?? 0),
       byCollection,
       byTag,
     }
