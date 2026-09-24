@@ -29,6 +29,8 @@
 | TB-126 | 产出目标按方向各存一份：设置时跨产品、配置归当时方向 | DONE  | 主写线 | 2026-09-24 |
 | TB-128 | 后处理进度弹窗按范围分页（当前方向 / 全部方向）          | DONE  | 主写线 | 2026-09-24 |
 | TB-130 | 导出位置开关：位置配置保留、临时不写（可逐处停用）          | DONE  | 主写线 | 2026-09-24 |
+| TB-132 | 「全选全部结果」去掉 200 条页大小夹住 + 游标不推进即收手        | DONE  | 主写线 | 2026-09-24 |
+| TB-133 | 图片模式删图后残留空壳卡：分页快照把「已删」当「窗口外素材」      | DONE  | 主写线 | 2026-09-24 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -6270,3 +6272,86 @@ trashed），得再进回收站点一次「永久删除」才是真删。用户�
 2. **两轮跑完会有两个同名批次**：`assetBatchGrouping.ts:196` 的标题取 `snapshot.title`/`sopName`，
    不含轮次。素材库里靠创建时间戳区分；要不要加「第 N 轮」待杰哥定。
 3. **未经真机确认**：本机无法做渲染验证（runbook 二十七节），观感需你在 dev 里过目。
+
+---
+
+## TB-132 「全选全部结果」不再被 200 条页大小夹住（2026-09-24 阿伟）
+
+- **来源**：杰哥报障「『全选全部结果』最多只能勾选 200 张图片，存在数量上限限制」。
+- **诊断（200 在哪儿，以及它到底限的是什么）**
+  1. **唯一的 200 硬编码在「每页条数」上**：`electron/asset-catalog.ts:569`
+     `Math.min(200, Math.floor(input.limit ?? 100))`（浏览器回退同款在
+     `src/lib/assetLibraryRepository.ts:286`）。而「全选全部结果」走的是
+     `assetCommands.searchAllAssetIds`（`PAGE_SIZE = 500`）**游标翻页**：
+     每次要 500 条、实收 200 条，一路翻到耗尽。HTTP 素材 API 的 `?limit=` 也顶在 200。
+  2. **实测（真实 `AssetCatalog` + 真实全选链路，450 张库）**：`limit=500 → 200/200/50` 三轮
+     收齐 450 条；`createdAt/updatedAt/rating/width/area/name/batch` 七种排序键、带 FTS 搜索、
+     相等排序值（游标 tie-break）全都 **450/450** ⇒ 这条夹子**只限单页条数，不会把总量截到 200**。
+  3. **真正能截到「正好 200」的是内存窗口**：桌面端启动 `hydrate()` 只灌最新 200 条
+     （`assetLibraryRepository.hydrate` 的 `limit: 200`，见 R-91）。`selectAllVisible` 有两条分支
+     直接吃这份内存集：① 收藏夹模式（`filterFavorite`）；② `searchAllAssetIds` 抛错后的回退。
+     本机库 494 张、收藏 0 张 ⇒ 这条当前不生效，但它是「200 张」这个数字唯一的来源。
+- **改动**
+  1. 新增共享口径 `src/lib/assetPaging.ts`：`resolveAssetPageSize()` —— 按调用方请求的页大小返回，
+     只留一个防畸形请求的兜底上限 `MAX_ASSET_PAGE_SIZE = 1000`（它是安全阀，不是数量限制）。
+     主进程目录与浏览器回退共用这一份实现（避免两处各写一遍）。
+  2. `searchAllAssetIds` 改为**边收边去重**，并加「游标不推进就收手」：同一页重复返回时立刻
+     返回已收结果并置 `truncated`，不再白翻 64 轮、堆积重复 id 后被上层去重成一小撮
+     （那种「看着像只选了 200 张、还不给提示」的结果最难查）。
+- **验收证据**
+  - **`npm run verify`**：`tsc` 双端 + `lint` + `format:check` 全绿；`test` **270 文件 / 3350 用例**。
+  - **新增 3 条守卫**：`electron/asset-catalog.test.ts`「按调用方请求的页大小返回：要 500 就给 500」
+    （450 张一页取完）；`assetCommands.test.ts`「底层每页只给 200 条时也能翻页收全 450 条」
+    +「游标不推进时立刻收手并报截断」。
+  - **反向验证**：把页大小夹回 `Math.min(200, …)`、删掉「游标不推进就收手」→ **恰好红 2 条**
+    （上面第 1、3 条），复原后 53/53 绿。
+- **未做 / 待确认**
+  1. **内存窗口那两条分支仍未修**（收藏夹模式 / 全选失败回退）：它们选的是内存集，上限 = 200。
+     收藏夹的成员是**按任务**算的（`favoriteCollectionAssets` 从 `assets` 过滤），目录侧没有等价
+     筛选条件 ⇒ 要修得先定「收藏夹内全选」的目标集怎么查（新增按 taskIds 的目录查询？还是先
+     `hydrateFull`？）—— 属于取舍，等杰哥定。
+  2. 兜底上限留了 1000：想彻底不设上限也行，但 `?limit=` 走 HTTP，畸形请求会把主进程内存打满。
+
+---
+
+## TB-133 图片模式删除后残留空壳卡：分页快照把「已删」当「窗口外素材」（2026-09-24 阿伟）
+
+- **来源**：杰哥报障「图片模式下删除图片后，界面仍然残留一个空的占位卡片」，并补充
+  「切换到其他方向再切回来就没了」——后半句直接把范围锁到「分页快照残留」，不是数据问题。
+- **诊断**
+  1. 图片模式（`groupBy: 'none'`）的网格渲染的是「SQLite 分页快照 + 内存最新态复检」的结果：
+     `AssetLibraryWorkspace.tsx` 的 `effectiveResult` → `query.ts` 的 `resolveEffectiveAssets`。
+  2. 那条复检里有一条兜底：**内存里查不到这条 → 按快照保留**。它是为 TB-106 准备的 ——
+     桌面端 `hydrate()` 只灌最新 200 条，分页里窗口之外的素材不能被整批剔掉。
+  3. 永久删除（ADR-0021 / TB-127）会把素材从 `assetsById` 摘掉（`store.ts:removeAssetLocal`）
+     ⇒ 被删的素材与「窗口外的老素材」在这条兜底眼里**完全一样**，于是被留下。
+  4. 而图片记录 / 原图字节 / 磁盘缩略图都已真删（`purgeImageDerivedData`）⇒ 卡片没图可加载，
+     只剩占位图标 + 「N 个来源」（`AssetTile.tsx:264/273`）—— 就是报障截图里的样子。
+  5. 重查也修不好：`mergePagedAssets` 只增不减，快照里的旧项不会被清。换文件夹会
+     `setCatalogPage(null)` 重建快照 ⇒ **切走再切回来它自己就没了**（与报障补充吻合）。
+  6. 软删时代没这个问题：那时内存里还留着记录、只是 `status` 不同，
+     `live.status !== asset.status → 剔除` 能命中 —— 是 TB-127 改成真删后才暴露的回归。
+- **改动**
+  1. `features/assetLibrary/store.ts` 新增内存墓碑 `purgedAssetIds`（**不持久化**）：
+     `removeAssetLocal` 时无条件记（素材可能从没进过内存）；`applyAssetsToState` 在素材重新写回
+     内存时清（删除后 Ctrl+Z 撤销不能让它永久隐身）；`hydrate` 全量重读时清空。
+  2. `features/assetLibrary/query.ts` 的 `resolveEffectiveAssets` 优先剔除墓碑；
+     TB-106 那条兜底**保留**，只留给真正「从未进过内存」的素材。
+  3. `AssetLibraryWorkspace.tsx` 读出墓碑并传给查询。
+- **验收证据**
+  - `npm run verify`：`tsc` 双端 + `lint` + `format:check` 全绿；`test` **270 文件 / 3357 用例**。
+    其中 1 条 `electron/legacy-data-import.test.ts` 的 `afterEach` hook 在并发全量下 10s 超时假红
+    （**单文件复跑 34.5s 全绿**，同 R-102 / R-98 族；与本轮改动无关）。
+  - **新增 6 条守卫**：`query.test.ts`「剔除已永久删除的素材：即使它不在内存里（删除墓碑）」
+    +「墓碑只剔自己：同页其它素材与窗口外兜底都不受影响（TB-106 不回归）」；
+    `store.test.ts`「removeAssetLocal 无条件记墓碑」+「素材重新写回内存时清掉墓碑」
+    +「清空删除墓碑（hydrate 全量重读）」+「不持久化删除墓碑」。
+  - **反向验证**（两处分别撤掉）：① 撤掉 `resolveEffectiveAssets` 的墓碑过滤 →
+    `query.test.ts` **恰好红 2 条**（就是上面那两条）；② 撤掉墓碑记录 + 清除 →
+    `store.test.ts` **恰好红 2 条**（记墓碑 / 清墓碑）。复原后全绿。
+- **未做 / 待确认**
+  1. **未经真机确认**：本机无法做渲染验证（runbook 二十七节），请杰哥在 dev 里删一张图过目。
+  2. **墓碑只在内存**：重启后靠分页快照重建（重查不会返回已删素材）来自愈，故不必落盘 ——
+     落盘反而会跨重启误伤素材（已用 persist 边界用例钉住）。
+  3. 其它「绕过 `removeAssetLocal` 把素材移出内存」的路径不会进墓碑；grep 下来当前只有
+     `purgeGeneratedAssets` 尾部这一处调用，若将来新增第二条删除路径，需一并走它。
