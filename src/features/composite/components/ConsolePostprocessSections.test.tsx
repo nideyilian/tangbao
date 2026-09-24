@@ -416,9 +416,13 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度', 'E:/留档百度'])
   })
 
-  it('⭐ 只有「渠道名」与「参与产出」两列居中，其余列左对齐（2026-09-22 杰哥定的口径）', () => {
-    // 这两列内容短且是「标记」性质（名字 / 一个勾），居中比贴左更稳；
-    // 详细尺寸与导出位置是长内容，必须左对齐。改回全左或全中，这条会挂。
+  it('⭐ 短标记列居中（渠道名 / 参与产出 / 写入），长内容列左对齐（2026-09-22 定的口径）', () => {
+    // 短标记（名字、一个勾）居中比贴左更稳；详细尺寸与导出位置是长内容，必须左对齐。
+    // 改回全左或全中，这条会挂。
+    //
+    // ⚠️ 「写入」（TB-130）也是「一个勾」，与「参与产出」同类，所以一并居中 ——
+    // 两列的勾于是落在同一条竖线上。这条守卫原先只断言到第 4 列（导出位置），
+    // 新加列能整列逃过检查 —— 加列时**必须把它一起纳入断言**（TB-130 时补的）。
     render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     const heads = container.querySelectorAll('table[aria-label="渠道与输出"] thead th')
     const isCentered = (index: number) =>
@@ -427,6 +431,8 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(isCentered(1)).toBe(false) // 详细尺寸
     expect(isCentered(2)).toBe(true) // 参与产出
     expect(isCentered(3)).toBe(false) // 导出位置
+    expect(isCentered(4)).toBe(true) // 写入（TB-130）
+    expect(isCentered(5)).toBe(false) // 操作
   })
 
   it('⭐ 尺寸表一行一个渠道，详细尺寸是一组复选框（勾选 = 参与产出）', () => {
