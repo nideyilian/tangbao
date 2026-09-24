@@ -50,6 +50,7 @@ function baseConfig(): PostprocessMediaConfig {
     fitMode: 'crop-fill',
     outputDir: '',
     mediaOutputDirs: {},
+    mediaOutputDirEnabled: {},
     namePattern: '{line}-{product}-{direction}-{seq}',
     creator: '',
     watermarkPresetIds: [],

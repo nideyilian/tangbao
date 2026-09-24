@@ -240,6 +240,11 @@ export function buildConsoleSheets(input: ConsoleExportInput): ConsoleSheet[] {
   }
 
   // ---- ⑤ output_dirs_global：全局输出位置（列全部渠道，空 = 用默认位置） ----
+  //
+  // ⚠️ 刻意**不导出「启用」开关**（TB-130）：开关是「这一处这一轮写不写」的临时状态，
+  // 不是位置配置本身。塞进这张表会让「导出 → 改 → 导入」把停用状态固化或误清，
+  // 而用户改 Excel 时多半没意识到自己在动交付开关。
+  // 导入侧因此**保留**既有开关记录（见 `applyConsoleImport` ④），两边口径一致。
   const outputDirsGlobal: ConsoleSheet = {
     name: 'output_dirs_global',
     columns: [

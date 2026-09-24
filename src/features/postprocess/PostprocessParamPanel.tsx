@@ -54,7 +54,13 @@ import {
   TextField,
 } from '../../design-system'
 import ChannelOutputDirs from './ChannelOutputDirs'
-import { normalizeOutputDirList, resolvePostprocessOutputDirs } from '../../lib/postprocessMedia'
+import {
+  dropOutputDirEnabledKey,
+  isOutputDirEnabled,
+  normalizeOutputDirList,
+  renameOutputDirEnabledKey,
+  resolvePostprocessOutputDirs,
+} from '../../lib/postprocessMedia'
 import type { PostprocessMediaConfig, PostprocessNodeOverride } from '../../lib/postprocessMedia'
 import { resolveCollectionPath } from '../../lib/postprocessProjectTree'
 import { useStore } from '../../store'
@@ -231,11 +237,25 @@ export default function PostprocessParamPanel({ selectedNodeId, globalConfig }: 
   const writeDirs = (mediaId: string, index: number, outputDir: string) => {
     const slots = [...resolveDirs(mediaId)]
     while (slots.length <= index) slots.push('')
+    const previous = slots[index] ?? ''
     slots[index] = outputDir
     const next = normalizeOutputDirList(slots)
     // 同时写 `outputDirs` 并摘掉旧的单值 `outputDir`：两个字段并存时以 `outputDirs` 为准，
     // 留着旧值只会让「界面上显示的」和「实际生效的」不一致。
-    apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
+    // 开关记录跟着路径走 —— 改个路径就把「已停用」忘掉，属于最让人发懵的那种静默失效。
+    apply({
+      byMedia: {
+        [mediaId]: {
+          outputDirs: next.length > 0 ? next : undefined,
+          outputDir: undefined,
+          outputDirEnabled: renameOutputDirEnabledKey(
+            override?.byMedia?.[mediaId]?.outputDirEnabled,
+            previous,
+            outputDir,
+          ),
+        },
+      },
+    })
   }
 
   /**
@@ -245,8 +265,43 @@ export default function PostprocessParamPanel({ selectedNodeId, globalConfig }: 
    * 一次事件里连写两笔的话，第二笔会基于过期数据（`byMedia` 只认最后一次 `apply`）。
    */
   const removeDirs = (mediaId: string, index: number) => {
-    const next = resolveDirs(mediaId).filter((_, slot) => slot !== index)
-    apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
+    const own = resolveDirs(mediaId)
+    const removed = own[index] ?? ''
+    const next = own.filter((_, slot) => slot !== index)
+    apply({
+      byMedia: {
+        [mediaId]: {
+          outputDirs: next.length > 0 ? next : undefined,
+          outputDir: undefined,
+          // 这一处没了，它的开关记录一起丢掉（留着的话，以后填回同一路径会莫名是关的）
+          outputDirEnabled: dropOutputDirEnabledKey(override?.byMedia?.[mediaId]?.outputDirEnabled, removed),
+        },
+      },
+    })
+  }
+
+  /** 某一处导出位置**最终**开不开；走产出链同一个解析函数，界面不与实际产出分叉。 */
+  const resolveDirEnabled = (mediaId: string, dir: string): boolean =>
+    isOutputDirEnabled(
+      resolveProjectPostprocessSlice(collections, params, selectedNodeId, globalConfig, mediaId).config,
+      mediaId,
+      dir,
+    )
+
+  /**
+   * 切换某一处导出位置的开关：写**本级**这一层。
+   * 更浅一层对别的处的停用照样留着（合并是逐键的，不是整份替换）。
+   */
+  const toggleDirEnabled = (mediaId: string, dir: string, enabled: boolean) => {
+    const key = dir.trim()
+    if (!key) return
+    apply({
+      byMedia: {
+        [mediaId]: {
+          outputDirEnabled: { ...(override?.byMedia?.[mediaId]?.outputDirEnabled ?? {}), [key]: enabled },
+        },
+      },
+    })
   }
 
   /**
@@ -270,6 +325,18 @@ export default function PostprocessParamPanel({ selectedNodeId, globalConfig }: 
     }
     return map
   }, [selectedNodeId, collections, params, media, globalConfig])
+
+  /**
+   * 本级留空时能继承到、且**可逐处开关**的位置。
+   *
+   * 本面板只服务**项目树节点**（全局基线在中控台编），所以这里一定有上级；本级已经配了位置
+   * 就不算继承（返回空数组），由本级自己那几格负责开关。
+   * 复用 `inheritedDirsByMedia` 的解析结果，不再算第二遍（两处各算一遍迟早分叉）。
+   */
+  const resolveInheritedToggleDirs = (mediaId: string): string[] => {
+    if (resolveDirs(mediaId).length > 0) return []
+    return inheritedDirsByMedia[mediaId] ?? []
+  }
 
   /**
    * 「输出目录」留空后会落到哪个目录。
@@ -384,6 +451,9 @@ export default function PostprocessParamPanel({ selectedNodeId, globalConfig }: 
         media={media}
         resolveDirs={resolveDirs}
         resolveInheritedDirs={(mediaId) => inheritedDirsByMedia[mediaId] ?? []}
+        resolveInheritedToggleDirs={resolveInheritedToggleDirs}
+        resolveDirEnabled={resolveDirEnabled}
+        onToggleDirEnabled={toggleDirEnabled}
         onChangeDir={writeDirs}
         onRemoveDir={removeDirs}
         onPickError={() => showToast('选择导出位置失败，请重试', 'error')}

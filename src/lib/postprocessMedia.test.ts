@@ -9,12 +9,17 @@ import {
   PURE_MEDIA_ID,
   applyPostprocessOverride,
   buildPostprocessOutputs,
+  dropOutputDirEnabledKey,
   findPostprocessMedia,
   formatInheritedOutputDirsHint,
   getOutputDirectionLabel,
+  isOutputDirEnabled,
   matchMediaSizes,
+  normalizeOutputDirEnabledMap,
   normalizeOutputDirList,
   normalizePostprocessFitMode,
+  planPostprocessOutputDirSlots,
+  renameOutputDirEnabledKey,
   resolveOutputDirection,
   resolvePostprocessOutputDirs,
   type PostprocessMedia,
@@ -403,6 +408,7 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
       fitMode: 'crop-fill',
       outputDir: '基线目录',
       mediaOutputDirs: {},
+      mediaOutputDirEnabled: {},
       namePattern: '{seq}',
       creator: '基线',
       watermarkPresetIds: ['基线水印'],
@@ -548,6 +554,7 @@ describe('导出位置：全局渠道表 + 双写', () => {
       fitMode: 'crop-fill',
       outputDir: '全局默认目录',
       mediaOutputDirs: {},
+      mediaOutputDirEnabled: {},
       namePattern: '{seq}',
       creator: '',
       watermarkPresetIds: [],
@@ -683,5 +690,135 @@ describe('DIRECTION_OPTIONS（画面方向选项的唯一来源）', () => {
       if (option.value === 'auto') continue
       expect(option.label).toBe(getOutputDirectionLabel(option.value))
     }
+  })
+})
+
+describe('导出位置开关（TB-130）', () => {
+  function baseConfig(): PostprocessMediaConfig {
+    return {
+      media: DEFAULT_POSTPROCESS_MEDIA,
+      selectedMediaIds: ['gdt'],
+      selectedCollectionIds: [],
+      savedTargetCollectionIds: [],
+      savedTargetsByFolder: {},
+      direction: null,
+      fitMode: 'crop-fill',
+      outputDir: '全局默认目录',
+      mediaOutputDirs: { baidu: ['D:/共享盘'] },
+      mediaOutputDirEnabled: {},
+      namePattern: '{seq}',
+      creator: '',
+      watermarkPresetIds: [],
+      distribution: { ...DEFAULT_POSTPROCESS_DISTRIBUTION },
+    }
+  }
+
+  it('缺记录 = 启用；只有 `false` 才停用', () => {
+    const config: Pick<PostprocessMediaConfig, 'mediaOutputDirEnabled'> = {
+      mediaOutputDirEnabled: { baidu: { 'D:/共享盘': false } },
+    }
+    expect(isOutputDirEnabled(config, 'baidu', 'D:/共享盘')).toBe(false)
+    expect(isOutputDirEnabled(config, 'baidu', 'D:/本地留档')).toBe(true)
+    expect(isOutputDirEnabled(config, 'gdt', 'D:/共享盘')).toBe(true)
+    // 空路径不是一处真实位置（占位 / 默认输出位置），一律按「开」——
+    // 否则默认输出位置会被一条空键莫名关掉
+    expect(isOutputDirEnabled({ mediaOutputDirEnabled: { baidu: { '': false } } }, 'baidu', '')).toBe(true)
+  })
+
+  it('⭐ 逐键合并：本级只关一处，浅一层对别的处的停用照样留着', () => {
+    const base = {
+      ...baseConfig(),
+      mediaOutputDirs: { baidu: ['D:/共享盘', 'D:/本地留档'] },
+      mediaOutputDirEnabled: { baidu: { 'D:/共享盘': false } },
+    }
+    const merged = applyPostprocessOverride(
+      base,
+      { byMedia: { baidu: { outputDirEnabled: { 'D:/本地留档': false } } } },
+      'baidu',
+    )
+    // 整份替换的话「共享盘」那条会被抹掉，用户会以为全局的停用自己失效了
+    expect(merged.mediaOutputDirEnabled.baidu).toEqual({ 'D:/共享盘': false, 'D:/本地留档': false })
+  })
+
+  it('⭐ 本级写 `true` 能盖掉浅一层的 `false`（「全局关了、这个方向想用」）', () => {
+    const base = {
+      ...baseConfig(),
+      mediaOutputDirEnabled: { baidu: { 'D:/共享盘': false } },
+    }
+    const merged = applyPostprocessOverride(
+      base,
+      { byMedia: { baidu: { outputDirEnabled: { 'D:/共享盘': true } } } },
+      'baidu',
+    )
+    expect(isOutputDirEnabled(merged, 'baidu', 'D:/共享盘')).toBe(true)
+  })
+
+  it('本节点没表态时，浅一层的表原样留着（`undefined` 不等于「清空」）', () => {
+    const base = { ...baseConfig(), mediaOutputDirEnabled: { baidu: { 'D:/共享盘': false } } }
+    const merged = applyPostprocessOverride(base, { byMedia: { baidu: { watermarkPresetIds: [] } } }, 'baidu')
+    expect(merged.mediaOutputDirEnabled.baidu).toEqual({ 'D:/共享盘': false })
+  })
+
+  it('归一化：坏键 / 非布尔值丢掉，空表回退 undefined（留个空对象会被当成「已覆盖」）', () => {
+    expect(normalizeOutputDirEnabledMap(undefined)).toBeUndefined()
+    expect(normalizeOutputDirEnabledMap({})).toBeUndefined()
+    expect(normalizeOutputDirEnabledMap(['D:/x'])).toBeUndefined()
+    expect(normalizeOutputDirEnabledMap({ ' D:/a ': false, '': true, 'D:/b': 1, 'D:/c': true })).toEqual({
+      'D:/a': false,
+      'D:/c': true,
+    })
+  })
+
+  it('路径改名时记录跟着搬；新路径为空 = 丢掉这条记录', () => {
+    const map = { 'D:/旧': false, 'D:/别的': true }
+    expect(renameOutputDirEnabledKey(map, 'D:/旧', 'D:/新')).toEqual({ 'D:/新': false, 'D:/别的': true })
+    expect(renameOutputDirEnabledKey(map, 'D:/旧', '')).toEqual({ 'D:/别的': true })
+    // 路径没变 / 原路径本来就没记录 → 原样返回（不制造新对象）
+    expect(renameOutputDirEnabledKey(map, 'D:/旧', 'D:/旧')).toBe(map)
+    expect(renameOutputDirEnabledKey(map, 'D:/不存在', 'D:/x')).toBe(map)
+    expect(renameOutputDirEnabledKey(undefined, 'D:/旧', 'D:/新')).toBeUndefined()
+  })
+
+  it('删某一处位置时丢掉它的记录；丢空了回退 undefined', () => {
+    const map = { 'D:/一': false, 'D:/二': false }
+    expect(dropOutputDirEnabledKey(map, 'D:/一')).toEqual({ 'D:/二': false })
+    expect(dropOutputDirEnabledKey({ 'D:/一': false }, 'D:/一')).toBeUndefined()
+    expect(dropOutputDirEnabledKey(map, 'D:/不存在')).toBe(map)
+    expect(dropOutputDirEnabledKey(map, '')).toBe(map)
+  })
+
+  describe('表格铺行：planPostprocessOutputDirSlots', () => {
+    it('本级配了就按本级铺；本级没配则按**能继承到的**位置数铺开', () => {
+      const own = planPostprocessOutputDirSlots({ ownDirs: ['D:/一', 'D:/二'], inheritedDirs: [] })
+      expect(own.map((slot) => slot.dir)).toEqual(['D:/一', 'D:/二'])
+      expect(own.every((slot) => !slot.inherited)).toBe(true)
+
+      // ⭐ 本级留空、上级有两处 → 铺两行，好让继承来的两处**各自**开关：
+      // 只铺一行的话「停了第一处、第二处还在写」这种状态显示不出来，开关会变成撒谎
+      const inherited = planPostprocessOutputDirSlots({ ownDirs: [], inheritedDirs: ['D:/A', 'D:/B'] })
+      expect(inherited.map((slot) => slot.dir)).toEqual(['D:/A', 'D:/B'])
+      expect(inherited.map((slot) => slot.inherited)).toEqual([true, true])
+
+      // 本级留空、上级也没有 → 仍然铺一行（留个能打字的空框），但没有可开关的位置
+      expect(planPostprocessOutputDirSlots({ ownDirs: [], inheritedDirs: [] })).toEqual([
+        { index: 0, ownDir: '', dir: '', inherited: false },
+      ])
+    })
+
+    it('本级配了位置就不再走继承（继承来的那几处不占行）', () => {
+      const slots = planPostprocessOutputDirSlots({ ownDirs: ['D:/本级的'], inheritedDirs: ['D:/A', 'D:/B'] })
+      expect(slots.map((slot) => slot.dir)).toEqual(['D:/本级的'])
+      expect(slots[0]!.inherited).toBe(false)
+    })
+
+    it('待填空行只在本级已配、且没到上限时多铺一格', () => {
+      expect(planPostprocessOutputDirSlots({ ownDirs: ['D:/一'], inheritedDirs: [], extraSlot: true })).toHaveLength(2)
+      // 一处都没配就没得加（一排空框反而不知道该填哪个）
+      expect(planPostprocessOutputDirSlots({ ownDirs: [], inheritedDirs: [], extraSlot: true })).toHaveLength(1)
+      // 到上限不加
+      expect(
+        planPostprocessOutputDirSlots({ ownDirs: ['D:/一', 'D:/二'], inheritedDirs: [], extraSlot: true }),
+      ).toHaveLength(MAX_POSTPROCESS_OUTPUT_DIRS)
+    })
   })
 })

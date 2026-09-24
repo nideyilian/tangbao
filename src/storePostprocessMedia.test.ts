@@ -606,11 +606,11 @@ describe('渠道导出位置（双写）', () => {
     expect(usePostprocessMediaStore.getState().mediaOutputDirs).toEqual({})
   })
 
-  it('clearMediaOutputDirs 把某个渠道整体恢复到默认位置', () => {
+  it('setMediaOutputDirs 传空数组 = 把某个渠道整体恢复到默认位置', () => {
     const store = usePostprocessMediaStore.getState()
     store.setMediaOutputDir('toutiao', 0, 'D:/头条一')
     store.setMediaOutputDir('toutiao', 1, 'D:/头条二')
-    store.clearMediaOutputDirs('toutiao')
+    store.setMediaOutputDirs('toutiao', [])
     expect(usePostprocessMediaStore.getState().mediaOutputDirs.toutiao).toBeUndefined()
   })
 
@@ -649,6 +649,96 @@ describe('渠道导出位置（双写）', () => {
     restorePostprocessMediaConfig({ mediaOutputDirs: { baidu: ['D:/备份'] }, outputDir: 'D:/备份默认' })
     expect(usePostprocessMediaStore.getState().mediaOutputDirs).toEqual({ baidu: ['D:/备份'] })
     expect(resolveSub(usePostprocessMediaStore.getState())).toEqual(['D:/备份'])
+  })
+})
+
+describe('导出位置开关（TB-130）', () => {
+  it('默认全开：一条记录都没有', () => {
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({})
+  })
+
+  it('记下某处的停用；空渠道 id / 空路径一律忽略', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDirEnabled('baidu', 'D:/共享盘', false)
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({ baidu: { 'D:/共享盘': false } })
+    store.setMediaOutputDirEnabled('', 'D:/x', false)
+    store.setMediaOutputDirEnabled('baidu', '   ', false)
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({ baidu: { 'D:/共享盘': false } })
+  })
+
+  it('写回同样的值不产生新对象（避免订阅它的组件白重渲染一轮）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDirEnabled('baidu', 'D:/共享盘', false)
+    const before = usePostprocessMediaStore.getState().mediaOutputDirEnabled
+    store.setMediaOutputDirEnabled('baidu', 'D:/共享盘', false)
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toBe(before)
+  })
+
+  it('显式 true 也留着 —— 它是用来盖掉浅一层 `false` 的，不能当冗余清掉', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDirEnabled('baidu', 'D:/共享盘', true)
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({ baidu: { 'D:/共享盘': true } })
+  })
+
+  it('改路径时开关记录跟着搬（不搬的话：改完名字那处会「忘记自己关过」）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('baidu', 0, 'D:/共享盘')
+    store.setMediaOutputDirEnabled('baidu', 'D:/共享盘', false)
+    store.setMediaOutputDir('baidu', 0, 'E:/共享盘')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['E:/共享盘'])
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({ baidu: { 'E:/共享盘': false } })
+  })
+
+  it('清空某一处路径 → 它的开关记录一起丢掉（留着的话，以后填回同一路径会莫名是关的）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('baidu', 0, 'D:/共享盘')
+    store.setMediaOutputDirEnabled('baidu', 'D:/共享盘', false)
+    store.setMediaOutputDir('baidu', 0, '')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toBeUndefined()
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled.baidu).toBeUndefined()
+  })
+
+  it('⭐ 整份重写只保留「还在的位置」的记录（删第一个、第二个顶上来时不能把它的停用清掉）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('baidu', 0, 'D:/一')
+    store.setMediaOutputDir('baidu', 1, 'D:/二')
+    store.setMediaOutputDirEnabled('baidu', 'D:/一', false)
+    store.setMediaOutputDirEnabled('baidu', 'D:/二', false)
+    store.setMediaOutputDirs('baidu', ['D:/二'])
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/二'])
+    // 「D:/一」没了，记录跟着走；「D:/二」还在，它的停用必须留着
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({ baidu: { 'D:/二': false } })
+  })
+
+  it('删除渠道时连带删掉它的开关记录（渠道删了再加回来不该「上次是关的」）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('gdt', 0, 'D:/广点通')
+    store.setMediaOutputDirEnabled('gdt', 'D:/广点通', false)
+    store.deleteMedia('gdt')
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled.gdt).toBeUndefined()
+  })
+
+  it('进落盘快照、深拷贝隔离，且归一化（读盘 / 恢复备份）后原样保留', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setMediaOutputDir('baidu', 0, 'D:/共享盘')
+    store.setMediaOutputDirEnabled('baidu', 'D:/共享盘', false)
+
+    const snapshot = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
+    expect(snapshot.mediaOutputDirEnabled).toEqual({ baidu: { 'D:/共享盘': false } })
+    // 快照与 store 不共享内层对象：下游（产出链路）一次误改就会写回 store
+    snapshot.mediaOutputDirEnabled.baidu!['D:/共享盘'] = true
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled.baidu!['D:/共享盘']).toBe(false)
+
+    expect(normalizePostprocessMediaConfig(snapshot).mediaOutputDirEnabled).toEqual({
+      baidu: { 'D:/共享盘': true },
+    })
+    // 坏数据一律丢掉：非对象、空表、空键、非布尔值
+    expect(normalizePostprocessMediaConfig({ mediaOutputDirEnabled: ['D:/x'] }).mediaOutputDirEnabled).toEqual({})
+    expect(normalizePostprocessMediaConfig({ mediaOutputDirEnabled: { baidu: {} } }).mediaOutputDirEnabled).toEqual({})
+    expect(
+      normalizePostprocessMediaConfig({ mediaOutputDirEnabled: { baidu: { ' D:/a ': false, '': true, 'D:/b': 1 } } })
+        .mediaOutputDirEnabled,
+    ).toEqual({ baidu: { 'D:/a': false } })
   })
 })
 

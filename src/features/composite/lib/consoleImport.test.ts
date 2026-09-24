@@ -81,8 +81,7 @@ function makeActions(overrides: Partial<ConsoleImportActions> = {}): ConsoleImpo
     updateMediaSize: vi.fn(),
     deleteMediaSize: vi.fn(),
     setSelectedMediaIds: vi.fn(),
-    setMediaOutputDir: vi.fn(),
-    clearMediaOutputDirs: vi.fn(),
+    setMediaOutputDirs: vi.fn(),
     setPostprocessOverride: vi.fn(),
     patchDistribution: vi.fn(),
     setNamePattern: vi.fn(),
@@ -313,8 +312,9 @@ describe('applyConsoleImport', () => {
     )
     const actions = makeActions()
     await applyConsoleImport(plan, actions, makeContext({ mediaOutputDirs: { gdt: ['D:/旧'] } }))
-    expect(actions.clearMediaOutputDirs).toHaveBeenCalledWith('gdt')
-    expect(actions.setMediaOutputDir).not.toHaveBeenCalled()
+    // 整份写：空数组 = 清空覆盖（回到默认位置）。**开关记录不在这里动** ——
+    // Excel 表没有开关列，导入必须保留用户已关掉的那些位置，否则会把它悄悄重新打开。
+    expect(actions.setMediaOutputDirs).toHaveBeenCalledWith('gdt', [])
   })
 })
 
@@ -331,6 +331,7 @@ describe('往返：导出的工作簿能被导入解析回同样的数据', () =
         fitMode: 'crop-fill' as const,
         outputDir: 'D:/默认',
         mediaOutputDirs: { gdt: ['D:/投放'] },
+        mediaOutputDirEnabled: {},
         namePattern: '{date}',
         creator: '小王',
         watermarkPresetIds: ['preset-a'],

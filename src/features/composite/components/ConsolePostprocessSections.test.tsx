@@ -390,17 +390,19 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     const rows = table.querySelectorAll('tbody tr')
     const baiduFirst = rows[1]!
     const cells = baiduFirst.querySelectorAll('td')
-    expect(cells).toHaveLength(5)
+    expect(cells).toHaveLength(6)
     expect(cells[0]!.getAttribute('rowspan')).toBe('2')
     expect(cells[1]!.getAttribute('rowspan')).toBe('2')
     expect(cells[2]!.getAttribute('rowspan')).toBe('2')
-    // 导出位置与操作逐行（跨行的那三格以外，这两列每行各自一格）
+    // 导出位置 / 写入 / 操作逐行（跨行的那三格以外，这三列每行各自一格）——
+    // 「写入」必须逐行：一个渠道的两个位置各写各的，开关不能拉通
     expect(cells[3]!.getAttribute('rowspan')).toBeNull()
     expect(cells[4]!.getAttribute('rowspan')).toBeNull()
+    expect(cells[5]!.getAttribute('rowspan')).toBeNull()
 
-    // 第二行只剩「导出位置 + 操作」：被跨行格盖住的那三格**不能出空格子**，否则后面整体右移
+    // 第二行只剩「导出位置 + 写入 + 操作」：被跨行格盖住的那三格**不能出空格子**，否则后面整体右移
     const baiduSecond = rows[2]!
-    expect(baiduSecond.querySelectorAll('td')).toHaveLength(2)
+    expect(baiduSecond.querySelectorAll('td')).toHaveLength(3)
   })
 
   it('⭐ 双写的第 2 个位置写进第 2 槽，第 1 个位置一个字节不动', () => {
@@ -531,11 +533,17 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(toutiao.sizes.some((size) => size.width === 1024 && size.height === 1024)).toBe(true)
   })
 
-  it('⭐ 渠道表只剩一个开关：没有「启用」列（ADR-0013 把它并进了「参与产出」）', () => {
-    // 两个开关对产出完全等价，留着只会让人怀疑它们有什么区别 —— 这条是「别再合出来一个」的守卫
+  it('⭐ 渠道级启停只有一个（「参与产出」）：没有第二个叫「启用」的渠道开关列（ADR-0013）', () => {
+    // ADR-0013 删掉渠道级 `enabled`，理由是它与「参与产出」对产出完全等价，留着只会让人怀疑
+    // 它们有什么区别 —— 这条是「别再合出来一个」的守卫。
+    //
+    // ⚠️ 2026-09-24（TB-130）起表里确实有**第二个**开关列，但它不是渠道级：列名叫「写入」，
+    // 管的是「这一处导出位置写不写」（关掉照样生成变体，只是不落这一处），与「这个渠道产不产出」
+    // 是两件事。所以这条继续守着「不许出现叫『启用』的列」—— 叫「启用」就会让人以为是同一件事。
     render(<ChannelSection scope={GLOBAL_NODE_ID} />)
     const header = container.querySelector('table[aria-label="渠道与输出"] thead')!
     expect(header.textContent).toContain('参与产出')
+    expect(header.textContent).toContain('写入')
     expect(header.textContent).not.toContain('启用')
     expect(container.querySelector('[aria-label="启用：广点通"]')).toBeNull()
   })
@@ -609,6 +617,74 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(container.querySelector<HTMLInputElement>('input[aria-label="导出位置：百度"]')!.placeholder).toBe(
       '留空则 D:/产品级通用',
     )
+  })
+})
+
+describe('中控台 · 导出位置开关（TB-130）', () => {
+  it('配了位置的行有「写入」开关；关掉只记停用，路径配置一个字节不动', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度')
+    })
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+
+    const toggle = container.querySelector<HTMLInputElement>('[aria-label="百度：停掉写入 D:/百度"]')!
+    expect(toggle.checked).toBe(true)
+    clickByAriaLabel('百度：停掉写入 D:/百度')
+
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({ baidu: { 'D:/百度': false } })
+    // 位置本身不动 —— 关掉只是「这一轮别写」，随时能开回来
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度'])
+  })
+
+  it('没有位置的行开关是灰的（开关没有作用对象）', () => {
+    // 全局层一个渠道都没配位置 → 留空落到默认输出位置。那一行**不给**开关：
+    // 全局层停掉兜底位置等于「这个渠道不产出」，而这件事归「参与产出」管（ADR-0013 的教训：
+    // 两个开关说同一件事，只会让人怀疑它们有什么区别）
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+    const toggle = container.querySelector<HTMLInputElement>('[aria-label="百度：这一处还没有导出位置"]')!
+    expect(toggle.disabled).toBe(true)
+  })
+
+  it('⭐ 本级留空、上级配了位置 → 那行也能关，且只写进本级（全局一个字节不动）', () => {
+    usePostprocessMediaStore.setState({ mediaOutputDirs: { baidu: ['D:/百度'] } })
+    render(<ChannelSection scope="direction-a" />)
+
+    // 本级这一格的路径是空的（跟着全局），但开关可点、状态按生效值显示
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="导出位置：百度"]')!.value).toBe('')
+    clickByAriaLabel('百度：停掉写入 D:/百度')
+
+    const byMedia = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.byMedia
+    expect(byMedia?.baidu?.outputDirEnabled).toEqual({ 'D:/百度': false })
+    // 只有这个方向不写：全局那份既没被改、位置也没被搬过来
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({})
+    expect(usePostprocessMediaStore.getState().mediaOutputDirs.baidu).toEqual(['D:/百度'])
+  })
+
+  it('⭐ 上级有两处时本级铺两行，能只停其中一处（只铺一行的话这种状态显示不出来）', () => {
+    usePostprocessMediaStore.setState({ mediaOutputDirs: { baidu: ['D:/共享盘', 'D:/留档'] } })
+    render(<ChannelSection scope="direction-a" />)
+
+    // 百度那一组铺两行（继承来的两处各占一行），所以总行数比渠道数多 1
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(usePostprocessMediaStore.getState().media.length + 1)
+
+    clickByAriaLabel('百度（位置2）：停掉写入 D:/留档')
+
+    const byMedia = useProjectTreeParamsStore.getState().params['direction-a']?.postprocess?.byMedia
+    expect(byMedia?.baidu?.outputDirEnabled).toEqual({ 'D:/留档': false })
+    // 第一处照写（开关仍是开的）
+    expect(container.querySelector<HTMLInputElement>('[aria-label="百度：停掉写入 D:/共享盘"]')?.checked).toBe(true)
+  })
+
+  it('本级改路径时开关记录跟着搬到新路径（不搬的话那处会「忘记自己关过」）', () => {
+    act(() => {
+      usePostprocessMediaStore.getState().setMediaOutputDir('baidu', 0, 'D:/百度')
+      usePostprocessMediaStore.getState().setMediaOutputDirEnabled('baidu', 'D:/百度', false)
+    })
+    render(<ChannelSection scope={GLOBAL_NODE_ID} />)
+
+    commitGridCell('导出位置：百度', 'E:/百度新')
+
+    expect(usePostprocessMediaStore.getState().mediaOutputDirEnabled).toEqual({ baidu: { 'E:/百度新': false } })
   })
 })
 

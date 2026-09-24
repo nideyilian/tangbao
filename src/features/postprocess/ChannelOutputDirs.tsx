@@ -43,13 +43,14 @@
  */
 
 import { useState, type ReactNode } from 'react'
-import { Button, DataGrid, IconButton, Inline, Stack } from '../../design-system'
+import { Button, Checkbox, DataGrid, IconButton, Inline, Stack } from '../../design-system'
 import type { DataGridColumn } from '../../design-system'
 import { CloseIcon, PlusIcon } from '../../design-system/icons'
 import {
   MAX_POSTPROCESS_OUTPUT_DIRS,
   formatInheritedOutputDirsHint,
   normalizeOutputDirList,
+  planPostprocessOutputDirSlots,
   type PostprocessMedia,
 } from '../../lib/postprocessMedia'
 
@@ -64,6 +65,17 @@ interface Props {
    * 「跟随只跟一处」，产出侧却两处都写（TB-095）。
    */
   resolveInheritedDirs: (mediaId: string) => string[]
+  /**
+   * 本级留空时能继承到、**且可以逐处开关**的位置（上级真配了的那几处）。
+   *
+   * 与 `resolveInheritedDirs` 的差别：那个是**文案**（落到默认输出位置时也要说一句），
+   * 这个是**可操作的路径**（只有真路径才谈得上开关）。全局作用域没有上级 → 恒返回空数组。
+   */
+  resolveInheritedToggleDirs: (mediaId: string) => string[]
+  /** 某一处导出位置**最终**开不开（含从上级继承来的停用声明） */
+  resolveDirEnabled: (mediaId: string, dir: string) => boolean
+  /** 切换某一处导出位置的开关；`dir` = 该处当前生效的路径 */
+  onToggleDirEnabled: (mediaId: string, dir: string, enabled: boolean) => void
   /** 写某渠道第 `index` 个位置；传空串 = 清掉该位置 */
   onChangeDir: (mediaId: string, index: number, outputDir: string) => void
   /** 删掉某渠道第 `index` 个位置，其余位置上移（删到一个不剩 = 该渠道回到「留空」） */
@@ -97,6 +109,12 @@ interface ChannelDirRow {
   dirCount: number
   /** 留空时会继承到的**全部**位置（1~2 个）—— 逐行不同，所以走 `placeholderForRow` */
   inheritedDirs: string[]
+  /** 这一格代表的导出位置路径（本级填的，或本级留空时继承来的）；空串 = 没有可开关的位置 */
+  toggleDir: string
+  /** 这一处的开关状态；`toggleDir` 为空时恒 `false`（那个开关也不可点） */
+  dirEnabled: boolean
+  /** 这一格是不是「本级留空、跟着上级那一处」 */
+  inherited: boolean
   /** 是否给「在下面再加一个位置」 */
   canAdd: boolean
   /** 是否给「删掉这个位置」 */
@@ -107,6 +125,9 @@ export default function ChannelOutputDirs({
   media,
   resolveDirs,
   resolveInheritedDirs,
+  resolveInheritedToggleDirs,
+  resolveDirEnabled,
+  onToggleDirEnabled,
   onChangeDir,
   onRemoveDir,
   onPickError,
@@ -128,27 +149,35 @@ export default function ChannelOutputDirs({
   for (const item of media) {
     const dirs = normalizeOutputDirList(resolveDirs(item.id))
     const dirCount = dirs.length
+    const inheritedDirs = resolveInheritedDirs(item.id)
     /**
-     * 「+」点出来的待填空行。只有**已经配过一个位置**的渠道才给加 —— 否则第一个位置都没填
-     * 就能加出两个空行，一排空框反而不知道该填哪个（`+` 的条件见下面的 `canAdd`）。
+     * 行数由 `planPostprocessOutputDirSlots` 定（与中控台那张大表共用同一条规则）：
+     * 本级配了就按本级的算；本级没配则按**能继承到的位置数**铺开 ——
+     * 继承来的两处要各自有开关，只铺一行的话「停了第一处、第二处还在写」显示不出来。
      */
-    const extra = extraOpen.includes(item.id) && dirCount > 0 && dirCount < MAX_POSTPROCESS_OUTPUT_DIRS
-    // 每个渠道至少占一行：留空也要有个能打字的地方（这就是「留空 = 继承上级」的入口）
-    const slotCount = Math.min(MAX_POSTPROCESS_OUTPUT_DIRS, Math.max(1, dirCount + (extra ? 1 : 0)))
+    const slots = planPostprocessOutputDirSlots({
+      ownDirs: dirs,
+      inheritedDirs: resolveInheritedToggleDirs(item.id),
+      extraSlot: extraOpen.includes(item.id),
+    })
+    const slotCount = slots.length
 
-    for (let index = 0; index < slotCount; index += 1) {
+    for (const slot of slots) {
       rows.push({
-        rowId: `${item.id}#${index}`,
+        rowId: `${item.id}#${slot.index}`,
         mediaId: item.id,
         channelName: item.name,
-        name: index === 0 ? item.name : `${item.name}（位置${index + 1}）`,
-        index,
-        outputDir: dirs[index] ?? '',
-        channelSpan: index === 0 ? slotCount : 0,
+        name: slot.index === 0 ? item.name : `${item.name}（位置${slot.index + 1}）`,
+        index: slot.index,
+        outputDir: slot.ownDir,
+        channelSpan: slot.index === 0 ? slotCount : 0,
         dirCount,
-        inheritedDirs: resolveInheritedDirs(item.id),
+        inheritedDirs,
+        toggleDir: slot.dir,
+        dirEnabled: slot.dir !== '' && resolveDirEnabled(item.id, slot.dir),
+        inherited: slot.inherited,
         // 「+」只在组内最后一行：读作「在这一行下面加一行」
-        canAdd: dirCount > 0 && index === slotCount - 1 && slotCount < MAX_POSTPROCESS_OUTPUT_DIRS,
+        canAdd: dirCount > 0 && slot.index === slotCount - 1 && slotCount < MAX_POSTPROCESS_OUTPUT_DIRS,
         canRemove: dirCount > 0,
       })
     }
@@ -193,8 +222,42 @@ export default function ChannelOutputDirs({
       header: '导出位置',
       editor: 'path',
       pickPath,
-      placeholderForRow: (row) =>
-        row.index === 0 ? formatInheritedOutputDirsHint(row.inheritedDirs) : '留空 = 不多写这一个位置',
+      placeholderForRow: (row) => {
+        // 第一行永远念**全部**继承来源（TB-095：只说一处会让人以为「跟随只跟一处」）；
+        // 第二行起是「本级留空、对应上级的第 N 处」，念它自己那一条就够
+        if (row.index === 0) return formatInheritedOutputDirsHint(row.inheritedDirs)
+        if (row.inherited) return formatInheritedOutputDirsHint([row.toggleDir])
+        return '留空 = 不多写这一个位置'
+      },
+    },
+    {
+      key: 'dirEnabled',
+      // 列头叫「写入」而不是「启用」：这一列管的是**这一处导出位置写不写**，
+      // 与「这个渠道产不产出」是两件事（渠道级 `enabled` 已被 ADR-0013 删掉，
+      // 理由是它与「参与产出」等价 —— 别用一个撞名的列头把它请回来）。
+      header: '写入',
+      editor: 'readonly',
+      width: 72,
+      align: 'center',
+      render: (row) => (
+        <Checkbox
+          checked={row.dirEnabled}
+          disabled={row.toggleDir === ''}
+          aria-label={
+            row.toggleDir === ''
+              ? `${row.name}：这一处还没有导出位置`
+              : `${row.name}：${row.dirEnabled ? '停掉' : '恢复'}写入 ${row.toggleDir}`
+          }
+          title={
+            row.toggleDir === ''
+              ? '这一处还没有导出位置，开关没有作用对象'
+              : row.dirEnabled
+                ? `关掉这一处：不再往 ${row.toggleDir} 写文件（路径配置保留）`
+                : `打开这一处：恢复往 ${row.toggleDir} 写文件`
+          }
+          onChange={(next) => onToggleDirEnabled(row.mediaId, row.toggleDir, next)}
+        />
+      ),
     },
     {
       key: 'actions',

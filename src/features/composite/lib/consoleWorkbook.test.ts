@@ -50,6 +50,7 @@ function makeGlobalConfig(overrides: Partial<PostprocessMediaConfig> = {}): Post
     fitMode: 'crop-fill',
     outputDir: 'D:/默认位置',
     mediaOutputDirs: { gdt: ['D:/投放A', 'D:/投放B'] },
+    mediaOutputDirEnabled: {},
     namePattern: '{date}-{index}',
     creator: '小王',
     watermarkPresetIds: ['preset-global'],

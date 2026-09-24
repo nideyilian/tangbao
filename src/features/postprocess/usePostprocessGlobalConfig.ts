@@ -24,6 +24,7 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
   const fitMode = usePostprocessMediaStore((state) => state.fitMode)
   const outputDir = usePostprocessMediaStore((state) => state.outputDir)
   const mediaOutputDirs = usePostprocessMediaStore((state) => state.mediaOutputDirs)
+  const mediaOutputDirEnabled = usePostprocessMediaStore((state) => state.mediaOutputDirEnabled)
   const namePattern = usePostprocessMediaStore((state) => state.namePattern)
   const creator = usePostprocessMediaStore((state) => state.creator)
   const watermarkPresetIds = usePostprocessMediaStore((state) => state.watermarkPresetIds)
@@ -43,6 +44,7 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
           fitMode,
           outputDir,
           mediaOutputDirs,
+          mediaOutputDirEnabled,
           namePattern,
           creator,
           watermarkPresetIds,
@@ -60,6 +62,7 @@ export function usePostprocessGlobalConfig(): PostprocessMediaConfig {
       fitMode,
       outputDir,
       mediaOutputDirs,
+      mediaOutputDirEnabled,
       namePattern,
       creator,
       watermarkPresetIds,

@@ -67,6 +67,25 @@ export const PURE_MEDIA_NAME = '纯净版'
  */
 export const MAX_POSTPROCESS_OUTPUT_DIRS = 2
 
+/**
+ * 某个渠道下「每个导出位置开不开」的表（TB-130）。键 = 位置的**路径字符串**，值 = 是否启用。
+ *
+ * 为什么**不**塞进 `mediaOutputDirs` 的元素（做成 `{ path, enabled }[]`）：位置列表的继承口径是
+ * **整份覆盖**（某一层声明了就盖住下面所有层），而开关要能**逐处**表态 —— 把它做进元素，就要求
+ * 「本级只声明第 3 处的开关、不定第 1/2 处」这种逐槽位继承，那会改掉存量用户「本级填一处就只写一处」
+ * 的行为。分家之后位置列表一个字不改，开关另走一份表，两边各自可解释。
+ *
+ * 三个取值，缺一不可：
+ * - **缺键**：这一处没表态 → 沿用更浅一层的声明；整条链都没声明 = 启用（默认全开）；
+ * - `false`：停用这一处。位置配置保留，随时能开回来；
+ * - `true`：明确启用 —— 用来盖掉更浅一层写下的 `false`（「全局把它关了，这个方向还是想写」）。
+ *
+ * ⚠️ 键用**路径**而不是下标：位置可以删除（后面的往上顶），下标会串位；路径是这一处的天然主键，
+ * 且界面上那一格显示的就是它，不存在两套写法。代价是**路径改名时要跟着搬**（见
+ * `renameOutputDirEnabledKey`）—— 不搬的话用户改完路径，那处的开关会忘记关过。
+ */
+export type PostprocessOutputDirEnabledMap = Record<string, boolean>
+
 /** 默认的画面适配模式：与历史行为一致（曾经是产出链路里写死的常量）。 */
 export const DEFAULT_POSTPROCESS_FIT_MODE: CompositeV2FitMode = 'crop-fill'
 
@@ -98,6 +117,76 @@ export function normalizeOutputDirList(raw: unknown): string[] {
     if (result.length >= MAX_POSTPROCESS_OUTPUT_DIRS) break
   }
   return result
+}
+
+/**
+ * 归一化「导出位置开关」表：丢掉坏键与非布尔值，空表回退 `undefined`。
+ *
+ * 空表必须回退 `undefined`：`{}` 与「没表态」在合并时结果一样（浅合并），但留一个空对象会让
+ * 节点层被判定成「已按渠道覆盖」却什么都没配 —— 与 `normalizeByMediaOverride` 同一条口径。
+ */
+export function normalizeOutputDirEnabledMap(raw: unknown): PostprocessOutputDirEnabledMap | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const result: PostprocessOutputDirEnabledMap = {}
+  for (const [rawKey, rawValue] of Object.entries(raw as Record<string, unknown>)) {
+    const key = typeof rawKey === 'string' ? rawKey.trim() : ''
+    if (!key || typeof rawValue !== 'boolean') continue
+    result[key] = rawValue
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+/** 这一处导出位置**最终**开不开：整条链都没表态就是开。 */
+export function isOutputDirEnabled(
+  config: Pick<PostprocessMediaConfig, 'mediaOutputDirEnabled'>,
+  mediaId: string,
+  dir: string,
+): boolean {
+  const key = typeof dir === 'string' ? dir.trim() : ''
+  // 空路径不是一处真实位置（占位 / 默认输出位置），开关不适用，一律按「开」处理
+  if (!key) return true
+  return config.mediaOutputDirEnabled?.[mediaId]?.[key] !== false
+}
+
+/**
+ * 路径改名时把开关记录搬到新路径上。
+ *
+ * 不搬的话：用户把 `D:\共享盘` 改成 `E:\共享盘`，那处明明是关着的，开关会**自己变回开**
+ * （旧记录匹配不上新路径）—— 属于「关了就关了，改个名字就忘了」的静默失效。
+ * `to` 为空 = 这一处被清掉了，直接丢掉记录。
+ */
+export function renameOutputDirEnabledKey(
+  map: PostprocessOutputDirEnabledMap | undefined,
+  from: string,
+  to: string,
+): PostprocessOutputDirEnabledMap | undefined {
+  if (!map) return undefined
+  const key = typeof from === 'string' ? from.trim() : ''
+  const nextKey = typeof to === 'string' ? to.trim() : ''
+  // 没这一处 / 路径没变 → 原样返回，不制造新对象（订阅方少一次无谓重渲染）
+  if (!key || key === nextKey || !(key in map)) return map
+  const next = { ...map }
+  delete next[key]
+  if (nextKey) next[nextKey] = map[key]!
+  return Object.keys(next).length > 0 ? next : undefined
+}
+
+/**
+ * 删掉某一处位置时清掉它的开关记录。
+ *
+ * 不清的话：以后重新填回同一个路径，那处会**莫名是关着的**（旧记录又匹配上了）——
+ * 用户只会觉得「这个开关自己乱动」。
+ */
+export function dropOutputDirEnabledKey(
+  map: PostprocessOutputDirEnabledMap | undefined,
+  dir: string,
+): PostprocessOutputDirEnabledMap | undefined {
+  if (!map) return undefined
+  const key = typeof dir === 'string' ? dir.trim() : ''
+  if (!key || !(key in map)) return map
+  const next = { ...map }
+  delete next[key]
+  return Object.keys(next).length > 0 ? next : undefined
 }
 
 /** 内置媒体表（4 媒体 / 15 尺寸）。用户可在后处理设置里增删改。 */
@@ -364,6 +453,14 @@ export interface PostprocessMediaConfig {
    * 两个层级，生效顺序见 `applyPostprocessOverride`。
    */
   mediaOutputDirs: Record<string, string[]>
+  /**
+   * 按渠道的**导出位置开关**（TB-130）：键 = 位置路径，值 = 是否启用；缺键 = 启用。
+   *
+   * 它不参与位置的继承（那是 `mediaOutputDirs` 的事），只回答「这一处这一轮写不写」。
+   * 全局层与节点层各存一份，逐层浅合并（深的盖住浅的）—— 于是既能「全局关掉、某个方向单独开回来」，
+   * 也能「只在这个方向关掉」。语义见 `PostprocessOutputDirEnabledMap`。
+   */
+  mediaOutputDirEnabled: Record<string, PostprocessOutputDirEnabledMap>
   /** 命名模板，见 `src/lib/postprocessNaming.ts` */
   namePattern: string
   /** 创作者，供 `{creator}` token 取值 */
@@ -398,6 +495,9 @@ export type PostprocessFieldGroup = 'channels' | 'watermarks' | 'tree' | 'postpr
 export const POSTPROCESS_FIELD_GROUP: Record<keyof PostprocessMediaConfig, PostprocessFieldGroup> = {
   media: 'channels',
   mediaOutputDirs: 'channels',
+  // 开关与位置是同一件事的两半（都按渠道、都指同一批位置），必须同进同退 ——
+  // 让它跟着 `channels` 走，否则「导入了渠道位置、开关却没跟着来」会凭空把交付目录关掉。
+  mediaOutputDirEnabled: 'channels',
   selectedMediaIds: 'channels',
   watermarkPresetIds: 'watermarks',
   selectedCollectionIds: 'tree',
@@ -434,6 +534,14 @@ export interface PostprocessMediaOverride {
   outputDirs?: string[]
   /** 输出目录（绝对路径）；空串 = 用默认输出位置。**旧写法**，保留是为了兼容已导入的数据 */
   outputDir?: string
+  /**
+   * 本级这个渠道的**导出位置开关**（键 = 路径，值 = 是否启用；TB-130）。
+   *
+   * `undefined` = 本级没表态，沿继承链向上取。它是**逐键**浅合并的（不是整份替换）：
+   * 本级只写 `{ 'D:\共享盘': false }` 时，更浅一层对别的位置的声明照样留着 ——
+   * 否则「在这个方向关掉一处」会把全局对另一处的停用一起抹掉。
+   */
+  outputDirEnabled?: PostprocessOutputDirEnabledMap
   /** 水印预设 id 列表；`[]` = 该渠道不加水印（显式覆盖），`undefined` = 回退通用值 */
   watermarkPresetIds?: string[]
 }
@@ -483,6 +591,59 @@ export function formatInheritedOutputDirsHint(dirs: string[]): string {
   if (list.length === 0) return '留空则用默认输出位置'
   if (list.length === 1) return `留空则 ${list[0]}`
   return `留空则继承 ${list.length} 处：${list.join('、')}`
+}
+
+/** 「渠道 × 导出位置」表里的一格（见 `planPostprocessOutputDirSlots`）。 */
+export interface PostprocessOutputDirSlot {
+  /** 第几格（0 起） */
+  index: number
+  /** 本级这一格填的路径；空串 = 没填（本级留空，或还没填的待加行） */
+  ownDir: string
+  /** 这一格代表的**可开关路径**；空串 = 这一格没有对应的位置（开关该置灰） */
+  dir: string
+  /** 这一格是不是「本级留空、跟着上级那一处」—— 路径格是空的，开关改的是继承来的那一处 */
+  inherited: boolean
+}
+
+/**
+ * 规划一张「渠道 × 导出位置」表的行：一个位置一格，**本级没配时按能继承到的位置数铺开**。
+ *
+ * 两个入口（中控台的渠道大表、后处理弹窗里的按渠道表）共用它 —— 「铺几行」与「哪一格能开关」
+ * 是同一条规则，两处各写一遍迟早分叉成「一个表显示 2 行、另一个只显示 1 行」。
+ *
+ * **为什么本级没配时要按继承数铺开**：继承来的可能有两处（双写）。只铺一行的话，
+ * 「停了继承的第一处、第二处还在写」这种状态根本显示不出来 —— 开关会变成撒谎
+ * （显示开着，实际有一处在写、另一处没写）。宁可多铺一行。
+ *
+ * `ownDirs` 建议传 `resolvePostprocessOutputDirs` 的结果（配了哪几处，不过滤开关）；
+ * 被停用的位置**也要占一格**，否则关掉它就等于把它从表里删掉，看不见也开不回来。
+ * `inheritedDirs` 要传「上级真配了的那几处」（不含默认输出位置的兜底），
+ * 否则会给一个并不存在的路径配开关 —— 默认输出位置是全局一套，不归单个渠道管。
+ */
+export function planPostprocessOutputDirSlots(input: {
+  ownDirs: string[]
+  inheritedDirs: string[]
+  /** 是否多铺一格待填空行（界面上点了「+」，且本级已配至少一处、还没到上限） */
+  extraSlot?: boolean
+}): PostprocessOutputDirSlot[] {
+  const ownDirs = normalizeOutputDirList(input.ownDirs)
+  const ownCount = ownDirs.length
+  const inheritedDirs = normalizeOutputDirList(input.inheritedDirs)
+  const extra = input.extraSlot === true && ownCount > 0 && ownCount < MAX_POSTPROCESS_OUTPUT_DIRS
+  const slotCount =
+    ownCount > 0
+      ? Math.min(MAX_POSTPROCESS_OUTPUT_DIRS, ownCount + (extra ? 1 : 0))
+      : Math.max(1, Math.min(MAX_POSTPROCESS_OUTPUT_DIRS, inheritedDirs.length))
+
+  const slots: PostprocessOutputDirSlot[] = []
+  for (let index = 0; index < slotCount; index += 1) {
+    const ownDir = ownDirs[index] ?? ''
+    // 本级一处都没配 → 这一格是「继承」，它的位置取上级那一处的路径（逐格对应）
+    const inheritedDir = ownCount === 0 ? (inheritedDirs[index] ?? '') : ''
+    const dir = ownDir || inheritedDir
+    slots.push({ index, ownDir, dir, inherited: !ownDir && inheritedDir !== '' })
+  }
+  return slots
 }
 
 /**
@@ -636,6 +797,16 @@ export function applyPostprocessOverride(
       delete mediaOutputDirs[mediaId]
     }
   }
+  // 导出位置开关同样要按渠道折到**一个**字段上（写盘侧只认 `mediaOutputDirEnabled[mediaId]`）。
+  // 与位置列表的「整份覆盖」不同，这里是**逐键浅合并**：本级只关了一处，不该把更浅一层
+  // 对别处的声明一起抹掉 —— 那样「全局停了共享盘、在这个方向只想再停本地」会变成只停本地。
+  const mediaOutputDirEnabled = { ...base.mediaOutputDirEnabled }
+  if (mediaId) {
+    const declared = normalizeOutputDirEnabledMap(perMedia?.outputDirEnabled)
+    if (declared) {
+      mediaOutputDirEnabled[mediaId] = { ...mediaOutputDirEnabled[mediaId], ...declared }
+    }
+  }
   return {
     media: base.media,
     // 本节点不表态就沿用基线上的列表（全局或更浅一层）——`[]` 是有效值，别用 `length` 判
@@ -655,6 +826,9 @@ export function applyPostprocessOverride(
     // 而渲染器拿到 `undefined` 会抛「未知的背景适应模式」—— 整批产出当场废掉。
     fitMode: base.fitMode,
     mediaOutputDirs,
+    // 同上，白名单必须显式列出：漏了就是 `undefined` 往下游走，而写盘侧会把
+    // 「一切都是 undefined」读成「全都启用」—— 用户关掉的交付目录会**静默地重新开始写**。
+    mediaOutputDirEnabled,
     namePattern: base.namePattern,
     creator: base.creator,
     watermarkPresetIds: perMedia?.watermarkPresetIds ?? override.watermarkPresetIds ?? base.watermarkPresetIds,

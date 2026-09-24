@@ -374,7 +374,7 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     expect(table).toBeTruthy()
 
     const headers = Array.from(table.querySelectorAll('th')).map((node) => node.textContent?.trim())
-    expect(headers).toEqual(['渠道', '导出位置', '操作'])
+    expect(headers).toEqual(['渠道', '导出位置', '写入', '操作'])
 
     const mediaCount = usePostprocessMediaStore.getState().media.length
     expect(table.querySelectorAll('tbody tr')).toHaveLength(mediaCount)
@@ -404,7 +404,7 @@ describe('PostprocessSettingsModal — 方向级参数面板', () => {
     // 列数不随位置数增长 —— 往右加列会把「导出位置」这一列挤窄，而中文共享盘路径
     // 正是这一屏唯一要看清的东西（2026-09-21 改版的原因）
     const headers = Array.from(table.querySelectorAll('th')).map((node) => node.textContent?.trim())
-    expect(headers).toEqual(['渠道', '导出位置', '操作'])
+    expect(headers).toEqual(['渠道', '导出位置', '写入', '操作'])
 
     // 百度那一组占两行：渠道名只在第一行出现，且跨两行（Excel 的合并单元格）
     const mediaCount = usePostprocessMediaStore.getState().media.length

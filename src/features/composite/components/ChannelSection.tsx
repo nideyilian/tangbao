@@ -38,7 +38,10 @@ import { Alert, Badge, Button, Inline, SectionHeader, SegmentedControl } from '.
 import {
   DIRECTION_OPTIONS,
   FIT_MODE_OPTIONS,
+  dropOutputDirEnabledKey,
+  isOutputDirEnabled,
   normalizeOutputDirList,
+  renameOutputDirEnabledKey,
   resolvePostprocessOutputDirs,
   type PostprocessNodeOverride,
 } from '../../../lib/postprocessMedia'
@@ -83,8 +86,10 @@ export function ChannelSection({ scope }: Props) {
   const setFitMode = usePostprocessMediaStore((state) => state.setFitMode)
   const outputDir = usePostprocessMediaStore((state) => state.outputDir)
   const mediaOutputDirs = usePostprocessMediaStore((state) => state.mediaOutputDirs)
+  const mediaOutputDirEnabled = usePostprocessMediaStore((state) => state.mediaOutputDirEnabled)
   const setMediaOutputDir = usePostprocessMediaStore((state) => state.setMediaOutputDir)
-  const clearMediaOutputDirs = usePostprocessMediaStore((state) => state.clearMediaOutputDirs)
+  const setMediaOutputDirs = usePostprocessMediaStore((state) => state.setMediaOutputDirs)
+  const setMediaOutputDirEnabled = usePostprocessMediaStore((state) => state.setMediaOutputDirEnabled)
   const params = useProjectTreeParamsStore((state) => state.params)
   const setPostprocessOverride = useProjectTreeParamsStore((state) => state.setPostprocessOverride)
   const collections = useAssetLibraryStore((state) => state.collections)
@@ -172,33 +177,56 @@ export function ChannelSection({ scope }: Props) {
 
   const handleChangeDir = (mediaId: string, index: number, value: string) => {
     if (isGlobal) {
+      // 全局层由 store 自己搬运开关记录（它读得到旧值）
       setMediaOutputDir(mediaId, index, value)
       return
     }
     const slots = [...resolveDirs(mediaId)]
     while (slots.length <= index) slots.push('')
+    const previous = slots[index] ?? ''
     slots[index] = value
     const next = normalizeOutputDirList(slots)
     // 同时写 `outputDirs` 并摘掉旧的单值 `outputDir`：两个字段并存时以 `outputDirs` 为准，
     // 留着旧值只会让「界面上显示的」和「实际生效的」不一致。
-    apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
+    // 开关记录跟着路径走 —— 改个路径就把「已停用」忘掉，属于最让人发懵的那种静默失效。
+    apply({
+      byMedia: {
+        [mediaId]: {
+          outputDirs: next.length > 0 ? next : undefined,
+          outputDir: undefined,
+          outputDirEnabled: renameOutputDirEnabledKey(override?.byMedia?.[mediaId]?.outputDirEnabled, previous, value),
+        },
+      },
+    })
   }
 
   /**
    * 删掉某渠道的第 `index` 个位置，其余位置上移（删到一个不剩 = 该渠道回到「留空」）。
    *
-   * 两个作用域都**整份重写**而不是逐槽位改：`setMediaOutputDir` 只能按槽位写，
-   * 「删中间一格、后面的往前顶」要写多次才表达得出来，而节点层的 `apply` 读的是本轮 props
-   * 里的旧值 —— 连着写两次，第二笔会基于过期数据。一次写，两条链路才等价。
+   * 两个作用域都**整份重写**而不是逐槽位改：「删中间一格、后面的往前顶」要写多次才表达得出来，
+   * 而节点层的 `apply` 读的是本轮 props 里的旧值 —— 连着写两次，第二笔会基于过期数据。
+   * 整份写一次，两条链路才等价。
    */
   const handleRemoveDir = (mediaId: string, index: number) => {
-    const next = resolveDirs(mediaId).filter((_, slot) => slot !== index)
+    const own = resolveDirs(mediaId)
+    const removed = own[index] ?? ''
+    const next = own.filter((_, slot) => slot !== index)
     if (isGlobal) {
-      clearMediaOutputDirs(mediaId)
-      next.forEach((dir, slot) => setMediaOutputDir(mediaId, slot, dir))
+      // 整份写（顺带按还在的位置过滤开关记录）——不能用「清空 + 逐个写」那个组合：
+      // 它会把剩下的位置的「已停用」一起清掉
+      setMediaOutputDirs(mediaId, next)
       return
     }
-    apply({ byMedia: { [mediaId]: { outputDirs: next.length > 0 ? next : undefined, outputDir: undefined } } })
+    apply({
+      byMedia: {
+        [mediaId]: {
+          outputDirs: next.length > 0 ? next : undefined,
+          outputDir: undefined,
+          // 这一处没了，它的开关记录一起丢掉（留着的话，以后填回同一路径会莫名是关的）
+          outputDirEnabled: dropOutputDirEnabledKey(override?.byMedia?.[mediaId]?.outputDirEnabled, removed),
+        },
+      },
+    })
   }
 
   /**
@@ -223,6 +251,56 @@ export function ChannelSection({ scope }: Props) {
         mediaId,
       )
   }, [collections, globalConfig, isGlobal, outputDir, params, scope])
+
+  /**
+   * 某一处导出位置**最终**开不开。
+   *
+   * 全局作用域直接读全局表；节点作用域走产出链**同一个**解析函数（`resolveProjectPostprocessSlice`）——
+   * 不在界面里另拼一遍继承，否则迟早出现「界面显示开着、产出按关执行」这种分叉。
+   */
+  const resolveDirEnabled = (mediaId: string, dir: string): boolean => {
+    if (isGlobal) return isOutputDirEnabled({ mediaOutputDirEnabled }, mediaId, dir)
+    return isOutputDirEnabled(
+      resolveProjectPostprocessSlice(collections, params, scope, globalConfig, mediaId).config,
+      mediaId,
+      dir,
+    )
+  }
+
+  /**
+   * 本级留空时能继承到、且**可逐处开关**的位置。
+   *
+   * 全局作用域没有上级 —— 留空落到「默认输出位置」，而那是全局一套、不归单个渠道管，
+   * 所以恒返回空数组，那几行的开关是灰的（不想投这个渠道，取消勾选「参与产出」才对）。
+   * 节点作用域：本级已经配了位置就不算继承（返回空数组），由本级自己那几格负责开关。
+   */
+  const resolveInheritedToggleDirs = (mediaId: string): string[] => {
+    if (isGlobal) return []
+    if (resolveDirs(mediaId).length > 0) return []
+    return resolveInheritedDirs(mediaId)
+  }
+
+  /**
+   * 切换某一处导出位置的开关。
+   *
+   * 全局作用域写全局表；节点作用域写**本级**这一层 —— 于是「只在这个方向不写」不会动到全局，
+   * 而更浅一层对别的处的停用也照样留着（两边合并是逐键的，不是整份替换）。
+   */
+  const handleToggleDirEnabled = (mediaId: string, dir: string, enabled: boolean) => {
+    const key = dir.trim()
+    if (!key) return
+    if (isGlobal) {
+      setMediaOutputDirEnabled(mediaId, key, enabled)
+      return
+    }
+    apply({
+      byMedia: {
+        [mediaId]: {
+          outputDirEnabled: { ...(override?.byMedia?.[mediaId]?.outputDirEnabled ?? {}), [key]: enabled },
+        },
+      },
+    })
+  }
 
   /**
    * 有节点级输出覆盖的方向数。只在**全局作用域**下提示——切到节点作用域时用户正在编辑覆盖本身，
@@ -399,6 +477,9 @@ export function ChannelSection({ scope }: Props) {
           participationScopeLabel={isGlobal ? '全局基线' : (scopeNode?.name ?? '已删除节点')}
           resolveDirs={resolveDirs}
           resolveInheritedDirs={resolveInheritedDirs}
+          resolveInheritedToggleDirs={resolveInheritedToggleDirs}
+          resolveDirEnabled={resolveDirEnabled}
+          onToggleDirEnabled={handleToggleDirEnabled}
           onChangeDir={handleChangeDir}
           onRemoveDir={handleRemoveDir}
           onPickError={() => showToast('选择导出位置失败，请重试', 'error')}

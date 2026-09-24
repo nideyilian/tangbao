@@ -727,8 +727,8 @@ export interface ConsoleImportActions {
   ) => void
   deleteMediaSize: (mediaId: string, sizeId: string) => void
   setSelectedMediaIds: (ids: string[]) => void
-  setMediaOutputDir: (mediaId: string, index: number, outputDir: string) => void
-  clearMediaOutputDirs: (mediaId: string) => void
+  /** 整份重写某渠道的导出位置（空数组 = 清空，回到默认输出位置） */
+  setMediaOutputDirs: (mediaId: string, dirs: string[]) => void
   setPostprocessOverride: (collectionId: string, patch: PostprocessNodeOverride) => void
   patchDistribution: (patch: Partial<PostprocessDistributionConfig>) => void
   setNamePattern: (pattern: string) => void
@@ -865,11 +865,15 @@ export async function applyConsoleImport(
   // ---- ④ 全局输出位置 ----
   if (payload.outputDirsGlobal) {
     for (const row of payload.outputDirsGlobal) {
-      if (row.dirs.length === 0) actions.clearMediaOutputDirs(row.mediaId)
-      else {
-        actions.clearMediaOutputDirs(row.mediaId)
-        row.dirs.forEach((dir, index) => actions.setMediaOutputDir(row.mediaId, index, dir))
-      }
+      /**
+       * **整份重写**（空数组 = 清空），不用「清空 + 逐个写」那个组合。
+       *
+       * 那个组合会先把该渠道的**导出位置开关记录**一起清掉再写回位置 —— 而 Excel 的
+       * `output_dirs_global` 表里**没有开关列**（位置与开关是两件事，塞进格子只会让表更宽），
+       * 所以导入时唯一正确的做法是**保留**用户已有的开关状态：
+       * 清掉就等于把ta 停用的交付目录重新打开，而且没有任何提示。
+       */
+      actions.setMediaOutputDirs(row.mediaId, row.dirs)
       written += 1
     }
   }

@@ -20,13 +20,16 @@ import {
   MAX_POSTPROCESS_OUTPUT_DIRS,
   PURE_MEDIA_ID,
   buildPostprocessOutputs,
+  normalizeOutputDirEnabledMap,
   normalizeOutputDirList,
   normalizePostprocessFitMode,
+  renameOutputDirEnabledKey,
   resolveOutputDirection,
   type OutputDirection,
   type PostprocessMedia,
   type PostprocessMediaConfig,
   type PostprocessMediaSize,
+  type PostprocessOutputDirEnabledMap,
   type PostprocessOutputPlan,
   type PostprocessProjectTarget,
 } from './lib/postprocessMedia'
@@ -85,8 +88,21 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
    * 正在输入的内容一起顶掉（受控输入尤其明显）。
    */
   setMediaOutputDir: (mediaId: string, index: number, outputDir: string) => void
-  /** 清掉某个渠道的全部导出位置（回到 `outputDir` 那个默认位置） */
-  clearMediaOutputDirs: (mediaId: string) => void
+  /**
+   * **整份重写**某个渠道的导出位置（传空数组 = 清空，回到 `outputDir` 那个默认位置）。
+   *
+   * 为什么要它、而不继续用「清空 + 逐个写」那个组合：后者会把**开关记录一起清掉**再写回位置 ——
+   * 「删掉第一个位置、第二个往前顶」之后，剩下那处的「已停用」就悄悄丢了。
+   * 整份写一次，记录按还在的位置过滤，全局与节点两条链路也才等价。
+   */
+  setMediaOutputDirs: (mediaId: string, dirs: string[]) => void
+  /**
+   * 开关某个渠道某一处导出位置（全局层）；`dir` = 那一处**当前生效的路径**。
+   *
+   * 传生效路径而不是下标：位置可以增删（后面的往上顶），下标会串位；界面上那一格显示的就是路径，
+   * 两边同源。节点层同名开关走项目树参数（见 `PostprocessMediaOverride.outputDirEnabled`）。
+   */
+  setMediaOutputDirEnabled: (mediaId: string, dir: string, enabled: boolean) => void
   setNamePattern: (namePattern: string) => void
   setCreator: (creator: string) => void
   /** 局部更新分发配置（只传要改的字段，其余保持） */
@@ -118,6 +134,8 @@ export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
     outputDir: '',
     // 默认一个渠道都不单独指定：全部走 `outputDir`（空串 = 本地保存目录下的 postprocess）
     mediaOutputDirs: {},
+    // 默认没有任何一处被停用（缺记录 = 启用），与历史行为完全一致
+    mediaOutputDirEnabled: {},
     namePattern: DEFAULT_POSTPROCESS_NAME_PATTERN,
     creator: '',
     watermarkPresetIds: [],
@@ -139,6 +157,26 @@ function normalizeMediaOutputDirs(raw: unknown): Record<string, string[]> {
     if (!mediaId) continue
     const dirs = normalizeOutputDirList(rawDirs)
     if (dirs.length > 0) result[mediaId] = dirs
+  }
+  return result
+}
+
+/**
+ * 归一化「导出位置开关」表（全局层）。与 `normalizeMediaOutputDirs` 同一口径：
+ * 坏键丢掉、空表丢掉、键指向的渠道允许不存在（渠道删了再加回来，记录还在也不出错）。
+ *
+ * 键是**路径**，不做存在性校验 —— 位置删掉后它的记录留着不生效，重新填回同一路径会又生效。
+ * 这一条是刻意的：删位置时由界面顺手清掉记录（`dropOutputDirEnabledKey`），
+ * 而这里再按 `mediaOutputDirs` 剪一次枝会把「先配开关、后填路径」的顺序卡死。
+ */
+function normalizeMediaOutputDirEnabled(raw: unknown): Record<string, PostprocessOutputDirEnabledMap> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const result: Record<string, PostprocessOutputDirEnabledMap> = {}
+  for (const [rawMediaId, rawMap] of Object.entries(raw as Record<string, unknown>)) {
+    const mediaId = typeof rawMediaId === 'string' ? rawMediaId.trim() : ''
+    if (!mediaId) continue
+    const map = normalizeOutputDirEnabledMap(rawMap)
+    if (map) result[mediaId] = map
   }
   return result
 }
@@ -293,6 +331,9 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
     fitMode: normalizePostprocessFitMode(input.fitMode),
     outputDir: typeof input.outputDir === 'string' ? input.outputDir : defaults.outputDir,
     mediaOutputDirs: normalizeMediaOutputDirs(input.mediaOutputDirs),
+    // 缺字段（旧数据）→ 空表 = 一处都没停用，与历史行为一字不差，**不需要 bump persist 版本号**
+    // （与 `fitMode` / `savedTargetsByFolder` 同一条判断：纯新增、没有旧语义要折算）。
+    mediaOutputDirEnabled: normalizeMediaOutputDirEnabled(input.mediaOutputDirEnabled),
     namePattern,
     creator: typeof input.creator === 'string' ? input.creator : defaults.creator,
     watermarkPresetIds: normalizeWatermarkPresetIds(input),
@@ -366,10 +407,14 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
           if (!state.media.some((item) => item.id === mediaId)) return state
           const mediaOutputDirs = { ...state.mediaOutputDirs }
           delete mediaOutputDirs[mediaId]
+          // 开关记录跟着渠道一起走：渠道删了再加回来，用户不会希望它「上次是关的」还留着
+          const mediaOutputDirEnabled = { ...state.mediaOutputDirEnabled }
+          delete mediaOutputDirEnabled[mediaId]
           return {
             media: state.media.filter((item) => item.id !== mediaId),
             selectedMediaIds: state.selectedMediaIds.filter((id) => id !== mediaId),
             mediaOutputDirs,
+            mediaOutputDirEnabled,
           }
         }),
 
@@ -507,16 +552,53 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
           const mediaOutputDirs = { ...state.mediaOutputDirs }
           if (next.length > 0) mediaOutputDirs[id] = next
           else delete mediaOutputDirs[id]
-          return { mediaOutputDirs }
+          /**
+           * 这一处的开关记录跟着路径走。
+           *
+           * 不搬的话：用户改完路径，那处明明是关着的，开关会**自己变回开**（旧记录匹配不上新路径）——
+           * 「关了就关了，改个名字就忘了」属于最难自查的一类静默失效。清空这一处则连记录一起丢掉。
+           */
+          const renamed = renameOutputDirEnabledKey(state.mediaOutputDirEnabled[id], current[index] ?? '', slots[index])
+          const mediaOutputDirEnabled = { ...state.mediaOutputDirEnabled }
+          if (renamed) mediaOutputDirEnabled[id] = renamed
+          else delete mediaOutputDirEnabled[id]
+          return { mediaOutputDirs, mediaOutputDirEnabled }
         }),
 
-      clearMediaOutputDirs: (mediaId) =>
+      setMediaOutputDirs: (mediaId, dirs) =>
         set((state) => {
           const id = typeof mediaId === 'string' ? mediaId.trim() : ''
-          if (!id || !(id in state.mediaOutputDirs)) return state
+          if (!id) return state
+          const next = normalizeOutputDirList(dirs)
           const mediaOutputDirs = { ...state.mediaOutputDirs }
-          delete mediaOutputDirs[id]
-          return { mediaOutputDirs }
+          if (next.length > 0) mediaOutputDirs[id] = next
+          else delete mediaOutputDirs[id]
+          /**
+           * 开关记录只留**还在的位置**。
+           *
+           * 被删掉的那些必须一起丢：留着的话，以后重新填回同一个路径，那处会莫名是关着的
+           * （旧记录又匹配上了），用户只会觉得「这个开关自己乱动」。
+           */
+          const current = state.mediaOutputDirEnabled[id] ?? {}
+          const kept: PostprocessOutputDirEnabledMap = {}
+          for (const dir of next) if (dir in current) kept[dir] = current[dir]
+          const mediaOutputDirEnabled = { ...state.mediaOutputDirEnabled }
+          if (Object.keys(kept).length > 0) mediaOutputDirEnabled[id] = kept
+          else delete mediaOutputDirEnabled[id]
+          return { mediaOutputDirs, mediaOutputDirEnabled }
+        }),
+
+      setMediaOutputDirEnabled: (mediaId, dir, enabled) =>
+        set((state) => {
+          const id = typeof mediaId === 'string' ? mediaId.trim() : ''
+          const key = typeof dir === 'string' ? dir.trim() : ''
+          if (!id || !key) return state
+          const current = state.mediaOutputDirEnabled[id] ?? {}
+          // 值没变就不写：避免每次点开关都产出一个新对象，让订阅它的组件白重渲染一轮
+          if (current[key] === enabled) return state
+          return {
+            mediaOutputDirEnabled: { ...state.mediaOutputDirEnabled, [id]: { ...current, [key]: enabled } },
+          }
         }),
 
       setNamePattern: (namePattern) =>
@@ -547,6 +629,11 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
       // v4：`clean`（当年的「纯净版」）退出产出维度（ADR-0020），归一化会把它从
       // `selectedMediaIds` 里剔掉。**必须 bump** —— 版本号不变时 zustand 不跑 `migrate`，
       // 用户库里那条 `clean` 会原样留着，于是「改了代码但什么都没发生」（R-63 家族，静默失效）。
+      //
+      // 新增 `mediaOutputDirEnabled`（导出位置开关，TB-130）**刻意不 bump**：纯新增字段，
+      // 缺键就是「一处都没停用」，恰好是旧行为；没有需要折算的旧语义，无谓 bump 只会让所有用户
+      // 的数据白过一遍 `migrate`。**但 `partialize` 必须加上它** —— 白名单是显式的，
+      // 漏了就是「点完开关当场生效、重启全变回开」，而界面上不报任何错。
       version: 4,
       storage: createDesktopJsonStorage('postprocessMedia'),
       partialize: (state) => ({
@@ -561,6 +648,7 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         fitMode: state.fitMode,
         outputDir: state.outputDir,
         mediaOutputDirs: state.mediaOutputDirs,
+        mediaOutputDirEnabled: state.mediaOutputDirEnabled,
         namePattern: state.namePattern,
         creator: state.creator,
         watermarkPresetIds: state.watermarkPresetIds,
@@ -587,6 +675,10 @@ export function getPostprocessMediaConfigSnapshot(state: PostprocessMediaStore):
     outputDir: state.outputDir,
     mediaOutputDirs: Object.fromEntries(
       Object.entries(state.mediaOutputDirs).map(([mediaId, dirs]) => [mediaId, [...dirs]]),
+    ),
+    // 两层都要拷：这份快照会跟着配置进产出链路，共享内层对象的话下游一次误改就写回 store
+    mediaOutputDirEnabled: Object.fromEntries(
+      Object.entries(state.mediaOutputDirEnabled).map(([mediaId, map]) => [mediaId, { ...map }]),
     ),
     namePattern: state.namePattern,
     creator: state.creator,

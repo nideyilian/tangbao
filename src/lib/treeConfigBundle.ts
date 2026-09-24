@@ -122,6 +122,13 @@ export interface TreeConfigDefaults {
   outputDir: string
   /** 全局渠道层的导出位置覆盖（`mediaId → 1~2 个位置`） */
   mediaOutputDirs: Record<string, string[]>
+  /**
+   * 全局渠道层的**导出位置开关**（`mediaId → { 路径: 是否启用 }`；缺键 = 启用）。
+   *
+   * 跟着配置包走：它是「这套配置要不要往这一处写」的一部分。落在包外的话，换台机器导入
+   * 会**把停用的交付目录重新打开**（比如共享盘本来被关着），属于静默改变产出行为。
+   */
+  mediaOutputDirEnabled: PostprocessMediaConfig['mediaOutputDirEnabled']
   namePattern: string
   creator: string
   fitMode: PostprocessMediaConfig['fitMode']
@@ -228,6 +235,7 @@ const POSTPROCESS_FIELD_TO_DEFAULTS: Record<keyof PostprocessMediaConfig, keyof 
   fitMode: 'fitMode',
   outputDir: 'outputDir',
   mediaOutputDirs: 'mediaOutputDirs',
+  mediaOutputDirEnabled: 'mediaOutputDirEnabled',
   namePattern: 'namePattern',
   creator: 'creator',
   watermarkPresetIds: 'watermarkPresetIds',
