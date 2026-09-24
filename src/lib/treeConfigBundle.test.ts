@@ -385,16 +385,18 @@ describe('配置包 v9：以树为骨架', () => {
     expect(merged.watermarkPresetIds).toEqual(['wm-pkg'])
   })
 
-  it('⭐ 启用范围与产出目标跟着项目树同组（它们引用的是节点 id）', () => {
+  it('⭐ 启用范围与产出目标（两份）跟着项目树同组 —— 它们引用的都是节点 id', () => {
     const incoming: PostprocessMediaConfig = {
       ...createDefaultPostprocessMediaConfig(),
       selectedCollectionIds: ['pkg-node'],
       savedTargetCollectionIds: ['pkg-node'],
+      savedTargetsByFolder: { 'pkg-dir': ['pkg-node'] },
     }
     const current: PostprocessMediaConfig = {
       ...createDefaultPostprocessMediaConfig(),
       selectedCollectionIds: ['local-node'],
       savedTargetCollectionIds: ['local-node'],
+      savedTargetsByFolder: { 'local-dir': ['local-node'] },
     }
 
     const merged = applyPostprocessScope(current, incoming, {
@@ -405,6 +407,8 @@ describe('配置包 v9：以树为骨架', () => {
     })
     expect(merged.selectedCollectionIds).toEqual(['pkg-node'])
     expect(merged.savedTargetCollectionIds).toEqual(['pkg-node'])
+    // 按文件夹那份引用的同样是节点 id → 归 tree 组，否则导入配置包时它会留在本机
+    expect(merged.savedTargetsByFolder).toEqual({ 'pkg-dir': ['pkg-node'] })
     // 输出位置这类不引用节点的字段不该被牵连
     expect(merged.outputDir).toBe(current.outputDir)
   })

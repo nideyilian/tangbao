@@ -157,7 +157,8 @@ describe('后处理执行体：方向级「自动后处理」开关只拦自动�
  * 背景（2026-09-22）：一批素材经常要同时投到多个产品 / 多个方向，而归属（`collectionIds` 里
  * 最深那条）只能表达「这张图属于哪个方向」——靠把素材挂到多个方向绕不过去（同级挂两个只有
  * 一个生效），还会改写素材的真实归属。用户点「记住配置」把「这批图要投到哪几个方向」定下来
- * （`savedTargetCollectionIds`），之后手动跑一直复用，直到他再改。
+ * （`savedTargetsByFolder`，**按他当时所在的文件夹各存一份**，2026-09-24 改），之后从那条方向
+ * 手动跑一直复用，直到他再改。
  *
  * 这里守三件事：
  * ① **每个目标各用自己那一套参数**（输出目录 / 水印 / 渠道）—— 复用归属那一份会把后一个方向的
@@ -176,6 +177,8 @@ describe('多目标产出：记住的产出目标', () => {
       // 不勾任何渠道 → 零产出、不进渲染链。这几条只关心「目标怎么定、参数按谁解析」
       selectedMediaIds: [],
       savedTargetCollectionIds: [],
+      // 按文件夹的那份也要清：留着会串到别的用例（表现为「这一条没设过却按某个方向产」）
+      savedTargetsByFolder: {},
     })
   })
 
@@ -200,7 +203,7 @@ describe('多目标产出：记住的产出目标', () => {
   it('记住多个方向 → 每个方向各解析一次参数，不再只解析归属那一个', async () => {
     usePostprocessMediaStore.setState({
       selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
-      savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_A.id, DIRECTION_B.id] },
     })
 
     await run()
@@ -208,10 +211,10 @@ describe('多目标产出：记住的产出目标', () => {
     expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id, DIRECTION_B.id]))
   })
 
-  it('没记住（空数组）→ 退回旧口径：只解析归属方向', async () => {
+  it('这条方向没设过 → 退回旧口径：只解析归属方向', async () => {
     usePostprocessMediaStore.setState({
       selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
-      savedTargetCollectionIds: [],
+      savedTargetsByFolder: {},
     })
 
     await run()
@@ -219,10 +222,22 @@ describe('多目标产出：记住的产出目标', () => {
     expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id]))
   })
 
+  it('⭐ 别的方向设的目标不影响这一条（「设一个方向、全库都变」的回归守卫）', async () => {
+    // 2026-09-24 报障就是这条：产出目标原先只有全库一份，给 B 设完，跑 A 的素材也按 B 产。
+    usePostprocessMediaStore.setState({
+      selectedCollectionIds: [DIRECTION_A.id],
+      savedTargetsByFolder: { [DIRECTION_B.id]: [DIRECTION_B.id] },
+    })
+
+    await run({ source: 'manual' })
+
+    expect(resolvedDirectionIds()).toEqual(new Set([DIRECTION_A.id]))
+  })
+
   it('⭐ 手动跑：记住的目标跨出归属方向，且不被归属那个方向级开关拦住', async () => {
     usePostprocessMediaStore.setState({
       selectedCollectionIds: [DIRECTION_A.id],
-      savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_A.id, DIRECTION_B.id] },
     })
 
     // fixture 的 `params` 把归属方向 A 的方向级开关关着 —— 手动跑不该受它影响
@@ -236,7 +251,7 @@ describe('多目标产出：记住的产出目标', () => {
     usePostprocessMediaStore.setState({
       selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
       // 用户手动那批只想投 B
-      savedTargetCollectionIds: [DIRECTION_B.id],
+      savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_B.id] },
     })
 
     await run({ source: 'auto' })
@@ -249,7 +264,7 @@ describe('多目标产出：记住的产出目标', () => {
     usePostprocessMediaStore.setState({
       selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
       // 这一批只产到 B；A 是归属方向但不打算产它
-      savedTargetCollectionIds: [DIRECTION_B.id],
+      savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_B.id] },
     })
 
     const result = await run({
@@ -263,7 +278,7 @@ describe('多目标产出：记住的产出目标', () => {
   it('归属方向自己就是目标时，它的「自动后处理」开关照旧拦自动触发（防回退）', async () => {
     usePostprocessMediaStore.setState({
       selectedCollectionIds: [DIRECTION_A.id],
-      savedTargetCollectionIds: [DIRECTION_A.id],
+      savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_A.id] },
     })
 
     const result = await run({
@@ -283,7 +298,7 @@ describe('多目标产出：记住的产出目标', () => {
   it('⭐ 只产指定方向（方向级拆分）：只解析那一个方向的参数', async () => {
     usePostprocessMediaStore.setState({
       selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
-      savedTargetCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
+      savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_A.id, DIRECTION_B.id] },
     })
 
     const result = await run({ source: 'manual', onlyTargets: [DIRECTION_B.id] })

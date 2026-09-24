@@ -64,7 +64,10 @@
 
     "selectedMediaIds": ["gdt"],
     "selectedCollectionIds": ["line-home", "prod-vacuum", "dir-moon"],
-    "savedTargetCollectionIds": ["dir-moon", "dir-sun"],
+    "savedTargetsByFolder": {
+      "dir-moon": ["dir-moon", "dir-sun"]
+    },
+    "savedTargetCollectionIds": [],
 
     "direction": null,
     "fitMode": "crop-fill",

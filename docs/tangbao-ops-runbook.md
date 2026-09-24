@@ -1362,6 +1362,12 @@ settings.themeMode → App.tsx effect → applyAppearance() → html.dark + styl
 
 「记住的产出目标」（`savedTargetCollectionIds`）是照这份清单走完的第一例。**清单是 4.2.1（节点级字段）的全局版对应物**。
 
+**第二例：「按文件夹各存一份的产出目标」（`savedTargetsByFolder`，2026-09-24）。六处清单照样走**，另有三处 map 型字段特有的坑：
+
+- **键是节点 id** → `POSTPROCESS_FIELD_GROUP` 与 `treeConfigBundle` 里的 `POSTPROCESS_FIELD_TO_DEFAULTS` 都要把它归到 `tree` 组（前者忘了归类编译红；后者忘了会让导入配置包时它**留在本机**，表现为「按方向设的清单没跟过来」）。
+- **取用要带树** → `directionTargets.ts` 的取用要传 `collections`（沿「归属方向 → 祖先」向上找）。三个调用点 `store.ts` / `taskPostprocess.ts` / `AssetLibraryToolbar.tsx` **都要传**：漏一处，在「产品」层设的那份就对该产品下的方向失效，症状是「设置了没生效」且不报任何错。
+- **空列表的键要删掉** → `setSavedTargetsForFolder(id, [])` 走的是 `delete`，`normalizeSavedTargetsByFolder` 也丢掉空列表的键。留着空壳会让「设过但为空」与「从没设过」在数据上分不开（执行时等价，但界面推不出来）。
+
 ### 1. 六处必改（漏任一处 = 静默失效）
 
 | #   | 位置                                                                 | 漏了会怎样                                                       |
@@ -1417,11 +1423,22 @@ expect(new Set(vi.mocked(resolveProjectPostprocessSlice).mock.calls.map((call) =
 **改法一律是「按 `source` 分流，而不是改共享语义」**：
 
 ```ts
-// taskPostprocess.ts —— 读点分流
-const savedTargets = input.source === 'manual' ? baseConfig.savedTargetCollectionIds : []
+// 读点分流：这段（2026-09-24 起）不再在各处手写，统一调唯一实现
+// （features/postprocess/directionTargets.ts；执行体自己那份已删，见 architecture-constraints §4.3）
+const resolvedTargetIds = resolveImageTargetDirectionIds(imageId, {
+  ownership: new Map([[imageId, collectionId]]),
+  source: input.source ?? 'auto', // 不传 source 的调用方 = 自动那一路
+  config: baseConfig,
+  collections: collectionsById, // ← 少传它，「在产品层设的那份」就对其下方向失效
+})
 // 门也分流（同一个函数里两处门的写法必须一致，第二处是 PP-SCOPE-002）
 if (input.source !== 'manual' && !isCollectionWithinSelection(…)) { … }
 ```
+
+⚠️ **兜底那一份只对「没有归属」的图生效**（2026-09-24 加的边界）：`savedTargetCollectionIds` 从
+「手动这次投哪些」降级成「没有归属的图投哪些」。让它对有归属的图生效 = 回到「设一个方向、全库都变」
+那个 bug —— 回归守卫是 `directionTargets.test.ts` 与 `taskPostprocess.test.ts` 里那两条带 ⭐ 的用例
+（「兜底那份不影响有归属的图」「别的方向设的目标不影响这一条」）。
 
 **动手前必做**：把该字段的**全部读点** grep 出来，逐个标注它属于哪条路（`grep -n "<字段名>" src`）。
 本次实测：`savedTargetCollectionIds` 的读点里只有 `taskPostprocess.ts` 的产出目标那处是「路相关的」，

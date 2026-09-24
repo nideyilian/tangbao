@@ -398,6 +398,7 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
       selectedMediaIds: ['clean'],
       selectedCollectionIds: [],
       savedTargetCollectionIds: [],
+      savedTargetsByFolder: {},
       direction: null,
       fitMode: 'crop-fill',
       outputDir: '基线目录',
@@ -510,16 +511,28 @@ describe('applyPostprocessOverride —— 按渠道（byMedia）覆盖', () => {
     const config: PostprocessMediaConfig = {
       ...baseConfig(),
       savedTargetCollectionIds: ['direction-a', 'direction-b'],
+      savedTargetsByFolder: { 'dir-a': ['direction-c'] },
     }
     const merged = applyPostprocessOverride(config, { outputDir: '节点目录' }, 'baidu')
     expect(merged.savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
+    // 按文件夹那份同样是白名单成员：漏了它 = 每个文件夹设的目标都白设
+    expect(merged.savedTargetsByFolder).toEqual({ 'dir-a': ['direction-c'] })
   })
 
-  it('记住的产出目标是全局一套：节点层与 byMedia 都没有覆盖入口', () => {
-    const config: PostprocessMediaConfig = { ...baseConfig(), savedTargetCollectionIds: ['direction-a'] }
+  it('产出目标不参与节点级覆盖（两份都是）：节点层与 byMedia 都没有入口', () => {
+    const config: PostprocessMediaConfig = {
+      ...baseConfig(),
+      savedTargetCollectionIds: ['direction-a'],
+      savedTargetsByFolder: { 'dir-a': ['direction-a'] },
+    }
     // 用 `as` 绕过类型模拟旧数据 / JS 调用方，验证运行期也不会被采纳
-    const legacy = { savedTargetCollectionIds: ['direction-x'] } as unknown as PostprocessNodeOverride
-    expect(applyPostprocessOverride(config, legacy, 'baidu').savedTargetCollectionIds).toEqual(['direction-a'])
+    const legacy = {
+      savedTargetCollectionIds: ['direction-x'],
+      savedTargetsByFolder: { 'dir-a': ['direction-x'] },
+    } as unknown as PostprocessNodeOverride
+    const merged = applyPostprocessOverride(config, legacy, 'baidu')
+    expect(merged.savedTargetCollectionIds).toEqual(['direction-a'])
+    expect(merged.savedTargetsByFolder).toEqual({ 'dir-a': ['direction-a'] })
   })
 })
 
@@ -530,6 +543,7 @@ describe('导出位置：全局渠道表 + 双写', () => {
       selectedMediaIds: ['clean'],
       selectedCollectionIds: [],
       savedTargetCollectionIds: [],
+      savedTargetsByFolder: {},
       direction: null,
       fitMode: 'crop-fill',
       outputDir: '全局默认目录',

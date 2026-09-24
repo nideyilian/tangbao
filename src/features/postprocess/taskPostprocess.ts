@@ -36,6 +36,9 @@ import {
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
 import { mergePromotedGlobals, useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 import type { ProjectNodeParamsMap } from '../projectTree/types'
+// 产出目标的判定只有一份实现：本文件不再手写一遍「手动读记住的、自动按归属」——
+// 那两处一旦分叉，只在产物上看得出来（见 `directionTargets.ts` 模块注释）。
+import { resolveImageTargetDirectionIds } from './directionTargets'
 import { renderOnce, renderWithMaxKb, type RenderVariantOutcome } from './renderVariant'
 import { resolveBucketOutputRoots } from './outputRoots'
 import { isPostprocessCanceledError, throwIfPostprocessCanceled } from './postprocessCancel'
@@ -270,6 +273,13 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
   )
   const params = input.projectParams ?? {}
 
+  /**
+   * 归属方向 → 产出目标的取用要沿项目树向上找（见 `directionTargets.ts`），而本函数是**逐图**
+   * 取目标的。`resolveCollectionPath` 每次调用都会重建一张 `id → 节点`的表，不在这里建一次，
+   * 几百张图就把同一棵树解析几百遍。
+   */
+  const collectionsById = new Map(input.collections.map((item) => [item.id, item]))
+
   const api = typeof window !== 'undefined' ? window.electronAPI : undefined
   if (!api) {
     reportIssue(result, { code: 'PP-ENV-001', stage: 'prepare' })
@@ -346,21 +356,23 @@ export async function runTaskPostprocess(input: RunTaskPostprocessInput): Promis
     const collectionId = input.resolveImageCollectionId?.(imageId) ?? null
 
     /**
-     * 产出目标。**手动与自动分开取，别合并**：
+     * 产出目标。**判定只有一份实现**（`directionTargets.ts`）—— 批次编排在上面分组时用的就是它。
      *
-     * - **手动触发**（用户在素材库点了「跑后处理」）→ 记住的产出目标（`savedTargetCollectionIds`）
-     *   优先，其次归属方向，最后全局启用范围。「这批图要投到哪几个方向」是用户手动那一下
-     *   显式定下来的，之后一直复用，直到他再改。
-     * - **自动触发**（任务完成后自动跑）→ **不读记住的目标**，一律按归属方向（无归属才退回全局
-     *   启用范围）。产出目标是**手动场景**的概念：它掺进自动跑之后，用户在这里勾什么就会悄悄
-     *   改变自动产出的去向 —— 而自动产出是在他没看着的时候发生的（2026-09-22 杰哥明确「这个
-     *   只针对于手动后处理，不需要改自动后处理」）。
-     * - **没记住** → 退回旧口径：有归属就用归属方向本身（「执行时无需手动选项目」的含义）；
-     *   无归属（手工拖入、旧数据）才退回全局勾选的项目。
+     * 原先这里手写了一遍同样的口径，注释里写着「与之一字不差」，但那只能靠人盯：本文件任何一次
+     * 改动（比如 09-24 把产出目标改成按文件夹取）都要在另一处同步改一遍，漏掉就是
+     * 「分组说投 A、执行体按 B 产」——只在产物上看得出来的偏差。现在直接调它。
+     *
+     * 手写版与共用版的分界（本文件不再判断）：手动才读产出目标（沿归属方向向上找最近的设置），
+     * 自动一律按归属方向；无归属（手工拖入、旧数据）才退回兜底那份 / 全局启用范围。
      */
-    const savedTargets = input.source === 'manual' ? baseConfig.savedTargetCollectionIds : []
-    const resolvedTargetIds =
-      savedTargets.length > 0 ? savedTargets : collectionId ? [collectionId] : baseConfig.selectedCollectionIds
+    const resolvedTargetIds = resolveImageTargetDirectionIds(imageId, {
+      imageIds: [imageId],
+      ownership: new Map([[imageId, collectionId]]),
+      // 不传 `source` 的调用方走的就是「自动」那一路（原来这里写的是 `input.source === 'manual'`）
+      source: input.source ?? 'auto',
+      config: baseConfig,
+      collections: collectionsById,
+    })
     /**
      * 方向级拆分：调用方一次只让本执行体负责一个方向，其余目标归它自己那条 run。
      *

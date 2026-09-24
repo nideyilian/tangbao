@@ -32,15 +32,20 @@ import {
 } from '../../design-system'
 import {
   buildPostprocessProjectTree,
+  resolveCollectionPath,
   resolvePostprocessProjectTargets,
   type PostprocessProjectTreeNode,
 } from '../../lib/postprocessProjectTree'
 import { selectPostprocessOutputPlan, usePostprocessMediaStore } from '../../storePostprocessMedia'
 import { useStore } from '../../store'
 import { useAssetLibraryStore } from '../assetLibrary/store'
+// 范围文案与素材库工具栏共用一份：用户要拿它对上「我刚设的配置落在谁头上」
+import { formatAssetLibraryScopeLabel } from '../assetLibrary/scopeLabel'
 import { useCompositeV2Store } from '../composite/storeV2'
 import { resolveProjectPostprocessSlice } from '../projectTree/params'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
+// 「当前生效的是哪一份」与执行体同一份实现：在这里另写一遍必然出现「弹窗显示 A、实际产出到 B」
+import { resolveEffectiveSavedTargets } from './directionTargets'
 import { usePostprocessGlobalConfig } from './usePostprocessGlobalConfig'
 
 /**
@@ -62,20 +67,66 @@ interface Props {
 
 export default function PostprocessTargetsDialog({ onClose, assetCount }: Props) {
   const collections = useAssetLibraryStore((state) => state.collections)
+  const scope = useAssetLibraryStore((state) => state.scope)
   const params = useProjectTreeParamsStore((state) => state.params)
-  const savedTargets = usePostprocessMediaStore((state) => state.savedTargetCollectionIds)
-  const setSavedTargetCollectionIds = usePostprocessMediaStore((state) => state.setSavedTargetCollectionIds)
-  const clearSavedTargetCollectionIds = usePostprocessMediaStore((state) => state.clearSavedTargetCollectionIds)
+  const savedTargetCollectionIds = usePostprocessMediaStore((state) => state.savedTargetCollectionIds)
+  const savedTargetsByFolder = usePostprocessMediaStore((state) => state.savedTargetsByFolder)
+  const setSavedTargetsForFolder = usePostprocessMediaStore((state) => state.setSavedTargetsForFolder)
+  const clearSavedTargetsForFolder = usePostprocessMediaStore((state) => state.clearSavedTargetsForFolder)
   const presets = useCompositeV2Store((state) => state.presets)
   const globalConfig = usePostprocessGlobalConfig()
   const showToast = useStore((state) => state.showToast)
 
   /**
+   * 这份配置归到哪个文件夹 = 他在素材库**当前所在的文件夹**（点按钮那一刻的上下文）。
+   *
+   * 停在「全部素材 / 收藏 / 未整理 / 标签 / 回收站」时 `scope` 不指向具体文件夹（null）：
+   * 这时写的是**兜底**那一份，执行时只对没有归属的图生效（记在 `savedTargetCollectionIds` 上）。
+   */
+  const scopeFolderId = typeof scope === 'object' && scope.kind === 'collection' ? scope.id : null
+
+  /**
+   * 当前**真正生效**的清单（自己 → 祖先，最近的一环说了算）——执行时用的就是它。
+   * 与执行体共用 `resolveEffectiveSavedTargets`，免得「界面显示一份、实际产出按另一份」。
+   */
+  const effective = useMemo(
+    () => resolveEffectiveSavedTargets({ savedTargetsByFolder }, scopeFolderId, collections),
+    [savedTargetsByFolder, scopeFolderId, collections],
+  )
+
+  /** 文件夹的全路径标签（`保险 / 百万医疗险 / 月亮`）—— 同名方向靠它区分。 */
+  const folderPathLabel = (folderId: string): string | null => {
+    const path = resolveCollectionPath(collections, folderId).map((item) => item.name)
+    return path.length > 0 ? path.join(' / ') : null
+  }
+
+  const scopePathLabel = scopeFolderId ? folderPathLabel(scopeFolderId) : null
+  /** 兜底场景下要告诉他在哪儿：`全部素材` / `收藏` / `未整理` …（与工具栏同一份文案） */
+  const fallbackScopeLabel = useMemo(() => {
+    const collectionNames = new Map(collections.map((item) => [item.id, item.name]))
+    return formatAssetLibraryScopeLabel(scope, collectionNames, new Map())
+  }, [collections, scope])
+  /** 生效清单是**继承**来的那一环（不是设在当前文件夹上）时，界面上要说明白 */
+  const inheritedFromLabel =
+    effective.ownerId && effective.ownerId !== scopeFolderId ? folderPathLabel(effective.ownerId) : null
+
+  /**
+   * 当前文件夹**自己那一层**写没写过 —— 决定「恢复按归属」出不出现。
+   * 继承来的那一份不该在这里被清掉（那是上一层的配置，清它等于改了另一个文件夹）。
+   */
+  const hasOwnEntry = scopeFolderId
+    ? (savedTargetsByFolder[scopeFolderId]?.length ?? 0) > 0
+    : savedTargetCollectionIds.length > 0
+
+  /**
    * 草稿。**不能直接编辑 store**：那样「取消」就没有意义了（点一下勾选就已经落盘）。
    * 组件由调用方条件挂载（`{open && <PostprocessTargetsDialog …/>}`），所以这里的初始值
-   * 天然就是「打开那一刻的已记住值」，不需要再靠 effect 同步一次。
+   * 天然就是「打开那一刻的生效清单」，不需要再靠 effect 同步一次。
+   *
+   * 初值取**生效值**而不是"本层自己那份"：本层没写过、上层写过时，界面必须显示真正会生效的
+   * 那份 —— 显示空清单会让用户以为这儿没设过，一勾一存就在本层固化了一份他以为不存在的配置。
    */
-  const [draft, setDraft] = useState<string[]>(savedTargets)
+  const [draft, setDraft] = useState<string[]>(effective.ids)
 
   /**
    * 折叠的节点 id。**默认全展开**：产出目标就是来跨产品挑方向的，一进来全收着反而要一层层点开
@@ -130,17 +181,22 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
     setDraft((current) => (allChecked ? current.filter((id) => !ids.includes(id)) : [...new Set([...current, ...ids])]))
   }
 
+  /** 提示语里那份配置的落点：具体文件夹就用全路径，兜底场景说清是「全部素材」这类。 */
+  const savedToLabel = scopeFolderId ? (scopePathLabel ?? '当前文件夹') : `${fallbackScopeLabel}（兜底）`
+
   const handleSave = () => {
-    setSavedTargetCollectionIds(draft)
+    setSavedTargetsForFolder(scopeFolderId, draft)
     showToast(
-      draft.length > 0 ? `已记住产出目标：${draft.length} 个方向` : '产出目标已清空：回到按图片归属方向产出',
+      draft.length > 0
+        ? `已记住「${savedToLabel}」的产出目标：${draft.length} 个方向`
+        : '产出目标已清空：回到按图片归属方向产出',
       'success',
     )
     onClose()
   }
 
   const handleReset = () => {
-    clearSavedTargetCollectionIds()
+    clearSavedTargetsForFolder(scopeFolderId)
     showToast('产出目标已清空：回到按图片归属方向产出', 'success')
     onClose()
   }
@@ -193,10 +249,10 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
       }}
       size="md"
       title="产出目标"
-      description="这批素材手动跑后处理时要产出到哪些方向，跨产品线和产品都能选。点「记住配置」后，之后每次手动跑都按这份清单产出，直到你改了它。自动后处理不受这里影响，仍按图片归属的方向产出。"
+      description="这批素材手动跑后处理时要产出到哪些方向，跨产品线和产品都能选。「记住配置」把它存在当前所在的文件夹上，之后从这条方向手动跑都按它产出，直到你改了它；别的方向不受影响。自动后处理不看这里，仍按图片归属的方向产出。"
       footer={
         <div className="flex w-full items-center justify-between gap-2">
-          {savedTargets.length > 0 ? (
+          {hasOwnEntry ? (
             <Button variant="ghost" size="sm" onClick={handleReset} data-testid="postprocess-targets-reset">
               恢复按归属
             </Button>
@@ -215,6 +271,26 @@ export default function PostprocessTargetsDialog({ onClose, assetCount }: Props)
       }
     >
       <div className="flex flex-col gap-3">
+        {/*
+          归属说明。**必须显式写**：这份配置存在哪个文件夹上，光看界面推不出来 ——
+          而这正是杰哥 2026-09-24 报障的那件事（「我设了一个方向，结果全局都变」）。
+        */}
+        <div className="rounded-ds-md bg-ds-subtle px-3 py-2 text-xs text-ds-muted">
+          {scopeFolderId ? (
+            <>
+              这份配置归到：
+              <span className="text-ds-foreground">{scopePathLabel ?? '当前文件夹'}</span>
+              {inheritedFromLabel
+                ? ` · 当前清单继承自「${inheritedFromLabel}」，保存后写在当前文件夹上（不再随它变）`
+                : null}
+            </>
+          ) : (
+            <>
+              当前不在具体文件夹里（{fallbackScopeLabel}）：保存的是一份兜底清单，只对「没有归属」的图生效，
+              不会影响任何方向的产出。想按方向设置，先在左侧进入那条方向。
+            </>
+          )}
+        </div>
         {!hasAnyDirection ? (
           <EmptyState
             icon={<InfoIcon size={20} />}

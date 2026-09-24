@@ -54,17 +54,21 @@ export interface PostprocessMediaStore extends PostprocessMediaConfig {
   setSelectedCollectionIds: (ids: string[]) => void
   toggleSelectedCollection: (collectionId: string) => void
   /**
-   * 「记住配置」：把这次选定的产出目标固化下来，后续**手动**跑批一直复用它，直到再次修改。
+   * 「记住配置」：把这次选定的产出目标固化到**某个文件夹**上（`scopeId` = `AssetCollection.id`）。
    *
    * **只作用于手动触发**（执行体按 `source === 'manual'` 取它；自动后处理不读）：
    * 自动产出的去向仍是图片归属方向，不被这份清单悄悄改掉。
    *
+   * `scopeId` 传 `null` = 素材库当前不在具体文件夹里（全部 / 收藏 / 未整理 / 标签）→ 写
+   * `savedTargetCollectionIds` 那份**兜底**，执行时只对**没有归属**的图生效。
+   *
    * 传空数组 = 恢复「按图片归属方向产出」（与从没点过记住一致）。空数组表达的是「不指定目标」，
-   * **不是**「什么都不产出」。
+   * **不是**「什么都不产出」；此时该文件夹的键会被删掉，而不是留一个空数组
+   * （留空数组会让「已设过但为空」与「从没设过」两种状态在数据上分不开）。
    */
-  setSavedTargetCollectionIds: (ids: string[]) => void
-  /** 清掉记住的产出目标（等价于 `setSavedTargetCollectionIds([])`，给界面一个语义明确的入口） */
-  clearSavedTargetCollectionIds: () => void
+  setSavedTargetsForFolder: (scopeId: string | null, ids: string[]) => void
+  /** 清掉某个文件夹记住的产出目标（等价于 `setSavedTargetsForFolder(scopeId, [])`） */
+  clearSavedTargetsForFolder: (scopeId: string | null) => void
   setDirection: (direction: OutputDirection | null) => void
   /**
    * 设置源图适配目标尺寸的方式（全局一套）。
@@ -106,6 +110,8 @@ export function createDefaultPostprocessMediaConfig(): PostprocessMediaConfig {
     selectedCollectionIds: [],
     // 默认没记住任何产出目标 → 按图片归属方向产出（与历史行为一致）
     savedTargetCollectionIds: [],
+    // 默认没有任何文件夹设过产出目标 → 所有方向都按图片归属产出
+    savedTargetsByFolder: {},
     direction: null,
     // 默认「裁剪填满」：与历史行为一致，升级不改观感
     fitMode: DEFAULT_POSTPROCESS_FIT_MODE,
@@ -145,6 +151,27 @@ function normalizeStringList(value: unknown): string[] | null {
     const trimmed = item.trim()
     if (!trimmed || result.includes(trimmed)) continue
     result.push(trimmed)
+  }
+  return result
+}
+
+/**
+ * 归一化「按文件夹存的产出目标」表：丢掉空列表与坏键，键与值都过一遍归一化。
+ *
+ * 键指向的文件夹**允许不存在**（文件夹已删、或配置包来自另一台机器）——不按树剪枝，
+ * 与 `normalizeMediaOutputDirs` 同一个口径：查不到就是没设过，不会出错。
+ *
+ * **空数组一律丢掉**：该字段的语义是「这个文件夹要投到哪几个方向」，「设过但为空」
+ * 与「从没设过」执行时等价（都退回按归属产出），留一个空壳只会让数据多一种没用的状态。
+ */
+function normalizeSavedTargetsByFolder(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const result: Record<string, string[]> = {}
+  for (const [rawKey, rawIds] of Object.entries(raw as Record<string, unknown>)) {
+    const key = typeof rawKey === 'string' ? rawKey.trim() : ''
+    if (!key) continue
+    const ids = normalizeStringList(rawIds)
+    if (ids && ids.length > 0) result[key] = ids
   }
   return result
 }
@@ -256,6 +283,11 @@ export function normalizePostprocessMediaConfig(raw: unknown): PostprocessMediaC
     // 缺字段（旧数据 / 从没点过「记住配置」）→ 空数组 = 按归属方向走，与旧行为完全一致，
     // 所以**不需要 bump persist.version**：没有需要折算的旧语义。
     savedTargetCollectionIds: normalizeStringList(input.savedTargetCollectionIds) ?? defaults.savedTargetCollectionIds,
+    // 同样是纯新增（旧数据缺字段 = 没有任何文件夹设过 = 全部按归属产出），**不 bump**。
+    // ⚠️ 用户上一版设的那一份**不迁移**到任何文件夹：那份清单当初就是"全库一套"的意思，
+    // 按哪个方向折算都是猜。它留在 `savedTargetCollectionIds` 兜底位上，用户在需要的
+    // 文件夹下各设一次即可 —— 猜错的代价是"某个方向的产出悄悄跑去别的方向"，比让他重设一次重得多。
+    savedTargetsByFolder: normalizeSavedTargetsByFolder(input.savedTargetsByFolder),
     direction,
     // 旧数据没有这个字段 → 回落默认值，恰好等于它原来的行为（产出链路里写死的也是 crop-fill）
     fitMode: normalizePostprocessFitMode(input.fitMode),
@@ -425,9 +457,20 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
 
       setSelectedCollectionIds: (ids) => set({ selectedCollectionIds: normalizeStringList(ids) ?? [] }),
 
-      setSavedTargetCollectionIds: (ids) => set({ savedTargetCollectionIds: normalizeStringList(ids) ?? [] }),
+      setSavedTargetsForFolder: (scopeId, ids) =>
+        set((state) => {
+          // 归一化放在这里而不是信任调用方：界面上传进来的是勾选草稿，可能带空串 / 重复项。
+          const next = normalizeStringList(ids) ?? []
+          const key = typeof scopeId === 'string' ? scopeId.trim() : ''
+          // 不在具体文件夹里（全部 / 收藏 / 未整理 / 标签）→ 写兜底那一份
+          if (!key) return { savedTargetCollectionIds: next }
+          const savedTargetsByFolder = { ...state.savedTargetsByFolder }
+          if (next.length > 0) savedTargetsByFolder[key] = next
+          else delete savedTargetsByFolder[key]
+          return { savedTargetsByFolder }
+        }),
 
-      clearSavedTargetCollectionIds: () => set({ savedTargetCollectionIds: [] }),
+      clearSavedTargetsForFolder: (scopeId) => get().setSavedTargetsForFolder(scopeId, []),
 
       toggleSelectedCollection: (collectionId) =>
         set((state) => {
@@ -513,6 +556,7 @@ export const usePostprocessMediaStore = create<PostprocessMediaStore>()(
         // ⚠️ 这是**显式白名单**：新字段忘了加进来 = 点完「记住配置」当场生效、重启就没了，
         // 而界面上不报任何错（`appDataNamespaceContract` 只能守住 namespace，守不住字段）。
         savedTargetCollectionIds: state.savedTargetCollectionIds,
+        savedTargetsByFolder: state.savedTargetsByFolder,
         direction: state.direction,
         fitMode: state.fitMode,
         outputDir: state.outputDir,
@@ -534,6 +578,10 @@ export function getPostprocessMediaConfigSnapshot(state: PostprocessMediaStore):
     selectedMediaIds: [...state.selectedMediaIds],
     selectedCollectionIds: [...state.selectedCollectionIds],
     savedTargetCollectionIds: [...state.savedTargetCollectionIds],
+    // 逐值拷贝：这份 map 会跟着配置快照进产出链路，共享内层数组的话下游一次误改就写回 store
+    savedTargetsByFolder: Object.fromEntries(
+      Object.entries(state.savedTargetsByFolder).map(([key, ids]) => [key, [...ids]]),
+    ),
     direction: state.direction,
     fitMode: state.fitMode,
     outputDir: state.outputDir,

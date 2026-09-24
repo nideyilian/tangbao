@@ -140,6 +140,14 @@ export interface TreeConfigDefaults {
    * 别人导入这份包会**少掉目标**却看不出少在哪 —— 属于 R-63 那一类静默丢配置。
    */
   savedTargetCollectionIds: string[]
+  /**
+   * 按文件夹存的产出目标（键 = 节点 id）。**跟着配置包走**，理由同上。
+   *
+   * 键指向的节点 id 在别的机器上可能对不上（那棵树是另一套 id）：导入后表现为「那份按方向
+   * 细分的清单没跟过来」，而不是产出到错误的方向 —— 取用时查不到就是没设过，
+   * 退回按归属产出（见 `directionTargets.ts`）。这比"猜一个方向折算过去"安全。
+   */
+  savedTargetsByFolder: Record<string, string[]>
 }
 
 /**
@@ -215,6 +223,7 @@ const POSTPROCESS_FIELD_TO_DEFAULTS: Record<keyof PostprocessMediaConfig, keyof 
   selectedMediaIds: 'selectedMediaIds',
   selectedCollectionIds: 'selectedCollectionIds',
   savedTargetCollectionIds: 'savedTargetCollectionIds',
+  savedTargetsByFolder: 'savedTargetsByFolder',
   direction: 'direction',
   fitMode: 'fitMode',
   outputDir: 'outputDir',
@@ -248,6 +257,8 @@ function fromTreeConfigDefaults(defaults: TreeConfigDefaults): PostprocessMediaC
   }
   // 纯新增字段：老包可能缺它 → 空数组 = 按图片归属方向产出（与旧行为一致）
   mapped.savedTargetCollectionIds = defaults.savedTargetCollectionIds ?? []
+  // 同上：老包没有"按文件夹"这一层 → 空表 = 所有方向都按归属产出
+  mapped.savedTargetsByFolder = defaults.savedTargetsByFolder ?? {}
   return mapped as unknown as PostprocessMediaConfig
 }
 

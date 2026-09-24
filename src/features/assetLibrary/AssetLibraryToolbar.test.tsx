@@ -261,4 +261,52 @@ describe('AssetLibraryToolbar', () => {
     expect(done.props.children).toBe('后处理记录')
     expect(done.props.leadingIcon).toBeTruthy()
   })
+
+  /**
+   * 产出目标按钮上的数字 = **当前所在文件夹生效的那一份**（2026-09-24 改）。
+   *
+   * 以前它是全库一个数：在别处设过多少，这一屏也报多少 —— 而实际跑起来用的是当前方向的配置。
+   * 这个数字是跑之前唯一的可见状态（「按归属产出」与「按记住的 3 个方向产出」在跑之前完全
+   * 看不出区别，结果却差好几倍的文件数），所以它必须跟当前上下文一致。
+   */
+  it('⭐ 产出目标按钮的数字跟当前所在文件夹走，不是全库一个数', () => {
+    const direction = (id: string, name: string, order: number) => ({
+      id,
+      name,
+      normalizedName: name.toLowerCase(),
+      parentId: null,
+      order,
+      createdAt: 1,
+      updatedAt: 1,
+      pinned: false,
+    })
+    useAssetLibraryStore.setState({
+      collections: [direction('direction-a', '方向A', 0), direction('direction-b', '方向B', 1)],
+      scope: { kind: 'collection', id: 'direction-a' },
+    })
+    usePostprocessMediaStore.setState({
+      savedTargetsByFolder: {
+        'direction-a': ['direction-a'],
+        'direction-b': ['direction-b', 'direction-a'],
+      },
+    })
+
+    let renderer: ReturnType<typeof create>
+    act(() => {
+      renderer = create(<AssetLibraryToolbar scopeLabel="项目 · 方向A" totalCount={7} />)
+    })
+
+    // 当前在方向A：报 1，而不是全库合计 3 / 别的方向的 2
+    expect(renderer!.root.findByProps({ 'data-testid': 'asset-postprocess-targets' }).props.children).toBe(
+      '产出目标 (1)',
+    )
+
+    // 切到方向B：同一个按钮立刻改口
+    act(() => {
+      useAssetLibraryStore.setState({ scope: { kind: 'collection', id: 'direction-b' } })
+    })
+    expect(renderer!.root.findByProps({ 'data-testid': 'asset-postprocess-targets' }).props.children).toBe(
+      '产出目标 (2)',
+    )
+  })
 })

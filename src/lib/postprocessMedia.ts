@@ -310,8 +310,33 @@ export interface PostprocessMediaConfig {
    * 这个字段回答「**手动**跑这一次产出到哪些」。两者互相独立，判定也分开做：
    * 手动触发不读启用范围（可以跨产品产到一个还没参与自动产出的方向），自动触发不读这个字段
    * （去向仍是图片归属方向），见 `taskPostprocess` 里 `source` 的两处分流。
+   *
+   * ⚠️ **2026-09-24 起它只是"兜底那一份"**，正常路径请用 `savedTargetsByFolder`：
+   * 素材库停在「全部 / 收藏 / 未整理 / 标签」这些**不指向具体文件夹**的地方时，
+   * 「记住配置」写的是这里；执行时只有**没有归属**的图（手工拖入、旧数据）才读它。
+   * 有归属的图一律走 `savedTargetsByFolder`，否则「在某方向设一次、全库都变」的老毛病就回来了。
    */
   savedTargetCollectionIds: string[]
+  /**
+   * 按**素材库当前所在的文件夹**各存一份的产出目标（键 = `AssetCollection.id`，值 = 方向 id 列表）。
+   *
+   * 为什么不再全局一份（2026-09-24 杰哥报障）：他给一条方向设的清单，会让**所有**方向的手动跑
+   * 都照它产出 —— 换个方向干活时，产出目标还是上一个方向那套。这份配置天生属于
+   * 「**这个方向**要投到哪些方向」，不是全库一套。前一轮（09-23）刻意做成全局一份，
+   * 理由是「逐方向各存一份会让'哪个值生效'需要递归推理」；现在改成沿树向上找，
+   * 规则只有一条「自己 → 祖先，最近的一环说了算」，与其它方向级参数（输出目录 / 水印）同源。
+   *
+   * 取用（`features/postprocess/directionTargets.ts` 是唯一实现）：
+   * - 图有归属方向 → 沿「自己 → 祖先」向上找**第一个命中**的键（在「产品」层设的一份，
+   *   能被它下面所有方向继承；越具体越优先）；一个都没命中 → 按归属方向自己产出（老行为）。
+   * - 图没有归属 → 才退回 `savedTargetCollectionIds` 那一份兜底。
+   * - 自动后处理**一概不读**（与 `savedTargetCollectionIds` 同一条边界）。
+   *
+   * 键指向的文件夹**允许已不存在**（文件夹被删）：查不到就是没设过，不在这里剪枝 ——
+   * 剪枝要么读树、要么在删文件夹时联动，前者把配置层变成树的消费者，后者是又一条要维护的写链
+   * （同 `mediaOutputDirs` 的口径：坏键留着不出错）。
+   */
+  savedTargetsByFolder: Record<string, string[]>
   /** 手选方向；null = 按源图尺寸自动判定 */
   direction: OutputDirection | null
   /**
@@ -377,6 +402,7 @@ export const POSTPROCESS_FIELD_GROUP: Record<keyof PostprocessMediaConfig, Postp
   watermarkPresetIds: 'watermarks',
   selectedCollectionIds: 'tree',
   savedTargetCollectionIds: 'tree',
+  savedTargetsByFolder: 'tree',
   outputDir: 'postprocess',
   namePattern: 'postprocess',
   creator: 'postprocess',
@@ -615,10 +641,12 @@ export function applyPostprocessOverride(
     // 本节点不表态就沿用基线上的列表（全局或更浅一层）——`[]` 是有效值，别用 `length` 判
     selectedMediaIds: override.selectedMediaIds ?? base.selectedMediaIds,
     selectedCollectionIds: base.selectedCollectionIds,
-    // 产出目标是**全局一套**：它是「这次产出到哪些方向」的一次性选择（「记住配置」写入），
-    // 逐方向各存一份会让「为什么这张图进了那个目录」需要递归推理。节点层没有覆盖入口，
+    // 产出目标**不参与节点级覆盖**：它的"归属"是素材库当前所在的文件夹（`savedTargetsByFolder`
+    // 的键），与这里的节点覆盖链是两回事 —— 若再开放节点层覆盖，同一张图会同时受
+    // 「归属链上的覆盖」和「文件夹键」两套规则支配，谁说了算就得靠推理了。
     // 但必须在这里显式透传 —— 本函数返回的是白名单对象，漏了就是 `undefined` 往下游走。
     savedTargetCollectionIds: base.savedTargetCollectionIds,
+    savedTargetsByFolder: base.savedTargetsByFolder,
     direction: base.direction,
     // 用 `??` 而不是 `||`：空串是「用默认输出位置」、空数组是「这个渠道不加水印」，都是有效值
     outputDir: perMedia?.outputDir ?? override.outputDir ?? base.outputDir,

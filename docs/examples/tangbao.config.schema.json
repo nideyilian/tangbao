@@ -98,13 +98,19 @@
         "selectedCollectionIds": {
           "type": "array",
           "default": [],
-          "description": "无归属图片的兜底产出目标：只在图片没有任何归属方向（手工拖入 / 旧数据）时才用它。2026-09-23 起它**不再是**「哪些方向参与自动后处理」的白名单（那层已撤）。与 savedTargetCollectionIds 是两件事，别混（一个回答「没归属的图投哪儿」，一个回答「手动这次投哪些」）。",
+          "description": "无归属图片的兜底产出目标：只在图片没有任何归属方向（手工拖入 / 旧数据）时才用它。2026-09-23 起它**不再是**「哪些方向参与自动后处理」的白名单（那层已撤）。与那两份产出目标（savedTargetsByFolder / savedTargetCollectionIds）是两件事，别混。",
           "items": { "type": "string" }
+        },
+        "savedTargetsByFolder": {
+          "type": "object",
+          "default": {},
+          "description": "「记住配置」保存的产出目标，按素材库当时所在的文件夹各存一份：键 = 节点 id，值 = 方向 id 列表（顺序即产出顺序）。取用时沿「归属方向 → 它的祖先」向上找最近的命中（在「产品」层设的一份被其下方向继承，越具体越优先）。只作用于手动触发（素材库点「跑后处理」），自动后处理不读它。",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
         },
         "savedTargetCollectionIds": {
           "type": "array",
           "default": [],
-          "description": "「记住配置」保存的产出目标节点 id，顺序即产出顺序。只作用于手动触发（素材库点「跑后处理」），自动后处理不读它。空数组 = 没记住 → 每张图按自己的归属方向产出（原行为）。",
+          "description": "兜底那一份产出目标：素材库停在「全部素材 / 收藏 / 未整理 / 标签」（不指向具体文件夹）时「记住配置」写这里。⚠️ 只对没有归属的图（手工拖入 / 旧数据）生效，不覆盖任何方向的产出 —— 逐方向的配置在 savedTargetsByFolder。只作用于手动触发，自动后处理不读它。",
           "items": { "type": "string" }
         },
         "direction": {
@@ -279,7 +285,7 @@
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "节点 id。被 selectedCollectionIds / savedTargetCollectionIds / byMedia 之外的引用指向，改它等于改动所有引用。"
+          "description": "节点 id。被 selectedCollectionIds / savedTargetsByFolder 的键与值 / savedTargetCollectionIds 等引用指向（byMedia 引用的是渠道 id，不是节点），改它等于改动所有引用。"
         },
         "name": {
           "type": "string",

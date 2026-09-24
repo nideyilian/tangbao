@@ -78,22 +78,74 @@ describe('画面适配模式（fitMode，全局一套）', () => {
   })
 })
 
-describe('记住的产出目标（savedTargetCollectionIds）', () => {
-  it('默认与旧数据都是空数组 = 按图片归属方向产出（与改动前的行为一致）', () => {
-    expect(createDefaultPostprocessMediaConfig().savedTargetCollectionIds).toEqual([])
-    expect(normalizePostprocessMediaConfig({}).savedTargetCollectionIds).toEqual([])
+describe('产出目标（按文件夹各存一份 + 兜底那一份）', () => {
+  it('默认与旧数据都是空的 = 全部按图片归属方向产出（与改动前的行为一致）', () => {
+    const defaults = createDefaultPostprocessMediaConfig()
+    expect(defaults.savedTargetCollectionIds).toEqual([])
+    expect(defaults.savedTargetsByFolder).toEqual({})
+
+    const migrated = normalizePostprocessMediaConfig({})
+    expect(migrated.savedTargetCollectionIds).toEqual([])
+    expect(migrated.savedTargetsByFolder).toEqual({})
   })
 
-  it('写入 → 快照 → 归一化往返都带得走（等价于「重启之后还在」）', () => {
-    usePostprocessMediaStore.getState().setSavedTargetCollectionIds(['direction-a', 'direction-b'])
-    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
+  it('⭐ 写入 → 快照 → 归一化往返都带得走（等价于「重启之后还在」）', () => {
+    usePostprocessMediaStore.getState().setSavedTargetsForFolder('dir-a', ['direction-b'])
+    expect(usePostprocessMediaStore.getState().savedTargetsByFolder).toEqual({ 'dir-a': ['direction-b'] })
 
     const snapshot = getPostprocessMediaConfigSnapshot(usePostprocessMediaStore.getState())
-    expect(snapshot.savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
-    expect(normalizePostprocessMediaConfig(snapshot).savedTargetCollectionIds).toEqual(['direction-a', 'direction-b'])
+    expect(snapshot.savedTargetsByFolder).toEqual({ 'dir-a': ['direction-b'] })
+    expect(normalizePostprocessMediaConfig(snapshot).savedTargetsByFolder).toEqual({ 'dir-a': ['direction-b'] })
   })
 
-  it('归一化去重、去空、丢非字符串；非数组落回空数组', () => {
+  it('⭐ 两条方向各存一份，互不覆盖（这正是「设一个方向结果全局都变」的修法）', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setSavedTargetsForFolder('dir-a', ['方向X'])
+    store.setSavedTargetsForFolder('dir-b', ['方向Y'])
+    expect(usePostprocessMediaStore.getState().savedTargetsByFolder).toEqual({
+      'dir-a': ['方向X'],
+      'dir-b': ['方向Y'],
+    })
+
+    store.setSavedTargetsForFolder('dir-a', ['方向Z'])
+    expect(usePostprocessMediaStore.getState().savedTargetsByFolder).toEqual({
+      'dir-a': ['方向Z'],
+      'dir-b': ['方向Y'],
+    })
+  })
+
+  it('不在具体文件夹里（scopeId = null）→ 写兜底那一份，不碰任何文件夹的键', () => {
+    usePostprocessMediaStore.getState().setSavedTargetsForFolder(null, ['方向X'])
+
+    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual(['方向X'])
+    expect(usePostprocessMediaStore.getState().savedTargetsByFolder).toEqual({})
+  })
+
+  it('传空数组 = 删掉这一层（而不是留一个空壳）：它回到「按归属产出」', () => {
+    const store = usePostprocessMediaStore.getState()
+    store.setSavedTargetsForFolder('dir-a', ['方向X'])
+    store.clearSavedTargetsForFolder('dir-a')
+    expect(usePostprocessMediaStore.getState().savedTargetsByFolder).toEqual({})
+
+    store.setSavedTargetsForFolder(null, ['方向X'])
+    store.clearSavedTargetsForFolder(null)
+    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([])
+  })
+
+  it('归一化：键与值都过一遍（去空白 / 去重 / 丢非字符串），空列表的键直接丢掉', () => {
+    expect(
+      normalizePostprocessMediaConfig({
+        savedTargetsByFolder: {
+          ' dir-a ': ['a', 'a', '', ' b ', 7],
+          '': ['x'],
+          'dir-c': [],
+          'dir-d': 'not-array',
+        },
+      }).savedTargetsByFolder,
+    ).toEqual({ 'dir-a': ['a', 'b'] })
+  })
+
+  it('兜底那一份的归一化口径不变（去重、去空、丢非字符串）', () => {
     expect(
       normalizePostprocessMediaConfig({ savedTargetCollectionIds: ['a', 'a', '', ' b ', 7] }).savedTargetCollectionIds,
     ).toEqual(['a', 'b'])
@@ -102,18 +154,14 @@ describe('记住的产出目标（savedTargetCollectionIds）', () => {
     ).toEqual([])
   })
 
-  it('clearSavedTargetCollectionIds 回到「按归属方向产出」', () => {
-    usePostprocessMediaStore.getState().setSavedTargetCollectionIds(['direction-a'])
-    usePostprocessMediaStore.getState().clearSavedTargetCollectionIds()
-    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([])
-  })
-
-  it('⭐ 落盘白名单（partialize）带上了这个字段', () => {
+  it('⭐ 落盘白名单（partialize）带上了这两个字段', () => {
     // `partialize` 是**显式白名单**，类型系统管不到它：漏字段 = 点完「记住配置」当场生效、
     // 重启就没了，而界面上不报任何错（`appDataNamespaceContract` 只守 namespace，守不住字段）。
     // 测试环境没有存储后端（node 既无 localStorage 也无 electronAPI），拿不到运行期的白名单结果，
     // 所以照那个契约测试的做法读源码（全字段覆盖见文件末尾的守卫）。
-    expect(readPersistedFields()).toContain('savedTargetCollectionIds')
+    const fields = readPersistedFields()
+    expect(fields).toContain('savedTargetCollectionIds')
+    expect(fields).toContain('savedTargetsByFolder')
   })
 })
 

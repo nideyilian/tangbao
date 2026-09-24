@@ -5801,6 +5801,7 @@ describe('手动后处理入口', () => {
       selectedMediaIds: ['gdt'],
       selectedCollectionIds: [directionA.id, directionB.id],
       savedTargetCollectionIds: [],
+      savedTargetsByFolder: {},
       outputDir: '',
     })
     await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
@@ -5864,6 +5865,7 @@ describe('手动后处理入口', () => {
       selectedMediaIds: ['gdt'],
       selectedCollectionIds: [directionA.id, directionB.id],
       savedTargetCollectionIds: [],
+      savedTargetsByFolder: {},
       outputDir: '',
     })
     await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })
@@ -5915,6 +5917,7 @@ describe('手动后处理入口', () => {
       selectedMediaIds: ['gdt'],
       selectedCollectionIds: [directionA.id, directionB.id],
       savedTargetCollectionIds: [],
+      savedTargetsByFolder: {},
       outputDir: '',
     })
     await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,aaa', width: 1000, height: 1000 })

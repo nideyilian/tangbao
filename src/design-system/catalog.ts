@@ -1044,7 +1044,7 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/postprocess/PostprocessTargetsDialog.tsx',
     responsibility:
-      '产出目标弹窗（「记住配置」的落点）：一棵可展开的项目树（产品线→产品→方向，**跨产品、不受启用范围限制**；勾中间层 = 其下方向一起勾，落盘只有叶子）+ 逐目标估算产出文件数；确认后写入 `savedTargetCollectionIds`，此后**手动**跑批复用它，直到再改（自动后处理不读这份清单）',
+      '产出目标弹窗（「记住配置」的落点）：一棵可展开的项目树（产品线→产品→方向，**跨产品、不受启用范围限制**；勾中间层 = 其下方向一起勾，落盘只有叶子）+ 顶部写明「这份配置归到哪个文件夹」+ 逐目标估算产出文件数；确认后写入 `savedTargetsByFolder[当前文件夹]`（不在具体文件夹里时写兜底的 `savedTargetCollectionIds`），此后**从那条方向手动跑**复用它，直到再改（别的方向不受影响；自动后处理不读这份清单）',
     decision: 'compose',
     targets: ['Dialog', 'Checkbox', 'IconButton', 'Button', 'EmptyState'],
   },

@@ -15,6 +15,8 @@ import AssetGrid from './AssetGrid'
 import AssetListView from './AssetListView'
 import AssetGroupedView from './AssetBatchView'
 import SubfolderStrip from './SubfolderStrip'
+// 范围文案与「产出目标」弹窗共用一份（那段文字要能对上「我刚设的配置落在谁头上」）
+import { formatAssetLibraryScopeLabel } from './scopeLabel'
 import AssetPurgeModal from './AssetPurgeModal'
 import AssetDuplicateModal from './AssetDuplicateModal'
 import { AssetQuickPreview } from './AssetQuickPreview'
@@ -33,31 +35,6 @@ function serializeScope(scope: AssetLibraryScope): string {
   // 兼容历史智能文件夹：旧数据可能保存了 tag 范围，仅保留序列化能力（界面已无标签入口）
   if (typeof scope === 'object') return scope.kind === 'collection' ? `collection:${scope.id}` : `tag:${scope.id}`
   return scope
-}
-
-function scopeLabel(
-  scope: AssetLibraryScope,
-  collectionNames: ReadonlyMap<string, string>,
-  tagNames: ReadonlyMap<string, string>,
-): string {
-  if (typeof scope === 'object') {
-    if (scope.kind === 'collection') return `项目 · ${collectionNames.get(scope.id) ?? '未命名'}`
-    return `标签 · ${tagNames.get(scope.id) ?? '未命名'}`
-  }
-  switch (scope) {
-    case 'all':
-      return '全部素材'
-    case 'recent':
-      return '最近生成'
-    case 'favorites':
-      return '收藏'
-    case 'unorganized':
-      return '未整理'
-    case 'trash':
-      return '回收站'
-    default:
-      return '素材库'
-  }
 }
 
 function AssetLibraryWorkspaceInner() {
@@ -801,7 +778,7 @@ function AssetLibraryWorkspaceInner() {
                   ? `收藏夹 · ${favoriteCollectionName ?? '收藏'}`
                   : filters.tagIds && filters.tagIds.length > 0
                     ? `标签 · ${filters.tagIds.map((id) => tagNames.get(id) ?? '未命名').join(' + ')}`
-                    : scopeLabel(scope, collectionNames, tagNames)
+                    : formatAssetLibraryScopeLabel(scope, collectionNames, tagNames)
             }
             totalCount={inFavoritesOverview ? favoriteCollections.length : effectiveResult.totalCount}
             visibleCount={inFavoritesOverview ? favoriteCollections.length : effectiveResult.assets.length}

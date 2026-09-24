@@ -8,9 +8,12 @@
  *
  * 2026-09-22 起这个弹窗是**树**（跨产品线 / 跨产品可勾），且**不再只列启用范围内的方向**：
  * 启用范围管的是自动后处理，手动跑那一次由用户直接决定（杰哥：「我需要跨产品」）。
- * 于是这里守住两件容易悄悄回退的事：
- * ① 别的产品线下的方向**照样出现**（别又被人按启用范围过滤回去）；
- * ② 勾中间层 = 其下方向一起勾，但**落盘只有叶子**（命名段 `{direction}` 取路径末段）。
+ *
+ * 2026-09-24 起这份配置**按素材库当前所在的文件夹各存一份**（`savedTargetsByFolder`），
+ * 于是这里还要守住三件容易悄悄回退的事：
+ * ① 写进的是**当前文件夹那个键**（不是全库一份）；
+ * ② 换一条方向再设 → 是**另外一份**，前一份一个字节不动；
+ * ③ 带入的勾选是**当前生效**的那份（本层没设、上层设过时 = 继承来的），保存才写在当前层。
  *
  * 弹窗挂在 Dialog 上（portal 到 body），所以断言走 `document.body`。
  */
@@ -69,6 +72,16 @@ function buttonByText(text: string): HTMLButtonElement | undefined {
   return [...document.body.querySelectorAll('button')].find((button) => button.textContent?.trim() === text)
 }
 
+/** 素材库当前停在哪个文件夹 —— 这份配置的归属键就是它（`null` = 兜底那一份）。 */
+function setScopeTo(folderId: string | null) {
+  useAssetLibraryStore.setState({ scope: folderId ? { kind: 'collection', id: folderId } : 'all' })
+}
+
+/** 当前按文件夹存的那份（用例里断言用，等价于「重启后还在什么」）。 */
+function savedByFolder(): Record<string, string[]> {
+  return usePostprocessMediaStore.getState().savedTargetsByFolder
+}
+
 function render(onClose: () => void = () => {}) {
   act(() => {
     root = createRoot(container)
@@ -80,6 +93,8 @@ beforeEach(() => {
   useAssetLibraryStore.setState({
     collections: [LINE, PRODUCT, DIRECTION_A, DIRECTION_B, DIRECTION_C, LINE_B, PRODUCT_B, DIRECTION_D],
   })
+  // 默认停在「月亮」这条方向上：产出目标归到它
+  setScopeTo(DIRECTION_A.id)
   usePostprocessMediaStore.setState({
     ...createDefaultPostprocessMediaConfig(),
     // 零渠道零产出：这几条只关心「选了哪些方向、有没有写进 store」
@@ -87,6 +102,7 @@ beforeEach(() => {
     // 只启用医疗线下的 A、B —— 工具线整条都在范围外
     selectedCollectionIds: [DIRECTION_A.id, DIRECTION_B.id],
     savedTargetCollectionIds: [],
+    savedTargetsByFolder: {},
   })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -113,7 +129,13 @@ describe('PostprocessTargetsDialog', () => {
     expect(text).not.toContain('未启用')
   })
 
-  it('⭐ 勾中间层 = 其下方向一起勾，但落盘只有叶子', () => {
+  it('⭐ 界面上要写清这份配置归到哪个文件夹（上一版就是这里说不清才出的报障）', () => {
+    render()
+
+    expect(document.body.textContent ?? '').toContain('医疗线 / 百万医疗险 / 月亮')
+  })
+
+  it('⭐ 勾中间层 = 其下方向一起勾，但落盘只有叶子，且写进当前文件夹那个键', () => {
     render()
 
     act(() => checkboxByLabel('百万医疗险').click())
@@ -125,11 +147,9 @@ describe('PostprocessTargetsDialog', () => {
 
     act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="postprocess-targets-save"]')!.click())
 
-    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([
-      DIRECTION_A.id,
-      DIRECTION_B.id,
-      DIRECTION_C.id,
-    ])
+    expect(savedByFolder()).toEqual({
+      [DIRECTION_A.id]: [DIRECTION_A.id, DIRECTION_B.id, DIRECTION_C.id],
+    })
   })
 
   it('⭐ 跨产品多选：两个产品线下的方向能一起记住', () => {
@@ -139,11 +159,64 @@ describe('PostprocessTargetsDialog', () => {
     act(() => checkboxByLabel('清爽').click())
     act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="postprocess-targets-save"]')!.click())
 
-    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([DIRECTION_B.id, DIRECTION_D.id])
+    expect(savedByFolder()).toEqual({ [DIRECTION_A.id]: [DIRECTION_B.id, DIRECTION_D.id] })
+  })
+
+  it('⭐ 换一条方向再设 → 是另一份，前一份一个字节不动', () => {
+    // 先在「月亮」上设一份
+    render()
+    act(() => checkboxByLabel('图标').click())
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="postprocess-targets-save"]')!.click())
+    expect(savedByFolder()).toEqual({ [DIRECTION_A.id]: [DIRECTION_B.id] })
+
+    // 关掉弹窗，换到「清爽」那条方向再设一份
+    act(() => root.unmount())
+    setScopeTo(DIRECTION_D.id)
+    render()
+    act(() => checkboxByLabel('月亮').click())
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="postprocess-targets-save"]')!.click())
+
+    expect(savedByFolder()).toEqual({
+      [DIRECTION_A.id]: [DIRECTION_B.id],
+      [DIRECTION_D.id]: [DIRECTION_A.id],
+    })
+  })
+
+  it('⭐ 停在「全部素材」这类地方 → 写兜底那一份，不碰任何文件夹的键', () => {
+    act(() => root?.unmount())
+    setScopeTo(null)
+    render()
+
+    act(() => checkboxByLabel('图标').click())
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="postprocess-targets-save"]')!.click())
+
+    expect(savedByFolder()).toEqual({})
+    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([DIRECTION_B.id])
+  })
+
+  it('⭐ 自己没设、上层设过 → 带入的是继承来的那份，保存后写在自己这层', () => {
+    // 在产品（百万医疗险）层设过：月亮自己没设
+    usePostprocessMediaStore.setState({ savedTargetsByFolder: { [PRODUCT.id]: [DIRECTION_B.id] } })
+    render()
+
+    // ① 带入的是生效值（继承来的「图标」），而不是空勾选
+    expect(checkboxByLabel('图标').checked).toBe(true)
+    expect(checkboxByLabel('月亮').checked).toBe(false)
+    // ② 界面上要说清这是继承来的
+    expect(document.body.textContent ?? '').toContain('继承自')
+
+    act(() => checkboxByLabel('月亮').click())
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="postprocess-targets-save"]')!.click())
+
+    // ③ 写在自己的键上（产品层那份仍在，没被改）
+    expect(savedByFolder()).toEqual({
+      [PRODUCT.id]: [DIRECTION_B.id],
+      [DIRECTION_A.id]: [DIRECTION_B.id, DIRECTION_A.id],
+    })
   })
 
   it('已记住时带入勾选，且中间层显示部分选中（indeterminate）', () => {
-    usePostprocessMediaStore.setState({ savedTargetCollectionIds: [DIRECTION_A.id] })
+    usePostprocessMediaStore.setState({ savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_A.id] } })
     render()
 
     expect(checkboxByLabel('月亮').checked).toBe(true)
@@ -163,12 +236,20 @@ describe('PostprocessTargetsDialog', () => {
     expect(checkboxByLabel('月亮')).toBeTruthy()
   })
 
-  it('已记住时「恢复按归属」能把目标清空', () => {
-    usePostprocessMediaStore.setState({ savedTargetCollectionIds: [DIRECTION_A.id] })
+  it('已记住时「恢复按归属」能把当前文件夹那份清掉', () => {
+    usePostprocessMediaStore.setState({ savedTargetsByFolder: { [DIRECTION_A.id]: [DIRECTION_A.id] } })
     render()
 
     act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="postprocess-targets-reset"]')!.click())
-    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([])
+
+    expect(savedByFolder()).toEqual({})
+  })
+
+  it('「恢复按归属」按钮只在**本层**写过时出现（继承来的那份不归这里清）', () => {
+    usePostprocessMediaStore.setState({ savedTargetsByFolder: { [PRODUCT.id]: [DIRECTION_B.id] } })
+    render()
+
+    expect(document.body.querySelector('[data-testid="postprocess-targets-reset"]')).toBeNull()
   })
 
   it('勾了但点「取消」→ 一个字节都不写盘（草稿语义）', () => {
@@ -180,7 +261,7 @@ describe('PostprocessTargetsDialog', () => {
     act(() => checkboxByLabel('月亮').click())
     act(() => buttonByText('取消')!.click())
 
-    expect(usePostprocessMediaStore.getState().savedTargetCollectionIds).toEqual([])
+    expect(savedByFolder()).toEqual({})
     expect(closed).toBe(1)
   })
 

@@ -1305,6 +1305,8 @@ async function executePostprocessImageIds(
     ownership,
     source: options.source,
     config,
+    // 必须传：产出目标按文件夹存，取用要沿归属方向向上找（少传一处 = 在「产品」层设的那份失效）
+    collections,
   })) {
     // 同一方向已经有在飞的一条 → 跳过这次：用户要的是「别的方向能同时用」，
     // 同一方向重复触发本来就是误操作，而且两条会争同一批输出目录与文件名序号。

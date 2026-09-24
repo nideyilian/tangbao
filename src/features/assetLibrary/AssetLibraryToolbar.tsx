@@ -49,7 +49,7 @@ import {
   isRunInFlight,
 } from '../postprocess/postprocessRun'
 import { POSTPROCESS_STAGE_LABELS } from '../postprocess/postprocessIssue'
-import { collectTargetDirectionIdsFromOwnership } from '../postprocess/directionTargets'
+import { collectTargetDirectionIdsFromOwnership, resolveEffectiveSavedTargets } from '../postprocess/directionTargets'
 import { pickDeepestCollectionId } from '../projectTree/params'
 import PostprocessRunsDialog from '../postprocess/PostprocessRunsDialog'
 import PostprocessTargetsDialog from '../postprocess/PostprocessTargetsDialog'
@@ -881,9 +881,29 @@ function FavoriteToggleButton() {
  * 结果却差好几倍的文件数 —— 这个数字就是跑之前唯一的可见状态。
  */
 function PostprocessTargetsEntryButton() {
-  const savedCount = usePostprocessMediaStore((s) => s.savedTargetCollectionIds.length)
+  const scope = useAssetLibraryStore((s) => s.scope)
+  const collections = useAssetLibraryStore((s) => s.collections)
+  const savedTargetCollectionIds = usePostprocessMediaStore((s) => s.savedTargetCollectionIds)
+  const savedTargetsByFolder = usePostprocessMediaStore((s) => s.savedTargetsByFolder)
   const selectedAssetCount = useAssetLibraryStore((s) => s.selectedAssetIds.length)
   const [open, setOpen] = useState(false)
+
+  const scopeFolderId = typeof scope === 'object' && scope.kind === 'collection' ? scope.id : null
+
+  /**
+   * 数字 = **当前范围生效的那一份**有几个方向（不再是一个全库共用的数）。
+   *
+   * 取用与执行体共用 `resolveEffectiveSavedTargets`：这里独立算一遍的话，会出现
+   * 「按钮写着 3 个、跑起来只产出到 1 个」—— 而这个偏差只能靠产出结果发现。
+   * 说「当前范围」而不是「当前文件夹」：停在「全部素材 / 收藏」这类地方时它算的是兜底那一份。
+   */
+  const savedCount = useMemo(
+    () =>
+      scopeFolderId
+        ? resolveEffectiveSavedTargets({ savedTargetsByFolder }, scopeFolderId, collections).ids.length
+        : savedTargetCollectionIds.length,
+    [scopeFolderId, savedTargetsByFolder, collections, savedTargetCollectionIds],
+  )
 
   return (
     <>
@@ -893,8 +913,8 @@ function PostprocessTargetsEntryButton() {
         data-testid="asset-postprocess-targets"
         title={
           savedCount > 0
-            ? `已记住 ${savedCount} 个产出方向：手动跑后处理按这份清单产出，点这里改`
-            : '选择手动跑后处理要产出到哪些方向（跨产品线可选），选完点「记住配置」长期复用'
+            ? `当前范围已记住 ${savedCount} 个产出方向：从这里手动跑后处理按它产出，点这里改`
+            : '选择手动跑后处理要产出到哪些方向（跨产品线可选），选完点「记住配置」，存在当前所在的文件夹上'
         }
         onClick={() => setOpen(true)}
       >
@@ -926,6 +946,7 @@ function ManualPostprocessButton() {
   const collections = useAssetLibraryStore((s) => s.collections)
   const showToast = useStore((state) => state.showToast)
   const savedTargetCollectionIds = usePostprocessMediaStore((s) => s.savedTargetCollectionIds)
+  const savedTargetsByFolder = usePostprocessMediaStore((s) => s.savedTargetsByFolder)
   const selectedCollectionIds = usePostprocessMediaStore((s) => s.selectedCollectionIds)
 
   /**
@@ -942,9 +963,11 @@ function ManualPostprocessButton() {
           return asset ? pickDeepestCollectionId(collections, asset.collectionIds) : null
         }),
         'manual',
-        { savedTargetCollectionIds, selectedCollectionIds },
+        { savedTargetCollectionIds, savedTargetsByFolder, selectedCollectionIds },
+        // 产出目标按文件夹存，判定要沿归属方向向上找 —— 漏传这棵树会让「在产品层设的那份」失效
+        collections,
       ),
-    [selectedAssetIds, assetsById, collections, savedTargetCollectionIds, selectedCollectionIds],
+    [selectedAssetIds, assetsById, collections, savedTargetCollectionIds, savedTargetsByFolder, selectedCollectionIds],
   )
   /**
    * **按方向判加载态**（2026-09-23 改）：原先看的是「有没有后处理在跑」这个全局事实，

@@ -183,15 +183,16 @@ config.json
 | -------------------------- | ---------- | ---- | ----------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
 | `selectedCollectionIds`    | `string[]` | —    | `[]`        | **无归属的图投到哪**     | 仅兜底：图片**没有归属方向**（手工拖入 / 旧数据）时才用它。                                          |
 | `selectedMediaIds`         | `string[]` | —    | `["clean"]` | **默认投哪些渠道**       | 这里的渠道才产出。不含 `clean` 就没有纯净版。                                                        |
-| `savedTargetCollectionIds` | `string[]` | —    | `[]`        | **手动跑这次投哪些**     | 「记住配置」存的产出目标，顺序即产出顺序。**只作用于手动触发**；**`[]` = 没记住** → 每张图按自己的归属方向产出（原行为）。 |
+| `savedTargetsByFolder`     | `Record<string, string[]>` | —    | `{}`        | **手动跑这次投哪些**（按方向各一份） | 「记住配置」存的产出目标，键 = 素材库当时所在的文件夹（节点 id），值 = 方向 id 列表，顺序即产出顺序。取用时沿「归属方向 → 祖先」向上找最近的命中（在「产品」层设的一份会被其下所有方向继承，越具体越优先）。**只作用于手动触发**。 |
+| `savedTargetCollectionIds` | `string[]` | —    | `[]`        | **没有归属的图投哪些**（兜底） | 素材库停在「全部素材 / 收藏 / 未整理 / 标签」时「记住配置」写这里。⚠️ **只对没有归属的图生效**，不覆盖任何方向的产出。 |
 
 > **产出目标按触发来源分流**（`taskPostprocess.ts`，判定按 `source` 分开做）：
 >
-> - **自动触发**：去向 = **图片归属方向**；**不读** `savedTargetCollectionIds`。
+> - **自动触发**：去向 = **图片归属方向**；上面两份产出目标都**不读**。
 >   整个后台跑不跑由设置里的「生成完自动跑后处理」决定（`AppSettings.autoPostprocess`，**默认关**）；
 >   某个方向要不要变体由它自己的「自动后处理」开关决定（默认开）。
-> - **手动触发**（素材库点「跑后处理」）：读 `savedTargetCollectionIds`，可以跨产品 / 跨方向选择；
->   既不受总开关限制、也不受方向级开关限制。
+> - **手动触发**（素材库点「跑后处理」）：读 `savedTargetsByFolder`（沿每张图的归属方向向上找最近的
+>   命中；一份都没设过才按归属方向），可以跨产品 / 跨方向选择；既不受总开关限制、也不受方向级开关限制。
 >
 > ⚠️ **2026-09-23 撤掉了「启用范围」这一层**：`selectedCollectionIds` 原先还被当作
 > 「哪些方向参与自动后处理」的白名单（提示码 `PP-SCOPE-001`，空 = 一个都不跑）。
@@ -342,6 +343,7 @@ defaults（全局默认）
 | `selectedMediaIds`         | 继承上一层             | `[]` = **一个渠道都不投**                  |
 | `outputDir`                | 继承上一层             | `""` = 用默认输出位置（≈ 没写）            |
 | `mediaOutputDirs[渠道]`    | 继承（用 `outputDir`） | `[]` = 该渠道用 `outputDir`                |
+| `savedTargetsByFolder`     | 用默认值 `{}`          | `{}` = 一份都没设过 → 按图片归属方向产出；某个键的值写成 `[]` 会在归一化时被丢掉（与「没设过」等价） |
 | `savedTargetCollectionIds` | 用默认值 `[]`          | `[]` = 没记住 → 按图片归属方向产出         |
 | `channels`                 | 用内置渠道表           | `[]` = **真的没有渠道**（不复活内置表）    |
 | `namePattern`              | 用默认模板             | `""` / 空白 = 回落默认模板（不是空文件名） |
@@ -394,7 +396,8 @@ defaults（全局默认）
 
     "selectedMediaIds": ["gdt"], // 参与产出的渠道（历史的 "clean" 已随 ADR-0020 移除）
     "selectedCollectionIds": ["line-home", "prod-vacuum", "dir-moon"],
-    "savedTargetCollectionIds": ["dir-moon", "dir-sun"],
+    "savedTargetsByFolder": { "dir-moon": ["dir-moon", "dir-sun"] }, // 在「月亮」这条方向下设的手动产出目标
+    "savedTargetCollectionIds": [], // 兜底那一份：只对没有归属的图生效
 
     "direction": null, // 按源图尺寸自动判定
     "fitMode": "crop-fill",
@@ -696,7 +699,7 @@ LOGO **一导入就立刻落库** —— `importLogoFiles`（`PresetManagementTa
 | ------------- | ------------------------------------------------------- | ------------------------------------ |
 | `channels`    | 渠道字典、`mediaOutputDirs`、`selectedMediaIds`         | 都引用**渠道 id**                    |
 | `watermarks`  | `watermarkPresetIds`                                    | 引用**水印预设 id**，要跟水印库同进同退 |
-| `tree`        | `selectedCollectionIds`、`savedTargetCollectionIds`     | 引用**节点 id**                      |
+| `tree`        | `selectedCollectionIds`、`savedTargetCollectionIds`、`savedTargetsByFolder` | 引用**节点 id**（含"以节点 id 为键"的表） |
 | `postprocess` | 输出位置、命名、画面、分发                              | 不引用任何东西，可以独立覆盖          |
 
 合并本身是纯函数 `applyPostprocessScope`（在 `src/lib/treeConfigBundle.ts`，无副作用、好测）。
