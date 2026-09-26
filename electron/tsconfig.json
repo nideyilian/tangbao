@@ -33,6 +33,10 @@
     "library-integrity.ts",
     "project-tree-export.ts",
     "image-folder-export.ts",
+    "image-video/engine-path.ts",
+    "image-video/engine-bridge.ts",
+    "image-video/engine-manager.ts",
+    "image-video/engine-ipc.ts",
     "node-sqlite.d.ts"
   ]
 }

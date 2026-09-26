@@ -31,6 +31,7 @@
 | TB-130 | 导出位置开关：位置配置保留、临时不写（可逐处停用）          | DONE  | 主写线 | 2026-09-24 |
 | TB-132 | 「全选全部结果」去掉 200 条页大小夹住 + 游标不推进即收手        | DONE  | 主写线 | 2026-09-24 |
 | TB-133 | 图片模式删图后残留空壳卡：分页快照把「已删」当「窗口外素材」      | DONE  | 主写线 | 2026-09-24 |
+| TB-135 | 图转视频：嵌入本地引擎 + 中控台「视频」分区 + 导出后自动出视频    | DONE  | 主写线 | 2026-09-26 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -6355,3 +6356,77 @@ trashed），得再进回收站点一次「永久删除」才是真删。用户�
      落盘反而会跨重启误伤素材（已用 persist 边界用例钉住）。
   3. 其它「绕过 `removeAssetLocal` 把素材移出内存」的路径不会进墓碑；grep 下来当前只有
      `purgeGeneratedAssets` 尾部这一处调用，若将来新增第二条删除路径，需一并走它。
+
+---
+
+## TB-135 图转视频：嵌入本地引擎 + 中控台「视频」分区 + 导出后自动出视频（2026-09-26 阿伟）
+
+**需求（杰哥原话，2026-09-26）**
+
+> D:\AAA\image-to-video，我要把这个程序嵌入当前项目，用于在导出图片后再用导出的图片进行图转视频，
+> 同样要在表格可以填参数和设置，依旧以树为准，你分析够给我一个方案。
+
+**三条当场定的口径**（杰哥选定）
+
+1. **输入源** = 中控台产出的导出目录（不是素材库手动导出、也不是「按项目树导出原图副本」）；
+2. **触发** = 导出完自动接着跑（默认关，树上按方向开）；
+3. **体积** = 引擎随包分发。
+
+**做了什么**（决策与理由见 [ADR-0023](adr/0023-embed-image-video-engine.md)；坑见 R-108 / R-109）
+
+1. **引擎接入**（`electron/image-video/`，4 个模块）：`engine-path.ts` 定位 exe（环境变量覆盖 /
+   打包态 `resourcesPath/image-engine/` / 开发态仓库 `resources/`）；`engine-bridge.ts` 管进程与
+   NDJSON 协议（按行分帧、请求配对、事件订阅、超时策略分开：普通调用 20s、启动 120s、
+   `start_job` 60s）；`engine-manager.ts` 单例 + 常驻 + 环境探测；`engine-ipc.ts` 白名单 IPC。
+   **收工走 `taskkill /T /F` 整棵树**（引擎会 spawn 自己当渲染 worker），
+   `before-quit` 优雅关闭 + `will-quit` 同步兜底。
+2. **引擎不进 git、构建时取件**：111,487,840 字节（106.3 MiB）**超 GitHub 单文件 100 MiB 上限**。
+   新增 `scripts/fetch-image-engine.mjs`（本机源 → `TANGBAO_ENGINE_SOURCE` → `TANGBAO_ENGINE_URL`），
+   `electron-builder.cjs` 加 `extraResources` + `beforePack` **缺文件即让构建失败**；
+   `electron:build` / `release` / `electron:preview` 三条脚本都已串上取件。
+3. **ffmpeg 不用额外捆**：引擎内部 `imageio_ffmpeg` 自带一份 7.1。本机把 PATH 清空实测会回退到它
+   （`ffmpeg_available: true`）。但查找顺序是**先 PATH 后自带**，所以界面把「实际用的是哪一份」
+   显示出来（路径 + 版本）—— 否则老 ffmpeg 顶掉时用户拿不到任何线索。
+4. **参数层**（`src/features/imageVideo/`）：`types.ts`（转场 33 项 / 效果 39 项 / 分辨率 7 档，
+   名单照抄引擎，不自己编）、`params.ts`（两套归一化 + 继承解析 + 引擎配置映射 + 就近输出目录）、
+   `store.ts`（全局基线，namespace `imageVideo` 已登记白名单）。
+   节点覆盖挂进**既有**的 `useProjectTreeParamsStore`（`ProjectNodeParams.imageVideo`）。
+5. **中控台第三个分区「视频」**（`ImageVideoSection.tsx`）：一行一个方向，第一行是全局基线；
+   14 列（出视频三态 / 图片数 / 每图秒数 / 总时长 / 视频数 / 分辨率 / 帧率 / 转场 / 画面效果 /
+   强度 / 码率 / 前缀 / 输出位置）。**留空 = 向上继承**，占位文字写出「跟随：6」这样的具体值。
+   转场与画面效果各是一列下拉（`不用` / `随机` / 具体某一种），不是模式+样式两列。
+6. **手动生成**（`runVideo.ts`）：先 `scan_images` 数图（0 张直接报「目录里没有图片」，
+   不让引擎白起任务）→ `start_job` → 等 `job.finished`（**不认 `job.done`**：worker 崩了就永远等下去）
+   → 进度/取消；输出写在图片目录同级的 `<目录名>-视频`。
+7. **自动出视频**（`autoTrigger.ts` + `store.ts` 方向级收尾处）：条件 = 该方向开着开关 **且本次真有产出**；
+   **串行队列**（多方向不一起涌进来占满 CPU）；fire-and-forget（视频失败不该让后处理显示成失败）。
+   挂在**产出之后、分发之前** —— 分发会把产出文件夹按排期日搬走，搬完一个视频没法跨那么多目录取图。
+
+**验收证据**
+
+已验：
+
+- 单测 **35 条**新增且全绿：`params.test.ts` 26 条（继承链 / 空值语义 / 越界钳制 / 名单校验 /
+  三态映射到引擎两布尔 / 就近输出目录）+ `autoTrigger.test.ts` 9 条（零产出不触发 / 按方向筛目录 /
+  反斜杠路径 / 不混别的方向）。
+- 既有测试同步更新 **3 处**（都是「注册表加了东西、断言没跟上」）：
+  `controlConsoleSections.test.ts` 分区表、`CompositeWorkspace.test.tsx` 的 mock 与期望表、
+  `appDataNamespaceContract.test.ts` 要求白名单登记（`asset-kernel.ts` 已加 `imageVideo`）。
+- 引擎协议**实测**：`printf '{"id":"1","method":"system_snapshot","params":{}}' | image-to-video-engine.exe`
+  → 正常返回 `engine.ready` 事件 + 响应（Electron spawn 无阻碍）。
+- ffmpeg 回退**实测**：`PATH=/c/Windows/System32` 跑同一个探针 → `ffmpeg_path` 指向
+  `%TEMP%\_MEIxxxx\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe`。
+- `npm run verify` 全绿（tsc 双端 + lint + format:check + 全量测试）。
+
+**待实测（需杰哥过目）**
+
+1. **端到端出片**：dev 里对某个方向真实跑一次生成视频（本机无法做渲染 / 进程可视化验证）。
+2. **表格观感**：14 列偏宽，横向滚动 + 首列冻结；要改列取舍请说。
+3. **安装包体积**：预计 215–225MB（现 125.9MB），实测要在下一次打包时确认。
+
+**未做（后续，见 ADR-0023 末节）**
+
+- Excel 往返多带一张「视频」表；表格内单帧效果预览（引擎有 `preview_effect_frame`）；
+  视频播放预览（要动 CSP 的 `media-src` + 导出目录授权）；成片命名与糖包命名模板统一。
+- **CI 取件**：`release.yml` 尚未接引擎来源 —— 本地三条脚本都串好了，CI 需要配
+  `TANGBAO_ENGINE_URL`（或先把引擎作为一个 release asset 放好）。**发布前必须补**。

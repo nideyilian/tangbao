@@ -177,10 +177,17 @@ import { listAssets, upsertFromTask } from './lib/assetLibraryRepository'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
 import {
   pickDeepestCollectionId,
+  resolveProjectImageVideoParams,
   resolveProjectNodeIdChain,
   resolveProjectNodeKind,
 } from './features/projectTree/params'
 import { useProjectTreeParamsStore } from './features/projectTree/storeProjectTreeParams'
+import { useImageVideoStore } from './features/imageVideo/store'
+import {
+  enqueueAutoImageVideo,
+  resolveAutoImageVideoDirs,
+  shouldAutoRunImageVideo,
+} from './features/imageVideo/autoTrigger'
 import { isScrollActive } from './lib/scrollActivity'
 import { buildLocalImageUrl, isLocalImageUrl, localImageUrlToDataUrl } from './lib/localImageUrl'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
@@ -1460,6 +1467,35 @@ async function executePostprocessImageIds(
         targetDirectionIds: [directionId],
         outputDirs: result.outputDirs,
       })
+      /**
+       * 自动出视频：这个方向开着视频开关时，产出完就接着跑一遍。
+       *
+       * 挂在**这里**而不是分发之后：分发会把产出文件夹按排期日搬走（
+       * `lib/postprocessDistribution.ts`），搬完之后「这个方向的一批图」就散在好几个
+       * 日期目录里，而一个视频没法跨那么多目录取图。所以必须趁图还聚在一起时跑。
+       *
+       * fire-and-forget：视频渲染要几分钟，绝不能拖住后处理收尾；两件事的成败也必须分开
+       * —— 视频失败不该让后处理显示成失败。异常只走提示（见 `autoTrigger.ts`）。
+       */
+      const autoImageVideoParams = readOrNull(() =>
+        resolveProjectImageVideoParams(
+          collections,
+          useProjectTreeParamsStore.getState().params,
+          directionId,
+          useImageVideoStore.getState().globals,
+        ),
+      )
+      if (autoImageVideoParams && shouldAutoRunImageVideo(autoImageVideoParams, result.outputs.length)) {
+        const autoDirs = resolveAutoImageVideoDirs(result.outputs, directionId)
+        if (autoDirs.length > 0) {
+          enqueueAutoImageVideo({
+            directionLabel,
+            params: autoImageVideoParams,
+            dirs: autoDirs,
+            onNotice: (notice) => useStore.getState().showToast(notice.message, notice.level),
+          })
+        }
+      }
       return result
     } catch (error) {
       /**

@@ -23,6 +23,9 @@ vi.mock('./components/ChannelSection', () => ({
 vi.mock('./components/PresetManagementTab', () => ({
   PresetManagementTab: () => <div>editor-screen</div>,
 }))
+vi.mock('../imageVideo/ImageVideoSection', () => ({
+  ImageVideoSection: () => <div>video-screen</div>,
+}))
 
 /** 递归收集 props.children 里的全部文本（children 可能是字符串 / 单元素 / 数组） */
 function collectText(children: unknown): string {
@@ -116,11 +119,13 @@ describe('CompositeWorkspace', () => {
       renderer = create(<CompositeWorkspace />)
     })
 
-    // 2026-09-22 起右区只剩两个分区：「输出位置」并入「渠道与尺寸」（合称「渠道与输出」），
+    // 2026-09-22 起右区并入过两个分区：「输出位置」并入「渠道与尺寸」（合称「渠道与输出」），
     // 所以别指望还有它们的占位 —— 合并前那两个 id 现在都由别名收敛到 `channel`。
+    // 2026-09-26 新增「视频」分区（图转视频），它有自己的一段渲染分支。
     const expectations: Record<string, string> = {
       watermark: 'editor-screen',
       channel: 'channel-screen',
+      video: 'video-screen',
     }
     // 注册表里的每个分区都要真的能切过去 —— 加了分区却忘了接线是这类注册表最常见的失效
     for (const section of CONTROL_CONSOLE_SECTIONS) {

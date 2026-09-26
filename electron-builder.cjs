@@ -9,9 +9,34 @@
  *   无法验证发布者身份——正式分发前请配置代码签名证书。
  */
 const https = require('https')
+const fs = require('fs')
+const path = require('path')
 
 const PUBLISH_OWNER = 'nideyilian'
 const PUBLISH_REPO = 'tangbao'
+
+/**
+ * 图转视频引擎的最小体积：与 `scripts/fetch-image-engine.mjs` 的下限同一个数。
+ *
+ * 打包前必须验一道 —— 缺引擎的包能装、能开、能生图，**只有在跑视频时才炸**，
+ * 而那时用户看到的是「引擎异常退出」，排查要从安装目录翻起。宁可在构建时就红。
+ */
+const MIN_ENGINE_BYTES = 80 * 1024 * 1024
+const ENGINE_EXE = path.join(__dirname, 'resources/image-engine/image-to-video-engine.exe')
+
+function assertImageEnginePresent() {
+  if (!fs.existsSync(ENGINE_EXE)) {
+    throw new Error(
+      `[engine] 缺少图转视频引擎：${ENGINE_EXE}\n` +
+        '  先跑 `npm run engine:fetch`（脚本会按本机源 / TANGBAO_ENGINE_SOURCE / TANGBAO_ENGINE_URL 取件）',
+    )
+  }
+  const size = fs.statSync(ENGINE_EXE).size
+  if (size < MIN_ENGINE_BYTES) {
+    throw new Error(`[engine] 引擎文件只有 ${(size / 1048576).toFixed(1)} MB，疑似半截文件：${ENGINE_EXE}`)
+  }
+  return size
+}
 
 /**
  * 发布前预建 GitHub release，消除 electron-builder 的发布竞态。
@@ -103,6 +128,16 @@ module.exports = {
   },
   icon: 'public/icon.ico',
   files: ['dist/**/*', 'dist-electron/**/*'],
+  /**
+   * 图转视频引擎随包分发，但**不进 asar** —— 它是独立可执行文件，要能被 spawn 起来。
+   * 落到 `process.resourcesPath/image-engine/`（`electron/image-video/engine-path.ts` 按这个约定找它）。
+   */
+  extraResources: [{ from: 'resources/image-engine', to: 'image-engine' }],
+  // 打包前确认引擎在位（缺了就红，不让一个跑不了视频的包流出去）
+  beforePack() {
+    const size = assertImageEnginePresent()
+    console.log(`[engine] 随包分发引擎：${(size / 1048576).toFixed(1)} MB`)
+  },
   // 在 afterPack 阶段由 electron-builder 翻转 fuses，确保发生在签名和制作安装包之前。
   electronFuses: {
     runAsNode: false,

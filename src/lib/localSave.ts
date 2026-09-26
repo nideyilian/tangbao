@@ -15,6 +15,11 @@ import type {
 import { sanitizeGeneratedImageFilenamePart } from './generatedImageFilename'
 import { decodeDataUrlToBytes } from './imageFingerprint'
 import { escapeRegExp } from './escapeRegExp'
+import type {
+  ImageVideoCallResult,
+  ImageVideoEngineSnapshot,
+  ImageVideoEngineStatus,
+} from '../features/imageVideo/engineTypes'
 
 type ElectronAPI = {
   apiFetch?: (
@@ -226,6 +231,25 @@ type ElectronAPI = {
   ) => () => void
   /** 应用管理的原图或工作区图片文件被外部删除。 */
   onLibraryImageFileRemoved?: (callback: (payload: { path: string; imageId?: string }) => void) => () => void
+  /**
+   * 图转视频引擎（独立 Python 进程，见 `electron/image-video/`）。
+   *
+   * 只有四个口子：查状态、探环境、按**白名单方法**调用、收事件推送。
+   * 刻意不做成通用桥 —— 引擎不认识糖包的路径白名单，方法开多了等于开后门。
+   */
+  imageVideoStatus?: () => Promise<ImageVideoEngineStatus>
+  imageVideoProbeSystem?: () => Promise<{
+    success: boolean
+    snapshot: ImageVideoEngineSnapshot | null
+    status: ImageVideoEngineStatus
+  }>
+  imageVideoCall?: (payload: {
+    method: string
+    params?: Record<string, unknown>
+    timeoutMs?: number
+  }) => Promise<ImageVideoCallResult>
+  /** 引擎事件（`engine.ready` / `job.progress` / `job.finished` / 日志）；返回取消订阅函数。 */
+  onImageVideoEvent?: (callback: (payload: unknown) => void) => () => void
   completeExternalAssetCommand?: (payload: { id: string; result?: unknown; error?: string }) => void
   /** 扫描旧版本 userData 目录（糖包 / tangbao / 糖包 V2 等），返回可导入内容概况 */
   scanLegacySources?: () => Promise<LegacySourceInfo[]>

@@ -221,5 +221,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readZipManifest: (filePath: string) => ipcRenderer.invoke('backup:read-zip-manifest', { filePath }),
   readZipEntry: (filePath: string, archivePath: string) =>
     ipcRenderer.invoke('backup:read-zip-entry', { filePath, archivePath }),
+  /**
+   * 图转视频引擎（独立 Python 进程，见 `electron/image-video/`）。
+   *
+   * 只暴露三件事 + 一个事件订阅：查状态、探环境、按**白名单方法**调用、收事件推送。
+   * 刻意不做成通用桥 —— 引擎不认识糖包的路径白名单，方法开多了等于开了个后门。
+   */
+  imageVideoStatus: () => ipcRenderer.invoke('image-video:status'),
+  imageVideoProbeSystem: () => ipcRenderer.invoke('image-video:probe-system'),
+  imageVideoCall: (payload: { method: string; params?: Record<string, unknown>; timeoutMs?: number }) =>
+    ipcRenderer.invoke('image-video:engine-call', payload),
+  onImageVideoEvent: (callback: (payload: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload)
+    ipcRenderer.on('image-video:event', handler)
+    return () => ipcRenderer.removeListener('image-video:event', handler)
+  },
   isElectron: true,
 })

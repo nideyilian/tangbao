@@ -1859,3 +1859,73 @@ npm test                                       # = vitest run
 否则会死在 `vite.config.ts` 的 `MIN_NODE_MAJOR = 24` 守卫上（报「Node 版本过低」，
 症状看不出是环境不对）。**单文件过滤（`vitest run <path>`）与全量走同一条链路**，
 不存在「单文件能跑、全量不能跑」的分裂。
+
+## 二十八、图转视频引擎：取件、自检、换版本（2026-09-26 TB-135 定稿）
+
+**它是什么**：`D:\AAA\image-to-video` 那个程序被冻成的独立 exe（约 106MB，PyInstaller onefile + UPX）。
+糖包用 stdin/stdout 的 NDJSON 跟它说话（协议号 1，一行一条 JSON）。**壳（Tauri）不要，引擎整块复用** ——
+决策见 `docs/adr/0023-embed-image-video-engine.md`。
+
+### 取件
+
+```bash
+npm run engine:fetch                          # 幂等：已存在且 ≥80MB 就跳过
+node scripts/fetch-image-engine.mjs --force   # 无条件重取
+```
+
+三条来源（按优先级）：
+
+1. `--from <path>` / `TANGBAO_ENGINE_SOURCE`（调试、换版本时用）；
+2. 本机默认源 `D:/AAA/image-to-video/dist/image-to-video-engine.exe`；
+3. `TANGBAO_ENGINE_URL`（**CI 用 —— `release.yml` 目前还没接，发布前必须补**）。
+
+产物：`resources/image-engine/image-to-video-engine.exe` + `engine.json`（sha256 / 体积 / 来源 / 时间）。
+**该目录已 gitignore**：exe 是 111,487,840 字节 = 106.3 MiB，**超过 GitHub 单文件 100 MiB 硬上限**，
+push 会被拒（R-109）。
+
+### 自检（不用启动糖包）
+
+```bash
+printf '{"id":"1","method":"system_snapshot","params":{}}\n' | resources/image-engine/image-to-video-engine.exe
+```
+
+期望两行：先 `{"type":"event","event":"engine.ready",...}`，再
+`{"type":"response","id":"1","ok":true,...}`，里面能读到 `ffmpeg_available` / `ffmpeg_path` / `ffmpeg_version`。
+
+**验它用的是哪一份 ffmpeg**（引擎优先系统 PATH、其次自带）—— 把 PATH 清干净再跑同一个探针：
+
+```bash
+cd "$TEMP" && printf '{"id":"1","method":"system_snapshot","params":{}}\n' | PATH="/c/Windows/System32" <引擎绝对路径>
+```
+
+清掉之后 `ffmpeg_path` 应指向 `%TEMP%\_MEIxxxx\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe`
+（引擎自带那份，实测 `ffmpeg_available: true`）。**顺带说明：糖包不额外捆 ffmpeg，就靠这一份兜底。**
+
+### 换引擎版本
+
+1. 在原程序仓库重新构建（`desktop/scripts/build-engine-sidecar.ps1`，需要 Python + PyInstaller），拿到新 exe；
+2. `node scripts/fetch-image-engine.mjs --force --from <新 exe 路径>`；
+3. 看 `resources/image-engine/engine.json` 里的 **sha256 变了没** ——
+   它是唯一能证明「真的换上了」的东西（仓库里看不见 exe 的 diff，git 也不跟踪它）。
+
+### 打包校验
+
+`npm run electron:build` / `release` / `electron:preview` 都已先串上取件；
+`electron-builder.cjs` 的 `beforePack` 在**缺文件或体积 < 80MB** 时让构建直接失败（静默出包是最坏结果）。
+构建日志里看到 `[engine] 随包分发引擎：106.3 MB` 才算带上了。
+
+### 孤儿进程自查
+
+引擎跑渲染时会 **spawn 自己**（`exe --legacy-worker` 当渲染 worker）。关掉糖包之后：
+
+```bash
+tasklist //FI "IMAGENAME eq image-to-video-engine.exe"
+```
+
+不该有残留。有残留 ⇒ `will-quit` 的强杀没生效（成因与两层收工机制见 R-108）。
+
+### 浏览器里看不到「视频」分区可用
+
+dev 里若引擎状态显示「引擎不可用」，先按上面的自检验一次 exe 在不在
+（`resources/image-engine/`），再看 `TANGBAO_ENGINE_PATH` 有没有指向别处。
+界面上的 `ffmpeg` 路径与版本来自 `probeImageEngineSystem`，它就是给人排查用的。

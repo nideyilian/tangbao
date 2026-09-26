@@ -14,6 +14,7 @@
  */
 
 import type { PostprocessNodeOverride } from '../../lib/postprocessMedia'
+import type { ImageVideoNodeOverride } from '../imageVideo/types'
 
 /** 树节点的层级语义。第 4 层及以后是用户自建的深层节点，按「扩展」处理。 */
 export type ProjectNodeKind = 'line' | 'product' | 'direction' | 'extra'
@@ -29,11 +30,14 @@ export const PROJECT_NODE_KIND_LABELS: Record<ProjectNodeKind, string> = {
 /**
  * 一个树节点的参数配置。
  *
- * 当前只有后处理一项；包一层对象是为了后续接入别的模块参数时不必改存储结构
- * （`overrides: Record<collectionId, ProjectNodeParams>` 的形状保持稳定）。
+ * 后处理与图转视频各占一个字段 —— 包一层对象就是为了这个：接入新模块的参数时
+ * 不必改存储结构（`overrides: Record<collectionId, ProjectNodeParams>` 的形状保持稳定）。
+ * 两个模块**共用同一条继承链**（方向 → 产品 → 产品线 → 全局），但各自的字段互不影响。
  */
 export interface ProjectNodeParams {
   postprocess?: PostprocessNodeOverride
+  /** 图转视频参数覆盖；字段缺省 = 继承上层 */
+  imageVideo?: ImageVideoNodeOverride
   updatedAt?: number
 }
 

@@ -960,6 +960,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Panel', 'ListRow', 'Checkbox', 'SegmentedControl', 'Menu'],
   },
   {
+    module: 'src/features/imageVideo/ImageVideoSection.tsx',
+    responsibility:
+      '中控台「视频」分区：一行一个方向配图转视频参数（第一行是全局基线，方向行留空向上继承，转场与画面效果各占一列下拉 = 不用/随机/具体某一种），并触发本地引擎生成视频；引擎在位情况与它实际用的那份 ffmpeg 就地显示',
+    decision: 'compose',
+    targets: ['DataGrid', 'Button', 'Badge', 'Inline', 'Stack'],
+  },
+  {
     module: 'src/features/composite/CompositeWorkspace.tsx',
     responsibility:
       '中控台工作区装配（复刻灵境策略中心）：左栏作用域树 + 右区（作用域标题 + 分区 tab + 分区内容）；水印分区打开即编辑器（不做卡片中转），高度按分区给（编辑器撑满、表格走滚动）+ 撤销栈',
@@ -1324,7 +1331,12 @@ export const pageCoverage: PageCoverage[] = [
     id: 'postprocess',
     workspace: '中控台工作区',
     entry: "appMode==='postprocess'（顶栏第三个 tab，与素材库 / Agent 同级）",
-    differences: ['工作区顶部功能分区（水印为首个分区）', '水印分区内图层拖拽编辑', 'Ctrl+Z 撤销'],
+    differences: [
+      '工作区顶部功能分区（水印为首个分区）',
+      '水印分区内图层拖拽编辑',
+      '视频分区：参数按项目树分层，一行一个方向，触发生成本地视频',
+      'Ctrl+Z 撤销',
+    ],
     document: 'design-system/tangbao/pages/postprocess.md',
   },
   {

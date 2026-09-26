@@ -19,6 +19,9 @@ latest.yml
 .superpowers/
 .worktrees/
 
+# 图转视频引擎（约 106MB，超 GitHub 单文件 100MiB 上限，由 scripts/fetch-image-engine.mjs 取件）
+resources/image-engine/
+
 # build / runtime logs
 *.log
 .impeccable/

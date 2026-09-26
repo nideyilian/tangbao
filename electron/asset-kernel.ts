@@ -56,6 +56,7 @@ const APP_DATA_NAMESPACES = new Set([
   'requirementPrototype',
   'assetLibraryUi',
   'dailyBatch',
+  'imageVideo',
 ])
 
 function appDataNamespace(value: unknown): string {

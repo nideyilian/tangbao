@@ -12,6 +12,8 @@ import { runAssetMcpServer } from './asset-mcp'
 import { getLibraryPaths, resolveCatalogDbPath, resolveCatalogDbPathFor } from './library-paths'
 import { migrateCatalogIntoLibrary } from './catalog-migration'
 import { ensureStateFileReadable } from './legacy-data-migration'
+import { registerImageVideoIpc } from './image-video/engine-ipc'
+import { killImageEngineNow, shutdownImageEngine } from './image-video/engine-manager'
 import { isTrustedRendererUrl } from './trusted-renderer'
 import { loadApiSecrets, saveApiSecrets } from './secure-api-secrets'
 import { LibraryImageWatcher } from './library-image-watcher'
@@ -470,6 +472,7 @@ app.whenReady().then(async () => {
   }
   initLocalSavePath()
   registerIpcHandlers()
+  registerImageVideoIpc()
   registerApiTransport()
 
   // CSP：dev 与打包版统一注入同一份策略（仅 connect-src 追加 ws: 供 HMR WebSocket）。
@@ -609,6 +612,14 @@ app.on('before-quit', () => {
   libraryImageWatcher.close()
   tray?.destroy()
   tray = null
+  // 引擎是独立进程，先请它自己收工（它会清理临时文件与半截产物）；
+  // 来不及退干净的话由下面的 will-quit 兜底强杀。
+  void shutdownImageEngine()
+})
+
+app.on('will-quit', () => {
+  // 兜底：任何退出路径走到这里都把引擎**整棵树**收掉（幂等，已退则为 no-op）。
+  killImageEngineNow()
 })
 
 app.on('before-quit', (event) => {

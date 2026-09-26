@@ -524,3 +524,29 @@ prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步�
   `local-settings.json` 的 `configSyncPath` 并由 `getAllowedRoots` 放行（另见 R-31 / R-62）。
   **别指望 `sessionAllowedRoots`** —— 那是内存 Set，重启就清空。
 - 新增任何中控台配置项时，先回答一句「**它挂在哪一层**」，不要平铺进包。
+
+## 十一、图转视频（嵌入外部引擎）
+
+引擎是**另一个程序**（`D:\AAA\image-to-video` 冻结成的独立 exe），糖包用 stdin/stdout 的 NDJSON
+跟它说话；壳（Tauri）没有复用。决策见 `docs/adr/0023-embed-image-video-engine.md`，
+操作配方见 runbook 二十八节，坑见 R-108 / R-109。以下几条**勿改回**：
+
+- **引擎 exe 不进 git**：111,487,840 字节 = 106.3 MiB，**超过 GitHub 单文件 100 MiB 硬上限**。
+  由 `scripts/fetch-image-engine.mjs` 在构建前取件（本机源 / `TANGBAO_ENGINE_SOURCE` /
+  `TANGBAO_ENGINE_URL`），`electron-builder.cjs` 的 `beforePack` 在缺文件或体积过小时**让构建失败** ——
+  别改成警告：缺引擎的包能装能开能生图，只有点生成视频才炸。
+- **退出必须收整棵进程树**（`taskkill /T /F`）：引擎跑渲染时会 spawn **自己**
+  （`exe --legacy-worker`），`child.kill()` 在 Windows 上杀不掉孙子，会留下啃 CPU 的孤儿。
+  `before-quit` 优雅关闭 + `will-quit` 同步兜底，两层缺一不可。
+- **参数按项目树分层**：全局基线在 `useImageVideoStore.globals`，节点覆盖在**既有的**
+  `ProjectNodeParams.imageVideo`（`useProjectTreeParamsStore`）。留空 = 向上继承，
+  口径与后处理一字不差。⚠️ 改 `buildProjectNodeParams` / `normalizeProjectNodeParamsMap` 时
+  必须**两个模块一起看** —— 只判 `postprocess` 会把节点上的视频参数静默丢掉。
+- **自动出视频挂在产出之后、分发之前**：分发会把产出文件夹按排期日搬走，搬完之后
+  「这个方向的一批图」散在多个日期目录里，一个视频没法跨那么多目录取图。
+- **IPC 只开白名单方法**（`image-video/engine-ipc.ts`）：引擎不认识糖包的 `assertAllowedPath`，
+  透出一个通用 `call(method, params)` 等于开了个能读写任意目录的后门。
+- **ffmpeg 不额外捆**：引擎内自带的 `imageio_ffmpeg` 就是它的兜底那份；但引擎查找顺序是
+  **先系统 PATH 后自带**，所以界面必须把「实际用的是哪一份」显示出来。
+- **持久化 namespace `imageVideo` 必须留在主进程白名单**（`electron/asset-kernel.ts` 的
+  `APP_DATA_NAMESPACES`），否则设置改完重启就没了且 UI 不报错（R-07）。

@@ -8,6 +8,8 @@
 
 import type { AssetCollection } from '../../types'
 import type { PostprocessDistributionConfig } from '../../lib/postprocessDistribution'
+import { normalizeImageVideoOverride, resolveImageVideoParams } from '../imageVideo/params'
+import type { ImageVideoNodeOverride, ImageVideoParams } from '../imageVideo/types'
 import {
   applyPostprocessOverride,
   normalizeOutputDirEnabledMap,
@@ -422,7 +424,13 @@ export function hasLegacyNodeOnlyFields(rawParams: unknown): boolean {
   return false
 }
 
-/** 归一化整张参数表；坏条目逐条丢弃，不整份回退（保住用户其余编辑）。 */
+/**
+ * 归一化整张参数表；坏条目逐条丢弃，不整份回退（保住用户其余编辑）。
+ *
+ * ⚠️ 判「这条记录还要不要」必须**两个模块一起看**：只判 `postprocess` 的话，
+ * 一个只配了图转视频、没配后处理的节点会被整条丢掉 —— 用户配好的视频参数
+ * 在下次启动时凭空消失，而且没有任何提示。
+ */
 export function normalizeProjectNodeParamsMap(raw: unknown): ProjectNodeParamsMap {
   if (!raw || typeof raw !== 'object') return {}
   const input = raw as Record<string, unknown>
@@ -430,10 +438,17 @@ export function normalizeProjectNodeParamsMap(raw: unknown): ProjectNodeParamsMa
   for (const [collectionId, value] of Object.entries(input)) {
     const id = collectionId.trim()
     if (!id || !value || typeof value !== 'object') continue
-    const postprocess = normalizePostprocessNodeOverride((value as Record<string, unknown>).postprocess)
-    if (!postprocess) continue
-    const updatedAt = (value as Record<string, unknown>).updatedAt
-    result[id] = { postprocess, ...(typeof updatedAt === 'number' ? { updatedAt } : {}) }
+    const entry = value as Record<string, unknown>
+    const postprocess = normalizePostprocessNodeOverride(entry.postprocess)
+    const imageVideoOverride = normalizeImageVideoOverride(entry.imageVideo)
+    const imageVideo = Object.keys(imageVideoOverride).length > 0 ? imageVideoOverride : undefined
+    if (!postprocess && !imageVideo) continue
+    const updatedAt = entry.updatedAt
+    result[id] = {
+      ...(postprocess ? { postprocess } : {}),
+      ...(imageVideo ? { imageVideo } : {}),
+      ...(typeof updatedAt === 'number' ? { updatedAt } : {}),
+    }
   }
   return result
 }
@@ -495,13 +510,89 @@ export function mergePostprocessNodeOverride(
   return Object.keys(merged).length > 0 ? merged : undefined
 }
 
-/** 写回一条参数记录；覆盖被清空时返回 null，由调用方删除该键。 */
+/**
+ * 写回一条参数记录（后处理那一半）；两个模块都空了才返回 null（由调用方删键）。
+ *
+ * ⚠️ 必须**原样带上 `imageVideo`**：这个函数是按「改一半留一半」用的，
+ * 只回 `postprocess` 会让「在这个方向上调一下后处理」顺手把图转视频参数抹掉，
+ * 而且没有任何提示（用户只看到视频参数没了）。
+ */
 export function buildProjectNodeParams(
   current: ProjectNodeParams | undefined,
   patch: PostprocessNodeOverride,
   now = Date.now(),
 ): ProjectNodeParams | null {
   const postprocess = mergePostprocessNodeOverride(current?.postprocess, patch)
-  if (!postprocess) return null
-  return { postprocess, updatedAt: now }
+  const imageVideo = current?.imageVideo
+  if (!postprocess && !imageVideo) return null
+  return {
+    ...(postprocess ? { postprocess } : {}),
+    ...(imageVideo ? { imageVideo } : {}),
+    updatedAt: now,
+  }
+}
+
+/**
+ * 合并一次**图转视频**参数补丁。
+ *
+ * 语义与 `mergePostprocessNodeOverride` 完全一致（两个面板的手感不该不同）：
+ * `undefined` 的字段被剔除 = 恢复继承；补丁后一个字段都不剩时整条覆盖消失。
+ */
+export function mergeImageVideoNodeOverride(
+  current: ImageVideoNodeOverride | undefined,
+  patch: ImageVideoNodeOverride,
+): ImageVideoNodeOverride | undefined {
+  const merged: ImageVideoNodeOverride = { ...current }
+  for (const key of Object.keys(patch) as (keyof ImageVideoNodeOverride)[]) {
+    const value = patch[key]
+    if (value === undefined) delete merged[key]
+    else (merged as Record<string, unknown>)[key] = value
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+/**
+ * 写回一条参数记录（图转视频那一半）。
+ *
+ * ⚠️ 只有**两个模块都空了**才能返回 null：否则「清掉这个方向的视频参数」会顺手把
+ * 同一节点上的后处理参数一起抹掉。
+ */
+export function buildImageVideoNodeParams(
+  current: ProjectNodeParams | undefined,
+  patch: ImageVideoNodeOverride,
+  now = Date.now(),
+): ProjectNodeParams | null {
+  const imageVideo = mergeImageVideoNodeOverride(current?.imageVideo, patch)
+  const postprocess = current?.postprocess
+  if (!imageVideo && !postprocess) return null
+  return {
+    ...(postprocess ? { postprocess } : {}),
+    ...(imageVideo ? { imageVideo } : {}),
+    updatedAt: now,
+  }
+}
+
+/**
+ * 解析某个节点**生效的图转视频参数**（含继承链）。
+ *
+ * 链的取法与后处理共用 `resolveProjectOverrideChain` 的同一条 id 链 ——
+ * 两个模块的作用域必须永远是同一棵树，各走各的遍历迟早会在「空对象算不算表态」
+ * 这类细节上分叉。
+ *
+ * 全局基线由调用方传进来（它存在 `useImageVideoStore` 里，不在本模块）。
+ */
+export function resolveProjectImageVideoParams(
+  collections: AssetCollection[],
+  params: ProjectNodeParamsMap,
+  collectionId: string | null,
+  globalParams: ImageVideoParams,
+): ImageVideoParams {
+  const chain: ImageVideoNodeOverride[] = [globalParams]
+  if (collectionId) {
+    resolveProjectNodeIdChain(collections, collectionId).forEach((id) => {
+      const override = params[id]?.imageVideo
+      if (override) chain.push(override)
+    })
+  }
+  return resolveImageVideoParams(chain)
 }
