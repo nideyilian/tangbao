@@ -27,6 +27,7 @@ import { computeContentHash, computeContentHashFromBytes } from './imageFingerpr
 import { blobToDataUrl, dataUrlToBlob } from './blobDataUrl'
 import { canvasToWebpDataUrl, createImageThumbnailDataUrl } from './canvasImage'
 import { decodeSopBatchSnapshotRecord } from './sopBatchSnapshotRecord'
+import { FULL_THUMBNAIL_MAX_EDGE, GRID_THUMBNAIL_MAX_EDGE, GRID_THUMBNAIL_WIDTH_LIMIT } from './thumbnailLimits'
 
 const DB_NAME = 'tangbao'
 const DB_VERSION = 15
@@ -46,27 +47,50 @@ const STORE_ASSET_TOMBSTONES = 'assetTombstones'
 const STORE_ASSET_USAGE_EVENTS = 'assetUsageEvents'
 const STORE_ASSET_BLOBS = 'assetBlobs'
 const STORE_ASSET_VERSIONS = 'assetVersions'
-const THUMBNAIL_MAX_SIZE = 1024
+const THUMBNAIL_MAX_SIZE = FULL_THUMBNAIL_MAX_EDGE
 const THUMBNAIL_QUALITY = 0.82
 /**
- * 网格小图（grid 通道）参数：最长边 512px。
+ * 网格小图（grid 通道）参数：**宽度 ≤512px 且最长边 ≤1024px**（阈值在 `thumbnailLimits.ts`）。
+ *
+ * 口径为什么是「宽度优先」而不是「最长边」（2026-09-28，TB-141）：
+ * 磁贴的**宽度**由容器列宽决定，与图片比例无关；而"最长边"口径对竖图最不利 ——
+ * 512 长边落到 9:16 竖图上只剩 288px 宽、3:4 竖图只剩 384px 宽，
+ * 于是竖图在网格里被拉伸得比横图糊得多（4K+150% 缩放下磁贴要 570 设备像素）。
+ * 双上限后：**横图结果与旧口径逐像素一致**（横图的最长边就是宽度），竖图宽度被抬到 512。
  *
  * 尺寸依据（本机真实库 `D:\AI生图2\thumbs`，2267 张 v5 full 缩略图）：
  * - 磁贴最大边长由用户可选列数决定（3–6 列），3 列 + 宽屏下单个磁贴 CSS 边长可达 ~500–700px，
- *   2x DPR 需要 ~1000+ 设备像素，288px 会明显发虚；512px 与历史 grid 文件口径一致
- *   （v1/v2 实测尺寸分布 512×288 / 320×180 / 384×512，长边均为 512）。
+ *   2x DPR 需要 ~1000+ 设备像素。
  * - 实测收益（生产 `buildGridThumbnail` 跑真实缩略图，40 张均匀取样）：
- *   full 均值 79.9KB → grid 均值 26.7KB / p50 25.7KB，**缩量 x2.99**（逐张中位 x2.90，区间 x2.30–3.61）；
+ *   full 均值 79.9KB → grid 均值 26.7KB / p50 25.7KB，**缩量 x2.99**；
  *   解码位图内存 1024×576×4≈2.36MB → 512×288×4≈0.59MB，**约 1/4**。
+ *   ⚠️ 上面是**横图**的一组数据；竖图（宽度 288/384 → 512）体积约涨 1.8~3.2 倍。
  */
-const GRID_THUMBNAIL_MAX_SIZE = 512
 const GRID_THUMBNAIL_QUALITY = 0.8
 const THUMBNAIL_VERSION = 5
+/**
+ * grid 通道**独立版本线**（2026-09-28 起）。
+ *
+ * 为什么独立：这次只改了 grid 的尺寸口径，full 的生成方式一个字没动 ——
+ * 共用版本号会连 full 一起作废，导致全库 1024 缩略图白白重编一遍（每张 ~100ms）。
+ * 文件名本来就按 variant 分命名空间（`.grid` 后缀），写 v6 时会自动清掉 v5.grid 残留。
+ */
+const GRID_THUMBNAIL_VERSION = 6
 const APP_DATA_MIGRATION_ID = 'electron-app-data-migrated-v1'
 const APP_DATA_LEGACY_CLEANUP_ID = 'electron-indexeddb-cleaned-v1'
 const APP_DATA_MIGRATION_BATCH_SIZE = 200
 
 export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
+export const CURRENT_GRID_THUMBNAIL_VERSION = GRID_THUMBNAIL_VERSION
+
+/**
+ * 各通道当前缩略图版本号的**唯一实现**。
+ * 内存缓存校验、磁盘读取、落盘守卫都必须走它 —— 写死 `CURRENT_THUMBNAIL_VERSION`
+ * 会让 grid 通道的记录被判成"旧版本"而反复重算（或反过来把旧图当新图缓存）。
+ */
+export function thumbnailVersionFor(variant: ThumbnailVariant = 'full'): number {
+  return variant === 'grid' ? GRID_THUMBNAIL_VERSION : THUMBNAIL_VERSION
+}
 
 // 连接缓存：复用同一 IDB 连接，避免每次操作都重新 open。
 // 缓存键是 indexedDB 全局引用——测试用 stubGlobal 替换全局时自动失效，
@@ -822,22 +846,23 @@ export async function getFreshThumbnailFromDisk(
   variant: ThumbnailVariant = 'full',
 ): Promise<StoredImageThumbnail | undefined> {
   if (!isElectron()) return undefined
-  const disk = await readThumbnailFromDisk(id, THUMBNAIL_VERSION, variant)
+  const version = thumbnailVersionFor(variant)
+  const disk = await readThumbnailFromDisk(id, version, variant)
   if (!disk?.dataUrl) return undefined
   return {
     id,
     thumbnailDataUrl: disk.dataUrl,
     width: disk.width,
     height: disk.height,
-    thumbnailVersion: THUMBNAIL_VERSION,
+    thumbnailVersion: version,
   }
 }
 
 /**
  * 由 full 缩略图现出网格小图并落盘（grid 通道）。
  *
- * 源用 full 缩略图（最长边 ≤1024px 的 webp）而不是原图：目标最长边只有 512px，
- * 二次缩放画质损失可忽略，却省掉一次 2K/4K 原图解码。
+ * 源用 full 缩略图（最长边 ≤1024px 的 webp）而不是原图：目标宽度只有 512px，
+ * 二次缩放画质损失可忽略（竖图最多 downscale 1.13 倍），却省掉一次 2K/4K 原图解码。
  * 失败返回 undefined（调用方继续用 full 兜底），永不 reject。
  * 写盘失败仍返回 dataUrl —— 内存缓存已经能用，下次读取会重试落盘。
  */
@@ -845,11 +870,12 @@ export async function buildGridThumbnail(id: string, fullThumbnailDataUrl: strin
   try {
     const gridDataUrl = await createImageThumbnailDataUrl(
       fullThumbnailDataUrl,
-      GRID_THUMBNAIL_MAX_SIZE,
+      GRID_THUMBNAIL_MAX_EDGE,
       GRID_THUMBNAIL_QUALITY,
+      { maxWidth: GRID_THUMBNAIL_WIDTH_LIMIT },
     )
     if (!gridDataUrl) return undefined
-    if (isElectron()) await writeThumbnailToDisk(id, THUMBNAIL_VERSION, gridDataUrl, 'grid')
+    if (isElectron()) await writeThumbnailToDisk(id, GRID_THUMBNAIL_VERSION, gridDataUrl, 'grid')
     return gridDataUrl
   } catch {
     return undefined

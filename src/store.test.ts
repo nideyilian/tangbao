@@ -61,6 +61,9 @@ vi.mock('./lib/db', () => {
 
   return {
     CURRENT_THUMBNAIL_VERSION: 2,
+    // 测试环境里两条通道同版本线（生产上 grid 是独立版本线，见 db.ts 的 GRID_THUMBNAIL_VERSION）。
+    // 这个出口必须存在：store.ts 的缓存/落盘校验走的都是它，缺了会直接抛。
+    thumbnailVersionFor: () => 2,
     getAllTasks: async () => [...tasks.values()],
     loadTasksIncrementally: async (migrate: (task: TaskRecord) => TaskRecord) => {
       const loaded: TaskRecord[] = []

@@ -49,16 +49,49 @@ export async function getImageDimensions(dataUrl: string): Promise<ImageDimensio
 }
 
 /**
+ * 缩略图尺寸约束。
+ *
+ * `maxSize` 是**最长边**上限；`maxWidth` 是额外的**宽度**上限。
+ * 网格磁贴要的是「宽度够」，而"最长边"口径对竖图最不利 —— 长边额度被高度吃掉后，
+ * 竖图的宽度可能只剩长边的 1/2~1/3（实测 9:16 竖图 512 长边 ⇒ 仅 288px 宽），
+ * 而磁贴宽度是按容器列宽算的、与图片比例无关，于是竖图先糊。
+ * 同时给两个上限即可：横图结果与只给 maxSize 完全一致，竖图宽度被抬到 maxWidth。
+ */
+export interface ThumbnailConstraints {
+  /** 宽度上限（像素）；不给则只用最长边约束。 */
+  maxWidth?: number
+}
+
+/**
+ * 缩略图缩放倍数（纯函数，可单测）：同时受最长边与宽度两个上限约束，**只缩不放**。
+ *
+ * 两个上限都要的理由见 {@link ThumbnailConstraints}：
+ * 只给最长边时竖图的宽度会被牺牲（9:16 ⇒ 只剩 1/3），而网格磁贴的瓶颈正是宽度；
+ * 只给宽度时极端长图（600×2400）的高度会失控 ⇒ 两个一起限。
+ */
+export function computeThumbnailScale(width: number, height: number, maxSize: number, maxWidth?: number): number {
+  if (width <= 0 || height <= 0) return 1
+  const byEdge = maxSize / Math.max(width, height)
+  const byWidth = maxWidth && maxWidth > 0 ? maxWidth / width : 1
+  return Math.min(1, byEdge, byWidth)
+}
+
+/**
  * 把一张图等比缩小到 maxSize 以内的 webp dataURL，用于生成记录等仅需缩略图的场景。
  * 失败或原图已经足够小时原样返回，永不 reject。
  */
-export async function createImageThumbnailDataUrl(dataUrl: string, maxSize = 512, quality = 0.85): Promise<string> {
+export async function createImageThumbnailDataUrl(
+  dataUrl: string,
+  maxSize = 512,
+  quality = 0.85,
+  constraints: ThumbnailConstraints = {},
+): Promise<string> {
   try {
     const image = await loadImage(dataUrl)
     const width = image.naturalWidth
     const height = image.naturalHeight
     if (width <= 0 || height <= 0) return dataUrl
-    const scale = Math.min(1, maxSize / Math.max(width, height))
+    const scale = computeThumbnailScale(width, height, maxSize, constraints.maxWidth)
     if (scale >= 1) return dataUrl
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(width * scale))

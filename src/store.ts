@@ -195,6 +195,7 @@ import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/pr
 import { appendAdNegativeRule, createAdNegativeRuleSnapshot, getAdNegativeRule } from './lib/adNegativeRules'
 import {
   CURRENT_THUMBNAIL_VERSION,
+  thumbnailVersionFor,
   getAllTasks,
   loadTasksIncrementally,
   putTask as dbPutTask,
@@ -1677,7 +1678,7 @@ function thumbnailKey(id: string, variant: ThumbnailVariant): string {
 export function getCachedThumbnail(id: string, variant: ThumbnailVariant = 'full') {
   const key = thumbnailKey(id, variant)
   const thumbnail = thumbnailCache.get(key)
-  if (thumbnail?.thumbnailVersion === CURRENT_THUMBNAIL_VERSION) {
+  if (thumbnail?.thumbnailVersion === thumbnailVersionFor(variant)) {
     return thumbnail
   }
   if (thumbnail) {
@@ -1691,7 +1692,7 @@ function cacheThumbnail(
   thumbnail: { dataUrl: string; width?: number; height?: number; thumbnailVersion?: number },
   variant: ThumbnailVariant = 'full',
 ) {
-  if (thumbnail.thumbnailVersion !== CURRENT_THUMBNAIL_VERSION) return
+  if (thumbnail.thumbnailVersion !== thumbnailVersionFor(variant)) return
   thumbnailCache.set(thumbnailKey(id, variant), thumbnail, thumbnail.dataUrl.length * 2)
 }
 
@@ -1971,12 +1972,15 @@ function startThumbnailLoad(
       height,
       thumbnailVersion: rec.thumbnailVersion,
     }
-    if (thumbnail.thumbnailVersion !== CURRENT_THUMBNAIL_VERSION) {
+    // 版本校验按**记录实际所属的通道**取：grid 未命中时会回退到 full 记录，
+    // 那种记录必须按 full 的版本线判（否则会被误判成"旧版本"而反复重算）。
+    const cacheVariant: ThumbnailVariant = matchedTargetChannel ? variant : 'full'
+    if (thumbnail.thumbnailVersion !== thumbnailVersionFor(cacheVariant)) {
       scheduleThumbnailBackfill([{ id, variant, priority: 'background', silent: false }])
       return thumbnail
     }
 
-    cacheThumbnail(id, thumbnail, matchedTargetChannel ? variant : 'full')
+    cacheThumbnail(id, thumbnail, cacheVariant)
     return thumbnail
   })().finally(() => {
     thumbnailLoadPromises.delete(key)
@@ -2277,7 +2281,7 @@ function startThumbnailBackfill(request: ThumbnailBackfillRequest) {
       dataUrl,
       width: source.width,
       height: source.height,
-      thumbnailVersion: CURRENT_THUMBNAIL_VERSION,
+      thumbnailVersion: thumbnailVersionFor(variant),
     }
     cacheThumbnail(id, thumbnail, variant)
     // silent：订阅方当前显示的是 full 兜底图，同一张图再换一次 src 会白闪一下，

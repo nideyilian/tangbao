@@ -1,14 +1,17 @@
 import { memo, useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import type { GeneratedAsset } from '../../types'
+import type { GeneratedAsset, ThumbnailVariant } from '../../types'
 import {
   GRID_THUMBNAIL_VARIANT,
   ensureImageCached,
   ensureImageThumbnailCached,
   getCachedThumbnail,
+  resolveImageDisplaySrc,
   subscribeImageThumbnail,
 } from '../../store'
 import { decodeImageDataUrl } from '../../lib/imageHover'
 import { isScrollActive } from '../../lib/scrollActivity'
+import { isLocalImageUrl } from '../../lib/localImageUrl'
+import { currentDevicePixelRatio, resolveTileImagePlan, tileCssWidthFromStyle } from '../../lib/tileImagePlan'
 import { CheckIcon, ImageIcon, StarIcon } from '../../design-system/icons'
 import { cx } from '../../design-system/components'
 import { useAssetLibraryStore } from './store'
@@ -99,28 +102,45 @@ function AssetTile({
   suppressClickUntilRef,
   loadFullOnHover = true,
 }: AssetTileProps) {
-  // 网格磁贴只读 grid 通道（512px 小图）；hover 预览仍是原图（ensureImageCached）。
-  const [thumbnailSrc, setThumbnailSrc] = useState(
-    () => getCachedThumbnail(asset.imageId, GRID_THUMBNAIL_VARIANT)?.dataUrl ?? '',
-  )
+  // 磁贴取图档位：按「这块磁贴实际要多少设备像素」决定用网格小图 / 详情大图 / 原图
+  // （判定与阈值见 `lib/tileImagePlan.ts`）。网格默认仍是 512px 小图；
+  // 4K + 高 DPR 下磁贴比小图还大时升级，否则会被浏览器拉伸放大（2026-09-28 报障的成因）。
+  const plan = resolveTileImagePlan(tileCssWidthFromStyle(style), currentDevicePixelRatio())
+  const planVariant: ThumbnailVariant = plan === 'full' ? 'full' : GRID_THUMBNAIL_VARIANT
+  const [thumbnailSrc, setThumbnailSrc] = useState(() => getCachedThumbnail(asset.imageId, planVariant)?.dataUrl ?? '')
+  /** 档位决定的基础图源：`full` 档是大图 dataURL，`original` 档是本地协议地址（原图直出）。 */
+  const [planSrc, setPlanSrc] = useState('')
+  /** hover 时临时升级的原图（档次较低时才有意义，优先级高于 `planSrc`）。 */
   const [fullSrc, setFullSrc] = useState('')
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hoveredRef = useRef(false)
   const hoverLoadVersionRef = useRef(0)
-  const loadedImageIdRef = useRef(asset.imageId)
 
   useEffect(() => {
     let cancelled = false
+
+    if (plan === 'original') {
+      // 原图直出：交给 Chromium 按显示尺寸解码缩放，比在 JS 里拿 dataURL 更省内存
+      setThumbnailSrc('')
+      setPlanSrc('')
+      void resolveImageDisplaySrc(asset.imageId)
+        .then((src) => {
+          if (!cancelled && src) setPlanSrc(src)
+        })
+        .catch(() => {})
+      return () => {
+        cancelled = true
+      }
+    }
+
     const applyThumbnail = (thumbnail: { dataUrl: string }) => {
       if (!cancelled) setThumbnailSrc(thumbnail.dataUrl)
     }
-    // 仅当 imageId 变化时复位；挂载时保留 useState 同步读取的缓存值，避免先闪占位再加载
-    if (loadedImageIdRef.current !== asset.imageId) {
-      loadedImageIdRef.current = asset.imageId
-      setThumbnailSrc(getCachedThumbnail(asset.imageId, GRID_THUMBNAIL_VARIANT)?.dataUrl ?? '')
-    }
-    const unsubscribe = subscribeImageThumbnail(asset.imageId, applyThumbnail, GRID_THUMBNAIL_VARIANT)
-    ensureImageThumbnailCached(asset.imageId, 'visible', GRID_THUMBNAIL_VARIANT)
+    // 复位时同步读缓存，切档位（窗口缩放 / 密度切换）不闪占位
+    setThumbnailSrc(getCachedThumbnail(asset.imageId, planVariant)?.dataUrl ?? '')
+    setPlanSrc('')
+    const unsubscribe = subscribeImageThumbnail(asset.imageId, applyThumbnail, planVariant)
+    ensureImageThumbnailCached(asset.imageId, 'visible', planVariant)
       .then((thumbnail) => {
         if (thumbnail) applyThumbnail(thumbnail)
       })
@@ -129,7 +149,7 @@ function AssetTile({
       cancelled = true
       unsubscribe?.()
     }
-  }, [asset.imageId])
+  }, [asset.imageId, plan, planVariant])
 
   useEffect(
     () => () => {
@@ -147,6 +167,8 @@ function AssetTile({
     // 框选拖拽中禁止 hover 原图加载：鼠标扫过卡片会不断触发缩略图↔原图切换与离屏解码，造成图片闪烁/卡顿
     if (document.body.classList.contains('drag-selecting')) return
     if (!loadFullOnHover) return
+    // 大磁贴档位显示的本来就是原图，再叠一层 dataURL 原图只是白解码一遍
+    if (plan === 'original') return
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
     hoveredRef.current = true
     hoverTimerRef.current = setTimeout(function scheduleHoverFullLoad() {
@@ -213,7 +235,15 @@ function AssetTile({
     onOpenViewer(asset.id)
   }
 
-  const imageSrc = fullSrc || thumbnailSrc
+  const imageSrc = fullSrc || planSrc || thumbnailSrc
+
+  // 本地协议地址 404（原图被外部删除 / 移出库根）时回退 dataUrl；回退本身失败则不再重试。
+  const handleImageError = () => {
+    if (!isLocalImageUrl(imageSrc)) return
+    void ensureImageCached(asset.imageId).then((dataUrl) => {
+      if (dataUrl) setFullSrc(dataUrl)
+    })
+  }
   /** 状态标记：已使用 / 已审核（两者互斥，都没有则为 null） */
   const statusMark = resolveAssetStatusMark(asset)
 
@@ -257,6 +287,7 @@ function AssetTile({
           alt={asset.origins[0]?.prompt || ''}
           loading="lazy"
           decoding="async"
+          onError={handleImageError}
           className="block h-full w-full select-none object-cover"
           draggable={false}
         />

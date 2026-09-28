@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { blobToDataUrl, canvasToWebpDataUrl } from './canvasImage'
+import { blobToDataUrl, canvasToWebpDataUrl, computeThumbnailScale } from './canvasImage'
 
 /** 只实现 toBlob / toDataURL 的假 canvas：绕开 jsdom 没有 2D 上下文、也无真实编码器的限制。 */
 function stubCanvas(options: {
@@ -66,5 +66,51 @@ describe('blobToDataUrl', () => {
     const blob = new Blob([new Uint8Array([72, 105])], { type: 'image/webp' })
 
     await expect(blobToDataUrl(blob)).resolves.toBe('data:image/webp;base64,SGk=')
+  })
+})
+
+/**
+ * grid 通道口径（宽度 ≤512 且长边 ≤1024）。
+ * 这组数字直接决定网格里的图糊不糊，所以按像素断言，而不是断言"缩了一点"。
+ */
+describe('computeThumbnailScale', () => {
+  it('横图：只给 maxWidth 的结果与旧口径「最长边 512」逐像素一致（不改变既有行为）', () => {
+    // 16:9 横图 → 512×288
+    expect(Math.round(1920 * computeThumbnailScale(1920, 1080, 1024, 512))).toBe(512)
+    expect(Math.round(1080 * computeThumbnailScale(1920, 1080, 1024, 512))).toBe(288)
+  })
+
+  it('竖图：宽度被抬到上限（旧口径下 9:16 只剩 288px 宽，正是报障里最糊的一类）', () => {
+    // 3:4 → 512×683（旧口径 384×512）
+    const portrait34 = computeThumbnailScale(1080, 1440, 1024, 512)
+    expect(Math.round(1080 * portrait34)).toBe(512)
+    expect(Math.round(1440 * portrait34)).toBe(683)
+
+    // 9:16 → 512×910（旧口径 288×512）
+    const portrait916 = computeThumbnailScale(1080, 1920, 1024, 512)
+    expect(Math.round(1080 * portrait916)).toBe(512)
+    expect(Math.round(1920 * portrait916)).toBe(910)
+  })
+
+  it('极端长图仍受最长边约束，不会为宽度把高度放大失控', () => {
+    // 1:4 长图：按宽度会算出 512×2048，被 1024 长边挡回 256×1024
+    const scale = computeThumbnailScale(600, 2400, 1024, 512)
+    expect(Math.round(600 * scale)).toBe(256)
+    expect(Math.round(2400 * scale)).toBe(1024)
+  })
+
+  it('只缩不放：源已经比上限小就原样返回（scale = 1）', () => {
+    expect(computeThumbnailScale(300, 200, 1024, 512)).toBe(1)
+    expect(computeThumbnailScale(512, 512, 1024, 512)).toBe(1)
+  })
+
+  it('尺寸非法时回退 scale = 1（调用方原样返回，不生成空图）', () => {
+    expect(computeThumbnailScale(0, 100, 1024, 512)).toBe(1)
+    expect(computeThumbnailScale(100, 0, 1024, 512)).toBe(1)
+  })
+
+  it('不给 maxWidth 时退化成纯最长边口径（老调用方行为不变）', () => {
+    expect(Math.round(1080 * computeThumbnailScale(1080, 1440, 512))).toBe(384)
+    expect(Math.round(1440 * computeThumbnailScale(1080, 1440, 512))).toBe(512)
   })
 })

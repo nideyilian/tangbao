@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AssetCollection, AssetTag, GeneratedAsset, TaskRecord } from '../types'
 import {
+  CURRENT_GRID_THUMBNAIL_VERSION,
   CURRENT_THUMBNAIL_VERSION,
+  thumbnailVersionFor,
   batchGetCompositeAssets,
   batchGetImages,
   buildGridThumbnail,
@@ -698,7 +700,7 @@ describe('缩略图磁盘通道（full / grid）', () => {
     try {
       const grid = await getFreshThumbnailFromDisk('grid-read-1', 'grid')
       expect(grid?.thumbnailDataUrl).toBe('data:image/webp;base64,GRID')
-      expect(readThumbnail).toHaveBeenCalledWith('grid-read-1', CURRENT_THUMBNAIL_VERSION, 'grid')
+      expect(readThumbnail).toHaveBeenCalledWith('grid-read-1', CURRENT_GRID_THUMBNAIL_VERSION, 'grid')
 
       const fallbackFull = await getFreshThumbnailFromDisk('grid-read-1')
       expect(fallbackFull).toBeUndefined()
@@ -718,13 +720,21 @@ describe('缩略图磁盘通道（full / grid）', () => {
       expect(dataUrl).toBe('data:image/webp;base64,FULL')
       expect(writeThumbnail).toHaveBeenCalledWith(
         'grid-write-1',
-        CURRENT_THUMBNAIL_VERSION,
+        CURRENT_GRID_THUMBNAIL_VERSION,
         'data:image/webp;base64,FULL',
         'grid',
       )
     } finally {
       restore()
     }
+  })
+
+  it('grid 与 full 各走独立的版本线（改 grid 口径不该让全库 full 缩略图作废重编）', () => {
+    expect(thumbnailVersionFor('grid')).toBe(CURRENT_GRID_THUMBNAIL_VERSION)
+    expect(thumbnailVersionFor('full')).toBe(CURRENT_THUMBNAIL_VERSION)
+    // 两个通道文件名本来就分命名空间（`.grid` 后缀），版本线也必须分开；
+    // 合成一个会让"只改 grid 口径"变成全库 full 缩略图跟着重建（每张 ~100ms）。
+    expect(CURRENT_GRID_THUMBNAIL_VERSION).not.toBe(CURRENT_THUMBNAIL_VERSION)
   })
 })
 

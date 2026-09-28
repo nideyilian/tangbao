@@ -9,7 +9,8 @@ import {
 } from '../store'
 import { decodeImageDataUrl } from '../lib/imageHover'
 import { isLocalImageUrl } from '../lib/localImageUrl'
-import type { TaskRecord } from '../types'
+import { currentDevicePixelRatio, resolveTileImagePlan, tileCssWidthFromStyle } from '../lib/tileImagePlan'
+import type { TaskRecord, ThumbnailVariant } from '../types'
 import { CheckIcon, ImageIcon } from '../design-system/icons'
 
 /** hover 原图加载防抖：鼠标快速扫过网格时不触发加载，避免连续解码多张 2K/4K 原图。 */
@@ -53,34 +54,48 @@ function GalleryImageTile({
   style,
   loadFullOnHover = true,
 }: GalleryImageTileProps) {
-  // 网格磁贴只读 grid 通道（512px 小图）：滚动期单张读取量约为 full 的 1/3。
-  const [thumbnailSrc, setThumbnailSrc] = useState(
-    () => getCachedThumbnail(item.imageId, GRID_THUMBNAIL_VARIANT)?.dataUrl ?? '',
-  )
+  // 磁贴取图档位：按「这块磁贴实际要多少设备像素」决定小图 / 大图 / 原图
+  // （判定与阈值见 `lib/tileImagePlan.ts`）。滚动期默认仍读 512px 小图，读取量约为 full 的 1/3；
+  // 4K + 高 DPR 下磁贴比小图还大时才升级，否则会被拉伸放大（2026-09-28 报障的成因）。
+  const plan = resolveTileImagePlan(tileCssWidthFromStyle(style), currentDevicePixelRatio())
+  const planVariant: ThumbnailVariant = plan === 'full' ? 'full' : GRID_THUMBNAIL_VARIANT
+  const [thumbnailSrc, setThumbnailSrc] = useState(() => getCachedThumbnail(item.imageId, planVariant)?.dataUrl ?? '')
+  /** 档位决定的基础图源：`full` 档是大图 dataURL，`original` 档是本地协议地址（原图直出）。 */
+  const [planSrc, setPlanSrc] = useState('')
   const [fullImageSrc, setFullImageSrc] = useState('')
   const hoverTimerRef = useRef<number | null>(null)
   const hoveredRef = useRef(false)
   const hoverLoadVersionRef = useRef(0)
-  const loadedImageIdRef = useRef(item.imageId)
   const onAspectRatioChangeRef = useRef(onAspectRatioChange)
   onAspectRatioChangeRef.current = onAspectRatioChange
 
   useEffect(() => {
     let cancelled = false
 
-    // 仅当 imageId 变化时复位；挂载时保留 useState 同步读取的缓存值，避免先闪占位再加载
-    if (loadedImageIdRef.current !== item.imageId) {
-      loadedImageIdRef.current = item.imageId
-      setThumbnailSrc(getCachedThumbnail(item.imageId, GRID_THUMBNAIL_VARIANT)?.dataUrl ?? '')
-      setFullImageSrc('')
+    if (plan === 'original') {
+      // 原图直出：交给 Chromium 按显示尺寸解码缩放，不在 JS 里再持一份 dataURL
+      setThumbnailSrc('')
+      setPlanSrc('')
+      void resolveImageDisplaySrc(item.imageId)
+        .then((src) => {
+          if (!cancelled && src) setPlanSrc(src)
+        })
+        .catch(() => {})
+      return () => {
+        cancelled = true
+      }
     }
+
     const applyThumbnail = (thumbnail: { dataUrl: string; width?: number; height?: number }) => {
       if (cancelled) return
       setThumbnailSrc(thumbnail.dataUrl)
       if (thumbnail.width && thumbnail.height) onAspectRatioChangeRef.current?.(thumbnail.width / thumbnail.height)
     }
-    const unsubscribe = subscribeImageThumbnail(item.imageId, applyThumbnail, GRID_THUMBNAIL_VARIANT)
-    ensureImageThumbnailCached(item.imageId, 'visible', GRID_THUMBNAIL_VARIANT)
+    // 复位时同步读缓存，切档位（窗口缩放 / 密度切换）不闪占位
+    setThumbnailSrc(getCachedThumbnail(item.imageId, planVariant)?.dataUrl ?? '')
+    setPlanSrc('')
+    const unsubscribe = subscribeImageThumbnail(item.imageId, applyThumbnail, planVariant)
+    ensureImageThumbnailCached(item.imageId, 'visible', planVariant)
       .then((thumbnail) => {
         if (thumbnail) applyThumbnail(thumbnail)
       })
@@ -93,7 +108,7 @@ function GalleryImageTile({
       cancelled = true
       unsubscribe?.()
     }
-  }, [item.imageId])
+  }, [item.imageId, plan, planVariant])
 
   // 卸载时清理 hover 防抖定时器，避免悬空回调。
   useEffect(
@@ -115,6 +130,8 @@ function GalleryImageTile({
 
   const handlePointerEnter = () => {
     if (!loadFullOnHover) return
+    // 大磁贴档位显示的本来就是原图，再叠一层 dataURL 原图只是白解码一遍
+    if (plan === 'original') return
     if (hoverTimerRef.current !== null) return
     hoveredRef.current = true
     hoverTimerRef.current = window.setTimeout(() => {
@@ -135,6 +152,9 @@ function GalleryImageTile({
         })
     }, HOVER_FULL_IMAGE_DEBOUNCE_MS)
   }
+
+  /** 渲染优先级：hover 原图 → 档位图源 → 缩略图。 */
+  const imageSrc = fullImageSrc || planSrc || thumbnailSrc
 
   // 协议地址 404（文件被外部删除/移出库根）时回退 dataUrl；dataUrl 本身失败则不再重试。
   const handleImageError = () => {
@@ -161,7 +181,6 @@ function GalleryImageTile({
   }
 
   const imageCount = item.task.outputImages.length
-  const imageSrc = fullImageSrc || thumbnailSrc
 
   return (
     <article
