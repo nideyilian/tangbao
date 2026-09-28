@@ -123,7 +123,7 @@ export type SopKind = 'single' | 'series' | 'campaign-recipe'
 /**
  * SOP 执行方式（触发本地/远端分支的依据）：
  * - prompt-generator   调 AI 文本模型生成提示词（默认）
- * - variable-prompt    本地展开变量模板组合，组合不足时用 AI 扩词条
+ * - variable-prompt    纯本地展开变量模板组合；组合不足时按引擎规则循环复用凑够数量（全程不调 AI）
  * - campaign-recipe    配方卡引擎：纯本地最远点采样，完全不调 AI
  */
 export type SopExecutionMode = 'prompt-generator' | 'variable-prompt' | 'campaign-recipe'

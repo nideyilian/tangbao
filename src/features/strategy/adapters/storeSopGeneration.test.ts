@@ -367,24 +367,28 @@ describe('store SOP generation', () => {
       expect(onBatch).toHaveBeenCalledWith(expect.any(Array), 2, 2)
     })
 
-    it('组合不足时自动调 AI 扩词条后再展开', async () => {
-      const expanded = JSON.stringify({
-        variablePrompt:
-          '一只{{主体}}，{{风格}}风格。\n\n可变项：\n{{主体}}：柴犬 / 柯基 / 金毛 / 萨摩耶 / 边牧\n{{风格}}：水彩 / 油画 / 卡通 / 素描 / 3D',
-      })
-      const fetchMock = vi.fn().mockResolvedValue(mockResponse(expanded))
+    it('组合不足时不调 AI：按引擎规则循环复用凑够数量，并给出可见说明', async () => {
+      const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)
+      const onNotice = vi.fn()
 
+      // 组合上限 2×3=6，却要 20 条：旧行为会把整份模板发给 AI「扩词条」并拿回一份新模板，
+      // 用户填好的可变项被 AI 重写（2026-09-28 报障）。现在只循环复用，一个请求都不发。
       const result = await generateVariablePromptsFromSopStore(variableSop, 20, '', {
         exact: false,
+        onNotice,
       })
 
       expect(result).toHaveLength(20)
-      expect(new Set(result).size).toBe(20)
-      // 至少发起一次扩词条请求
-      expect(fetchMock).toHaveBeenCalled()
-      const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
-      expect(request.instructions).toContain('词条扩充')
+      expect(fetchMock).not.toHaveBeenCalled()
+      // 结果必须全部落在模板原有选项里 —— 出现别的词就说明又去调 AI 造了新选项
+      const subjects = new Set(['柴犬', '柯基'])
+      const styles = new Set(['水彩', '油画', '卡通'])
+      for (const prompt of result) {
+        expect(subjects.has(prompt.match(/一只(.+?)，/)?.[1] ?? '')).toBe(true)
+        expect(styles.has(prompt.match(/，(.+?)风格/)?.[1] ?? '')).toBe(true)
+      }
+      expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('6 种组合'))
     })
 
     it('模板格式错误时直接报错', async () => {

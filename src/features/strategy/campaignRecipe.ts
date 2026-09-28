@@ -15,6 +15,7 @@
  *
  * 距离定义：两条提示词在「维度取值」上的汉明距离（不同维度计数）。
  */
+import { parseVariablePrompt } from '../../lib/variablePrompt'
 import type { SopCampaignRecipeConfig, SopCampaignRecipeDimension } from './types'
 
 /** 配方卡维度的别名（语义等价，供引擎内部与调用方共用同一结构）。 */
@@ -1189,6 +1190,30 @@ export function parseCampaignRecipeConfigFromContent(content: string): SopCampai
 }
 
 /**
+ * 判定一个 SOP 是否走「变量提示词引擎」本地展开分支（`renderVariablePromptBatch`）。
+ *
+ * **本函数是全应用唯一的判定实现**，SOP 库角标 / 批量弹窗分流 / 每日批量一律从这里导入。
+ *
+ * 命中任一即成立：
+ * 1. `executionMode === 'variable-prompt'` —— 标准资产形态；
+ * 2. `content` 能被 `parseVariablePrompt` 认出「可变项：」区块 —— **漏标记兜底**。
+ *
+ * 为什么必须有第 2 条（2026-09-28 报障「填了可变项提示词，生图却调用 AI 重新生成」的成因之一）：
+ * `executionMode` 只在「AI 生成变量提示词技能」那一条写入路径上落库；**手工新建 SOP 与 JSON 库
+ * 导入都不写这个字段**。只认标记，一份正文完全合法、含「可变项：」的资产就会被当成普通 SOP，
+ * 整份交给文本模型逐条重写 —— 用户看到的正是「我明明写了可变项，它却去叫 AI」。
+ * 配方卡早有同款 content 兜底（`parseCampaignRecipeConfigFromContent`），变量提示词此前缺这一条。
+ */
+export function isVariablePromptSop(
+  sop:
+    (Partial<Pick<SopLibraryItemLike, 'campaignRecipe' | 'executionMode'>> & { content?: string }) | null | undefined,
+): boolean {
+  if (!sop) return false
+  if (sop.executionMode === 'variable-prompt') return true
+  return parseVariablePrompt(sop.content ?? '').detected
+}
+
+/**
  * 该 SOP 是否由本地算法生成提示词（配方卡 / 变量提示词），即：不调用 AI 文本模型。
  *
  * 用于「记录模型名」「界面展示模型名」这类需要区分本地/远端的场景 ——
@@ -1199,7 +1224,7 @@ export function isLocalGenerationSop(
     (Partial<Pick<SopLibraryItemLike, 'campaignRecipe' | 'executionMode'>> & { content?: string }) | null | undefined,
 ): boolean {
   if (!sop) return false
-  return isCampaignRecipeSop(sop) || sop.executionMode === 'variable-prompt'
+  return isCampaignRecipeSop(sop) || isVariablePromptSop(sop)
 }
 
 /**

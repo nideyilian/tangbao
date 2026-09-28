@@ -1,5 +1,5 @@
 import type { AssetCollection } from '../../types'
-import { isCampaignRecipeSop } from '../strategy/adapters/storeSopGeneration'
+import { isCampaignRecipeSop, isVariablePromptSop } from '../strategy/adapters/storeSopGeneration'
 import {
   generateCampaignRecipePromptsFromStore,
   generatePromptsFromSopStore,
@@ -50,9 +50,11 @@ export async function generateCardPrompts(
   count: number,
   existingPrompts: string[] = [],
 ): Promise<string[]> {
+  // 三分支判定一律走全应用唯一实现（`campaignRecipe.ts`）：变量提示词**不再只看 executionMode** ——
+  // 手工新建 / JSON 导入的卡会丢那个字段，只认标记就会把合法的变量模板当普通 SOP 交给 AI 逐条重写。
   const generated = isCampaignRecipeSop(sop)
     ? await generateCampaignRecipePromptsFromStore(sop, count, '', { existingPrompts })
-    : sop.executionMode === 'variable-prompt'
+    : isVariablePromptSop(sop)
       ? await generateVariablePromptsFromSopStore(sop, count, '', { existingPrompts })
       : await generatePromptsFromSopStore(sop, count, '', { existingPrompts })
   return normalizeSopPromptCandidates(generated, count, existingPrompts)

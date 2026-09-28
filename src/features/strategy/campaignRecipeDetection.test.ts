@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { isCampaignRecipeSop, isLocalGenerationSop, parseCampaignRecipeConfigFromContent } from './campaignRecipe'
+import {
+  isCampaignRecipeSop,
+  isLocalGenerationSop,
+  isVariablePromptSop,
+  parseCampaignRecipeConfigFromContent,
+} from './campaignRecipe'
 
 /**
  * 配方卡判定收口回归测试。
@@ -66,6 +71,35 @@ describe('isLocalGenerationSop：本地引擎（不调 AI）判定', () => {
     expect(isLocalGenerationSop({ executionMode: 'prompt-generator' })).toBe(false)
     expect(isLocalGenerationSop({ content: '一只猫' })).toBe(false)
     expect(isLocalGenerationSop(null)).toBe(false)
+  })
+})
+
+describe('isVariablePromptSop：执行模式标记 + 「可变项：」正文兜底', () => {
+  const variableContent = '一只{{主体}}，{{风格}}风格。\n\n可变项：\n{{主体}}：猫 / 狗\n{{风格}}：水彩 / 油画'
+
+  it('executionMode 显式为 variable-prompt（AI 生成的标准形态）', () => {
+    expect(isVariablePromptSop({ executionMode: 'variable-prompt' })).toBe(true)
+  })
+
+  /**
+   * 这条锁住 2026-09-28 报障的成因：`executionMode` 只在「AI 生成变量提示词技能」那条写入
+   * 路径上落库，手工新建 SOP 与 JSON 库导入都不写它。只认标记时，一份正文完全合法、
+   * 含「可变项：」的资产会被判成普通 SOP，整份交给文本模型逐条重写提示词。
+   */
+  it('缺 executionMode 但正文含「可变项：」区块 → 仍判为变量提示词', () => {
+    expect(isVariablePromptSop({ content: variableContent })).toBe(true)
+    expect(isLocalGenerationSop({ content: variableContent })).toBe(true)
+  })
+
+  it('普通 SOP 的正文不会被误判成变量提示词', () => {
+    expect(isVariablePromptSop({ executionMode: 'prompt-generator', content: '一只猫在窗台上晒太阳' })).toBe(false)
+    expect(isVariablePromptSop(null)).toBe(false)
+    expect(isVariablePromptSop(undefined)).toBe(false)
+    expect(isVariablePromptSop({})).toBe(false)
+  })
+
+  it('配方卡优先级不受影响：带 campaignRecipe 的资产仍走配方卡引擎', () => {
+    expect(isCampaignRecipeSop({ campaignRecipe: { body: 'x', dimensions: [] }, content: variableContent })).toBe(true)
   })
 })
 

@@ -38,7 +38,7 @@ import { useCloseOnEscape } from '../../hooks/useCloseOnEscape'
 import { useStore } from '../../store'
 import type { TaskRecord } from '../../types'
 import type { SopGroup, SopLibraryItem } from './types'
-import { isCampaignRecipeSop } from './campaignRecipe'
+import { isCampaignRecipeSop, isVariablePromptSop } from './campaignRecipe'
 import { buildSopGroupTree, flattenSopGroupTree } from './sopGroupTree'
 import SopCampaignRecipePanel from './SopCampaignRecipePanel'
 import SopImageStack from './SopImageStack'
@@ -401,14 +401,14 @@ export default function SopLibraryTab({
                  * 原先它们（或其中一部分）混在下方参数行里 —— 参数行宽度不足时会换行，
                  * 把内容整体抬高并顶出卡片下边界（2026-09-20 反馈的徽章跑出卡片）。
                  */}
-                {(item.kind === 'series' || item.executionMode === 'variable-prompt' || isCampaignRecipeSop(item)) && (
+                {(item.kind === 'series' || isVariablePromptSop(item) || isCampaignRecipeSop(item)) && (
                   <span className="sop-center-sop-badges">
                     {item.kind === 'series' && (
                       <Badge tone="info" title={`系列 SOP · ${item.seriesConfig?.imageCount ?? 3} 图`}>
                         系列 {item.seriesConfig?.imageCount ?? 3} 图
                       </Badge>
                     )}
-                    {item.executionMode === 'variable-prompt' && <Badge tone="info">变量提示词</Badge>}
+                    {isVariablePromptSop(item) && <Badge tone="info">变量提示词</Badge>}
                     {isCampaignRecipeSop(item) && <Badge tone="info">配方卡引擎</Badge>}
                   </span>
                 )}
@@ -627,7 +627,7 @@ export default function SopLibraryTab({
                 onTestRevision={
                   onTestSopRevision ? (content) => onTestSopRevision({ ...itemDraft, content }) : undefined
                 }
-                variableMeta={itemDraft.executionMode === 'variable-prompt' ? itemDraft.variableMeta : undefined}
+                variableMeta={isVariablePromptSop(itemDraft) ? itemDraft.variableMeta : undefined}
                 onVariableMetaChange={(meta) =>
                   setItemDraft((current) => (current ? { ...current, variableMeta: meta } : current))
                 }

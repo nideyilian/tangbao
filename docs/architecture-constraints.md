@@ -366,6 +366,16 @@
   （`Boolean(sop.campaignRecipe) || sop.executionMode === 'campaign-recipe'`），
   **不要为省一行去 import 生成模块的辅助函数**（R-46：测试整体 mock 会挂掉该文件全部生成用例）。
 - **配方卡 = 纯本地**：不调 AI、不读参考图、无 JSON 解析重试；合规红线 21 词内置且不可关闭。
+- **变量提示词 = 纯本地**（2026-09-28 定，TB-140 / R-114）：只做「拆解 + 组合」，
+  **不允许再调 AI 扩充选项**。组合数不够本批张数时按引擎规则**循环复用凑够数量**，
+  并用 `onNotice` 把这件事写进收尾状态消息（不再静默）。
+  - **判定收口**：`isVariablePromptSop`（`campaignRecipe.ts`，唯一实现）= `executionMode === 'variable-prompt'`
+    **或** 正文能被 `parseVariablePrompt` 认出「可变项：」区块。**那条 content 兜底不能省** ——
+    `executionMode` 只有「AI 生成变量提示词技能」这一条路径会写，手工新建 SOP 与 JSON 库导入都会丢；
+    只认标记就会把一份合法模板当普通 SOP 交给 AI 逐条重写。
+  - 单条「重新生成」对变量提示词 / 配方卡也要走本地引擎（变量提示词的展开是确定性的，靠给种子加盐换一条）。
+  - **本地展开不要复用 `generateSopPromptBatches`**：那套会按内容去重，把循环复用项当脏数据丢掉
+    （实测「要 20 张只出 6 张」）。
 - **骨架存 `campaignRecipe.body`，不是 `content`** —— 配方卡 `content` 为空是**合法形态**，
   保存门槛按类型分叉（R-51）。
 - 编辑入口：SOP 列表头「新建 | 配方卡」→ `SopCampaignRecipePanel`

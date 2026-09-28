@@ -30,6 +30,7 @@ import {
   parseSopPromptBatchResponse,
   parseSopSeriesPromptBatchResponse,
   SOP_PROMPT_GENERATOR_INSTRUCTION,
+  throwIfSopPromptGenerationAborted,
   type SopPromptBatchContext,
 } from '../sopPromptBatch'
 import { IMAGE_GENERATION_STRATEGY_SKILL_META_INSTRUCTION } from '../skillMetaInstructions'
@@ -40,6 +41,7 @@ import {
   deriveUsedSignatures,
   generateCampaignRecipeBatch,
   isCampaignRecipeSop as isCampaignRecipeSopShared,
+  isVariablePromptSop as isVariablePromptSopShared,
   MAX_DIMENSION_OPTIONS,
   parseCampaignRecipeConfigFromContent,
   sanitizeCampaignRecipeConfig,
@@ -576,34 +578,18 @@ export async function testSopRevisionFromStore(sop: SopLibraryItem) {
 // 变量提示词模式（executionMode='variable-prompt'）批量展开
 // ---------------------------------------------------------------------------
 
-const VARIABLE_EXPANSION_TEXT_FORMAT = {
-  type: 'json_schema',
-  name: 'expanded_variable_prompt',
-  strict: true,
-  schema: {
-    type: 'object',
-    properties: {
-      variablePrompt: {
-        type: 'string',
-        description:
-          '扩词条后的完整变量提示词正文：保留原正文与全部原选项，为每个变量追加足够多的新选项，必须可直接解析执行（包含单独一行的可变项区块）',
-      },
-    },
-    required: ['variablePrompt'],
-    additionalProperties: false,
-  },
-} as const
-
-const VARIABLE_EXPANSION_INSTRUCTION = `你是变量提示词词条扩充器。用户提供一条变量提示词模板与期望的批量数量，当前模板的可变项组合数不足以覆盖该数量。
-你的任务：在完全保留模板正文、变量名与已有选项的前提下，为每个变量追加足够多的新选项，使总组合数达到或超过期望数量。
-要求：
-1. 不得修改正文中的变量占位符（{{变量名}}）和已有选项，只能新增选项。
-2. 新选项必须与原选项语义同级、互不重复，并在模板原有主题方向上形成有意义的差异。
-3. 保持“可变项：”单独一行、每个变量单独一行的格式，选项用「 / 」分隔。
-4. 最终只输出 JSON：{"variablePrompt":"完整的变量提示词正文"}，不要 Markdown、解释或编号。`
-
 /**
- * 变量提示词模式的批量提示词生成：本地展开组合，组合不足时自动调 AI 扩词条。
+ * 变量提示词模式的批量提示词生成：**纯本地展开，全程不调用 AI**。
+ *
+ * 引擎规则：`parseVariablePrompt` 拆解「可变项：」区块 → `renderVariablePromptBatch`
+ * 按确定性种子组合出 N 条（组合耗尽后允许复用，但优先选与最近结果差异最大的组合）。
+ *
+ * 为什么彻底删掉「组合不足时自动调 AI 扩词条」（2026-09-28 报障）：
+ * 那条分支会把整份模板发给文本模型，让它「为每个变量追加足够多的新选项」并返回一整份新模板 ——
+ * 用户填好的可变项被 AI 重写，出的图自然不是他指定的组合；更糟的是这次 AI 调用**无开关、无提示**，
+ * 而弹窗上还写着「本地引擎（不调用 AI）」（见 `GallerySopBatchModal` 的模型名展示），用户无从察觉。
+ * 现在的取舍（杰哥 2026-09-28 定）：组合不够就按引擎既有规则循环复用、凑够数量，并在界面上说明一句。
+ *
  * 与 generatePromptsFromSopStore 同签名，弹窗可无缝切换执行分支。
  */
 export async function generateVariablePromptsFromSopStore(
@@ -622,6 +608,13 @@ export async function generateVariablePromptsFromSopStore(
     signal?: AbortSignal
     /** 系列模式下批次单位是「组」：quantity 为组数，每组展开 outputUnitSize 条画面。 */
     outputUnitSize?: number
+    /** 给界面的一句说明（如「模板只有 N 种组合，已循环复用」）；不传则静默。 */
+    onNotice?: (message: string) => void
+    /**
+     * 给种子加盐：展开是**确定性**的（同种子必然同一批结果）。单条「重新生成」要换一条时靠它区分，
+     * 否则每点一次都拿到原样那一条。
+     */
+    seedSalt?: string
   } = {},
 ) {
   const parsed = parseVariablePrompt(sop.content)
@@ -629,181 +622,35 @@ export async function generateVariablePromptsFromSopStore(
     throw new Error(`变量提示词模板格式有误：${parsed.errors[0] ?? '请检查可变项格式'}`)
   }
 
-  const settings = useStore.getState().settings
-  const profile = getAgentTextApiProfile(settings)
-  const validationError = validateApiProfile(profile)
-  if (validationError || profile.provider !== 'openai') {
-    const message = validationError
-      ? `请先完善 Agent 配置：${validationError}`
-      : '变量提示词批量展开需要管理员配置 OpenAI 兼容的 Agent 文本模型'
-    throw new Error(message)
-  }
-
-  // 模板实际可展开的组合数；请求数量不能超过组合数（否则必然重复）
-  // quantity 是批次单位数（系列模式下为组数），展开成实际画面条数再和组合数比较
+  // quantity 是批次单位数（系列模式下为组数），展开成实际画面条数
   const outputUnitSize = Math.max(1, Math.trunc(options.outputUnitSize ?? 1))
-  const targetCount = Math.max(1, Math.trunc(quantity)) * outputUnitSize
-  let template = sop.content
+  const unitCount = Math.max(1, Math.trunc(quantity))
+  const targetCount = unitCount * outputUnitSize
 
-  // 组合不足时自动调 AI 扩词条（仅当目标数量超过组合数，且未显式关闭）
-  if (targetCount > parsed.combinationCount && options.signal?.aborted !== true) {
-    template = await expandSopVariablePromptOptions(template, targetCount, {
-      settings,
-      profile,
-      brief,
-      referenceImages: options.referenceImages,
-      signal: options.signal,
-    })
-    const reparsed = parseVariablePrompt(template)
-    if (!reparsed.enabled) {
-      throw new Error(`扩词条后模板格式异常：${reparsed.errors[0] ?? '请检查可变项格式'}`)
-    }
-  }
-  // 用扩词条后的模板重新计算组合上限；按整组向下取整，避免凑不满一组时 exact 校验失败
-  const finalParsed = parseVariablePrompt(template)
-  const combinationLimit = Math.min(targetCount, finalParsed.combinationCount)
-  const unitCount = Math.max(1, Math.floor(combinationLimit / outputUnitSize))
-
-  const seed = `${sop.id}:${brief.trim() || 'default'}`
-  // 复用 generateSopPromptBatches 驱动：本地展开作为唯一一批，走现有 onBatch 逐条推进/提交
-  return generateSopPromptBatches(
-    unitCount,
-    async () => {
-      const prompts = renderVariablePromptBatch(template, combinationLimit, seed)
-      // 与配方卡同源的问题：renderBody 对未命中的 `{{X}}` 原样保留，
-      // 不拦就会带着占位符直接出图。变量提示词是纯本地展开，残留必然是名称写错。
-      assertNoResidualPlaceholders(prompts, '变量提示词')
-      return prompts
-    },
-    {
-      exact: options.exact,
-      existingPrompts: options.existingPrompts,
-      maxBatchSize: options.maxBatchSize,
-      onProgress: options.onProgress,
-      onBatch: options.onBatch,
-      beforeBatch: options.beforeBatch,
-      signal: options.signal,
-      outputUnitSize,
-    },
-  )
-}
-
-async function expandSopVariablePromptOptions(
-  template: string,
-  targetCount: number,
-  context: {
-    settings: AppSettings
-    profile: ApiProfile
-    brief: string
-    referenceImages?: Array<{ name: string; dataUrl: string }>
-    signal?: AbortSignal
-  },
-): Promise<string> {
-  const { settings, profile, brief, referenceImages } = context
-  const proxy = readClientDevProxyConfig()
-  const useChatCompletions = getAgentTextProtocol(settings, profile) === 'chat-completions'
-  const url = buildApiUrl(
-    profile.baseUrl,
-    useChatCompletions ? 'chat/completions' : 'responses',
-    proxy,
-    shouldUseApiProxy(profile.apiProxy, proxy),
-  )
-  const userText = [
-    `期望批量数量：${targetCount} 条。`,
-    brief.trim() ? `补充要求：\n${brief.trim()}` : '',
-    '',
-    '当前变量提示词模板：',
-    '<TEMPLATE>',
-    template,
-    '</TEMPLATE>',
-  ]
-    .filter(Boolean)
-    .join('\n')
-
-  const send = (useStructuredOutput: boolean) => {
-    const body = useChatCompletions
-      ? {
-          model: profile.model || settings.model,
-          messages: [
-            { role: 'system', content: VARIABLE_EXPANSION_INSTRUCTION },
-            {
-              role: 'user',
-              content: referenceImages?.length
-                ? [
-                    { type: 'text', text: userText },
-                    ...referenceImages.map((image) => ({
-                      type: 'image_url',
-                      image_url: { url: image.dataUrl },
-                    })),
-                  ]
-                : userText,
-            },
-          ],
-          max_tokens: 8000,
-          ...(useStructuredOutput
-            ? {
-                response_format: {
-                  type: 'json_schema',
-                  json_schema: {
-                    name: VARIABLE_EXPANSION_TEXT_FORMAT.name,
-                    strict: true,
-                    schema: VARIABLE_EXPANSION_TEXT_FORMAT.schema,
-                  },
-                },
-              }
-            : {}),
-        }
-      : {
-          model: profile.model || settings.model,
-          instructions: VARIABLE_EXPANSION_INSTRUCTION,
-          input: referenceImages?.length
-            ? [
-                {
-                  role: 'user',
-                  content: [
-                    { type: 'input_text', text: userText },
-                    ...referenceImages.map((image) => ({
-                      type: 'input_image',
-                      image_url: image.dataUrl,
-                    })),
-                  ],
-                },
-              ]
-            : userText,
-          max_output_tokens: 8000,
-          ...(useStructuredOutput ? { text: { format: VARIABLE_EXPANSION_TEXT_FORMAT } } : {}),
-        }
-    return fetchTextModelWithTimeout(
-      url,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${profile.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store',
-        body: JSON.stringify(body),
-      },
-      { signal: context.signal, timeoutMs: resolveTextRequestTimeoutMs(profile.timeout), label: '扩词条' },
+  // 组合不够时不再调 AI 扩词条：按引擎规则循环复用凑够数量，只把这件事说给用户听
+  // （原先那条 AI 调用既无开关也无提示，弹窗上还写着「本地引擎（不调用 AI）」）。
+  if (targetCount > parsed.combinationCount) {
+    options.onNotice?.(
+      `模板只有 ${parsed.combinationCount} 种组合，本批 ${targetCount} 张将循环复用（不调用 AI 扩充选项）`,
     )
   }
 
-  let response = await send(true)
-  if (!response.ok && (response.status === 400 || response.status === 422)) {
-    response = await send(false)
-  }
-  if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`扩词条失败（${response.status}）：${body.slice(0, 180)}`)
-  }
-  const payload = (await response.json()) as unknown
-  const text = useChatCompletions ? extractChatCompletionsText(payload) : extractResponseText(payload)
-  const generated = parseGeneratedVariablePrompt(text)
-  const validation = parseVariablePrompt(generated.sop)
-  if (!validation.enabled) {
-    throw new Error(`扩词条后模板仍无法解析：${validation.errors[0] ?? '请检查模型返回'}`)
-  }
-  return generated.sop
+  const seedSuffix = options.seedSalt ? `:${options.seedSalt}` : ''
+  const seed = `${sop.id}:${brief.trim() || 'default'}${seedSuffix}`
+  // 与配方卡同源的问题：renderBody 对未命中的 `{{X}}` 原样保留，
+  // 不拦就会带着占位符直接出图。变量提示词是纯本地展开，残留必然是名称写错。
+  const prompts = renderVariablePromptBatch(sop.content, targetCount, seed)
+  assertNoResidualPlaceholders(prompts, '变量提示词')
+
+  // 刻意**不走** generateSopPromptBatches：那套是给 AI 分支设计的（按模型单请求上限分批，
+  // 并按内容去重）。本地展开是一次算到底的确定性序列，组合耗尽后的复用是有意为之，
+  // 交给它去重就会「要 20 张只出 6 张」（每个重复项都被当成脏数据丢掉）。
+  // 这里按「一次算完、逐条提交」的既定形态直接驱动一次 onBatch。
+  await options.beforeBatch?.()
+  throwIfSopPromptGenerationAborted(options.signal)
+  await options.onBatch?.(prompts, unitCount, unitCount)
+  options.onProgress?.(unitCount, unitCount)
+  return prompts
 }
 
 // ---------------------------------------------------------------------------
@@ -818,6 +665,13 @@ async function expandSopVariablePromptOptions(
  * 判定分叉会导致「引擎能认出、界面认不出」的展示与执行割裂（R-53 / R-54 的病根）。
  */
 export const isCampaignRecipeSop = isCampaignRecipeSopShared
+
+/**
+ * 变量提示词引擎判定的兼容出口，**实现唯一在 `campaignRecipe.ts` 的 `isVariablePromptSop`**
+ * （`executionMode === 'variable-prompt'` 或正文能被解析出「可变项：」区块）。
+ * 与上面同款理由：**不要再在此处派生新口径**，否则又会回到「展示认不出、执行走了 AI」的分叉。
+ */
+export const isVariablePromptSop = isVariablePromptSopShared
 
 /**
  * 本地生成分支（配方卡 / 变量提示词）的最后一道拦网：提示词里不允许残留占位符。

@@ -67,7 +67,12 @@ import {
   throwIfSopPromptGenerationAborted,
 } from '../sopPromptBatch'
 import { normalizeSeriesConfig } from '../sopGeneration'
-import { describeCampaignRecipeSize, isCampaignRecipeSop, isLocalGenerationSop } from '../campaignRecipe'
+import {
+  describeCampaignRecipeSize,
+  isCampaignRecipeSop,
+  isLocalGenerationSop,
+  isVariablePromptSop,
+} from '../campaignRecipe'
 import type { SopSeriesConfig } from '../types'
 import {
   buildSopSeriesAnchoredPrompt,
@@ -2095,6 +2100,11 @@ export default function GallerySopBatchModal({
     const anchorWaitTimings: number[] = []
     const submitTimings: number[] = []
     let lastOnBatchEnd = 0
+    /**
+     * 变量提示词「组合不够、已循环复用」的说明。本地展开一次性算完，进度消息随后就会被
+     * 「正在编写提示词 x/y」覆盖 —— 所以先存下来，收尾时拼进最终状态消息，否则这句提示等于没说。
+     */
+    let combinationReuseNotice = ''
 
     /**
      * 渐进派发下提交一条生图任务；返回 taskId，失败返回 null（计数已在内部完成）。
@@ -2250,7 +2260,10 @@ export default function GallerySopBatchModal({
         const generatedBeforeRequest = nextPrompts.filter(
           (item) => !item.deleted && item.promptText.trim() && promptBelongsToSource(item, sourceRun.source),
         ).length
-        const isVariablePromptSop = selectedSop.executionMode === 'variable-prompt'
+        // 变量提示词判定同样收口到模块级（executionMode 标记 **或** 正文含「可变项：」）：
+        // 手工新建 / JSON 库导入的资产会丢掉 executionMode，只认标记就会把一份合法的
+        // 变量提示词模板当成普通 SOP 交给 AI 逐条重写（2026-09-28 报障的成因之一）。
+        const variablePromptSop = isVariablePromptSop(selectedSop)
         // 配方卡 / 变量提示词的判定统一收口到模块级 isLocalGenerationSop，
         // 避免「分流用一份口径、模型名记录用另一份口径」再次漂移（R-53 / R-54）。
         const isCampaignRecipe = isCampaignRecipeSop(selectedSop)
@@ -2287,6 +2300,8 @@ export default function GallerySopBatchModal({
         const generationOptions: NonNullable<Parameters<typeof generatePromptsFromSopStore>[3]> & {
           outputUnitSize?: number
           builtinValues?: Record<string, string>
+          /** 变量提示词「组合不够、已循环复用」的说明（本地展开，不调 AI） */
+          onNotice?: (message: string) => void
         } = {
           // 配方卡骨架可用 {比例} / {方向} / {尺寸} 注入界面当前选中的尺寸 ——
           // 否则 body 里的比例只能写死（如 vertical 9:16 photo），跟界面选择脱节。
@@ -2315,6 +2330,11 @@ export default function GallerySopBatchModal({
           outputUnitSize: activeSeriesMode ? seriesCount : 1,
           beforeBatch: waitWhileGenerationPaused,
           signal: generationController.signal,
+          // 变量提示词组合不够时只提示、不调 AI（引擎按规则循环复用），收尾时拼进最终状态消息
+          onNotice: (message: string) => {
+            combinationReuseNotice = message
+            setStatusMessage(message)
+          },
           onBatch: async (batchPrompts) => {
             if (lastOnBatchEnd > 0) promptBatchTimings.push(Date.now() - lastOnBatchEnd)
             for (const prompt of batchPrompts) {
@@ -2509,7 +2529,7 @@ export default function GallerySopBatchModal({
               effectiveBrief,
               generationOptions,
             )
-          : isVariablePromptSop
+          : variablePromptSop
             ? await generateVariablePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
             : await generatePromptsFromSopStore(selectedSop, generationCount, effectiveBrief, generationOptions)
         diag('②引擎返回', `${generated?.length ?? '(非数组)'} 条`)
@@ -2645,10 +2665,13 @@ export default function GallerySopBatchModal({
       if (progressiveSuccessCount > 0) setCurrentRunId(progressiveSnapshotId, true)
       const hasProblems = Boolean(failed || missing || progressiveFailureCount || progressivePersistenceError)
       setStatus(hasProblems ? 'error' : 'success')
+      const progressiveCompletionMessage = hasProblems
+        ? `逐条生成完成：已发送 ${progressiveSuccessCount} 条，发送失败 ${progressiveFailureCount} 条，提示词缺口 ${missing} 条`
+        : `已逐条生成并发送 ${progressiveSuccessCount} 个 SOP 生图任务`
       setStatusMessage(
-        hasProblems
-          ? `逐条生成完成：已发送 ${progressiveSuccessCount} 条，发送失败 ${progressiveFailureCount} 条，提示词缺口 ${missing} 条`
-          : `已逐条生成并发送 ${progressiveSuccessCount} 个 SOP 生图任务`,
+        combinationReuseNotice
+          ? `${progressiveCompletionMessage}；${combinationReuseNotice}`
+          : progressiveCompletionMessage,
       )
       setError(
         [
@@ -2676,11 +2699,10 @@ export default function GallerySopBatchModal({
       diag('⑥写库完成')
       setStatus(failed || missing ? 'error' : 'ready')
       diag('⑦status 已复位 —— 流程结束')
-      setStatusMessage(
-        missing
-          ? `提示词列表部分完成：当前可用 ${available} 条，缺口 ${missing} 条`
-          : `提示词列表已生成：当前可用 ${available} 条`,
-      )
+      const completionMessage = missing
+        ? `提示词列表部分完成：当前可用 ${available} 条，缺口 ${missing} 条`
+        : `提示词列表已生成：当前可用 ${available} 条`
+      setStatusMessage(combinationReuseNotice ? `${completionMessage}；${combinationReuseNotice}` : completionMessage)
       setError(
         failed || missing
           ? [
@@ -2797,6 +2819,56 @@ export default function GallerySopBatchModal({
         activeSeriesMode && itemSeries
           ? getSopSeriesCopyBlock(item.promptText) || getSopSeriesCopyBlock(siblingPromptText)
           : ''
+      /** 把重新生成的结果写回这一条，并给出一致的状态反馈（本地引擎与 AI 分支共用）。 */
+      const applyRegeneratedPrompt = (nextPrompt: string) => {
+        if (generationController.signal.aborted) return
+        activePromptGenerationModelRef.current = getSopPromptGenerationModelFromStore()
+        updatePrompts((current) =>
+          current.map((entry) =>
+            entry.id === item.id
+              ? { ...entry, referenceImageIds, promptText: nextPrompt, origin: 'ai', edited: false }
+              : entry,
+          ),
+        )
+        setStatus('ready')
+        setStatusMessage(
+          `已重新生成第 ${visiblePrompts.findIndex((entry) => entry.id === item.id) + 1} 条提示词${
+            seriesFixedBlock ? '（沿用本组固定规范）' : ''
+          }`,
+        )
+      }
+      // 单条「重新生成」同样要遵守分流：本地引擎卡按引擎规则重新取一条，只有普通 SOP 才交给 AI 撰写。
+      // 此前这里**无条件**调 AI —— 在变量提示词卡上点一次「重新生成」，拿到的是 AI 自由发挥的词，
+      // 与模板的「可变项」组合彻底脱钩（2026-09-28 一并修掉）。
+      if (isVariablePromptSop(selectedSop)) {
+        // 展开是确定性的：同一颗种子必然得到同一条 —— 给种子加盐并避开当前那条（最多换 8 次），
+        // 否则用户点「重新生成」看到的还是原样。
+        let nextPrompt = ''
+        for (let attempt = 0; attempt < 8 && !nextPrompt; attempt += 1) {
+          const [candidate] = await generateVariablePromptsFromSopStore(selectedSop, 1, effectiveBrief, {
+            exact: true,
+            seedSalt: `${item.id}:${attempt}:${Date.now()}`,
+            beforeBatch: waitWhileGenerationPaused,
+            signal: generationController.signal,
+          })
+          if (candidate && candidate.trim() && candidate.trim() !== item.promptText.trim()) nextPrompt = candidate
+        }
+        if (!nextPrompt) throw new Error('没能换出新的组合，请给「可变项」增加选项后重试')
+        applyRegeneratedPrompt(nextPrompt)
+        return
+      }
+      if (isCampaignRecipeSop(selectedSop)) {
+        const [sampled] = await generateCampaignRecipePromptsFromStore(selectedSop, 1, effectiveBrief, {
+          exact: false,
+          existingPrompts,
+          builtinValues: describeCampaignRecipeSize(params.size ?? ''),
+          beforeBatch: waitWhileGenerationPaused,
+          signal: generationController.signal,
+        })
+        if (!sampled) throw new Error('配方卡没能采样出新的组合，请检查维度池')
+        applyRegeneratedPrompt(sampled)
+        return
+      }
       const generated = await generatePromptsFromSopStore(selectedSop, 1, effectiveBrief, {
         context: {
           sourceLabel: sourceImage ? (source?.label ?? '参考图') : undefined,
@@ -2817,21 +2889,7 @@ export default function GallerySopBatchModal({
         beforeBatch: waitWhileGenerationPaused,
         signal: generationController.signal,
       })
-      if (generationController.signal.aborted) return
-      activePromptGenerationModelRef.current = getSopPromptGenerationModelFromStore()
-      updatePrompts((current) =>
-        current.map((entry) =>
-          entry.id === item.id
-            ? { ...entry, referenceImageIds, promptText: generated[0] ?? entry.promptText, origin: 'ai', edited: false }
-            : entry,
-        ),
-      )
-      setStatus('ready')
-      setStatusMessage(
-        `已重新生成第 ${visiblePrompts.findIndex((entry) => entry.id === item.id) + 1} 条提示词${
-          seriesFixedBlock ? '（沿用本组固定规范）' : ''
-        }`,
-      )
+      applyRegeneratedPrompt(generated[0] ?? item.promptText)
     } catch (cause) {
       setStatus('ready')
       if (generationController.signal.aborted || isAbortError(cause)) {

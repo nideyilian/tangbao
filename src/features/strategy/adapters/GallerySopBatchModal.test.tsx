@@ -113,6 +113,29 @@ const requirementState = vi.hoisted(() => {
       // 手工资产形态：没有 campaignRecipe 字段，配方配置直接放在 content 的 JSON 里。
       // 引擎侧有同款兜底解析，弹窗分流也必须认得（见 R-53）。
       recipeJsonSop,
+      {
+        id: 'sop-variable',
+        name: '变量提示词卡',
+        description: '',
+        content: '一只{{主体}}，{{风格}}风格。\n\n可变项：\n{{主体}}：柴犬 / 柯基\n{{风格}}：水彩 / 油画',
+        source: 'manual' as const,
+        createdBy: 'user-1',
+        createdAt: 6,
+        updatedAt: 6,
+        executionMode: 'variable-prompt' as const,
+      },
+      // 手工新建 / JSON 库导入的卡会丢掉 executionMode。判定侧只认标记时，
+      // 这份正文完全合法的变量提示词模板会被当普通 SOP，整份交给 AI 逐条重写（2026-09-28 报障）。
+      {
+        id: 'sop-variable-unmarked',
+        name: '没标记的变量提示词卡',
+        description: '',
+        content: '一只{{主体}}，{{风格}}风格。\n\n可变项：\n{{主体}}：柴犬 / 柯基\n{{风格}}：水彩 / 油画',
+        source: 'manual' as const,
+        createdBy: 'user-1',
+        createdAt: 7,
+        updatedAt: 7,
+      },
     ],
   }
 })
@@ -416,6 +439,58 @@ describe('GallerySopBatchModal background generation', () => {
     mountedRenderers.push(renderer!)
 
     expect(generateMocks.generateCampaignRecipePromptsFromStore).toHaveBeenCalledOnce()
+    expect(generateMocks.generatePromptsFromSopStore).not.toHaveBeenCalled()
+  })
+
+  it('routes variable-prompt SOPs to the local engine instead of the AI text model', async () => {
+    generateMocks.generateVariablePromptsFromSopStore.mockResolvedValue(['本地展开的提示词'])
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-variable"
+          initialPromptCount={1}
+          autoStart
+          onAutoStartConsumed={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    // 变量提示词走本地展开，绝不调用 AI 生成函数
+    expect(generateMocks.generateVariablePromptsFromSopStore).toHaveBeenCalledOnce()
+    expect(generateMocks.generatePromptsFromSopStore).not.toHaveBeenCalled()
+    expect(renderer!.root.findByProps({ 'aria-label': '第 1 条提示词' }).props.value).toBe('本地展开的提示词')
+  })
+
+  it('routes an unmarked variable-prompt SOP (no executionMode) to the local engine too', async () => {
+    // 2026-09-28 报障的守卫：手工新建 / JSON 库导入会丢 executionMode，分流若只认标记，
+    // 这份「正文里明明写着可变项」的卡就会落到 AI 分支被逐条重写。
+    generateMocks.generateVariablePromptsFromSopStore.mockResolvedValue(['没标记也走本地展开'])
+
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <GallerySopBatchModal
+          workspaceTabId="tab-a"
+          initialSopId="sop-variable-unmarked"
+          initialPromptCount={1}
+          autoStart
+          onAutoStartConsumed={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mountedRenderers.push(renderer!)
+
+    expect(generateMocks.generateVariablePromptsFromSopStore).toHaveBeenCalledOnce()
     expect(generateMocks.generatePromptsFromSopStore).not.toHaveBeenCalled()
   })
 

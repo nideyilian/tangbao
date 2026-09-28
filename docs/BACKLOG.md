@@ -6839,6 +6839,56 @@ localStorage 里的**过期**提示词把输入框盖回去，尺寸参数它不
   「= 图片数」，「图片数/视频」那格随之置灰显示 `1（每张图各一个）`（置灰而不是藏起来 —— 藏了用户
   会以为这个设置没了）。
 
+---
+
+## TB-140 变量提示词生图不再调 AI：删自动扩词条 + 判定补 content 兜底（2026-09-28 阿伟）
+
+**杰哥的一句话**：
+
+> 在提示词输入框中填写可变项提示词后，生图流程应严格按照指定引擎的规则来拆解和组合提示词，
+> 而不是调用 AI 模型重新生成提示词。
+
+**定位（三处「该本地却调了 AI」：两条自动、一条用户点击）**
+
+1. **组合数不够时静默扩词条**（`storeSopGeneration.ts`）：模板只有 4 种组合、本批要 10 张 ⇒
+   把「正文 + 全部选项」（外加输入框里填的「本次生成要求」）发给文本模型，让它给每个变量追加新选项、
+   返回**一整份新模板**再本地展开。**无开关、无提示**，弹窗还写着「本地引擎（不调用 AI）」。
+2. **判定只认 `executionMode`**：`sop.executionMode === 'variable-prompt'` 在弹窗、每日批量、
+   SOP 库角标三处各写了一遍；而该字段只有「AI 生成变量提示词技能」这一条写入路径会落库，
+   **手工新建 SOP 与 JSON 库导入都不写** ⇒ 一份正文完全合法、含「可变项：」的卡被当普通 SOP，
+   整份交给 AI 逐条重写。
+3. **单条「重新生成」绕过分流**：弹窗里点某一条的「重新生成」**无条件**调 AI —— 变量提示词与配方卡同样中招。
+
+**改法（杰哥拍板：组合不够就循环复用）**
+
+| 层 | 改了什么 |
+| --- | --- |
+| 引擎 | `generateVariablePromptsFromSopStore` 删掉 AI 扩词条分支与整套 `VARIABLE_EXPANSION_*` 常量/函数；改为一次算完 `renderVariablePromptBatch(content, targetCount, seed)` 再驱动一次 `onBatch`（**刻意不走 `generateSopPromptBatches`**：那套按内容去重，会把循环复用项当脏数据全丢掉，实测「要 20 张只出 6 张」） |
+| 提示 | 新增 `onNotice` 回调：组合不够时「模板只有 N 种组合，本批 M 张将循环复用（不调用 AI 扩充选项）」；弹窗把它存进变量、在**收尾**状态消息里拼出（进度消息会立刻覆盖，只有收尾那句留得住） |
+| 判定 | `campaignRecipe.ts` 新增 `isVariablePromptSop`（标记 **或** 正文含「可变项：」），`isLocalGenerationSop` 复用它；四处内联判定（弹窗分流 / 每日批量 / SOP 库角标 / 变量参数面板）全部收口到这一处 |
+| 单条 | 「重新生成」按卡型分流：变量提示词走本地展开（`seedSalt` 加盐 + 避开当前那条，最多换 8 次）、配方卡走本地采样，只有普通 SOP 才调 AI |
+| 附带 | 纯本地展开不再依赖 Agent 文本模型 ⇒ 删掉「请先完善 Agent 配置 / 需要管理员配置 OpenAI 兼容模型」那道前置校验（不删的话没配文本模型就用不了纯本地功能） |
+
+**验收证据**
+
+- 改写 1 条 + 新增 6 条守卫：`storeSopGeneration.test.ts`「组合不足时不调 AI：按引擎规则循环复用凑够数量，
+  并给出可见说明」（原用例断言的正是旧行为「自动调 AI 扩词条」，已改写）、`campaignRecipeDetection.test.ts`
+  4 条（标记 / 漏标记 / 普通 SOP 不误判 / 配方卡优先级）、`GallerySopBatchModal.test.tsx` 2 条
+  （有标记与无标记的变量提示词卡都路由到本地引擎，AI 生成函数一次都没被调用）。
+- **反向验证**：① 去掉 content 兜底 ⇒ 精确命中 2 条（判定层 1 + 弹窗分流 1）；② 把展开数量夹回组合数
+  ⇒ 精确命中 1 条。恢复后 `grep NV-PROBE` 无残留。
+- 双端 tsc + lint + format:check 全过；全量测试 **279 文件 / 3505 用例**，
+  仅 1 条环境级 flaky（`electron/legacy-data-migration.test.ts` 的 `beforeEach` 10s 超时，
+  单独重跑 19/19 全过，与本次改动无关）。
+
+**未做 / 建议另开一条**
+
+- JSON 库导入（`SopManagementCenter.tsx` 的导入白名单）仍会丢 `executionMode` / `campaignRecipe` /
+  `variableMeta` / `dominantSlots`。本轮靠 content 兜底让变量提示词与配方卡的**执行侧**不受影响，
+  但导入导出往返依旧不是无损的（变量参数面板的 theme / count 会丢）。
+- 配方卡的「单条重新生成」本轮一并改成本地采样，但采样空间耗尽时的表现（报「没能采样出新的组合」）
+  没有专门的守卫用例。
+
 **验收**：`params.test.ts` 加 6 条（fixed 照旧 / perImage 换算 / **换算结果恒满足引擎校验** /
 `buildEngineConfig` 认换算结果 / 不传换算结果时仍走参数值 / `videoCountMode` 脏值丢弃）。
 
