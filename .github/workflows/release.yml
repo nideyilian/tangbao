@@ -38,6 +38,18 @@ jobs:
       - name: Typecheck electron
         run: npx tsc -p electron/tsconfig.json --noEmit
 
+      # 图转视频引擎（106 MB）进不了 git —— 超过 GitHub 单文件 100 MiB 的硬上限，
+      # 而 electron-builder 的 `beforePack` 会**硬检查**它在位（缺失或不足 80 MB 直接红）。
+      # 所以 CI 必须自己取件，来源是仓库里那条 `engine-v1` release 的附件
+      # （Release 附件上限 2 GB，不受 git 单文件限制）。
+      #
+      # 换引擎版本：上传新附件到新的 `engine-vN` tag，并同步改下面的 URL。
+      # 刻意不引 secret：这个 URL 是公开的，少一层配置就少一个「CI 上没配 secret」的哑失败。
+      - name: Fetch image engine
+        env:
+          TANGBAO_ENGINE_URL: https://github.com/nideyilian/tangbao/releases/download/engine-v1/image-to-video-engine.exe
+        run: npm run engine:fetch
+
       - name: Build frontend
         run: npm run build
 
