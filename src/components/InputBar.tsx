@@ -161,30 +161,6 @@ function splitGallerySopScopeKey(scopeKey: string): { tabId: string | null; fold
   return { tabId: scopeKey.slice(0, separator) || null, folderKey: scopeKey.slice(separator + 2) }
 }
 
-/** 画廊输入草稿按素材库文件夹隔离的持久化键。 */
-function getGalleryInputDraftKey(folderKey: string) {
-  return `tangbao.gallery-input-draft.${folderKey || 'default'}`
-}
-
-function readGalleryInputDraft(folderKey: string): string | null {
-  try {
-    const raw = window.localStorage.getItem(getGalleryInputDraftKey(folderKey))
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as { prompt?: unknown }
-    return typeof parsed.prompt === 'string' ? parsed.prompt : null
-  } catch {
-    return null
-  }
-}
-
-function writeGalleryInputDraft(folderKey: string, prompt: string) {
-  try {
-    window.localStorage.setItem(getGalleryInputDraftKey(folderKey), JSON.stringify({ prompt }))
-  } catch {
-    /* 忽略本地存储不可用 */
-  }
-}
-
 const QUICK_ASPECT_RATIOS = ['16:9', '9:16', '1:1'] as const
 
 function getAspectRatioFromSize(size: string): string {
@@ -785,30 +761,16 @@ export default function InputBar() {
   )
   const gallerySopScopeKey = gallerySopFolderKey ? `${gallerySopScopeId}::${gallerySopFolderKey}` : gallerySopScopeId
   /**
-   * 画廊提示词输入框按素材库文件夹隔离：切换文件夹时保存当前输入、恢复目标文件夹的输入，
-   * 避免不同文件夹生图读取到彼此的缓存提示词（重启后按当前文件夹的草稿恢复）。
-   * 首次挂载时把当前输入视为当前文件夹的草稿，之后每次切换都走「保存旧 / 恢复新」。
+   * 「按素材库文件夹隔离生图输入（提示词 / 参数 / 参考图 / 遮罩）」这件事**只有一处实现**：
+   * store 的 `folderInputDrafts`，由 `AssetLibraryWorkspace` 订阅素材库 scope 变化触发
+   * （见 `store.ts` 的 `onAssetLibraryFolderScopeChange`）。输入栏这里**不要**再自己存一份。
+   *
+   * 2026-09-28 实故：这里曾另有一套 localStorage 草稿，
+   * 它**只存提示词、且只在切走那一刻写一次**。切文件夹时两套同时恢复 —— store 把「提示词 + 尺寸」
+   * 一起换过去，紧接着它拿过期的提示词把输入框盖回去、尺寸却不动，于是出现
+   * 「输入框写着 画面比例为:9:16、下面尺寸选着 16:9」。因为提示词里的比例会随请求一起发出去
+   * （很多网关忽略 `size`、只认提示词，见 `lib/aspectRatioPrompt.ts`），这个不一致会真的影响出图。
    */
-  const galleryPromptFolderRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (appMode !== 'gallery') return
-    const nextFolderKey = gallerySopFolderKey
-    if (galleryPromptFolderRef.current === null) {
-      galleryPromptFolderRef.current = nextFolderKey
-      const saved = readGalleryInputDraft(nextFolderKey)
-      if (saved !== null && saved !== prompt) {
-        // 程序性改写提示词：清掉「用户输入」标志，否则输入框不会跟着切到该文件夹的草稿。
-        isUserInputRef.current = false
-        setPrompt(saved)
-      }
-      return
-    }
-    if (galleryPromptFolderRef.current === nextFolderKey) return
-    writeGalleryInputDraft(galleryPromptFolderRef.current, prompt)
-    galleryPromptFolderRef.current = nextFolderKey
-    isUserInputRef.current = false
-    setPrompt(readGalleryInputDraft(nextFolderKey) ?? '')
-  }, [appMode, gallerySopFolderKey, prompt, setPrompt])
   const gallerySopId = gallerySopIdsByTab[gallerySopScopeKey] ?? ''
   const gallerySopPromptCount = gallerySopPromptCountsByTab[gallerySopScopeKey] ?? 5
   const gallerySopImagesPerPrompt = gallerySopImagesPerPromptByTab[gallerySopScopeKey] ?? 1

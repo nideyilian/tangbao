@@ -35,6 +35,8 @@ import {
 import { getPostprocessRunPercent } from './features/postprocess/postprocessRun'
 import { createPostprocessIssue } from './features/postprocess/postprocessIssue'
 import { useAssetLibraryStore } from './features/assetLibrary/store'
+import { withAspectRatioPrompt } from './lib/aspectRatioPrompt'
+import { calculateImageSize } from './lib/size'
 
 // 供 db mock 与测试共享的素材种子/删除记录（task 删除级联测试用）
 const dbMockState = vi.hoisted(() => ({
@@ -5291,6 +5293,72 @@ describe('folder-scoped gallery input isolation', () => {
       })
     } finally {
       useAssetLibraryStore.setState({ scope: previousScope })
+    }
+  })
+
+  /**
+   * 防的是「提示词回退、尺寸不回退」这类半截恢复：文件夹草稿必须同时含提示词与参数，
+   * 恢复时一起回来。只保提示词的话，界面就会出现「输入框写着 9:16、尺寸选着 16:9」，
+   * 而提示词里的比例会随请求发出去（很多网关忽略 `size`），直接改变出图比例。
+   */
+  it('restores prompt and params.size together so the ratio never desyncs', async () => {
+    const { useAssetLibraryStore } = await import('./features/assetLibrary/store')
+    const previousScope = useAssetLibraryStore.getState().scope
+    try {
+      const portrait = calculateImageSize('1K', '9:16')
+      const landscape = calculateImageSize('1K', '16:9')
+      if (!portrait || !landscape) throw new Error('前置：1K 档应能算出 9:16 / 16:9 的尺寸')
+      expect(portrait).not.toBe(landscape)
+
+      useStore.setState({ folderInputDrafts: {} })
+
+      // 文件夹 A：输入框为空时选了 9:16 —— 比例被写进提示词末尾
+      useAssetLibraryStore.setState({ scope: { kind: 'collection', id: 'folder-ratio-a' } })
+      useStore
+        .getState()
+        .onAssetLibraryFolderScopeChange(
+          { kind: 'collection', id: 'folder-ratio-a' },
+          { kind: 'collection', id: 'folder-ratio-a' },
+        )
+      useStore.getState().setPrompt(withAspectRatioPrompt('', '9:16'))
+      useStore.getState().setParams({ size: portrait })
+      expect(useStore.getState().prompt).toBe('画面比例为:9:16')
+
+      // 切到文件夹 B 并改成 16:9
+      useAssetLibraryStore.setState({ scope: { kind: 'collection', id: 'folder-ratio-b' } })
+      useStore
+        .getState()
+        .onAssetLibraryFolderScopeChange(
+          { kind: 'collection', id: 'folder-ratio-a' },
+          { kind: 'collection', id: 'folder-ratio-b' },
+        )
+      useStore.getState().setPrompt(withAspectRatioPrompt('文件夹 B', '16:9'))
+      useStore.getState().setParams({ size: landscape })
+
+      // 切回 A：提示词与尺寸都必须回到 A 的 9:16，不能一个回一个不回
+      useAssetLibraryStore.setState({ scope: { kind: 'collection', id: 'folder-ratio-a' } })
+      useStore
+        .getState()
+        .onAssetLibraryFolderScopeChange(
+          { kind: 'collection', id: 'folder-ratio-b' },
+          { kind: 'collection', id: 'folder-ratio-a' },
+        )
+      expect(useStore.getState().prompt).toBe('画面比例为:9:16')
+      expect(useStore.getState().params.size).toBe(portrait)
+
+      // 再切回 B：同样成套回来
+      useAssetLibraryStore.setState({ scope: { kind: 'collection', id: 'folder-ratio-b' } })
+      useStore
+        .getState()
+        .onAssetLibraryFolderScopeChange(
+          { kind: 'collection', id: 'folder-ratio-a' },
+          { kind: 'collection', id: 'folder-ratio-b' },
+        )
+      expect(useStore.getState().prompt).toBe('文件夹 B，画面比例为:16:9')
+      expect(useStore.getState().params.size).toBe(landscape)
+    } finally {
+      useAssetLibraryStore.setState({ scope: previousScope })
+      useStore.setState({ folderInputDrafts: {} })
     }
   })
 

@@ -452,6 +452,26 @@
 
 **故意不合并**（差异是有意的，别去"统一"）：路径净化 4 份、`escapeHtml` 3 份、`formatDate`。
 
+## 七·七、按素材库文件夹隔离的生图输入只有一处实现（2026-09-28 实故）
+
+提示词 / 参数 / 参考图 / 遮罩按「素材库项目文件夹」各存一份的**唯一实现**是 store 的
+`folderInputDrafts`：写入经 `syncActiveInputDraft`（每次输入、每次改参数都同步），
+切换经 `onAssetLibraryFolderScopeChange`（`AssetLibraryWorkspace` 订阅素材库 scope 触发，
+挂载时先按当前 scope 跑一次）。**输入栏（`InputBar.tsx`）不要再自己存一份。**
+
+**为什么单独立一节**：2026-09-28 之前这里是两套 —— store 那套（提示词 **+ 参数**）和
+`InputBar` 里一套 localStorage 草稿（**只存提示词、且只在切走那一刻写一次**）。切文件夹时
+两套同时恢复：store 先把「提示词 + 尺寸」成套换到目标文件夹，紧接着旧那套拿过期提示词把
+输入框盖回去、尺寸却不动 ⇒ 界面出现「输入框写着 `画面比例为:9:16`、下面尺寸选着 `16:9`」。
+因为提示词里的比例会随请求一起发出去（很多网关忽略 `size`、只认提示词，见
+`lib/aspectRatioPrompt.ts` 的文件注释），**这个不一致会真的改变出图比例**。详见 R-112 / TB-138。
+
+**判据（同类问题自查）**：界面上两个本该联动的值不一致、且「切一下上下文就变」时，
+先数这个值有**几套存储**（`grep` 存储键、看有几个写入口），而不是先去查同步 effect 的顺序。
+
+**守卫**：`src/components/inputDraftSourceContract.test.ts`（源码级 —— InputBar 里再出现第二套
+草稿即红）+ `src/store.test.ts`「restores prompt and params.size together…」（行为级 —— 成套恢复）。
+
 ## 八、`InputBar` 的 prompt 是双写（易踩）
 
 prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步。

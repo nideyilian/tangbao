@@ -6501,3 +6501,47 @@ trashed），得再进回收站点一次「永久删除」才是真删。用户�
 - 库的标签 / 文件夹树 / 移动 / 全库去重扫描 / 假字幕轨体检 / 从视频里拆 BGM / 智能文件夹。
 - 表格里其余 6 个字段的入口（随机 / 循环 / 大小模式 / 混合 / 匹配 / 音轨）—— 目前用引擎默认值。
 - 水印「大小模式 + 缩放」这一对：`缩放` 只在「固定比例」下真正起作用，要暴露就得成对暴露。
+
+## TB-138 修「输入框里的画面比例与下方尺寸参数脱钩」（2026-09-28 阿伟）
+
+**杰哥的问题**（一张截图 + 一句「提示词输入栏的比例和下方选择的比例不一样，这是什么情况？」）：
+输入框里写着 `画面比例为:9:16`，下方尺寸选着 `16:9`。
+
+**病根：同一个需求有两套实现，而且两套存的字段不一样**
+
+「按素材库文件夹隔离生图输入」这件事曾有两套并存：
+
+| 实现        | 位置                              | 存什么                          | 什么时候写                                |
+| ----------- | --------------------------------- | ------------------------------- | ----------------------------------------- |
+| 新（权威）  | `store.ts` 的 `folderInputDrafts` | 提示词 **+ 参数** + 参考图 + 遮罩 | 每次输入 / 改参数（`syncActiveInputDraft`） |
+| 旧（残留）  | `InputBar.tsx` 的 localStorage 草稿 | **只有提示词**                  | 只在「切走那一刻」写一次                  |
+
+切文件夹时两套同时恢复：store 先把「提示词 + 尺寸」成套换到目标文件夹，紧接着旧那套拿
+localStorage 里的**过期**提示词把输入框盖回去，尺寸参数它不管 ⇒ 两者脱钩。
+
+**不只是显示问题**：提示词里的比例会随请求一起发出去（提交时 prompt 原样带走），而很多网关
+忽略 `size`、真正约束比例的是提示词（`lib/aspectRatioPrompt.ts` 的文件注释）—— 所以用户选了
+16:9，出来可能是 9:16。连带：旧那套的「写」发生在恢复之后，会把当前文件夹的提示词串进
+**另一个**文件夹的草稿槽。
+
+**改法（杰哥拍板方案 A）**：删掉 `InputBar` 里那套 localStorage 草稿（三个读写函数 + 那个
+`galleryPromptFolderRef` effect），按文件夹隔离全部交给 store 的 `folderInputDrafts`。
+
+功能等价性已核对：旧那套只在 `appMode === 'gallery'` 生效，而该模式下 `AssetLibraryWorkspace`
+必然挂载（`App.tsx:478-485`）、素材库 scope 订阅必然建立，所以删掉不丢任何场景。
+
+**验收证据**
+
+- 行为守卫 `src/store.test.ts`「restores prompt and params.size together so the ratio never
+  desyncs」：文件夹 A 选 9:16、文件夹 B 改 16:9，来回切换后提示词与 `params.size` 必须**成套**恢复。
+  **反向验证**：把恢复分支里的 `patches.params = draft.params` 去掉 ⇒ 恰好 1 条红，报错
+  `expected '1280x720' to be '720x1280'`（尺寸留在横版、提示词回到竖版），复原后全绿。
+- 源码守卫 `src/components/inputDraftSourceContract.test.ts`：`InputBar.tsx` 再出现第二套草稿即红，
+  并断言权威实现同时含 `prompt` 与 `params`。**反向验证**：把 `getGalleryInputDraftKey` 加回
+  `InputBar` ⇒ 恰好 1 条红，复原后全绿。
+- 约定写进 `docs/architecture-constraints.md` 七·七；坑登记 `docs/RISK.md` R-112。
+
+**未做**
+
+- 存量 localStorage 草稿键（`tangbao.gallery-input-draft.*`）**不清理**：已不再读取，留着无害，
+  万一回退版本还能用上。
