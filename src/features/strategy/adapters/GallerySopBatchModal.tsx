@@ -2105,6 +2105,15 @@ export default function GallerySopBatchModal({
      * 「正在编写提示词 x/y」覆盖 —— 所以先存下来，收尾时拼进最终状态消息，否则这句提示等于没说。
      */
     let combinationReuseNotice = ''
+    /**
+     * 配方卡「命中红线的候选值被剔除」的说明（TB-144）。理由同上：进度消息会把它冲掉，
+     * 先攒着、收尾时一起说 —— 这件事原先只进 `console.warn`，用户看到的是
+     * 「我明明写了 20 个候选值，怎么只用上 17 个」（值被静默剔除）。
+     */
+    let redlineSanitizeNotice = ''
+    /** 把收尾消息与生成过程中攒下的提示拼起来（两条都是「不说清楚用户就会怀疑程序」的那种）。 */
+    const collectGenerationNotices = (base: string) =>
+      [base, combinationReuseNotice, redlineSanitizeNotice].filter(Boolean).join('；')
 
     /**
      * 渐进派发下提交一条生图任务；返回 taskId，失败返回 null（计数已在内部完成）。
@@ -2302,6 +2311,8 @@ export default function GallerySopBatchModal({
           builtinValues?: Record<string, string>
           /** 变量提示词「组合不够、已循环复用」的说明（本地展开，不调 AI） */
           onNotice?: (message: string) => void
+          /** 配方卡「候选值命中红线被剔除」的回执（TB-144） */
+          onSanitized?: (removed: string[]) => void
         } = {
           // 配方卡骨架可用 {比例} / {方向} / {尺寸} 注入界面当前选中的尺寸 ——
           // 否则 body 里的比例只能写死（如 vertical 9:16 photo），跟界面选择脱节。
@@ -2334,6 +2345,14 @@ export default function GallerySopBatchModal({
           onNotice: (message: string) => {
             combinationReuseNotice = message
             setStatusMessage(message)
+          },
+          // 配方卡的候选值命中红线会被剔除，把这件事说出来（TB-144）——
+          // 光看结果「值少了几条」是没法定位的，得告诉用户是红线剔的、以及去哪儿处理。
+          onSanitized: (removed: string[]) => {
+            redlineSanitizeNotice = `已按红线剔除 ${removed.length} 个候选值：${removed.slice(0, 2).join('；')}${
+              removed.length > 2 ? ' 等' : ''
+            }（判为误判可到配方卡详情里删掉那个词）`
+            setStatusMessage(redlineSanitizeNotice)
           },
           onBatch: async (batchPrompts) => {
             if (lastOnBatchEnd > 0) promptBatchTimings.push(Date.now() - lastOnBatchEnd)
@@ -2668,11 +2687,7 @@ export default function GallerySopBatchModal({
       const progressiveCompletionMessage = hasProblems
         ? `逐条生成完成：已发送 ${progressiveSuccessCount} 条，发送失败 ${progressiveFailureCount} 条，提示词缺口 ${missing} 条`
         : `已逐条生成并发送 ${progressiveSuccessCount} 个 SOP 生图任务`
-      setStatusMessage(
-        combinationReuseNotice
-          ? `${progressiveCompletionMessage}；${combinationReuseNotice}`
-          : progressiveCompletionMessage,
-      )
+      setStatusMessage(collectGenerationNotices(progressiveCompletionMessage))
       setError(
         [
           // 提示词生成失败时把模型/接口的原始报错带出来：只显示「生成中断」会把真因
@@ -2702,7 +2717,7 @@ export default function GallerySopBatchModal({
       const completionMessage = missing
         ? `提示词列表部分完成：当前可用 ${available} 条，缺口 ${missing} 条`
         : `提示词列表已生成：当前可用 ${available} 条`
-      setStatusMessage(combinationReuseNotice ? `${completionMessage}；${combinationReuseNotice}` : completionMessage)
+      setStatusMessage(collectGenerationNotices(completionMessage))
       setError(
         failed || missing
           ? [

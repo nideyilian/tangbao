@@ -816,6 +816,9 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
     // `[]` = 用户明确清空（红线关闭）。**不能**把空数组折算成 undefined ——
     // 用户把误判词全删光之后，默认词表不能又冒回来。
     recipeForbiddenTerms: normalizeRecipeForbiddenTerms(record.recipeForbiddenTerms),
+    // 红线标记显示开关（TB-144）：默认显示，只有显式 false 才关。
+    // ⚠️ 它只管显示，判定与剔除照旧 —— 两者别混（见 AppSettings 里的注释）。
+    recipeComplianceHints: record.recipeComplianceHints === false ? false : true,
     wordLibraryDerivativeRule:
       typeof record.wordLibraryDerivativeRule === 'string' ? record.wordLibraryDerivativeRule : undefined,
     wordLibraryDerivativeRuleMode,

@@ -160,6 +160,8 @@ export default function SopLibraryTab({
    * 直接透传，**不要在这里折算**（折算会让「全删光」退回默认词表）。
    */
   const recipeForbiddenTerms = useStore((state) => state.settings.recipeForbiddenTerms)
+  /** 红线标记显示开关（TB-144）：只管显示，判定与生成前剔除照旧。 */
+  const recipeComplianceHints = useStore((state) => state.settings.recipeComplianceHints)
   const setSettings = useStore((state) => state.setSettings)
   const [editorMenuOpen, setEditorMenuOpen] = useState(false)
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
@@ -647,6 +649,8 @@ export default function SopLibraryTab({
                 onChange={(campaignRecipe) => setItemDraft({ ...itemDraft, campaignRecipe })}
                 forbiddenTerms={recipeForbiddenTerms}
                 onForbiddenTermsChange={(terms) => setSettings({ recipeForbiddenTerms: terms })}
+                showComplianceHints={recipeComplianceHints}
+                onShowComplianceHintsChange={(value) => setSettings({ recipeComplianceHints: value })}
                 onMetaChange={(patch) => {
                   // 解析出的名称/说明/主控槽直接落到草案上，随保存一起持久化；
                   // 名称已有值时**不覆盖**用户手填的名字（只在识别到且当前为空时补）

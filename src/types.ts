@@ -184,6 +184,16 @@ export interface AppSettings {
    * 否则用户「把误判词全删光」这个动作会被当成「没配过」，默认词表又冒回来。
    */
   recipeForbiddenTerms?: string[]
+  /**
+   * 配方卡是否显示「红线」标记（候选值标红 + 骨架命中提示 + 复核区）。
+   *
+   * `undefined` / `true` = 显示；`false` = 只关掉**显示**，判定与生成前的剔除照旧
+   * （即「我不想看这些标记」，而不是「别管红线了」）。
+   *
+   * 想真正让某个误判词不再被拦，要用复核区的「这不是红线，删掉这个词」把它移出
+   * `recipeForbiddenTerms` —— 那是判定层的事，与这个显示开关是两回事（TB-144）。
+   */
+  recipeComplianceHints?: boolean
   wordLibraryDerivativeRule?: string
   wordLibraryDerivativeRuleMode: 'single' | 'multiple'
   wordLibraryDerivativeRules: WordLibraryDerivativeRule[]

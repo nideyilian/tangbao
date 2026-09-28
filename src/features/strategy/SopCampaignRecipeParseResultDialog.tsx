@@ -66,6 +66,13 @@ export interface SopCampaignRecipeParseResultDialogProps {
    * 不传时词表按只读展示：编辑控件（输入框 / 删除 / 加一条 / 恢复默认）一律不渲染。
    */
   onForbiddenTermsChange?: (terms: string[]) => void
+  /**
+   * 是否显示红线标记（候选值标红 / 骨架命中提示 / 复核区）。
+   * 不传 = 显示。**它只管显示**，判定与生成前剔除照旧（TB-144）。
+   */
+  showComplianceHints?: boolean
+  /** 切换上面的显示开关；不传时开关不渲染（只读场景）。 */
+  onShowComplianceHintsChange?: (value: boolean) => void
 }
 
 /**
@@ -146,6 +153,8 @@ export default function SopCampaignRecipeParseResultDialog({
   meta,
   forbiddenTerms,
   onForbiddenTermsChange,
+  showComplianceHints,
+  onShowComplianceHintsChange,
 }: SopCampaignRecipeParseResultDialogProps) {
   const close = () => onOpenChange(false)
   /** 红线词表区默认展开（`<details>` 的 open 必须受控，否则用户收起后一旦重渲染就被弹回展开）。 */
@@ -160,6 +169,9 @@ export default function SopCampaignRecipeParseResultDialog({
    */
   const terms = forbiddenTerms ?? CAMPAIGN_RECIPE_FORBIDDEN_TERMS
   const canEditTerms = typeof onForbiddenTermsChange === 'function'
+  /** 红线标记是否显示：关掉只停止标红，判定与生成前剔除照旧（TB-144）。 */
+  const showRedlineHints = showComplianceHints ?? true
+  const canToggleHints = typeof onShowComplianceHintsChange === 'function'
 
   const placeholders = useMemo(() => extractPlaceholders(body), [body])
   const errors = useMemo(() => validateCampaignRecipeConfig(config), [config])
@@ -251,6 +263,17 @@ export default function SopCampaignRecipeParseResultDialog({
 
   function resetTerms() {
     onForbiddenTermsChange?.([...CAMPAIGN_RECIPE_FORBIDDEN_TERMS])
+  }
+
+  /**
+   * 复核动作「这不是红线」：把命中它的词从红线词表里删掉。
+   *
+   * 落点刻意选**词表**而不是给这个候选值开豁免：误判的根因是那个词太宽（「军」撞「军绿色」），
+   * 删一次全局受益；给单个值开豁免，同一个词换个值还会再撞（TB-144 的口径）。
+   */
+  function removeTerms(words: string[]) {
+    const drop = new Set(words)
+    onForbiddenTermsChange?.(terms.filter((term) => !drop.has(term)))
   }
 
   return (
@@ -387,12 +410,9 @@ export default function SopCampaignRecipeParseResultDialog({
             className="sop-recipe-panel__body-input"
           />
 
-          {bodyViolations.length > 0 && (
+          {showRedlineHints && bodyViolations.length > 0 && (
             <p className="sop-recipe-panel__warning" role="alert">
-              骨架命中红线「{bodyViolations.join('、')}」。
-              {canEditTerms
-                ? '生成不会被中断 —— 判为误判就到下方词表里删掉这个词，确实违规再改写骨架。'
-                : '生成不会被中断，判为误判请调整红线词表，确实违规再改写骨架。'}
+              骨架命中红线「{bodyViolations.join('、')}」，已列入下方「红线复核」。
             </p>
           )}
 
@@ -439,7 +459,9 @@ export default function SopCampaignRecipeParseResultDialog({
                   </div>
                   <div className="sop-recipe-dimension__options">
                     {dimension.options.map((option, optionIndex) => {
-                      const hit = findCampaignRecipeViolations(option)
+                      // ⚠️ 必须把当前词表传进去：漏传会用**内置 21 词**判定，
+                      // 于是用户删掉误判词之后，格子照旧标红（"删了还标红"就是这么来的，TB-144 实测）。
+                      const hit = showRedlineHints ? findCampaignRecipeViolations(option, terms) : []
                       return (
                         <label
                           key={optionIndex}
@@ -484,15 +506,65 @@ export default function SopCampaignRecipeParseResultDialog({
             )}
           </div>
 
-          {optionViolations.length > 0 && (
-            <p className="sop-recipe-panel__warning" role="alert">
-              有 {optionViolations.length} 个候选值命中合规红线，生成时会被自动剔除：
-              {optionViolations
-                .slice(0, 3)
-                .map((entry) => `${entry.option}（${entry.violations.join('、')}）`)
-                .join('；')}
-              {optionViolations.length > 3 ? ' 等' : ''}
-            </p>
+          {/* 红线复核（TB-144）：命中项一条条摆出来让用户裁决，而不是只标个红、值还被静默丢掉。
+              两个动作各自落到**已有的真相源**，不需要另存复核结果：
+              「这不是红线」→ 删词（红线词表，全局 + 持久）；「确认违规，剔除」→ 删候选值（随这张卡）。
+              命中清零后整块消失，不留常驻噪音。 */}
+          {showRedlineHints && (bodyViolations.length > 0 || optionViolations.length > 0) && (
+            <section
+              className="rounded-ds-lg border border-ds-warning/35 bg-ds-warning-subtle px-3 py-2 dark:border-ds-warning/40 dark:bg-ds-warning/10"
+              aria-label="红线复核"
+            >
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <strong className="flex items-center gap-1.5 text-xs font-medium text-ds-text dark:text-ds-text">
+                  <AlertTriangleIcon className="h-3.5 w-3.5" />
+                  红线复核 · 本次命中 {bodyViolations.length + optionViolations.length} 处
+                </strong>
+                <span className="text-xs text-ds-muted dark:text-ds-muted">
+                  候选值命中会在生成前被剔除；判为误判就删掉那个词。
+                </span>
+              </div>
+              <div className="mt-1.5 grid gap-1">
+                {bodyViolations.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-ds-muted dark:text-ds-muted">骨架</span>
+                    <span className="min-w-0 flex-1 break-words text-xs text-ds-text dark:text-ds-text">
+                      命中「{bodyViolations.join('、')}」
+                    </span>
+                    {canEditTerms && (
+                      <Button size="sm" variant="secondary" onClick={() => removeTerms(bodyViolations)}>
+                        这不是红线，删掉这个词
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {optionViolations.map((entry) => (
+                  <div
+                    className="flex flex-wrap items-center gap-2"
+                    key={`${entry.dimensionIndex}:${entry.optionIndex}:${entry.option}`}
+                  >
+                    <span className="text-xs text-ds-muted dark:text-ds-muted">候选值</span>
+                    <span className="min-w-0 flex-1 break-words text-xs text-ds-text dark:text-ds-text">
+                      「{entry.option}」
+                      {dimensions[entry.dimensionIndex]?.name ? `（${dimensions[entry.dimensionIndex].name}）` : ''}
+                      命中「{entry.violations.join('、')}」
+                    </span>
+                    {canEditTerms && (
+                      <Button size="sm" variant="secondary" onClick={() => removeTerms(entry.violations)}>
+                        这不是红线，删掉这个词
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => removeOption(entry.dimensionIndex, entry.optionIndex)}
+                    >
+                      确认违规，剔除
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
 
           {errors.length > 0 && <p className="sop-recipe-panel__warning">{errors.join('；')}</p>}
@@ -531,6 +603,22 @@ export default function SopCampaignRecipeParseResultDialog({
               合规红线词表（{terms.length} 项 · 全局生效）
               {bodyViolations.length > 0 ? ' · 本次骨架命中' : ''}
             </summary>
+            {/* 显示开关（TB-144）：手动关掉这些标记。⚠️ 只关显示，判定与生成前剔除照旧 ——
+                想真正不拦某个误判词，用上方复核区的「这不是红线，删掉这个词」。 */}
+            {canToggleHints && (
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-ds-muted dark:text-ds-muted">
+                  关掉只停用标红与复核提示，不改变判定；想彻底放行某个词，用上面的「删掉这个词」。
+                </span>
+                <Button
+                  size="sm"
+                  variant={showRedlineHints ? 'primary' : 'secondary'}
+                  onClick={() => onShowComplianceHintsChange?.(!showRedlineHints)}
+                >
+                  {showRedlineHints ? '显示红线标记：开' : '显示红线标记：关'}
+                </Button>
+              </div>
+            )}
             {canEditTerms ? (
               <>
                 <div className="sop-recipe-terms__grid">

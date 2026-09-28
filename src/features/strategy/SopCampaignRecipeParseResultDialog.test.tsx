@@ -360,11 +360,11 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
     expect(changes[changes.length - 1][0]).toBe('人民币')
   })
 
-  it('命中当前骨架的那一格标红，并写明「不中断生成」', () => {
+  it('命中当前骨架的那一格标红，并指向复核区（TB-144 起骨架提示并入复核清单）', () => {
     renderWithTerms(['提现', '军'], { body: '点击提现到账，{M}' })
     const text = dialogText()
     expect(text).toContain('骨架命中红线「提现」')
-    expect(text).toContain('生成不会被中断')
+    expect(text).toContain('已列入下方「红线复核」')
     const hit = document.body.querySelectorAll('.sop-recipe-term--hit')
     expect(hit).toHaveLength(1)
     expect(hit[0].querySelector<HTMLInputElement>('input')?.value).toBe('提现')
@@ -379,5 +379,108 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
     renderWithTerms(['提现', '军'], {}, false)
     expect(termInputs()).toHaveLength(0)
     expect(dialogText()).toContain('提现 · 军')
+  })
+})
+
+/**
+ * 红线复核（TB-144）—— 需求原话：「变量池在识别时经常出现误判并错误显示红线，
+ * 我希望能够对标记结果进行人工复核，并支持手动关闭这些红线提示」。
+ *
+ * 这组用例锁四件事：**命中项摆出来**（不再是只标个红）、**两个动作各自落到已有真相源**
+ * （删词 → 词表；剔除 → 候选值）、**显示开关只停用标红不改变判定**、
+ * **复核完（命中清零）整块消失**。
+ */
+describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () => {
+  function renderReview(options: { terms?: string[]; config?: Partial<SopCampaignRecipeConfig>; hints?: boolean }) {
+    const termsChanges: string[][] = []
+    const hintsChanges: boolean[] = []
+    const initial = {
+      body: '点击提现到账，{M}',
+      dimensions: [{ name: 'M', options: ['提现金色文案', '手感出色'] }],
+      ...options.config,
+    }
+    function Harness() {
+      const [terms, setTerms] = useState<string[]>(options.terms ?? ['提现', '军'])
+      const [hints, setHints] = useState<boolean>(options.hints ?? true)
+      const [config, setConfig] = useState(initial)
+      return (
+        <SopCampaignRecipeParseResultDialog
+          open
+          onOpenChange={() => {}}
+          parsed={makeParsed()}
+          config={config}
+          onChange={(next) => {
+            latestConfig = next
+            setConfig(next)
+          }}
+          forbiddenTerms={terms}
+          onForbiddenTermsChange={(next) => {
+            termsChanges.push(next)
+            setTerms(next)
+          }}
+          showComplianceHints={hints}
+          onShowComplianceHintsChange={(value) => {
+            hintsChanges.push(value)
+            setHints(value)
+          }}
+        />
+      )
+    }
+    act(() => {
+      root.render(<Harness />)
+    })
+    return { termsChanges, hintsChanges }
+  }
+
+  it('命中项摆进复核区，逐条给出处置动作', () => {
+    renderReview({})
+    const text = dialogText()
+    expect(text).toContain('红线复核 · 本次命中 2 处')
+    expect(text).toContain('候选值命中会在生成前被剔除')
+    expect(text).toContain('这不是红线，删掉这个词')
+    expect(text).toContain('确认违规，剔除')
+  })
+
+  it('「这不是红线」把该词从红线词表里删掉（全局生效的落点）', () => {
+    const { termsChanges } = renderReview({})
+    clickButton('这不是红线，删掉这个词')
+    expect(termsChanges[termsChanges.length - 1]).toEqual(['军'])
+  })
+
+  it('「确认违规，剔除」从维度池删掉这个候选值', () => {
+    renderReview({})
+    clickButton('确认违规，剔除')
+    expect(latestConfig?.dimensions[0].options).toEqual(['手感出色'])
+  })
+
+  it('关掉显示后不再标红、复核区不出现（判定照旧，只是不看）', () => {
+    renderReview({ hints: false })
+    expect(dialogText()).not.toContain('红线复核')
+    expect(document.body.querySelectorAll('.sop-recipe-option--blocked')).toHaveLength(0)
+    expect(dialogText()).toContain('显示红线标记：关')
+  })
+
+  it('显示开关点击后写回设置', () => {
+    const { hintsChanges } = renderReview({
+      config: { body: '{M}', dimensions: [{ name: 'M', options: ['手感出色'] }] },
+    })
+    clickButton('显示红线标记')
+    expect(hintsChanges).toEqual([false])
+  })
+
+  it('复核完（命中清零）后复核区自动消失', () => {
+    renderReview({ terms: ['提现'], config: { body: '{M}', dimensions: [{ name: 'M', options: ['提现金色文案'] }] } })
+    expect(dialogText()).toContain('红线复核')
+    // 判为误判：删掉词 → 命中清零 → 整块消失
+    clickButton('这不是红线，删掉这个词')
+    expect(dialogText()).not.toContain('红线复核')
+  })
+
+  // 守卫「格子上那处标红」有没有把**当前词表**传进去 —— 漏传会退回内置 21 词，
+  // 于是用户删掉误判词之后格子照旧标红（"删了还标红"，TB-144 实测过的真 bug）。
+  it('候选值是否标红按当前生效词表判定（删掉的词不再让它标红）', () => {
+    renderReview({ terms: ['军'], config: { body: '{M}', dimensions: [{ name: 'M', options: ['提现金色文案'] }] } })
+    expect(document.body.querySelectorAll('.sop-recipe-option--blocked')).toHaveLength(0)
+    expect(dialogText()).not.toContain('红线复核')
   })
 })

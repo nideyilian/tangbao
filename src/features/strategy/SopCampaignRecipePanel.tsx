@@ -47,6 +47,10 @@ export type SopCampaignRecipePanelProps = {
    * 不传 = 词表按只读展示。
    */
   onForbiddenTermsChange?: (terms: string[]) => void
+  /** 是否显示红线标记；不传 = 显示。只管显示，判定与生成前剔除照旧。 */
+  showComplianceHints?: boolean
+  /** 切换红线标记显示；不传则开关不渲染。 */
+  onShowComplianceHintsChange?: (value: boolean) => void
 }
 
 /**
@@ -83,6 +87,8 @@ export default function SopCampaignRecipePanel({
   onMetaChange,
   forbiddenTerms,
   onForbiddenTermsChange,
+  showComplianceHints,
+  onShowComplianceHintsChange,
 }: SopCampaignRecipePanelProps) {
   const [rawText, setRawText] = useState('')
   const [parseError, setParseError] = useState('')
@@ -325,6 +331,8 @@ export default function SopCampaignRecipePanel({
         meta={meta}
         forbiddenTerms={forbiddenTerms}
         onForbiddenTermsChange={onForbiddenTermsChange}
+        showComplianceHints={showComplianceHints}
+        onShowComplianceHintsChange={onShowComplianceHintsChange}
       />
     </section>
   )
