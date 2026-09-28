@@ -422,6 +422,36 @@
   空白是在**面板内部**被行拉伸出来的，所以在面板上加 flex 治不了这个。
   契约测试：`features/strategy/sopCampaignRecipeLayout.test.ts`（读 CSS 文本断言声明，
   与 `design-system/dialogSizing.test.ts` 同一手法）。
+- ⭐ **自带拖拽 / 粘贴的浮层组件，必须挂 `data-block-global-image-input="true"`**
+  （2026-09-24 报障「拖图进不了风格池，直接进了提示词框」）：
+  `InputBar` 把全局拖拽 / 粘贴监听挂在 **`document`** 上（`handleDragEnter/Over/Leave/Drop`
+  与 `handlePaste`），每个 handler 开头都写着
+  `if (document.querySelector('[data-block-global-image-input="true"]')) return` ——
+  **谁挂这个属性，全局图片输入就即刻静默**。
+  不挂的后果：面板自己的 `onDrop` 收到一份，事件**继续冒泡到 `document`** 又被收一份，
+  后者把图挂成了输入栏的参考图（池子永远收不到，而界面看起来「就是没反应」）。
+  本仓先例：`SopManagementCenter`（全屏模态，同一属性 + `onDragOver/onDrop={blockUnscopedImageDrop}`，
+  且 `SopManagementCenter.test.tsx` 钉住了该属性存在）。
+  建议同处一并补 `stopPropagation()`，但它是**兜底不是主力**：万一将来全局监听改成**捕获阶段**，
+  `querySelector` 那条判断依然管用，`stopPropagation` 反而失效。
+  ⚠️ 该属性是**全局**屏蔽（`querySelector` 不看事件目标在哪）⇒ 挂上以后，拖到输入框也不再挂参考图。
+  只在「浮层有遮罩、用户意图明确」时使用。
+- ⭐ **自带遮罩的下拉浮层：遮罩与浮层必须同层，都用 `z-overlay`**（2026-09-24 同一处报障的**真凶**；
+  我第一次修错了方向，去改事件冒泡了）：`z-overlay = 80` 而 `z-dropdown = 40`
+  （见 `design-system/styles.css` 的 `--ds-z-*` 与 `tailwind.config.js` 的 `zIndex`）⇒
+  浮层写成 `z-dropdown` 就被遮罩（`fixed inset-0 z-overlay`）**整个盖住**：既点不动、也拖不进
+  （拖拽落在遮罩上），而界面上看起来「浮层明明在那儿，就是不响应」。
+  同层之后靠 **DOM 顺序**决定谁在上 ⇒ 遮罩必须写在浮层**之前**。
+  本仓正确先例：`InputBar.tsx` 的三个下拉菜单（`:652`、`:3276`、`:5011`）。
+  ⚠️ 反例：同文件 `:4361` 的「视觉 Skill」面板长期是 `z-dropdown`（**既有失修**，2026-09-24 一并修正）。
+- ⭐ **与持久数据绑定的「选中态」必须一起持久化，不能只放组件 `useState`**
+  （2026-09-24 报障「我选了风格，但出来的风格并无变化」的根因）：风格池的选中态原先只活在
+  `InputBar` 的 `useState` 里，而**改代码触发的每一次热更新都会把它清空** ⇒ 用户勾了也「看起来没勾」，
+  提交于是**静默走普通生图**：不报错、不留痕，只能靠查库才发现（任务里 `inputImageIds: 0`
+  且 prompt 里没有那句指令）。现在它落在 `CreativePool.selection`（随池落盘）。
+  判断标准：**这个状态下次打开界面时还该在吗？** 该在 → 持久化；只有"关掉就该忘"的才用组件 state。
+  ⚠️ 归一化时必须**校验 id 是否还存在于数据里**（删项后残留的勾选要清掉，否则界面写着「已选 1 张」
+  而实际一张都发不出去）。
 
 ## 七·五、新增可编辑字段 → 三处「静默失效」清单（必逐项过）
 

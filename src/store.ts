@@ -6989,6 +6989,18 @@ export async function submitTask(
     useCurrentApiProfileWhenReusedMissing?: boolean
     /** 只建卡不执行；调用方拿到 taskId 后写提示词再触发（见 `submitTaskWithData`）。 */
     deferExecution?: boolean
+    /**
+     * 只参与这一次请求的临时参考图（风格池）。
+     *
+     * 刻意**不**写进 store 的 `inputImages`：用户没手动挂过它们，出现在输入栏缩略图里
+     * 会让人以为「我什么时候挂了这张图」。
+     *
+     * ⚠️ 它们排在用户手动挂的图**之后** —— API 把第一张当主图（被编辑的图），
+     * 顺序反了会让模型去编辑风格图而不是画新内容。
+     */
+    extraInputImages?: InputImage[]
+    /** 覆盖提示词（风格池「角色指令 + 用户提示词」的拼装结果）；缺省用 state.prompt。 */
+    promptOverride?: string
   } = {},
 ) {
   const state = useStore.getState()
@@ -7002,10 +7014,17 @@ export async function submitTask(
   const scheduledOutputSubFolder = activeTab ? activeTab.name : undefined
 
   // 返回 taskId：一键衍生等「卡先建、词后填」的调用方要拿它去回写提示词
+  //
+  // ⚠️ 风格池的图与指令**只有在下面这两行被真正用上时才会进请求** ——
+  // 只声明选项、不改这里，它们会被静默丢掉（不报错、任务里看不出，2026-09-24 实踩）。
+  // 池图排在用户手动挂的图**之后**：API 把第一张当主图（被编辑的图），顺序不能反。
   return submitTaskWithData(
     {
-      prompt,
-      inputImages,
+      prompt: options.promptOverride ?? prompt,
+      inputImages:
+        options.extraInputImages && options.extraInputImages.length > 0
+          ? [...inputImages, ...options.extraInputImages]
+          : inputImages,
       inputImageFolder,
       params,
       maskDraft,

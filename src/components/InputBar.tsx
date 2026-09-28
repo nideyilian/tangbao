@@ -105,6 +105,11 @@ import { useRequirementPrototype } from '../features/requirementPrototype/store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { Badge, Button, Switch, useDialogFocusTrap } from '../design-system'
+import CreativePoolPanel from '../features/creativePool/CreativePoolPanel'
+import { useCreativePool } from '../features/creativePool/useCreativePool'
+import { buildPoolReferenceRule, buildTaskPrompt } from '../features/creativePool/poolPrompt'
+import { resolvePoolSelection, resolveRandomCount } from '../features/creativePool/poolSelection'
+import { resolvePoolInputImages } from '../features/creativePool/poolSubmit'
 import { useAssetLibraryStore } from '../features/assetLibrary/store'
 import { APPLY_SOP_TO_GALLERY_EVENT } from '../lib/assetCommands'
 import { getContentEditablePlainText } from '../lib/contentEditableText'
@@ -1723,6 +1728,62 @@ export default function InputBar() {
     }
   }, [deriveCopyMode, derivePolicy, hasSubmitApiConfig, inputImages, prompt, setPrompt, showToast])
 
+  // ===== 风格池 =====
+  const [creativePoolOpen, setCreativePoolOpen] = useState(false)
+  const creativePool = useCreativePool('style')
+  // 选中态**持久化在池子里**，不是组件 state：放 useState 时，改代码触发的每一次热更新都会把它
+  // 清空 —— 用户「勾了等于没勾」，而提交只会静默走普通生图，不报错也不留痕（2026-09-24 实踩）。
+  const poolSelection = creativePool.selection
+  // 选中数口径与提交时一致：随机模式按「这次会抽到几张」算（并受可选上限约束），而不是按勾选数
+  // 只认「选中态」本身，不再拿 items 反查一遍：反查会把「池数据此刻还没加载出来」误判成「没选」，
+  // 于是静默走普通生图（不报错、不留痕）。有效性校验只该在写入侧做（setSelection / normalizeSelection）。
+  const poolSelectedCount =
+    poolSelection.mode === 'random'
+      ? resolveRandomCount(poolSelection.randomCount, creativePool.items.length, creativePool.maxRandomCount)
+      : poolSelection.selectedIds.length
+  const poolSubmitRef = useRef(false)
+
+  /**
+   * 带风格池的生图：用户挂的图在前（第一张是主图）、池图在后，另加一句角色指令。
+   *
+   * 走 `submitTask` 的 `extraInputImages`，不往 store 的 `inputImages` 里塞 ——
+   * 池图不是用户手动挂的，不该出现在输入栏缩略图里。
+   */
+  const submitTaskWithCreativePool = useCallback(async () => {
+    if (poolSubmitRef.current) return
+    poolSubmitRef.current = true
+    try {
+      const picked = resolvePoolSelection(creativePool.items, poolSelection, creativePool.maxRandomCount)
+      if (picked.length === 0) {
+        showToast('风格池没有可用的图（选中的可能已被删除）', 'error')
+        return
+      }
+      const { images, missing } = await resolvePoolInputImages(picked, creativePool.assets)
+      if (images.length === 0) {
+        showToast('风格池的图读不出来，请重新丢一次', 'error')
+        return
+      }
+      if (missing > 0) showToast(`有 ${missing} 张池图读不出来，已跳过`, 'error')
+      const rule = buildPoolReferenceRule('style', {
+        contentCount: inputImages.length,
+        styleCount: images.length,
+      })
+      await submitTask({ extraInputImages: images, promptOverride: buildTaskPrompt(prompt, rule) })
+    } catch (error) {
+      showToast(`提交失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    } finally {
+      poolSubmitRef.current = false
+    }
+  }, [
+    creativePool.assets,
+    creativePool.items,
+    creativePool.maxRandomCount,
+    inputImages.length,
+    poolSelection,
+    prompt,
+    showToast,
+  ])
+
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
@@ -1755,6 +1816,9 @@ export default function InputBar() {
       )
     } else if (referenceStyleEnabled) {
       void runReferenceStyleGeneration()
+    } else if (poolSelectedCount > 0) {
+      // 风格池排在「一键衍生」之前：用池子的场景本来就不挂图，而一键衍生要求挂了图才生效
+      void submitTaskWithCreativePool()
     } else if (oneClickDeriveEnabled && inputImages.length > 0) {
       // 一键衍生：挂图未选 SOP 时，自动反推变量提示词模板 → 保存为资产 → 自动批量出图
       void runOneClickDerive()
@@ -1780,11 +1844,13 @@ export default function InputBar() {
     inputImages.length,
     maskDraft,
     oneClickDeriveEnabled,
+    poolSelectedCount,
     referenceStyleEnabled,
     runReferenceStyleGeneration,
     openGallerySopBatch,
     revealGallerySopBatch,
     runOneClickDerive,
+    submitTaskWithCreativePool,
     showToast,
   ])
   const stopActiveAgentResponse = useCallback(() => {
@@ -4181,6 +4247,43 @@ export default function InputBar() {
                 >
                   Skill
                 </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setCreativePoolOpen((open) => !open)
+                    setOneClickDeriveEnabled(false)
+                    // 与「参考图风格复刻」互斥：两者同时开会有一方静默不生效，用户只会觉得坏了
+                    setReferenceStyleEnabled(false)
+                  }}
+                  aria-pressed={creativePoolOpen}
+                  aria-label="打开风格池"
+                  title="从风格池选图：生图时把这几张图只作为风格参考一起发过去"
+                  className={`min-w-16 rounded-ds-lg border transition-[background-color,border-color,color] duration-150 ${
+                    creativePoolOpen || poolSelectedCount > 0
+                      ? 'border-ds-primary/35 bg-ds-primary-subtle text-ds-primary dark:bg-ds-primary/10'
+                      : 'border-transparent text-ds-muted hover:border-ds-border hover:bg-ds-subtle hover:text-ds-text dark:hover:bg-ds-surface'
+                  }`}
+                >
+                  风格池{poolSelectedCount > 0 ? ` ${poolSelectedCount}` : ''}
+                </Button>
+                {creativePoolOpen && !gallerySopModeActive && !maskDraft && (
+                  <CreativePoolPanel
+                    items={creativePool.items}
+                    assets={creativePool.assets}
+                    maxRandomCount={creativePool.maxRandomCount}
+                    loading={creativePool.loading}
+                    analyzing={creativePool.analyzing}
+                    notice={creativePool.notice}
+                    selection={poolSelection}
+                    onSelectionChange={(next) => void creativePool.setSelection(next)}
+                    onMaxRandomCountChange={(value) => void creativePool.setMaxRandomCount(value)}
+                    onAddImages={(files) => void creativePool.addImages(files)}
+                    onRemoveItem={(itemId) => void creativePool.removeItem(itemId)}
+                    onRenameItem={(itemId, name) => void creativePool.renameItem(itemId, name)}
+                    onClose={() => setCreativePoolOpen(false)}
+                  />
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-ds-muted">
@@ -4212,7 +4315,7 @@ export default function InputBar() {
                 onClick={() => setReferenceStyleEnabled(false)}
                 className="fixed inset-0 z-overlay cursor-default"
               />
-              <div className="absolute bottom-full right-0 z-dropdown mb-2 flex max-h-[58vh] w-[min(480px,calc(100vw-24px))] flex-col space-y-2 overflow-y-auto rounded-ds-lg border border-ds-primary/25 bg-ds-surface/95 px-2.5 py-2 shadow-lg backdrop-blur-xl dark:bg-ds-scrim/95">
+              <div className="absolute bottom-full right-0 z-overlay mb-2 flex max-h-[58vh] w-[min(480px,calc(100vw-24px))] flex-col space-y-2 overflow-y-auto rounded-ds-lg border border-ds-primary/25 bg-ds-surface/95 px-2.5 py-2 shadow-lg backdrop-blur-xl dark:bg-ds-scrim/95">
                 <div className="sticky top-0 z-dropdown -mx-0.5 flex items-center justify-between gap-2 bg-ds-surface/95 py-0.5 dark:bg-ds-scrim/95">
                   <div>
                     <div className="text-xs font-semibold text-ds-text">

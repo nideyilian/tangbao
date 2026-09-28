@@ -1451,6 +1451,24 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.showToast).toHaveBeenCalledWith('任务已提交', 'success')
   })
 
+  // 这两个选项曾经"只写进类型签名、函数体没用" ⇒ 池图与指令被静默丢掉，
+  // 任务里看不出任何异常（2026-09-24 实踩）。
+  it('⭐ submitTask 真会用上 extraInputImages 与 promptOverride', async () => {
+    await submitTask({
+      extraInputImages: [{ id: 'pool-image-1', dataUrl: 'data:image/png;base64,cG9vbA==' }],
+      promptOverride: '图 1 只作风格参考，请完全按文字描述重新构图。\n一只猫',
+    })
+
+    const task = useStore.getState().tasks[0]
+    expect(task.inputImageIds).toEqual(['pool-image-1'])
+    expect(task.prompt).toBe('图 1 只作风格参考，请完全按文字描述重新构图。\n一只猫')
+  })
+
+  it('⭐ 不传 extraInputImages 时行为与从前完全一致（不引入副作用）', async () => {
+    await submitTask()
+    expect(useStore.getState().tasks[0].inputImageIds).toEqual([])
+  })
+
   it('captures the active project folder onto gallery tasks (images belong to the folder the task is sent from)', async () => {
     const { useAssetLibraryStore } = await import('./features/assetLibrary/store')
     const previousScope = useAssetLibraryStore.getState().scope

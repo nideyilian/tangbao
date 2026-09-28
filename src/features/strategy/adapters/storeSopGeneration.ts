@@ -1141,16 +1141,25 @@ const VISUAL_SKILL_FORMAT = {
   },
 } as const
 
-async function requestModelJson(options: {
+/**
+ * 结构化输出的外壳约束；各业务自带 schema。
+ *
+ * 原先这里是四家 FORMAT 的联合字面量类型 —— 每新增一个业务格式都要回来改这一行，
+ * 而传进来的其实都是同一形状。改成结构类型后，新业务在自己的模块里定义 FORMAT 即可。
+ */
+type ModelJsonResponseFormat = {
+  type: 'json_schema'
+  name: string
+  strict: boolean
+  schema: unknown
+}
+
+export async function requestModelJson(options: {
   settings: AppSettings
   profile: ApiProfile
   instructions: string
   userContent: unknown
-  responseFormat:
-    | typeof VISUAL_PROFILE_TEXT_FORMAT
-    | typeof VARIABLE_PROMPT_GENERATION_TEXT_FORMAT
-    | typeof REFERENCE_STYLE_PROMPT_FORMAT
-    | typeof VISUAL_SKILL_FORMAT
+  responseFormat: ModelJsonResponseFormat
   signal?: AbortSignal
   /** 超时提示里展示的业务名，便于用户判断卡在哪一步。 */
   timeoutLabel?: string

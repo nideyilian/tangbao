@@ -6360,6 +6360,181 @@ trashed），得再进回收站点一次「永久删除」才是真删。用户�
 
 ---
 
+## TB-134 风格池：内置可复用参考图库，生图时把图「只作风格参考」一起发（2026-09-24 阿伟）
+
+**需求（杰哥）**：内置一个「池」（留以后衍生构图池 / 样式池的余地），把图片丢进去 → AI 自动分析 +
+起名（≤8 字）+ 存档；生图时可直接调用（单选 / 多选 / 全部随机），调用后**把这张图一起发过去**，
+且「只参考风格，不参考其他」。
+
+**开工前查实的三个事实（决定了整个做法）**
+
+1. **仓库里已有半成品，缺的正是那一环**：`referenceStyleSkill.ts` 的 `VisualSkill` +
+   `InputBar` 的「参考图风格复刻」面板能丢图、AI 分析、起名、存档，但生图时
+   `inputImages: []` —— **只发文字模板、原图一张不发**。本次补上「图一起发」，
+   **旧面板一个字未动**（不动它就是不回退任何既有能力）。
+2. **只发图不行，「只发 AI 拆出来的内容描述」也不行**（杰哥的追问）：
+   - 纯喂像素会泄漏参考图的主体与构图；`gpt-image-2` 又取消了 `input_fidelity`
+     （输入图默认按高保真处理），更容易被整幅复刻。
+   - 内容描述与图冗余、是有损转述，且**文字与图冲突时模型可能信文字** ——
+     那才是「偏离原图」的来源。
+   - ⇒ 池项的 `points`（AI 分析出的要点）**只存档展示、不进 prompt**；进 prompt 的只有一句
+     不含任何描述的**角色指令**（说「怎么用这张图」，而不是「这张图是什么」）。
+3. **两条 API 硬规则**（决定拼装顺序）：
+   - **第一张是主图 / 被编辑的图**，遮罩也只作用于第一张 ⇒ 用户挂的图在前、池图在后。
+   - 参考图有明确角色时模型服从度更好 ⇒ 指令必须标出序号角色。
+
+**落地（10 个文件）**
+
+| 文件 | 内容 |
+| --- | --- |
+| `src/features/creativePool/types.ts` | 池容器（`kind: style/composition/pattern` 扩展位）+ 池项 + 名字上限口径 |
+| `creativePool/poolPrompt.ts` | ⭐ 角色指令拼装（**有内容图 / 纯池图两场景分开写**）+ 顺序契约 + 提示词拼装 |
+| `creativePool/poolSelection.ts` | 勾选（按池内顺序，保证序号稳定）/ 随机部分洗牌 / 选择状态类型 |
+| `creativePool/poolStorage.ts` | 两个 namespace（元数据 + 图资产）；**读失败进降级态拒绝写盘** |
+| `creativePool/poolAnalysis.ts` | 多模态分析 → 名字 + 要点（复用 `requestModelJson`） |
+| `creativePool/poolSubmit.ts` | 池项 → 输入图（用 `storeImage` 的真实哈希 id） |
+| `creativePool/useCreativePool.ts` | 池状态与增删改（收在 hook，不往 `store.ts` 里塞） |
+| `creativePool/CreativePoolPanel.tsx` | 网格面板（丢图/拖拽、勾选、随机、双击改名、悬停删除） |
+| `InputBar.tsx` | 新增「风格池」按钮 + 提交分支（与「参考图风格复刻」互斥） |
+| `store.ts` | `submitTask` 加 `extraInputImages` / `promptOverride`（**不动 store 的 `inputImages`**） |
+| `storeSopGeneration.ts` | 导出 `requestModelJson`；`responseFormat` 从四家联合类型放宽成结构类型 |
+
+**⭐ 四个非显然的决定**
+
+1. **池图必须自持副本**：素材是「删除即永久删除」（ADR-0021），图片记录又会被启动时的孤儿回收
+   （超过 7 天没被任务 / 标签页引用就删）⇒ 池子若只记素材 id，用户删了素材池子就变空白格子。
+   故池图存进 `creativePoolAssets`（dataUrl 内嵌），与元数据分两个 namespace。
+2. **提交时用 `storeImage` 拿真实内容哈希 id，不自己编**：`submitTaskWithData` 会把
+   `inputImageIds` 记进任务，执行时 `ensureImageCached(id)` 先查内存缓存、再查图片存储 ——
+   编的 id 在存储里查不到，内存缓存一旦被淘汰，这张图就静默变成「没有参考图」。
+3. **`poolSubmit.ts` 单独成文件**：把「池项 → 输入图」的 store 依赖收在一处，
+   `InputBar` 只多一行 import（那个文件本来已经很大）。
+4. **池数据不放 `store.ts`**：池独立于生图状态机，放进去只会让那个已经过大的 store 继续膨胀
+   （AGENTS.md 明令勿继续膨胀），改用 `useCreativePool` hook 持有。
+
+**验收证据**
+
+- 新增 3 个测试文件共 **35 条**：`poolPrompt.test.ts`（15）/ `poolSelection.test.ts`（11）/
+  `poolStorage.test.ts`（9）。覆盖：两场景措辞差异、序号随数量变化、随机不重复不越界、
+  脏数据归一（缺 id / 缺图引用 / 重复 id / 非数组 / 未知 kind）、名字 8 字上限按码点截断。
+- design-system 合规：`catalog.ts` 已登记 `CreativePoolPanel.tsx`；新组件零旧类
+  （无 `bg-white`/`gray-*`/`rounded-xl`/hex、无 `text-[Npx]`、无 `shadow-xl/2xl`）。
+- 全量验证全绿：**273 文件 / 3392 用例**（基线 270 / 3357 → +3 文件 / +35 用例，正是新增的三个测试文件）。
+  ⚠️ `npm run verify` 在本机**跑不完**：它抓到的 node 是 v22（managed 版，PATH 在前），vitest 被
+  `vite.config.ts` 的版本守卫拦下。前四步（tsc 双端 + lint + format:check）正常，测试那步要单独用
+  Node 24 跑：`"C:/Program Files/nodejs/node.exe" node_modules/vitest/vitest.mjs run`。
+
+**报障修复（2026-09-24 19:13，杰哥实测）**
+
+现象：往池子拖图片**进不去**，图片直接挂成了输入栏的参考图。
+根因：浮层没声明屏蔽标记 ⇒ 面板的 `onDrop` 收到一份之后，事件**继续冒泡到 `document`**，
+被 `InputBar` 挂在 document 上的全局拖拽监听**又收了一份**，于是图进了 `inputImages`。
+修法：面板根元素挂 `data-block-global-image-input="true"`（本仓既有约定，先例 `SopManagementCenter`）
++ `onDragOver/onDrop/onDragLeave` 补 `stopPropagation()`（兜底）。
+新增 `CreativePoolPanel.test.tsx`（6 条）钉住；**反向验证撤掉 `stopPropagation` → 恰好 1 条红**，
+复原后全绿。约定已写进 `docs/architecture-constraints.md` 第七节，防复发。
+⚠️ 知情副作用：该属性是**全局**屏蔽 ⇒ 面板打开时拖到输入框也不再挂参考图（浮层有遮罩、意图明确，与
+`SopManagementCenter` 行为一致）。
+全量测试更新为 **274 文件 / 3398 用例**。
+
+**参数调整（2026-09-24 19:23，杰哥要求）**
+
+原先我给「一次生图最多带几张池图」硬编码了 `POOL_SELECTION_MAX_COUNT = 8` —— 那不是他要的。
+现改为三个层次分明、只有一个可配的口径：
+
+- **池容量不设上限**：可以无限往里丢图（本来就没有上限，这次在类型注释与验收里写死）。
+- **手动勾选不设上限**：一张张点出来的，有明确意图，不该被拦（原来的 `.slice(0, 8)` 已删）。
+- **只有随机抽签**保留一个**可选**上限：面板底部「随机 N 张 / 上限 __ 张」，**留空 = 不限**。
+  落到 `CreativePool.maxRandomCount`（随池持久化，`null` = 不限），抽签数被夹到
+  `[1, min(上限, 池子大小)]`（`resolveRandomCount`）——下限 1 张、且绝不超出池子大小。
+
+新增 9 条测试：勾选到 21 张不被拦、上限留空 / 填值的回传、上限夹取、上限比池子大、脏值（0 / 负数 / NaN）
+一律当「不限」、空池返回 0。**反向验证：把上限判断改成忽略配置 → 恰好 2 条红**（正是那两条断言上限
+生效的），其余 48 条全绿，复原后全绿。
+
+**再修：拖不进的「真凶」是 z 层级（2026-09-24 19:59，杰哥复报）**
+
+杰哥复报「风格池无法拖拽图片进去」。我上一轮按「事件冒泡被 document 上的全局监听抢走」修 ——
+那个问题**真实存在**（所以那处修复保留），但**不是拦路虎**，方向修偏了。
+
+真凶：面板用 `z-dropdown`（=40），而关闭遮罩是 `fixed inset-0 z-overlay`（=80）
+⇒ **遮罩把整个面板盖住了**：拖拽与点击全部落在遮罩上（点一下还会把面板关掉），
+而界面上看起来「浮层明明在那儿，就是不响应」。
+本仓的正确约定是**遮罩与浮层同层**（都用 `z-overlay`，靠 DOM 顺序让浮层压在上面），
+先例见 `InputBar.tsx` 的三个下拉菜单（`:652`、`:3276`、`:5011`）。
+修法：面板 `z-dropdown` → `z-overlay`；并**顺手修掉同文件 `:4361` 那个「视觉 Skill」面板**
+（长期也是 `z-dropdown`，属**既有失修**，表现同样是面板打开后点不动）。
+新增 1 条测试钉住层级（断言面板与遮罩都含 `z-overlay`、且不含 `z-dropdown`）；
+**反向验证改回 `z-dropdown` → 恰好 1 条红**，复原后全绿。
+约定已写进 `docs/architecture-constraints.md` 第七节。
+
+**再修：选了风格却没生效（2026-09-24 20:57，杰哥复报）**
+
+杰哥：「我选了风格，但出来的风格并无变化」。**先查库取证**（不猜）：最近一次任务
+`inputImageIds: 0 张`、prompt 就是用户原话 `一个美女，画面比例为:9:16` ⇒ **池图与角色指令都没进请求**，
+说明提交时根本没走「带风格池」分支（`poolSelectedCount === 0`）。
+而池数据本身完好（1 项 + 5 条 AI 要点 + 2.5MB 图资产都在）。
+⇒ 病根：**选中态只活在 `InputBar` 的 `useState` 里** —— 当天改了十几轮代码，每次热更新都会把它清空，
+于是「勾了等于没勾」，而提交只是静默走普通生图：不报错、不留痕，只能靠查库发现。
+
+修法：**把选中态持久化进池子**。
+- `CreativePoolSelection` 类型搬到 `types.ts`（它是池数据的一部分）；`poolSelection.ts` 再导出，旧导入路径不受影响。
+- `poolStorage.ts` 新增 `createEmptySelection` / `normalizeSelection`（**校验 id 是否还在池里**，
+  删图后的残留勾选会被清掉 —— 否则界面写着「已选 1 张」而实际一张都发不出去）。
+- `useCreativePool` 暴露 `selection` / `setSelection`；`removeItem` 顺带清掉该 id 的勾选。
+- `InputBar` 不再自己 `useState` 存选中态，直接用 `creativePool.selection`。
+- 面板底部「未选图」改成「**未选图 —— 本次生图不会带池里的图**」并区分颜色（防「以为选了其实没选」）。
+
+新增 3 条测试：选中态脏值归一（含去重、非字符串过滤、张数取整）、残留 id 被清、`mode` 只认 `random`。
+
+**再修（真凶）：选项「声明了却没实现」（2026-09-24 21:37，杰哥第三次复报）**
+
+症状：界面按钮明明显示「风格池 1」（**桌面截图确认**）、选中态也确实落盘了，但任务里仍是
+`inputImageIds: 0 张`、prompt 里没有指令。
+
+**根因（纯属我自己的疏漏）**：给 `submitTask` 加 `extraInputImages` / `promptOverride` 时，
+**只改了类型签名，函数体一个字没动** —— 里面依旧写 `prompt, inputImages`（取 state 而不是取选项），
+于是两个选项被**静默丢掉**：不报错、任务里看不出任何异常。
+
+修法：函数体改成
+`prompt: options.promptOverride ?? prompt`、
+`inputImages: options.extraInputImages?.length ? [...inputImages, ...options.extraInputImages] : inputImages`。
+
+新增 2 条测试（「真会用上」+「不传时行为不变」）；
+**反向验证：把函数体改回原样 → 恰好 1 条红**，复原后 163 条全绿。
+
+**⭐ 诊断手法（本轮的关键，值得复用）**：前两轮各修错一次方向（事件冒泡 / 热更新残留），
+这轮改为**先取证**：① 只读查库拿到「选中态有、任务里没有」这组矛盾；
+② 用 `desktop-screenshot-probe` skill **截图运行中的界面**，一眼看到「风格池」按钮显示 `1`
+⇒ 直接排除「选中态没进内存」，把范围锁死在提交链路。
+**结论：报「功能没生效」时，先截一张运行中的界面，比读十遍代码有用。**
+
+**未做 / 待确认（等杰哥）**
+
+1. **未经真机确认**：本机无法做渲染验证（runbook 二十七节）⇒ 面板观感请在 dev 里过目。
+2. ⬜ **「只取风格」的服从度需实拍验证**（本轮**刻意留的开关**）：`points` 已存好但未参与生图。
+   若实拍发现纯指令锁不住风格，把它拼进指令即可（只改 `buildPoolReferenceRule` 一处）。
+   外部文档说法本身不一致：一家建议「只借风格就该走纯文字文生图」、一家直接给「图 + 风格迁移」示例。
+3. ⬜ **构图池 / 样式池未开**：`kind` 与措辞表都在，加一套提示词即可，存储 / 交互 / 发图链路共用。
+4. ⬜ **`appDataNamespaceContract.test.ts` 有盲区**：它只扫 `createDesktopJsonStorage('ns')`
+   字面量调用，而本次 `poolStorage.ts` 是直接调 `appDataPut(常量)` —— 守卫扫不到。
+   本次已手工把两个 namespace 加进 `APP_DATA_NAMESPACES` 白名单。建议后续把守卫扩成
+   也能扫「namespace 常量声明」（全仓目前只有本功能这两处用这种写法，扩了不会误伤）。
+
+**22:15–22:35 UI 改版（杰哥「先给我预览一下效果」→ 看过两版后选中整卡为图那版）**
+
+- 面板 **480 → 660px**、网格 **3 → 5 列**（每格约 121px，名字最多 8 字放得下）；
+  卡片改成**整格正方形图**（`aspect-square`，原来 `h-16` 把图裁成了扁条），
+  名字改成**压在图底的 20px 薄标签**，不再占一块独立文字区；选中时**名字条整条变主色**。
+- **⭐ 名字压图必须用 `bg-ds-surface/90`，不能用 `bg-ds-scrim`**：`--ds-color-scrim` 在浅色与深色
+  主题下**都是深色**，而 `--ds-color-text` 在浅色主题是深字 ⇒ 浅色下「深底配深字」看不见。
+  顺带发现旧版删除按钮（`bg-ds-scrim/80 text-ds-text`）是**同一个 bug**，一并改掉。
+- 改名仍是**双击名字条**；双击会连带触发两次卡片点击（选中状态两次抵消、净不变），刻意接受。
+- 新增 4 条测试（名字条底色 / 选中变主色 / `aspect-square` / 双击进改名）；
+  **反向验证：把底色改回 `bg-ds-scrim` → 恰好 1 条红**，复原后全绿。定向 **58 条全绿**。
+
+---
+
 ## TB-135 图转视频：嵌入本地引擎 + 中控台「视频」分区 + 导出后自动出视频（2026-09-26 阿伟）
 
 **需求（杰哥原话，2026-09-26）**

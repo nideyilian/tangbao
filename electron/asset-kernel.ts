@@ -57,6 +57,8 @@ const APP_DATA_NAMESPACES = new Set([
   'assetLibraryUi',
   'dailyBatch',
   'imageVideo',
+  'creativePools',
+  'creativePoolAssets',
 ])
 
 function appDataNamespace(value: unknown): string {

@@ -1224,6 +1224,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     decision: 'compose',
     targets: ['Toolbar', 'TextArea', 'SearchField', 'StatusIndicator'],
   },
+  {
+    module: 'src/features/creativePool/CreativePoolPanel.tsx',
+    responsibility:
+      '风格池面板：缩略图网格 + 丢图/拖拽导入 + AI 自动起名与要点存档 + 勾选（勾一张即单选、勾多张即多选）与随机抽签；池数据自持副本，不依赖素材库（素材删除与孤儿回收都不会影响它）',
+    decision: 'compose',
+    targets: ['Panel', 'Button', 'Switch', 'EmptyState'],
+  },
 ]
 
 export interface InteractionPattern {
