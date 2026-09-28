@@ -30,6 +30,7 @@ import {
   IMAGE_VIDEO_WATERMARK_MATCH_METHODS,
   IMAGE_VIDEO_WATERMARK_POSITIONS,
   IMAGE_VIDEO_WATERMARK_SIZE_MODES,
+  type ImageVideoCountMode,
   type ImageVideoMode,
   type ImageVideoNodeOverride,
   type ImageVideoParams,
@@ -158,6 +159,10 @@ export function normalizeImageVideoOverride(raw: unknown): ImageVideoNodeOverrid
     imagesPerVideo: optionalNumber(raw.imagesPerVideo, ranges.imagesPerVideo.min, ranges.imagesPerVideo.max),
     secondsPerImage: optionalNumber(raw.secondsPerImage, ranges.secondsPerImage.min, ranges.secondsPerImage.max),
     totalDuration: optionalNumber(raw.totalDuration, ranges.totalDuration.min, ranges.totalDuration.max),
+    videoCountMode:
+      raw.videoCountMode === 'perImage' || raw.videoCountMode === 'fixed'
+        ? (raw.videoCountMode as ImageVideoCountMode)
+        : undefined,
     videoCount: optionalNumber(raw.videoCount, ranges.videoCount.min, ranges.videoCount.max),
     resolution: optionalAllowed(raw.resolution, IMAGE_VIDEO_RESOLUTIONS),
     fps: optionalNumber(raw.fps, ranges.fps.min, ranges.fps.max),
@@ -282,15 +287,27 @@ export function joinLibraryPath(root: string, relative: string): string {
  * - `use_image_watermark` / `watermark_layers`：引擎自带的**图片水印图层**与糖包的水印库是两回事，
  *   继续保持关 —— 糖包的水印由自己的后处理链路叠，不从这里再叠一次。
  */
-export function buildEngineConfig(params: ImageVideoParams, paths: ImageVideoEnginePaths): Record<string, unknown> {
+export function buildEngineConfig(
+  params: ImageVideoParams,
+  paths: ImageVideoEnginePaths,
+  /**
+   * 本次**实际**要出的量与每片用图数；缺省就用参数里写的那个。
+   *
+   * 只有「每张图各出一个视频」（`videoCountMode === 'perImage'`）需要传它 ——
+   * 那个模式要等数完图才知道出几个（换算见 `runVideo.ts` 的 `resolveVideoPlan`）。
+   */
+  plan?: { imagesPerVideo: number; videoCount: number },
+): Record<string, unknown> {
+  const imagesPerVideo = plan?.imagesPerVideo ?? params.imagesPerVideo
+  const videoCount = plan?.videoCount ?? params.videoCount
   return {
     input_dir: paths.inputDir,
     output_dir: paths.outputDir,
-    num_images: params.imagesPerVideo,
+    num_images: imagesPerVideo,
     duration: params.secondsPerImage,
     total_duration: params.totalDuration,
     fps: params.fps,
-    video_count: params.videoCount,
+    video_count: videoCount,
     video_format: 'mp4',
     resolution_preset: params.resolution,
     resolution_presets: [...IMAGE_VIDEO_RESOLUTIONS],

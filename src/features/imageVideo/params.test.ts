@@ -7,6 +7,7 @@ import {
   resolveVideoOutputDir,
   summarizeImageVideoParams,
 } from './params'
+import { resolveVideoPlan } from './runVideo'
 import { DEFAULT_IMAGE_VIDEO_PARAMS, type ImageVideoParams } from './types'
 
 const BASE: ImageVideoParams = { ...DEFAULT_IMAGE_VIDEO_PARAMS }
@@ -283,5 +284,62 @@ describe('库内相对路径的清洗（这两个值会被拼成绝对路径交�
 
   it('单个前导斜杠只是剥掉、不算穿越（拼出来仍在库内）', () => {
     expect(normalizeImageVideoOverride({ watermarkPath: '/logo.mov' })).toEqual({ watermarkPath: 'logo.mov' })
+  })
+
+  it('videoCountMode 只认那两个值，别的（含手改 JSON 写进来的中文）一律丢弃', () => {
+    expect(normalizeImageVideoOverride({ videoCountMode: 'perImage' })).toEqual({ videoCountMode: 'perImage' })
+    expect(normalizeImageVideoOverride({ videoCountMode: 'fixed' })).toEqual({ videoCountMode: 'fixed' })
+    expect(normalizeImageVideoOverride({ videoCountMode: '按图片数' })).toEqual({})
+    expect(normalizeImageVideoOverride({ videoCountMode: true })).toEqual({})
+  })
+})
+
+/**
+ * 「视频数怎么定」（2026-09-28 杰哥要的「单图加特效那种，视频数按图片数量来」）。
+ *
+ * 引擎没有这个模式，所以换算是糖包这边做的：`perImage` ⇒ 每片 1 张图、视频数 = 图片数。
+ */
+describe('resolveVideoPlan', () => {
+  it('fixed：照参数里写的来，图片数不参与（老行为）', () => {
+    const plan = resolveVideoPlan({ ...BASE, videoCountMode: 'fixed', imagesPerVideo: 6, videoCount: 3 }, 40)
+    expect(plan).toEqual({ imagesPerVideo: 6, videoCount: 3 })
+  })
+
+  it('perImage：每张图各一个 —— 每片 1 张图、视频数 = 目录里的图片数', () => {
+    const plan = resolveVideoPlan({ ...BASE, videoCountMode: 'perImage', imagesPerVideo: 6, videoCount: 1 }, 40)
+    expect(plan).toEqual({ imagesPerVideo: 1, videoCount: 40 })
+  })
+
+  it('⭐ 换算结果恒满足引擎那条校验（图片数 ≥ 视频数 × 每片图片数），所以不会出现「图片数量不足」', () => {
+    const params = { ...BASE, videoCountMode: 'perImage' as const }
+    for (const imageCount of [1, 2, 7, 500]) {
+      const plan = resolveVideoPlan(params, imageCount)
+      expect(imageCount).toBeGreaterThanOrEqual(plan.videoCount * plan.imagesPerVideo)
+    }
+  })
+
+  it('buildEngineConfig 认这个换算结果：num_images / video_count 用实际值，其余照参数', () => {
+    const params = { ...BASE, videoCountMode: 'perImage' as const, fps: 25 }
+    const config = buildEngineConfig(
+      params,
+      { inputDir: 'D:/in', outputDir: 'D:/out', library: { bgm: '', watermark: '' } },
+      resolveVideoPlan(params, 12),
+    )
+    expect(config.num_images).toBe(1)
+    expect(config.video_count).toBe(12)
+    expect(config.fps).toBe(25)
+  })
+
+  it('不传换算结果时仍是参数里的值（别的调用方不受影响）', () => {
+    const config = buildEngineConfig(
+      { ...BASE, imagesPerVideo: 4, videoCount: 2 },
+      {
+        inputDir: 'D:/in',
+        outputDir: 'D:/out',
+        library: { bgm: '', watermark: '' },
+      },
+    )
+    expect(config.num_images).toBe(4)
+    expect(config.video_count).toBe(2)
   })
 })

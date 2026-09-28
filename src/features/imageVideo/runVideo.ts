@@ -73,6 +73,24 @@ function dirNameOf(filePath: string): string {
   return index > 0 ? normalized.slice(0, index) : ''
 }
 
+/**
+ * 这一次**实际**要出几个视频、每个视频用几张图。
+ *
+ * 「每张图各出一个视频」（`videoCountMode === 'perImage'`）是杰哥 2026-09-28 要的
+ * 「单图加特效」那种：一个视频只用 1 张图、靠画面效果撑满时长 —— 所以**视频数 = 目录里的图片数**。
+ *
+ * 引擎**没有**这个模式：`engine/config.py` 要求显式给「视频数」与「每片图片数」，
+ * 还校验「图片数 ≥ 两者之积」。所以这里换算成 `{ imagesPerVideo: 1, videoCount: 图片数 }`，
+ * 恰好满足那条校验 —— **别改成让引擎自己数**（它不会）。
+ */
+export function resolveVideoPlan(
+  params: ImageVideoParams,
+  imageCount: number,
+): { imagesPerVideo: number; videoCount: number } {
+  if (params.videoCountMode === 'perImage') return { imagesPerVideo: 1, videoCount: imageCount }
+  return { imagesPerVideo: params.imagesPerVideo, videoCount: params.videoCount }
+}
+
 /** 一条可以直接拿去转视频的输入目录，带上它属于哪个渠道。 */
 export interface ImageVideoInputDir {
   /** 渠道 id（`PostprocessMedia.id`）；用它是为了取这个渠道自己的视频参数 */
@@ -199,7 +217,9 @@ export async function runImageVideoJob(input: ImageVideoRunInput): Promise<Image
     throw new Error('开着背景音乐或视频水印，但读不到素材库位置，先打开一次「视频素材」分区再试')
   }
   const library = { bgm: dirs?.bgm ?? '', watermark: dirs?.watermark ?? '' }
-  const config = buildEngineConfig(input.params, { inputDir, outputDir, library })
+  // 「每张图各出一个视频」要等数完图才知道出几个（`resolveVideoPlan`）
+  const plan = resolveVideoPlan(input.params, scanned.count)
+  const config = buildEngineConfig(input.params, { inputDir, outputDir, library }, plan)
   const started = await api.imageVideoCall({
     method: 'start_job',
     params: { config },
@@ -213,7 +233,7 @@ export async function runImageVideoJob(input: ImageVideoRunInput): Promise<Image
   // ③ 等终态
   return waitForJobFinished(api, jobId, {
     outputDir,
-    expectedCount: input.params.videoCount,
+    expectedCount: plan.videoCount,
     onProgress: input.onProgress,
     signal: input.signal,
   })

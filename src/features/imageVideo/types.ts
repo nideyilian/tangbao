@@ -138,6 +138,19 @@ export const IMAGE_VIDEO_WATERMARK_AUDIO_MODES = ['使用BGM', '使用水印', '
 /** 水印取用方式：单个文件，还是从文件夹里按视频序号轮转取。 */
 export type ImageVideoWatermarkMode = 'single' | 'folder'
 
+/**
+ * 「出几个视频」怎么定。
+ *
+ * - `fixed`：按 `videoCount` 出**固定数量**（默认，也一直是以前的行为）；
+ * - `perImage`：**每张图各出一个视频** —— 杰哥 2026-09-28 要的「单图加特效」那种：
+ *   一个视频只用 1 张图、靠画面效果撑满时长，视频数 = **目录里的图片数**。
+ *
+ * 引擎（`src/engine/config.py`）**没有**这个模式：它要求显式给「视频数」与「图片数」，
+ * 还校验「图片数 ≥ 视频数 × 每片图片数」。所以 `perImage` 是糖包这边**数完图再换算**过去的
+ * （见 `runVideo.ts` 的 `resolveVideoPlan`）—— 别指望引擎自己会数。
+ */
+export type ImageVideoCountMode = 'fixed' | 'perImage'
+
 /** 一套完整的图转视频参数（全局基线就是这个形状，节点覆盖是它的 Partial）。 */
 export interface ImageVideoParams {
   /**
@@ -153,7 +166,13 @@ export interface ImageVideoParams {
   secondsPerImage: number
   /** 固定总时长（秒）；`0` = 按「图片数 × 每图时长」自动算 */
   totalDuration: number
-  /** 一次出几个视频 */
+  /**
+   * 「出几个视频」怎么定（见 `ImageVideoCountMode`）。
+   *
+   * `perImage` 时下面那两个字段**都不生效**：每个视频恒用 1 张图、视频数 = 目录里的图片数。
+   */
+  videoCountMode: ImageVideoCountMode
+  /** 一次出几个视频（`videoCountMode === 'fixed'` 时生效） */
   videoCount: number
   /** 分辨率预设，取值见 `IMAGE_VIDEO_RESOLUTIONS` */
   resolution: string
@@ -273,6 +292,7 @@ export const DEFAULT_IMAGE_VIDEO_PARAMS: ImageVideoParams = {
   imagesPerVideo: 6,
   secondsPerImage: 2,
   totalDuration: 0,
+  videoCountMode: 'fixed',
   videoCount: 1,
   resolution: '1280x720',
   fps: 30,

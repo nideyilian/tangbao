@@ -67,10 +67,10 @@ const GROUPS: FieldGroup[] = [
     title: '节奏',
     columns: 4,
     fields: [
-      { key: 'imagesPerVideo', label: '图片数/视频', hint: '从目录里抽几张拼成一个视频' },
+      { key: 'imagesPerVideo', label: '图片数/视频', hint: '从目录里抽几张拼成一个视频；「每张图各一个」时恒为 1' },
       { key: 'secondsPerImage', label: '每图秒数' },
       { key: 'totalDuration', label: '总时长', unit: '秒', hint: '0 = 按「图片数 × 每图秒数」自动算' },
-      { key: 'videoCount', label: '视频数' },
+      // 第 4 格是「视频数」——它要同时给模式与数量，不是纯数字字段，所以在渲染处单独画
     ],
   },
   {
@@ -233,28 +233,75 @@ export function VideoParamsDialog({
   const inputClass =
     'w-full rounded-ds-md border border-ds-border/70 bg-ds-surface/60 px-2 py-1.5 text-sm text-ds-text outline-none transition focus:border-ds-primary/60 dark:border-ds-border dark:bg-ds-surface dark:text-ds-text-subtle'
 
+  /**
+   * 「图片数/视频」在「每张图各一个」模式下不生效（恒为 1）—— 置灰而不是藏起来：
+   * 藏了用户会以为这个设置没了。数字字段用草稿 + `onBlur` 提交（`commitNumber`）。
+   */
+  const perImageMode = effective.videoCountMode === 'perImage'
+
   const renderField = (field: FieldDef) => {
     const range = rangeOf(field.key)
+    const disabled = field.key === 'imagesPerVideo' && perImageMode
     return (
       <label key={field.key as string} className="flex flex-col gap-1" title={field.hint}>
         <span className={labelClass}>
           {field.label}
           {field.unit ? <span className="ml-1 text-ds-muted">({field.unit})</span> : null}
         </span>
-        <input
-          type="number"
-          inputMode="numeric"
-          min={range?.min}
-          max={range?.max}
-          className={inputClass}
-          value={draftValue(field.key)}
-          placeholder={field.hint ? '默认' : ''}
-          onChange={(event) => setDrafts((previous) => ({ ...previous, [field.key as string]: event.target.value }))}
-          onBlur={() => commitNumber(field.key)}
-        />
+        {disabled ? (
+          <span className="flex h-[34px] items-center text-sm text-ds-muted">1（每张图各一个）</span>
+        ) : (
+          <input
+            type="number"
+            inputMode="numeric"
+            min={range?.min}
+            max={range?.max}
+            className={inputClass}
+            value={draftValue(field.key)}
+            placeholder={field.hint ? '默认' : ''}
+            onChange={(event) => setDrafts((previous) => ({ ...previous, [field.key as string]: event.target.value }))}
+            onBlur={() => commitNumber(field.key)}
+          />
+        )}
       </label>
     )
   }
+
+  /**
+   * 「视频数」那一格：模式 + 数量。
+   *
+   * 「每张图各一个」= 单图加特效那种（杰哥 2026-09-28 要的）：视频数跟着**目录里的图片数**走，
+   * 每个视频只用 1 张图。数量框这时换成一句说明 —— 它是算出来的，填也没用。
+   */
+  const renderCountField = () => (
+    <label className="flex flex-col gap-1" title="「每张图各一个」时视频数 = 目录里的图片数">
+      <span className={labelClass}>视频数</span>
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <Select
+            value={effective.videoCountMode}
+            onChange={(value) => patch({ videoCountMode: value === 'perImage' ? 'perImage' : 'fixed' })}
+            options={[
+              { value: 'fixed', label: '固定数量' },
+              { value: 'perImage', label: '每张图各一个' },
+            ]}
+          />
+        </div>
+        {perImageMode ? (
+          <span className="shrink-0 text-xs text-ds-muted">= 图片数</span>
+        ) : (
+          <input
+            type="number"
+            inputMode="numeric"
+            className={`${inputClass} w-16 shrink-0`}
+            value={draftValue('videoCount')}
+            onChange={(event) => setDrafts((previous) => ({ ...previous, videoCount: event.target.value }))}
+            onBlur={() => commitNumber('videoCount')}
+          />
+        )}
+      </div>
+    </label>
+  )
 
   return (
     <div data-no-drag-select className="ds-modal-layer fixed inset-0 flex items-center justify-center p-4">
@@ -377,6 +424,8 @@ export function VideoParamsDialog({
               <p className="text-xs text-ds-muted dark:text-ds-muted">{group.title}</p>
               <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${group.columns}, minmax(0, 1fr))` }}>
                 {group.fields.map((field) => renderField(field))}
+                {/* 「节奏」这一排的第 4 格是「视频数」（模式 + 数量），见 `renderCountField` */}
+                {group.title === '节奏' ? renderCountField() : null}
               </div>
             </div>
           ))}
@@ -530,6 +579,7 @@ function resetPatch(): ImageVideoNodeOverride {
     imagesPerVideo: undefined,
     secondsPerImage: undefined,
     totalDuration: undefined,
+    videoCountMode: undefined,
     videoCount: undefined,
     resolution: undefined,
     fps: undefined,
