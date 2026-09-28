@@ -960,11 +960,11 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Panel', 'ListRow', 'Checkbox', 'SegmentedControl', 'Menu'],
   },
   {
-    module: 'src/features/imageVideo/ImageVideoSection.tsx',
+    module: 'src/features/imageVideo/VideoParamsDialog.tsx',
     responsibility:
-      '中控台「视频」分区：一行一个方向配图转视频参数（第一行是全局基线，方向行留空向上继承，转场与画面效果各占一列下拉 = 不用/随机/具体某一种），并触发本地引擎生成视频；引擎在位情况与它实际用的那份 ffmpeg 就地显示',
+      '图转视频参数弹窗：按「方向 × 渠道」各配一套（出视频开关 / 节奏 / 画面 / 转场与效果 / BGM / 视频水印），只写该渠道那一层覆盖，附「恢复默认」与「应用到本方向其它渠道」；改一个字段立刻落盘，数字字段走本地草稿 + onBlur 提交（避免写进「1」这种半截值）',
     decision: 'compose',
-    targets: ['DataGrid', 'Button', 'Badge', 'Inline', 'Stack'],
+    targets: ['Switch', 'Button'],
   },
   {
     module: 'src/features/imageVideo/VideoLibrarySection.tsx',

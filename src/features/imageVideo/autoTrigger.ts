@@ -22,7 +22,7 @@
  * 两件事的成败必须分开。所以这里是 fire-and-forget，异常只在提示里体现。
  */
 
-import { resolveDirectionInputDirs, runImageVideoJob } from './runVideo'
+import { resolveDirectionInputDirsByMedia, runImageVideoJob, type ImageVideoInputDir } from './runVideo'
 import type { ImageVideoParams } from './types'
 
 export interface AutoImageVideoNotice {
@@ -30,31 +30,41 @@ export interface AutoImageVideoNotice {
   level: 'success' | 'error' | 'info'
 }
 
+/** 一个渠道要跑的一批：目录 + **该渠道自己那一套**参数（2026-09-28 起参数按渠道存）。 */
+export interface AutoImageVideoRun {
+  mediaId: string
+  mediaName: string
+  /** 要处理的图片目录（本次产出实际写到的目录） */
+  dir: string
+  params: ImageVideoParams
+}
+
 export interface AutoImageVideoInput {
   directionLabel: string
-  params: ImageVideoParams
-  /** 要处理的图片目录（本次产出实际写到的目录） */
-  dirs: string[]
+  runs: AutoImageVideoRun[]
   onNotice?: (notice: AutoImageVideoNotice) => void
 }
 
 /**
  * 该不该自动出视频。
  *
- * 两个条件缺一不可：**这个方向开着视频开关**，且**这次真的产出了图**。
+ * 两个条件缺一不可：**这个渠道开着视频开关**，且**这次真的产出了图**。
  * 后者不能省 —— 零产出的批次（整批被跳过）再去跑一次视频，只会得到一句
  * 引擎报的「图片数量不足」，把一次本来就说清楚的跳过又搅浑一次。
+ *
+ * 判的是**单个渠道**的参数（2026-09-28 起视频参数按渠道存）：一个方向投三个渠道时，
+ * 可以只让其中两个出视频。
  */
 export function shouldAutoRunImageVideo(params: ImageVideoParams, producedCount: number): boolean {
   return params.enabled && producedCount > 0
 }
 
-/** 从产出记录里挑出该方向的图片目录（转发 `runVideo` 的实现，避免两处各写一套筛选）。 */
+/** 从产出记录里挑出该方向每个渠道的目录（转发 `runVideo` 的实现，避免两处各写一套筛选）。 */
 export function resolveAutoImageVideoDirs(
-  outputs: readonly { path: string; collectionId?: string }[],
+  outputs: readonly { path: string; mediaId?: string; mediaName?: string; collectionId?: string; createdAt?: number }[],
   directionId: string,
-): string[] {
-  return resolveDirectionInputDirs(outputs, directionId)
+): ImageVideoInputDir[] {
+  return resolveDirectionInputDirsByMedia(outputs, directionId)
 }
 
 /** 自动出视频的串行队列（模块级：整个应用一条链）。 */
@@ -68,29 +78,38 @@ export function enqueueAutoImageVideo(input: AutoImageVideoInput): void {
     })
 }
 
+/**
+ * 逐个渠道跑，**一个失败不吞掉别的**。
+ *
+ * 以前是「第一个目录不对就 return」：一个渠道的目录被分发搬走 / 手工清理过，后面几个
+ * 好端端的渠道就都不跑了，而用户只看到一句报错、以为整件事没做（2026-09-28 实测）。
+ * 现在把失败收集起来、跑完剩下的，最后一次性说清「出了几个、哪几个没出、为什么」。
+ */
 async function runAutoImageVideo(input: AutoImageVideoInput): Promise<void> {
+  const failed: string[] = []
   let completed = 0
-  try {
-    for (const inputDir of input.dirs) {
-      const result = await runImageVideoJob({ inputDir, params: input.params })
-      if (result.status !== 'completed') {
-        const reason = result.status === 'cancelled' ? '已取消' : result.message || '引擎报错'
-        input.onNotice?.({
-          message: `自动出视频未完成（${input.directionLabel}）：${reason}`,
-          level: 'error',
-        })
-        return
+  for (const run of input.runs) {
+    try {
+      const result = await runImageVideoJob({ inputDir: run.dir, params: run.params })
+      if (result.status === 'completed') {
+        completed += 1
+        continue
       }
-      completed += 1
+      const reason = result.status === 'cancelled' ? '已取消' : result.message || '引擎报错'
+      failed.push(`${run.mediaName}：${reason}`)
+    } catch (error) {
+      failed.push(`${run.mediaName}：${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+  if (failed.length === 0) {
     input.onNotice?.({
-      message: `自动出视频完成（${input.directionLabel}）：${completed} 个目录`,
+      message: `自动出视频完成（${input.directionLabel}）：${completed} 个渠道`,
       level: 'success',
     })
-  } catch (error) {
-    input.onNotice?.({
-      message: `自动出视频失败（${input.directionLabel}）：${error instanceof Error ? error.message : String(error)}`,
-      level: 'error',
-    })
+    return
   }
+  input.onNotice?.({
+    message: `自动出视频部分完成（${input.directionLabel}）：${completed} 个渠道已出片，${failed.length} 个没出 —— ${failed.join('；')}`,
+    level: completed > 0 ? 'info' : 'error',
+  })
 }

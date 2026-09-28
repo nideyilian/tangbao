@@ -50,7 +50,7 @@ export function isGlobalScope(scope: ConsoleScope): boolean {
   return scope === GLOBAL_NODE_ID
 }
 
-export type ControlConsoleSectionId = 'watermark' | 'channel' | 'video' | 'videoLibrary'
+export type ControlConsoleSectionId = 'watermark' | 'channel' | 'videoLibrary'
 
 export interface ControlConsoleSection {
   id: ControlConsoleSectionId
@@ -90,13 +90,7 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
     id: 'channel',
     label: '渠道与输出',
     description:
-      '渠道名与尺寸规格是所有方向共用的一份；「参与产出」与导出位置跟着左侧作用域走——全局改基线，选某个方向就改它自己那份，目录留空则向上继承。',
-  },
-  {
-    id: 'video',
-    label: '视频',
-    description:
-      '把导出好的图片做成视频（独立引擎，本地渲染）。一行一个方向：全局行改基线，点某个方向的行只改它自己，留空向上继承。',
+      '渠道名与尺寸规格是所有方向共用的一份；「参与产出」「导出位置」「视频」跟着左侧作用域走——选某个方向就改它自己那份，目录留空则向上继承。视频参数点行尾那一格打开设置，每个渠道各一套。',
   },
   {
     id: 'videoLibrary',
@@ -112,15 +106,18 @@ export const DEFAULT_CONTROL_CONSOLE_SECTION: ControlConsoleSectionId = CONTROL_
  * 已退役的分区 id → 现行分区 id。
  *
  * **必须有这张表**：分区 id 是持久化的（`useStore.controlConsoleSection`），
- * 老用户机器上就存着 `'distribution'` / `'output'` / `'media'` 三个历史值。让它们掉进
- * 「认不出」分支会把人弹回水印，等于把「我上次停在哪」这件事默默抹掉 —— 而它们都有明确的新家
- * （三个都指到「渠道与输出」：前两个是它先后吞掉的邻居，`media` 是它自己的前身）。
+ * 老用户机器上就存着 `'distribution'` / `'output'` / `'media'` / `'video'` 四个历史值。
+ * 让它们掉进「认不出」分支会把人弹回水印，等于把「我上次停在哪」这件事默默抹掉 ——
+ * 而它们都有明确的新家（四个都指到「渠道与输出」：前两个是它先后吞掉的邻居，
+ * `media` 是它自己的前身，`video` 是 2026-09-28 并进来的 —— 视频参数改成跟着渠道走，
+ * 一行一个渠道一个入口，不再需要一张独立的方向表）。
  * （同类的历史值还有更早的 `'directions'`，那个没有对应新家，所以照旧退回默认。）
  */
 const RETIRED_SECTION_ALIASES: Record<string, ControlConsoleSectionId> = {
   distribution: 'channel',
   output: 'channel',
   media: 'channel',
+  video: 'channel',
 }
 
 /** 把任意字符串收敛成合法分区 id；认不出时退回默认分区，不抛错。 */

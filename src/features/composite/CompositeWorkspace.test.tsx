@@ -23,9 +23,6 @@ vi.mock('./components/ChannelSection', () => ({
 vi.mock('./components/PresetManagementTab', () => ({
   PresetManagementTab: () => <div>editor-screen</div>,
 }))
-vi.mock('../imageVideo/ImageVideoSection', () => ({
-  ImageVideoSection: () => <div>video-screen</div>,
-}))
 vi.mock('../imageVideo/VideoLibrarySection', () => ({
   VideoLibrarySection: () => <div>video-library-screen</div>,
 }))
@@ -130,12 +127,11 @@ describe('CompositeWorkspace', () => {
 
     // 2026-09-22 起右区并入过两个分区：「输出位置」并入「渠道与尺寸」（合称「渠道与输出」），
     // 所以别指望还有它们的占位 —— 合并前那两个 id 现在都由别名收敛到 `channel`。
-    // 2026-09-26 新增「视频」分区（图转视频参数），2026-09-27 再加「视频素材」（BGM / 视频水印两个库），
-    // 各自有独立的一段渲染分支。
+    // 2026-09-27 加「视频素材」（BGM / 视频水印两个库）；2026-09-28「视频」分区又并进了
+    // 「渠道与输出」（视频参数改成跟着渠道走、点行尾那一格开弹窗），所以这里不再有它的占位。
     const expectations: Record<string, string> = {
       watermark: 'editor-screen',
       channel: 'channel-screen',
-      video: 'video-screen',
       videoLibrary: 'video-library-screen',
     }
     // 注册表里的每个分区都要真的能切过去 —— 加了分区却忘了接线是这类注册表最常见的失效

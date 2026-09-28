@@ -588,12 +588,27 @@ prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步�
 - **退出必须收整棵进程树**（`taskkill /T /F`）：引擎跑渲染时会 spawn **自己**
   （`exe --legacy-worker`），`child.kill()` 在 Windows 上杀不掉孙子，会留下啃 CPU 的孤儿。
   `before-quit` 优雅关闭 + `will-quit` 同步兜底，两层缺一不可。
-- **参数按项目树分层**：全局基线在 `useImageVideoStore.globals`，节点覆盖在**既有的**
-  `ProjectNodeParams.imageVideo`（`useProjectTreeParamsStore`）。留空 = 向上继承，
-  口径与后处理一字不差。⚠️ 改 `buildProjectNodeParams` / `normalizeProjectNodeParamsMap` 时
-  必须**两个模块一起看** —— 只判 `postprocess` 会把节点上的视频参数静默丢掉。
+- **参数按「方向 × 渠道」存**（2026-09-28 起，TB-139）：节点缺省那份仍在
+  `ProjectNodeParams.imageVideo`（老配置所在处，**因此不需要数据迁移**），按渠道那份在
+  `ProjectNodeParams.imageVideoByMedia[渠道]`（与后处理的 `byMedia` 同构）。
+  **同一层内渠道那份盖住节点缺省那份；渠道不跨节点继承**（上一层配的是它自己的渠道，
+  与下一层的同名渠道不是一回事）。全局基线 `useImageVideoStore.globals` 是所有节点的兜底。
+  ⚠️ 改 `buildProjectNodeParams` / `normalizeProjectNodeParamsMap` / `buildImageVideoNodeParams` 时
+  必须**三个字段一起看**（`postprocess` / `imageVideo` / `imageVideoByMedia`）——
+  少带一个，另一个模块的配置就会被静默抹掉（R-112 家族）。
+- **图源只认「最近一批」，且用前必须验**（`resolveDirectionInputDirsByMedia` +
+  `partitionUsableInputDirs`）：按 `mediaId` 分组、每渠道只取 `createdAt` 最大那一批、
+  **排除历史 `clean`（纯净版）**。**不要再回到「遍历所有任务的产出记录、全堆进清单」**：
+  分发会把批次目录按排期日改名搬走、用户也会手工清理，历史路径迟早失效，
+  而一个失效目录就会让整批报「目录里没有图片」（R-113）。
+  失效目录**跳过并如实报**（哪个渠道 / 哪个目录 / 为什么），别中断整批。
 - **自动出视频挂在产出之后、分发之前**：分发会把产出文件夹按排期日搬走，搬完之后
   「这个方向的一批图」散在多个日期目录里，一个视频没法跨那么多目录取图。
+  （手动生成同样取不到「已分发」的图 —— 那种情况如实提示重跑一次后处理，别去排期目录里找。）
+- **UI 形态：视频参数并入「渠道与输出」**（2026-09-28 杰哥定）：不再有「视频」分区，也不再是
+  「一行一个方向 + 全局行 + 逐级继承」那张 20 列的表。渠道表每行尾一格入口 → `VideoParamsDialog`
+  （参数按组分好，改一个字段立刻落盘）。**别再把它拆回独立分区，也别再给视频加「全局行」**——
+  它跟着渠道走。
 - **IPC 只开白名单方法**（`image-video/engine-ipc.ts`）：引擎不认识糖包的 `assertAllowedPath`，
   透出一个通用 `call(method, params)` 等于开了个能读写任意目录的后门。
 - **ffmpeg 不额外捆**：引擎内自带的 `imageio_ffmpeg` 就是它的兜底那份；但引擎查找顺序是

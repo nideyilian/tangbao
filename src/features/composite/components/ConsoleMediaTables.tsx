@@ -71,6 +71,25 @@ import {
 /** 加尺寸时的默认规格：与原「加尺寸」按钮的行为一致（1024×1024、不做体积压缩）。 */
 const DEFAULT_NEW_SIZE = { width: 1024, height: 1024, maxSizeKb: 0, enabled: true }
 
+/**
+ * 「视频」列的入口（2026-09-28）。
+ *
+ * 视频参数并进本表之后，每行尾多一格用来打开参数弹窗。**表格本身不认识 imageVideo**：
+ * 它只知道「这一行有个入口、点开回调」，具体是什么、配成什么样由调用方（`ChannelSection`）组装 ——
+ * 这样这张表还能被别的调用方复用，也不会为视频模块长出一堆依赖。
+ *
+ * 不给 `videoColumn` 就完全不画这一列。
+ */
+export interface VideoColumnProps {
+  /** 全局作用域下为 `false`：视频参数是「方向 × 渠道」的，没选方向就没得配 */
+  enabled: boolean
+  /** 这个渠道有没有单独配过（决定按钮显示「视频参数」还是摘要） */
+  isConfigured: (mediaId: string) => boolean
+  /** 配过时按钮上显示什么（如「6图 / 12s · 开」） */
+  summary: (mediaId: string) => string
+  onOpen: (mediaId: string, mediaName: string) => void
+}
+
 interface Props {
   /** 当前作用域下生效的「参与产出」渠道 id（含 `clean`）。由调用方按作用域解析后传入 */
   selectedMediaIds: string[]
@@ -78,6 +97,8 @@ interface Props {
   onToggleSelected: (mediaId: string, next: boolean) => void
   /** 当前参与产出的作用域名（「全局基线」或某个方向名），挂在列说明上 */
   participationScopeLabel: string
+  /** 「视频」列的入口；不传就不画这一列（见 `VideoColumnProps`） */
+  videoColumn?: VideoColumnProps
   /** 读某渠道**本级已配**的导出位置（1~2 个）；空数组 = 本级没配，用继承值 */
   resolveDirs: (mediaId: string) => string[]
   /**
@@ -148,6 +169,7 @@ export function ConsoleMediaTables({
   selectedMediaIds,
   onToggleSelected,
   participationScopeLabel,
+  videoColumn,
   resolveDirs,
   resolveInheritedDirs,
   resolveInheritedToggleDirs,
@@ -458,6 +480,36 @@ export function ConsoleMediaTables({
           />
         ),
       },
+      ...(videoColumn
+        ? ([
+            {
+              key: 'video',
+              header: '视频',
+              help: '这个渠道的图转视频参数（每个渠道各一套）。点格子打开设置；双写的两行属于同一个渠道，所以只画在第一行。',
+              editor: 'readonly' as const,
+              width: 136,
+              align: 'center' as const,
+              render: (row: ChannelRow) => {
+                // 双写占两行，而视频参数按渠道只有一份 → 只画第一行，第二行留空
+                if (row.index !== 0) return null
+                if (!videoColumn.enabled) {
+                  return <span className="text-xs text-ds-muted">先选一个方向</span>
+                }
+                const configured = videoColumn.isConfigured(row.mediaId)
+                return (
+                  <button
+                    type="button"
+                    onClick={() => videoColumn.onOpen(row.mediaId, row.name)}
+                    title={configured ? '已单独配置 —— 点开修改' : '还没配过 —— 点开设置'}
+                    className="rounded-ds-md border border-ds-border px-2 py-1 text-xs text-ds-text transition hover:bg-ds-subtle dark:border-ds-border dark:text-ds-text-subtle dark:hover:bg-ds-surface"
+                  >
+                    {configured ? videoColumn.summary(row.mediaId) : '视频参数'}
+                  </button>
+                )
+              },
+            },
+          ] as Array<DataGridColumn<ChannelRow>>)
+        : []),
       {
         key: 'actions',
         header: '操作',
@@ -511,6 +563,8 @@ export function ConsoleMediaTables({
       pickPath,
       removeRow,
       spanAt,
+      // 「视频」那格的摘要跟着参数走 —— 少了它，改完参数回到表里摘要还是旧的
+      videoColumn,
       updateMediaSize,
     ],
   )

@@ -8,7 +8,11 @@
 
 import type { AssetCollection } from '../../types'
 import type { PostprocessDistributionConfig } from '../../lib/postprocessDistribution'
-import { normalizeImageVideoOverride, resolveImageVideoParams } from '../imageVideo/params'
+import {
+  normalizeImageVideoOverride,
+  normalizeImageVideoOverrideMap,
+  resolveImageVideoParams,
+} from '../imageVideo/params'
 import type { ImageVideoNodeOverride, ImageVideoParams } from '../imageVideo/types'
 import {
   applyPostprocessOverride,
@@ -442,11 +446,13 @@ export function normalizeProjectNodeParamsMap(raw: unknown): ProjectNodeParamsMa
     const postprocess = normalizePostprocessNodeOverride(entry.postprocess)
     const imageVideoOverride = normalizeImageVideoOverride(entry.imageVideo)
     const imageVideo = Object.keys(imageVideoOverride).length > 0 ? imageVideoOverride : undefined
-    if (!postprocess && !imageVideo) continue
+    const imageVideoByMedia = normalizeImageVideoOverrideMap(entry.imageVideoByMedia)
+    if (!postprocess && !imageVideo && !imageVideoByMedia) continue
     const updatedAt = entry.updatedAt
     result[id] = {
       ...(postprocess ? { postprocess } : {}),
       ...(imageVideo ? { imageVideo } : {}),
+      ...(imageVideoByMedia ? { imageVideoByMedia } : {}),
       ...(typeof updatedAt === 'number' ? { updatedAt } : {}),
     }
   }
@@ -460,18 +466,18 @@ export function normalizeProjectNodeParamsMap(raw: unknown): ProjectNodeParamsMa
  * 用户改完百度发现头条的配置没了，且看不到任何提示。渠道内的字段用 `undefined` 表示
  * 「恢复继承」，所以里层的 undefined 也要一起剔除，不能只在外层做。
  */
-function mergeByMediaOverride(
-  current: Record<string, PostprocessMediaOverride> | undefined,
-  patch: Record<string, PostprocessMediaOverride>,
-): Record<string, PostprocessMediaOverride> | undefined {
-  const result: Record<string, PostprocessMediaOverride> = { ...current }
+function mergeByMediaOverride<T extends object>(
+  current: Record<string, T> | undefined,
+  patch: Record<string, T>,
+): Record<string, T> | undefined {
+  const result: Record<string, T> = { ...current }
   for (const [mediaId, patchEntry] of Object.entries(patch)) {
     if (!patchEntry || typeof patchEntry !== 'object') continue
-    const entry: PostprocessMediaOverride = { ...result[mediaId] }
-    for (const key of Object.keys(patchEntry) as (keyof PostprocessMediaOverride)[]) {
+    const entry = { ...(result[mediaId] as T | undefined) } as T
+    for (const key of Object.keys(patchEntry) as (keyof T)[]) {
       const value = patchEntry[key]
       if (value === undefined) delete entry[key]
-      else (entry as Record<string, unknown>)[key] = value
+      else (entry as Record<string, unknown>)[key as string] = value
     }
     if (Object.keys(entry).length > 0) result[mediaId] = entry
     else delete result[mediaId]
@@ -513,9 +519,10 @@ export function mergePostprocessNodeOverride(
 /**
  * 写回一条参数记录（后处理那一半）；两个模块都空了才返回 null（由调用方删键）。
  *
- * ⚠️ 必须**原样带上 `imageVideo`**：这个函数是按「改一半留一半」用的，
- * 只回 `postprocess` 会让「在这个方向上调一下后处理」顺手把图转视频参数抹掉，
- * 而且没有任何提示（用户只看到视频参数没了）。
+ * ⚠️ 必须**原样带上图转视频的两个字段**（`imageVideo` 与 `imageVideoByMedia`）：这个函数是按
+ * 「改一半留一半」用的，只回 `postprocess` 会让「在这个方向上调一下后处理」顺手把图转视频参数
+ * 抹掉，而且没有任何提示（用户只看到视频参数没了）。**2026-09-28 加按渠道那份时差点只加一个 ——
+ * 加字段时两个都要带。**
  */
 export function buildProjectNodeParams(
   current: ProjectNodeParams | undefined,
@@ -524,10 +531,12 @@ export function buildProjectNodeParams(
 ): ProjectNodeParams | null {
   const postprocess = mergePostprocessNodeOverride(current?.postprocess, patch)
   const imageVideo = current?.imageVideo
-  if (!postprocess && !imageVideo) return null
+  const imageVideoByMedia = current?.imageVideoByMedia
+  if (!postprocess && !imageVideo && !imageVideoByMedia) return null
   return {
     ...(postprocess ? { postprocess } : {}),
     ...(imageVideo ? { imageVideo } : {}),
+    ...(imageVideoByMedia ? { imageVideoByMedia } : {}),
     updatedAt: now,
   }
 }
@@ -556,18 +565,30 @@ export function mergeImageVideoNodeOverride(
  *
  * ⚠️ 只有**两个模块都空了**才能返回 null：否则「清掉这个方向的视频参数」会顺手把
  * 同一节点上的后处理参数一起抹掉。
+ *
+ * `mediaId` 给了就写**那个渠道**那份（`imageVideoByMedia[mediaId]`），不给就写节点缺省那份
+ * （`imageVideo`，也是 2026-09-28 之前所有老配置所在的地方）。两者互不干扰：
+ * 改渠道那份不会碰到缺省那份，反之亦然。
+ *
+ * `now` 刻意留在第 3 位 —— 它是测试的注入点，往前插参数会把既有调用按位置错配。
  */
 export function buildImageVideoNodeParams(
   current: ProjectNodeParams | undefined,
   patch: ImageVideoNodeOverride,
   now = Date.now(),
+  mediaId?: string | null,
 ): ProjectNodeParams | null {
-  const imageVideo = mergeImageVideoNodeOverride(current?.imageVideo, patch)
+  const target = typeof mediaId === 'string' && mediaId.trim() ? mediaId.trim() : null
+  let imageVideo = current?.imageVideo
+  let imageVideoByMedia = current?.imageVideoByMedia
+  if (target) imageVideoByMedia = mergeByMediaOverride(imageVideoByMedia, { [target]: patch })
+  else imageVideo = mergeImageVideoNodeOverride(imageVideo, patch)
   const postprocess = current?.postprocess
-  if (!imageVideo && !postprocess) return null
+  if (!imageVideo && !imageVideoByMedia && !postprocess) return null
   return {
     ...(postprocess ? { postprocess } : {}),
     ...(imageVideo ? { imageVideo } : {}),
+    ...(imageVideoByMedia ? { imageVideoByMedia } : {}),
     updatedAt: now,
   }
 }
@@ -580,18 +601,27 @@ export function buildImageVideoNodeParams(
  * 这类细节上分叉。
  *
  * 全局基线由调用方传进来（它存在 `useImageVideoStore` 里，不在本模块）。
+ *
+ * `mediaId` 是**渠道**（`PostprocessMedia.id`）：2026-09-28 起视频参数可以按渠道各配一套
+ * （见 `ProjectNodeParams.imageVideoByMedia`）。给了就在每一层上取「该渠道那份盖住节点缺省那份」，
+ * 不给就是老口径（只看节点缺省那份）。**渠道不会跨节点继承** —— 上一层配的是它自己的渠道，
+ * 与下一层的同名渠道不是一回事，所以只在层内合并、不参与链的取舍。
  */
 export function resolveProjectImageVideoParams(
   collections: AssetCollection[],
   params: ProjectNodeParamsMap,
   collectionId: string | null,
   globalParams: ImageVideoParams,
+  mediaId?: string | null,
 ): ImageVideoParams {
+  const target = typeof mediaId === 'string' && mediaId.trim() ? mediaId.trim() : null
   const chain: ImageVideoNodeOverride[] = [globalParams]
   if (collectionId) {
     resolveProjectNodeIdChain(collections, collectionId).forEach((id) => {
-      const override = params[id]?.imageVideo
-      if (override) chain.push(override)
+      const entry = params[id]
+      if (!entry) return
+      const override = target ? { ...entry.imageVideo, ...entry.imageVideoByMedia?.[target] } : entry.imageVideo
+      if (override && Object.keys(override).length > 0) chain.push(override)
     })
   }
   return resolveImageVideoParams(chain)

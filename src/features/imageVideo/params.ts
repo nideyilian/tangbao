@@ -200,6 +200,25 @@ export function normalizeImageVideoOverride(raw: unknown): ImageVideoNodeOverrid
  * （手改 JSON、老版本字段名）时，这里必须能兜住 —— 所以每个字段都是独立判定的，
  * 不依赖 `Object.assign` 之类的整体合并。
  */
+/**
+ * 归一化「按渠道的视频参数覆盖」表（`ProjectNodeParams.imageVideoByMedia`）。
+ *
+ * 与后处理那张按渠道表（`normalizePostprocessNodeParamsMap` 里的 `byMedia`）同构：
+ * 坏条目逐条丢弃、不整份回退；**单条归一化后为空的渠道整键删掉** —— 留一个空对象在那儿，
+ * 会让「这个渠道单独配过视频参数」的判定成真，界面上就会显示成配过。
+ */
+export function normalizeImageVideoOverrideMap(raw: unknown): Record<string, ImageVideoNodeOverride> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const result: Record<string, ImageVideoNodeOverride> = {}
+  for (const [mediaId, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = mediaId.trim()
+    if (!id) continue
+    const override = normalizeImageVideoOverride(value)
+    if (Object.keys(override).length > 0) result[id] = override
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
 export function normalizeImageVideoParams(raw: unknown): ImageVideoParams {
   // 清洗发生在 `normalizeImageVideoOverride` 里（unique 入口），这里只管补默认值 ——
   // 若在出口处再洗一遍，界面上显示的值和实际落盘的值就可能对不上（静默不一致）。

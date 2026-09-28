@@ -187,6 +187,7 @@ import {
   enqueueAutoImageVideo,
   resolveAutoImageVideoDirs,
   shouldAutoRunImageVideo,
+  type AutoImageVideoRun,
 } from './features/imageVideo/autoTrigger'
 import { isScrollActive } from './lib/scrollActivity'
 import { buildLocalImageUrl, isLocalImageUrl, localImageUrlToDataUrl } from './lib/localImageUrl'
@@ -1477,24 +1478,28 @@ async function executePostprocessImageIds(
        * fire-and-forget：视频渲染要几分钟，绝不能拖住后处理收尾；两件事的成败也必须分开
        * —— 视频失败不该让后处理显示成失败。异常只走提示（见 `autoTrigger.ts`）。
        */
-      const autoImageVideoParams = readOrNull(() =>
-        resolveProjectImageVideoParams(
-          collections,
-          useProjectTreeParamsStore.getState().params,
-          directionId,
-          useImageVideoStore.getState().globals,
-        ),
-      )
-      if (autoImageVideoParams && shouldAutoRunImageVideo(autoImageVideoParams, result.outputs.length)) {
-        const autoDirs = resolveAutoImageVideoDirs(result.outputs, directionId)
-        if (autoDirs.length > 0) {
-          enqueueAutoImageVideo({
-            directionLabel,
-            params: autoImageVideoParams,
-            dirs: autoDirs,
-            onNotice: (notice) => useStore.getState().showToast(notice.message, notice.level),
-          })
-        }
+      // 每个渠道各用它自己那份视频参数（2026-09-28 起参数按渠道存）：一个方向投三个渠道时，
+      // 可以只让其中两个出视频，且各自的分辨率 / BGM / 水印互不影响。
+      const autoImageVideoRuns: AutoImageVideoRun[] = []
+      for (const entry of resolveAutoImageVideoDirs(result.outputs, directionId)) {
+        const params = readOrNull(() =>
+          resolveProjectImageVideoParams(
+            collections,
+            useProjectTreeParamsStore.getState().params,
+            directionId,
+            useImageVideoStore.getState().globals,
+            entry.mediaId,
+          ),
+        )
+        if (!params || !shouldAutoRunImageVideo(params, result.outputs.length)) continue
+        autoImageVideoRuns.push({ mediaId: entry.mediaId, mediaName: entry.mediaName, dir: entry.dir, params })
+      }
+      if (autoImageVideoRuns.length > 0) {
+        enqueueAutoImageVideo({
+          directionLabel,
+          runs: autoImageVideoRuns,
+          onNotice: (notice) => useStore.getState().showToast(notice.message, notice.level),
+        })
       }
       return result
     } catch (error) {

@@ -30,6 +30,7 @@ import type {
   ImageVideoScanResult,
   ImageVideoStartResult,
 } from './engineTypes'
+import { PURE_MEDIA_ID } from '../../lib/postprocessMedia'
 import { getVideoLibraryDirs } from './library'
 import { buildEngineConfig, resolveVideoOutputDir } from './params'
 import type { ImageVideoParams } from './types'
@@ -72,26 +73,97 @@ function dirNameOf(filePath: string): string {
   return index > 0 ? normalized.slice(0, index) : ''
 }
 
+/** 一条可以直接拿去转视频的输入目录，带上它属于哪个渠道。 */
+export interface ImageVideoInputDir {
+  /** 渠道 id（`PostprocessMedia.id`）；用它是为了取这个渠道自己的视频参数 */
+  mediaId: string
+  /** 渠道显示名（报错与提示里给用户看的，别让人对着 `gdt` 猜） */
+  mediaName: string
+  dir: string
+  /** 这批产出是什么时候写的（用来判断新鲜度，也便于界面提示） */
+  createdAt: number
+}
+
+interface PostprocessOutputLike {
+  path: string
+  mediaId?: string
+  mediaName?: string
+  collectionId?: string
+  createdAt?: number
+}
+
 /**
- * 从一批产出记录里算出「属于这个方向的图片所在目录」（去重保序）。
+ * 从一批产出记录里算出「这个方向、每个渠道各自最近一批」的图片目录。
  *
- * 用 `collectionId` 筛而不是猜目录名：目录名里的项目/方向段是可以被命名模板改掉的，
- * 一旦用户改了模板，按名字匹配就会静默失配（视频生成时才发现「一张图都没有」）。
+ * ## 为什么还是查记录，而不是自己去扫导出目录
+ *
+ * 杰哥 2026-09-28 的原话是「默认应该是输出位置，而不是纯净版」。但**不能**真的去扫
+ * 导出位置猜目录：批次目录名里那段项目/方向是可以被命名模板改掉的（`{product}` / `{direction}`），
+ * 一旦用户改了模板，按名字匹配就会静默失配 —— 视频生成时才发现「一张图都没有」。
+ * 产出记录里的 `collectionId` / `mediaId` 是**写入时记下的归属**，改模板也不会错。
+ *
+ * 所以「跟随渠道与输出」落在口径上就是这三条：
+ *
+ * 1. **按渠道分组** —— 每个渠道一份目录，各自出一批视频（多渠道各一份）；
+ * 2. **每个渠道只取最近那一批**（`createdAt` 最大）—— 以前是把历史上所有批次全堆进来，
+ *    于是几个月前的旧目录也会被拿去转视频；
+ * 3. **排除历史「纯净版」**（`mediaId === 'clean'`）—— ADR-0020 起就不再产出它，
+ *    但老记录还在库里，而那些文件夹多半早被清理或分发搬走。**2026-09-28 实测报障就是它**：
+ *    清单里混进一个已不存在的纯净版目录，引擎数到 0 张图直接报错。
+ *
+ * ⚠️ 「目录还在不在、里面有没有图」**不在这里判**：这是纯函数，读不了磁盘。
+ * 调用方（`resolveUsableInputDirs`）负责过滤，避免把一个已消失的目录送进引擎。
  */
-export function resolveDirectionInputDirs(
-  outputs: readonly { path: string; collectionId?: string }[],
+export function resolveDirectionInputDirsByMedia(
+  outputs: readonly PostprocessOutputLike[],
   directionId: string,
-): string[] {
-  const seen = new Set<string>()
-  const result: string[] = []
+): ImageVideoInputDir[] {
+  const latestByMedia = new Map<string, ImageVideoInputDir>()
   for (const output of outputs) {
     if (output.collectionId !== directionId) continue
+    const mediaId = typeof output.mediaId === 'string' ? output.mediaId.trim() : ''
+    if (!mediaId || mediaId === PURE_MEDIA_ID) continue
     const dir = dirNameOf(output.path)
-    if (!dir || seen.has(dir)) continue
-    seen.add(dir)
-    result.push(dir)
+    if (!dir) continue
+    const createdAt = typeof output.createdAt === 'number' ? output.createdAt : 0
+    const current = latestByMedia.get(mediaId)
+    if (!current || createdAt > current.createdAt) {
+      const mediaName =
+        typeof output.mediaName === 'string' && output.mediaName.trim() ? output.mediaName.trim() : mediaId
+      latestByMedia.set(mediaId, { mediaId, mediaName, dir, createdAt })
+    }
   }
-  return result
+  // 稳定顺序：按渠道 id 排，同一次点击跑出来的批次顺序不该随记录顺序变
+  return [...latestByMedia.values()].sort((a, b) => a.mediaId.localeCompare(b.mediaId))
+}
+
+/**
+ * 把「候选目录」过滤成**真的能用**的那些：目录要存在、且里面数得到图。
+ *
+ * 为什么要单独一步（而不是直接把候选丢给引擎）：引擎对空目录的报错是
+ * 「图片数量不足，共有0张」，用户看到的是引擎在抱怨，而真因在**我们给错了目录**
+ * （分发把批次目录按排期日搬走改名了、或者用户手工清理过）。这里先查一遍，
+ * 就能把「哪个目录、为什么不能用」如实说出来。
+ *
+ * `scan` 由调用方注入（桌面端走引擎的 `scan_images`）—— 纯函数好测，也不必在渲染进程里
+ * 自己实现一套图片计数。
+ */
+export async function partitionUsableInputDirs(
+  candidates: readonly ImageVideoInputDir[],
+  scan: (dir: string) => Promise<number>,
+): Promise<{ usable: ImageVideoInputDir[]; skipped: Array<ImageVideoInputDir & { reason: string }> }> {
+  const usable: ImageVideoInputDir[] = []
+  const skipped: Array<ImageVideoInputDir & { reason: string }> = []
+  for (const candidate of candidates) {
+    try {
+      const count = await scan(candidate.dir)
+      if (count > 0) usable.push(candidate)
+      else skipped.push({ ...candidate, reason: '目录里没有图片' })
+    } catch (error) {
+      skipped.push({ ...candidate, reason: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  return { usable, skipped }
 }
 
 /** 跑一次视频生成，跑到终态才返回。 */

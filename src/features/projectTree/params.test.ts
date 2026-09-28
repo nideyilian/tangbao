@@ -3,6 +3,7 @@ import { DEFAULT_POSTPROCESS_DISTRIBUTION } from '../../lib/postprocessDistribut
 import { resolvePostprocessOutputDirs, type PostprocessMediaConfig } from '../../lib/postprocessMedia'
 import type { AssetCollection } from '../../types'
 import {
+  buildImageVideoNodeParams,
   buildProjectNodeParams,
   collectPromotedNodeFieldValues,
   hasLegacyNodeOnlyFields,
@@ -11,6 +12,7 @@ import {
   normalizePostprocessNodeOverride,
   normalizeProjectNodeParamsMap,
   pickDeepestCollectionId,
+  resolveProjectImageVideoParams,
   resolveProjectNodeKind,
   resolveProjectNodePathNames,
   resolveNodeWatermarkBinding,
@@ -20,7 +22,8 @@ import {
 } from './params'
 import { mergePromotedGlobals } from './storeProjectTreeParams'
 import type { PromotedNodeFieldValues } from './params'
-import type { ProjectNodeParamsMap } from './types'
+import { DEFAULT_IMAGE_VIDEO_PARAMS } from '../imageVideo/types'
+import type { ProjectNodeParams, ProjectNodeParamsMap } from './types'
 
 function collection(id: string, name: string, parentId: string | null = null, order = 0): AssetCollection {
   return { id, name, normalizedName: name, parentId, order, createdAt: 0, updatedAt: 0 }
@@ -816,5 +819,71 @@ describe('listProductNodes —— 跨产品动作的候选清单', () => {
 
   it('根级节点（没有产品线）不算产品', () => {
     expect(listProductNodes([collection('orphan', '孤儿节点')])).toEqual([])
+  })
+})
+
+/**
+ * 图转视频参数按渠道各配一套（2026-09-28 杰哥定的口径：视频并进「渠道与输出」后跟着渠道走）。
+ *
+ * 关键不变量：`imageVideoByMedia[渠道]` 只**盖住**同一节点上的 `imageVideo`（节点缺省），
+ * 两者都只在**本层**生效 —— 渠道不跨节点继承。
+ */
+describe('按渠道的图转视频参数（imageVideoByMedia）', () => {
+  const globals = { ...DEFAULT_IMAGE_VIDEO_PARAMS }
+  const at = (entry: ProjectNodeParams): ProjectNodeParamsMap => ({ [DIRECTION]: entry })
+
+  it('不给渠道时就是老口径：只看节点缺省那份（所以老配置不需要迁移）', () => {
+    const params = at({ imageVideo: { imagesPerVideo: 9 } })
+    expect(resolveProjectImageVideoParams(COLLECTIONS, params, DIRECTION, globals).imagesPerVideo).toBe(9)
+  })
+
+  it('给了渠道就读该渠道那份', () => {
+    const params = at({ imageVideoByMedia: { gdt: { imagesPerVideo: 3 } } })
+    expect(resolveProjectImageVideoParams(COLLECTIONS, params, DIRECTION, globals, 'gdt').imagesPerVideo).toBe(3)
+  })
+
+  it('⭐ 同一层里渠道那份盖住节点缺省那份，渠道没表态的字段仍从缺省来', () => {
+    const params = at({
+      imageVideo: { imagesPerVideo: 9, bitrate: 4000 },
+      imageVideoByMedia: { gdt: { imagesPerVideo: 3 } },
+    })
+    const resolved = resolveProjectImageVideoParams(COLLECTIONS, params, DIRECTION, globals, 'gdt')
+    expect(resolved.imagesPerVideo).toBe(3)
+    expect(resolved.bitrate).toBe(4000)
+  })
+
+  it('没单独配过的渠道落到全局默认，不会串到别的渠道那份', () => {
+    const params = at({ imageVideoByMedia: { gdt: { imagesPerVideo: 3 } } })
+    const other = resolveProjectImageVideoParams(COLLECTIONS, params, DIRECTION, globals, 'baidu')
+    expect(other.imagesPerVideo).toBe(DEFAULT_IMAGE_VIDEO_PARAMS.imagesPerVideo)
+  })
+
+  it('写回：给了 mediaId 写渠道那份、不动缺省那份；不给就是老行为、也把渠道那份带住', () => {
+    const current: ProjectNodeParams = { imageVideo: { imagesPerVideo: 9 } }
+    const withMedia = buildImageVideoNodeParams(current, { bitrate: 5000 }, 111, 'gdt')
+    expect(withMedia?.imageVideo).toEqual({ imagesPerVideo: 9 })
+    expect(withMedia?.imageVideoByMedia).toEqual({ gdt: { bitrate: 5000 } })
+
+    const withoutMedia = buildImageVideoNodeParams(withMedia!, { imagesPerVideo: 5 }, 222)
+    expect(withoutMedia?.imageVideo).toEqual({ imagesPerVideo: 5 })
+    expect(withoutMedia?.imageVideoByMedia).toEqual({ gdt: { bitrate: 5000 } })
+  })
+
+  it('⭐ 改后处理不会抹掉按渠道的视频参数（新字段要跟着一起带）', () => {
+    const current: ProjectNodeParams = {
+      imageVideoByMedia: { gdt: { imagesPerVideo: 3 } },
+      postprocess: { enabled: true },
+    }
+    const next = buildProjectNodeParams(current, { enabled: false }, 333)
+    expect(next?.imageVideoByMedia).toEqual({ gdt: { imagesPerVideo: 3 } })
+  })
+
+  it('归一化：渠道键去空格、空条目整键删掉，只配了按渠道参数的节点不被整条丢弃', () => {
+    const normalized = normalizeProjectNodeParamsMap({
+      [DIRECTION]: {
+        imageVideoByMedia: { ' gdt ': { imagesPerVideo: 3 }, baidu: {}, '   ': { bitrate: 1 } },
+      },
+    })
+    expect(normalized[DIRECTION]?.imageVideoByMedia).toEqual({ gdt: { imagesPerVideo: 3 } })
   })
 })

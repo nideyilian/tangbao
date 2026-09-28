@@ -10,7 +10,6 @@ import {
 import { ConsoleAssetTree } from './components/ConsoleAssetTree'
 import { ChannelSection } from './components/ChannelSection'
 import { PresetManagementTab } from './components/PresetManagementTab'
-import { ImageVideoSection } from '../imageVideo/ImageVideoSection'
 import { VideoLibrarySection } from '../imageVideo/VideoLibrarySection'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
@@ -356,13 +355,7 @@ export default function CompositeWorkspace() {
              * 三个非水印分区：两个消费作用域（视频参数、渠道与输出），
              * 一个不消费（视频素材 —— 它管的是库，与左树选哪个方向无关）。
              */}
-            {activeSection === 'video' ? (
-              <ImageVideoSection scope={scope} />
-            ) : activeSection === 'videoLibrary' ? (
-              <VideoLibrarySection />
-            ) : (
-              <ChannelSection scope={scope} />
-            )}
+            {activeSection === 'videoLibrary' ? <VideoLibrarySection /> : <ChannelSection scope={scope} />}
           </div>
         )}
       </div>

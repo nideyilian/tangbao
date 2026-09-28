@@ -390,19 +390,23 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     const rows = table.querySelectorAll('tbody tr')
     const baiduFirst = rows[1]!
     const cells = baiduFirst.querySelectorAll('td')
-    expect(cells).toHaveLength(6)
+    expect(cells).toHaveLength(7)
     expect(cells[0]!.getAttribute('rowspan')).toBe('2')
     expect(cells[1]!.getAttribute('rowspan')).toBe('2')
     expect(cells[2]!.getAttribute('rowspan')).toBe('2')
-    // 导出位置 / 写入 / 操作逐行（跨行的那三格以外，这三列每行各自一格）——
-    // 「写入」必须逐行：一个渠道的两个位置各写各的，开关不能拉通
+    // 导出位置 / 写入 / 视频 / 操作逐行（跨行的那三格以外，这四列每行各自一格）——
+    // 「写入」必须逐行：一个渠道的两个位置各写各的，开关不能拉通；
+    // 「视频」也是**逐行出格**、只是内容画在第一行（参数按渠道只有一份）——
+    // 不能整格不渲染，否则第二行整体左移（这条断言就是钉住这件事）
     expect(cells[3]!.getAttribute('rowspan')).toBeNull()
     expect(cells[4]!.getAttribute('rowspan')).toBeNull()
     expect(cells[5]!.getAttribute('rowspan')).toBeNull()
+    expect(cells[6]!.getAttribute('rowspan')).toBeNull()
 
-    // 第二行只剩「导出位置 + 写入 + 操作」：被跨行格盖住的那三格**不能出空格子**，否则后面整体右移
+    // 第二行只剩「导出位置 + 写入 + 视频（空）+ 操作」：
+    // 被跨行格盖住的那三格**不能出空格子**，否则后面整体右移
     const baiduSecond = rows[2]!
-    expect(baiduSecond.querySelectorAll('td')).toHaveLength(3)
+    expect(baiduSecond.querySelectorAll('td')).toHaveLength(4)
   })
 
   it('⭐ 双写的第 2 个位置写进第 2 槽，第 1 个位置一个字节不动', () => {
@@ -432,7 +436,8 @@ describe('中控台 · 渠道与输出分区：表本体（尺寸 / 参与产出
     expect(isCentered(2)).toBe(true) // 参与产出
     expect(isCentered(3)).toBe(false) // 导出位置
     expect(isCentered(4)).toBe(true) // 写入（TB-130）
-    expect(isCentered(5)).toBe(false) // 操作
+    expect(isCentered(5)).toBe(true) // 视频（2026-09-28 并进来的那格，也是短标记）
+    expect(isCentered(6)).toBe(false) // 操作
   })
 
   it('⭐ 尺寸表一行一个渠道，详细尺寸是一组复选框（勾选 = 参与产出）', () => {

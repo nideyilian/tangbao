@@ -33,7 +33,7 @@
  * 不在界面里自己再拼一遍继承 —— 两处各写一遍迟早出现「界面显示一套、实际产出按另一套」。
  */
 
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Alert, Badge, Button, Inline, SectionHeader, SegmentedControl } from '../../../design-system'
 import {
   DIRECTION_OPTIONS,
@@ -58,6 +58,11 @@ import { ConsoleMediaTables } from './ConsoleMediaTables'
 import { DistributionSection } from './DistributionSection'
 import PostprocessOutputPreview from './PostprocessOutputPreview'
 import PostprocessHistoryList from '../../postprocess/PostprocessHistoryList'
+import { VideoParamsDialog } from '../../imageVideo/VideoParamsDialog'
+import { summarizeImageVideoParams } from '../../imageVideo/params'
+import { runVideoBatchForDirection, type VideoBatchProgress } from '../../imageVideo/runVideoBatch'
+import { useImageVideoStore } from '../../imageVideo/store'
+import { resolveProjectImageVideoParams } from '../../projectTree/params'
 
 interface Props {
   /** 当前作用域：`GLOBAL_NODE_ID`（全局基线）或某个方向节点 id，由左侧树驱动 */
@@ -109,6 +114,55 @@ export function ChannelSection({ scope }: Props) {
     () => (isGlobal ? undefined : collections.find((item) => item.id === scope)),
     [collections, isGlobal, scope],
   )
+
+  // ==================== 图转视频（2026-09-28 并进本分区：参数跟着渠道走） ====================
+
+  /**
+   * 视频参数弹窗：点渠道行尾「视频」那一格打开。
+   *
+   * 只记「哪个渠道」，参数值本身走 store、弹窗自己读 —— 于是别处改了参数（比如另一个入口）
+   * 弹窗里立刻就是新的，不用把一份参数在两层各存一遍。
+   */
+  const [videoDialog, setVideoDialog] = useState<{ mediaId: string; mediaName: string } | null>(null)
+  const [videoRun, setVideoRun] = useState<VideoBatchProgress | null>(null)
+  const [videoRunResult, setVideoRunResult] = useState<{ message: string; level: 'success' | 'error' | 'info' } | null>(
+    null,
+  )
+  const imageVideoGlobals = useImageVideoStore((state) => state.globals)
+  const directionLabel = isGlobal ? '全局基线' : (scopeNode?.name ?? '已删除节点')
+
+  /**
+   * 「视频」列的入口。表格只拿到三个回调，不认识 imageVideo 的任何细节。
+   *
+   * 全局作用域下 `enabled: false`：视频参数是「方向 × 渠道」的，没选方向就没得配
+   * （渠道名与尺寸规格是全局的，但视频参数不是 —— 它跟的是「这个方向投这个渠道」）。
+   */
+  const videoColumn = useMemo(
+    () => ({
+      enabled: !isGlobal,
+      isConfigured: (mediaId: string) => Boolean(params[scope]?.imageVideoByMedia?.[mediaId]),
+      summary: (mediaId: string) =>
+        summarizeImageVideoParams(
+          resolveProjectImageVideoParams(collections, params, isGlobal ? null : scope, imageVideoGlobals, mediaId),
+        ),
+      onOpen: (mediaId: string, mediaName: string) => setVideoDialog({ mediaId, mediaName }),
+    }),
+    [collections, imageVideoGlobals, isGlobal, params, scope],
+  )
+
+  /** 手动生成：按「方向 × 渠道」逐个渠道跑，结果如实汇总（不静默失败）。 */
+  const handleRunVideos = useCallback(async () => {
+    if (isGlobal) return
+    setVideoRunResult(null)
+    const result = await runVideoBatchForDirection({
+      directionId: scope,
+      directionLabel,
+      onProgress: setVideoRun,
+    })
+    setVideoRun(null)
+    setVideoRunResult(result)
+    showToast(result.message, result.level)
+  }, [directionLabel, isGlobal, scope, showToast])
 
   // ==================== 参与产出（方向级：全局改基线、节点改这个方向那份） ====================
 
@@ -471,10 +525,49 @@ export function ChannelSection({ scope }: Props) {
           </div>
         </section>
 
+        {/*
+         * 「图转视频」并入本分区（2026-09-28，杰哥定的口径）：
+         * 参数按渠道各一套、点行尾「视频」那一格配；这里只放「生成」入口与结果。
+         * 它不再是独立分区，也不再有自己的「全局行 + 逐级继承」那套 —— 视频跟着渠道与输出走。
+         */}
+        <section
+          data-layout="console-image-video"
+          className="mb-3 rounded-ds-lg border border-ds-border bg-ds-surface px-3 py-2 dark:border-ds-border dark:bg-ds-scrim"
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-sm font-medium text-ds-text dark:text-ds-text">
+                图转视频
+                <span className="ml-2 text-xs font-normal text-ds-muted dark:text-ds-muted">每个渠道一套</span>
+              </p>
+              <p className="text-xs text-ds-muted dark:text-ds-muted">
+                {isGlobal
+                  ? '先在左边树里选一个方向，再点行尾「视频」那一格配参数。'
+                  : '取该渠道导出位置下这个方向最近那一批图，一个渠道各出一批；成片落在图片目录同级的「-视频」文件夹。'}
+              </p>
+            </div>
+            <div className="ml-auto shrink-0">
+              <button
+                type="button"
+                disabled={isGlobal || Boolean(videoRun)}
+                onClick={() => void handleRunVideos()}
+                className="rounded-ds-md border border-ds-border px-3 py-1.5 text-xs text-ds-text transition hover:bg-ds-subtle disabled:opacity-40 dark:border-ds-border dark:text-ds-text-subtle dark:hover:bg-ds-surface"
+              >
+                {videoRun ? `第 ${videoRun.index}/${videoRun.total} 个渠道 · ${videoRun.percent}%` : '生成视频'}
+              </button>
+            </div>
+          </div>
+          {videoRun ? <p className="mt-1 text-xs text-ds-muted dark:text-ds-muted">{videoRun.message}</p> : null}
+          {!videoRun && videoRunResult ? (
+            <p className="mt-1 text-xs text-ds-text dark:text-ds-text-subtle">{videoRunResult.message}</p>
+          ) : null}
+        </section>
+
         <ConsoleMediaTables
           selectedMediaIds={effectiveSelectedMediaIds}
           onToggleSelected={toggleSelected}
-          participationScopeLabel={isGlobal ? '全局基线' : (scopeNode?.name ?? '已删除节点')}
+          participationScopeLabel={directionLabel}
+          videoColumn={videoColumn}
           resolveDirs={resolveDirs}
           resolveInheritedDirs={resolveInheritedDirs}
           resolveInheritedToggleDirs={resolveInheritedToggleDirs}
@@ -484,6 +577,19 @@ export function ChannelSection({ scope }: Props) {
           onRemoveDir={handleRemoveDir}
           onPickError={() => showToast('选择导出位置失败，请重试', 'error')}
         />
+
+        {videoDialog ? (
+          <VideoParamsDialog
+            scope={scope}
+            scopeLabel={directionLabel}
+            mediaId={videoDialog.mediaId}
+            mediaName={videoDialog.mediaName}
+            otherMedias={media
+              .filter((item) => item.id !== videoDialog.mediaId)
+              .map((item) => ({ id: item.id, name: item.name }))}
+            onClose={() => setVideoDialog(null)}
+          />
+        ) : null}
 
         {/* 原先这里是「纯净版」独一栏（它不是渠道、也没有渠道级导出位置，所以塞不进渠道表）。
             该产出路径已整条拆掉（ADR-0020）：它产出的就是素材库里那张原图有损重编的一份，

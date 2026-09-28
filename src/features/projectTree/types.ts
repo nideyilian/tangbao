@@ -36,8 +36,25 @@ export const PROJECT_NODE_KIND_LABELS: Record<ProjectNodeKind, string> = {
  */
 export interface ProjectNodeParams {
   postprocess?: PostprocessNodeOverride
-  /** 图转视频参数覆盖；字段缺省 = 继承上层 */
+  /**
+   * 图转视频参数覆盖 —— 该节点**所有渠道的缺省**；字段缺省 = 继承上层。
+   *
+   * 与 `imageVideoByMedia` 的关系：同一节点内后者（该渠道专用）盖住前者。
+   * 这个字段**保留不是为了兼容而留下的死字段**：它是「这个方向不管投哪个渠道都这么出视频」的
+   * 自然表达，老配置也全在这里（2026-09-28 之前没有渠道维度）——因此不需要数据迁移。
+   */
   imageVideo?: ImageVideoNodeOverride
+  /**
+   * 按渠道的图转视频参数覆盖：键 = 渠道 id（`PostprocessMedia.id`）。
+   *
+   * 为什么加这一层（2026-09-28 杰哥定的口径）：视频参数并进「渠道与输出」之后，
+   * 视频就是**跟着渠道走**的 —— 每个渠道的图规格（尺寸、水印）本来就不同，
+   * 出的片子自然也该各配一套。与后处理的 `PostprocessNodeOverride.byMedia` 同构。
+   *
+   * ⚠️ 逐渠道合并、**不能整份替换**：一次只改一个渠道的一个字段，整份替换会把其它渠道
+   * 静默抹掉（见 `mergeByMediaOverride`）。
+   */
+  imageVideoByMedia?: Record<string, ImageVideoNodeOverride>
   updatedAt?: number
 }
 

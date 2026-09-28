@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { resolveAutoImageVideoDirs, shouldAutoRunImageVideo } from './autoTrigger'
-import { resolveDirectionInputDirs } from './runVideo'
+import { resolveDirectionInputDirsByMedia } from './runVideo'
 import { DEFAULT_IMAGE_VIDEO_PARAMS } from './types'
 
 const BASE = { ...DEFAULT_IMAGE_VIDEO_PARAMS }
@@ -27,45 +27,65 @@ describe('shouldAutoRunImageVideo', () => {
   })
 })
 
-describe('resolveDirectionInputDirs', () => {
+describe('resolveDirectionInputDirsByMedia', () => {
   const outputs = [
-    { path: 'D:/导出/方向A/头条/a-01.jpg', collectionId: 'dirA' },
-    { path: 'D:/导出/方向A/广点通/a-01.jpg', collectionId: 'dirA' },
-    { path: 'D:/导出/方向A/头条/a-02.jpg', collectionId: 'dirA' },
-    { path: 'D:/导出/方向B/头条/b-01.jpg', collectionId: 'dirB' },
+    { path: 'D:/导出/方向A/头条/a-01.jpg', collectionId: 'dirA', mediaId: 'toutiao', mediaName: '头条', createdAt: 10 },
+    { path: 'D:/导出/方向A/广点通/a-01.jpg', collectionId: 'dirA', mediaId: 'gdt', mediaName: '广点通', createdAt: 10 },
+    { path: 'D:/导出/方向A/头条/a-02.jpg', collectionId: 'dirA', mediaId: 'toutiao', mediaName: '头条', createdAt: 10 },
+    { path: 'D:/导出/方向B/头条/b-01.jpg', collectionId: 'dirB', mediaId: 'toutiao', mediaName: '头条', createdAt: 10 },
     { path: 'D:/导出/未归属/c-01.jpg' },
   ]
 
-  it('只取这个方向的目录，并按首次出现顺序去重', () => {
-    expect(resolveDirectionInputDirs(outputs, 'dirA')).toEqual(['D:/导出/方向A/头条', 'D:/导出/方向A/广点通'])
+  it('每个渠道各一条（多渠道各出一批视频），同渠道的多条记录只出一条', () => {
+    expect(resolveDirectionInputDirsByMedia(outputs, 'dirA')).toEqual([
+      { mediaId: 'gdt', mediaName: '广点通', dir: 'D:/导出/方向A/广点通', createdAt: 10 },
+      { mediaId: 'toutiao', mediaName: '头条', dir: 'D:/导出/方向A/头条', createdAt: 10 },
+    ])
   })
 
-  it('不把别的方向的目录混进来', () => {
-    const dirs = resolveDirectionInputDirs(outputs, 'dirA')
-    expect(dirs.some((dir) => dir.includes('方向B'))).toBe(false)
+  it('⭐ 同一渠道只取最近那一批 —— 以前会把历史批次全堆进来，几个月前的旧目录也拿去转视频', () => {
+    const older = { path: 'D:/导出/方向A/头条/旧批次/a.jpg', collectionId: 'dirA', mediaId: 'toutiao', createdAt: 1 }
+    const newer = { path: 'D:/导出/方向A/头条/新批次/a.jpg', collectionId: 'dirA', mediaId: 'toutiao', createdAt: 99 }
+    expect(resolveDirectionInputDirsByMedia([older, newer], 'dirA')[0]?.dir).toBe('D:/导出/方向A/头条/新批次')
+    expect(resolveDirectionInputDirsByMedia([newer, older], 'dirA')[0]?.dir).toBe('D:/导出/方向A/头条/新批次')
   })
 
-  it('没有归属的产出不参与（宁可不产出，也不要拿错目录）', () => {
-    expect(resolveDirectionInputDirs(outputs, 'dirA').includes('D:/导出/未归属')).toBe(false)
+  it('⭐ 历史「纯净版」记录不进清单（ADR-0020 起已不再产出，那些目录多半已被清理或分发搬走）', () => {
+    const clean = { path: 'D:/导出/方向A/纯净版/x.jpg', collectionId: 'dirA', mediaId: 'clean', createdAt: 99 }
+    const dirs = resolveDirectionInputDirsByMedia([...outputs, clean], 'dirA')
+    expect(dirs.some((item) => item.dir.includes('纯净版'))).toBe(false)
+  })
+
+  it('不把别的方向的目录混进来；没有归属的产出不参与', () => {
+    const dirs = resolveDirectionInputDirsByMedia(outputs, 'dirA')
+    expect(dirs.some((item) => item.dir.includes('方向B') || item.dir.includes('未归属'))).toBe(false)
+  })
+
+  it('没有 mediaId 的记录不参与（判不出渠道就取不到它的视频参数）', () => {
+    expect(resolveDirectionInputDirsByMedia([{ path: 'D:/导出/A/x/1.jpg', collectionId: 'dirA' }], 'dirA')).toEqual([])
   })
 
   it('反斜杠路径同样能取出目录', () => {
-    expect(resolveDirectionInputDirs([{ path: 'D:\\导出\\方向A\\头条\\a.jpg', collectionId: 'dirA' }], 'dirA')).toEqual(
-      ['D:\\导出\\方向A\\头条'],
-    )
+    const win = [{ path: 'D:\\导出\\方向A\\头条\\a.jpg', collectionId: 'dirA', mediaId: 'toutiao', createdAt: 1 }]
+    expect(resolveDirectionInputDirsByMedia(win, 'dirA')[0]?.dir).toBe('D:\\导出\\方向A\\头条')
   })
 
   it('方向没有产出时返回空数组（调用方据此不触发）', () => {
-    expect(resolveDirectionInputDirs(outputs, 'dirMissing')).toEqual([])
+    expect(resolveDirectionInputDirsByMedia(outputs, 'dirMissing')).toEqual([])
+  })
+
+  it('渠道没给显示名时退回 id，不会显示成空白', () => {
+    const noName = [{ path: 'D:/导出/A/x/1.jpg', collectionId: 'dirA', mediaId: 'gdt', createdAt: 1 }]
+    expect(resolveDirectionInputDirsByMedia(noName, 'dirA')[0]?.mediaName).toBe('gdt')
   })
 })
 
 describe('resolveAutoImageVideoDirs 与 runVideo 的口径一致', () => {
   it('转发不是另写一套：同样的输入必须得到同样的结果', () => {
     const outputs = [
-      { path: 'D:/导出/A/x/1.jpg', collectionId: 'dirA' },
-      { path: 'D:/导出/A/y/2.jpg', collectionId: 'dirA' },
+      { path: 'D:/导出/A/x/1.jpg', collectionId: 'dirA', mediaId: 'gdt', createdAt: 1 },
+      { path: 'D:/导出/A/y/2.jpg', collectionId: 'dirA', mediaId: 'baidu', createdAt: 1 },
     ]
-    expect(resolveAutoImageVideoDirs(outputs, 'dirA')).toEqual(resolveDirectionInputDirs(outputs, 'dirA'))
+    expect(resolveAutoImageVideoDirs(outputs, 'dirA')).toEqual(resolveDirectionInputDirsByMedia(outputs, 'dirA'))
   })
 })

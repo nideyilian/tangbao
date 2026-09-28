@@ -40,8 +40,13 @@ export interface ProjectTreeParamsStore {
   promotedGlobals: PromotedNodeFieldValues
   /** 按补丁更新某节点的后处理参数；`undefined` 的字段表示恢复该字段的继承 */
   setPostprocessOverride: (collectionId: string, patch: PostprocessNodeOverride) => void
-  /** 按补丁更新某节点的图转视频参数；语义同上（`undefined` = 恢复继承） */
-  setImageVideoOverride: (collectionId: string, patch: ImageVideoNodeOverride) => void
+  /**
+   * 按补丁更新某节点的图转视频参数；语义同上（`undefined` = 恢复继承）。
+   *
+   * `mediaId` 给了就改**那个渠道**那份（`imageVideoByMedia[mediaId]`），不给就改节点缺省那份
+   * （`imageVideo`）。两份互不干扰 —— 改渠道参数不会动到「不管投哪个渠道都这么出」的缺省值。
+   */
+  setImageVideoOverride: (collectionId: string, patch: ImageVideoNodeOverride, mediaId?: string | null) => void
   /** 清空某节点的全部参数（整条记录删除，回到完全继承） */
   clearNodeParams: (collectionId: string) => void
 }
@@ -117,11 +122,12 @@ export const useProjectTreeParamsStore = create<ProjectTreeParamsStore>()(
           return { params }
         }),
 
-      setImageVideoOverride: (collectionId, patch) =>
+      setImageVideoOverride: (collectionId, patch, mediaId) =>
         set((state) => {
           const id = typeof collectionId === 'string' ? collectionId.trim() : ''
           if (!id) return state
-          const next = buildImageVideoNodeParams(state.params[id], patch)
+          // mediaId 是第 4 个形参（`now` 是测试注入点，不能往前插），所以这里显式给 now
+          const next = buildImageVideoNodeParams(state.params[id], patch, Date.now(), mediaId)
           if (!next) {
             if (!state.params[id]) return state
             const params = { ...state.params }
