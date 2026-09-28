@@ -293,3 +293,91 @@ describe('SopCampaignRecipeParseResultDialog', () => {
     expect(calls).toEqual([false])
   })
 })
+
+/**
+ * 红线词表（TB-142）—— 报障原话是「红线规则既不能删除也不能新增，误判无法手动修正」。
+ * 这组用例锁三件事：**能改**（增 / 改 / 删 / 恢复默认都写回设置）、
+ * **能看见**（命中当前骨架的词在词表里标红，且写明不会中断生成）、
+ * **能退回只读**（不传修改回调时不渲染编辑控件）。
+ */
+describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () => {
+  /** 渲染一个词表可编辑的弹窗，返回「每次写回的词表」记录。 */
+  function renderWithTerms(initial: string[], configOverrides: Partial<SopCampaignRecipeConfig> = {}, editable = true) {
+    const changes: string[][] = []
+    const config = { ...makeConfig(), ...configOverrides }
+    function Harness() {
+      const [terms, setTerms] = useState<string[]>(initial)
+      return (
+        <SopCampaignRecipeParseResultDialog
+          open
+          onOpenChange={() => {}}
+          parsed={makeParsed()}
+          config={config}
+          onChange={() => {}}
+          forbiddenTerms={terms}
+          onForbiddenTermsChange={
+            editable
+              ? (next) => {
+                  changes.push(next)
+                  setTerms(next)
+                }
+              : undefined
+          }
+        />
+      )
+    }
+    act(() => {
+      root.render(<Harness />)
+    })
+    return changes
+  }
+
+  const termInputs = () => Array.from(document.body.querySelectorAll<HTMLInputElement>('input[aria-label^="红线词"]'))
+
+  it('词表条目就是输入框：可加一条、可改字、可删除', () => {
+    const changes = renderWithTerms(['提现', '军'])
+    expect(termInputs().map((input) => input.value)).toEqual(['提现', '军'])
+
+    clickButton('加一条')
+    expect(changes[changes.length - 1]).toEqual(['提现', '军', ''])
+
+    typeInto(termInputs()[0], '提现按钮')
+    expect(changes[changes.length - 1]).toEqual(['提现按钮', '军', ''])
+
+    const removeButtons = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button[aria-label^="删除红线词"]'),
+    )
+    act(() => {
+      removeButtons[1].click()
+    })
+    expect(changes[changes.length - 1]).toEqual(['提现按钮', ''])
+  })
+
+  it('恢复默认还原成内置 21 词', () => {
+    const changes = renderWithTerms(['军'])
+    clickButton('恢复默认')
+    expect(changes[changes.length - 1]).toHaveLength(21)
+    expect(changes[changes.length - 1][0]).toBe('人民币')
+  })
+
+  it('命中当前骨架的那一格标红，并写明「不中断生成」', () => {
+    renderWithTerms(['提现', '军'], { body: '点击提现到账，{M}' })
+    const text = dialogText()
+    expect(text).toContain('骨架命中红线「提现」')
+    expect(text).toContain('生成不会被中断')
+    const hit = document.body.querySelectorAll('.sop-recipe-term--hit')
+    expect(hit).toHaveLength(1)
+    expect(hit[0].querySelector<HTMLInputElement>('input')?.value).toBe('提现')
+  })
+
+  it('骨架命中红线也照常出预览（与真实生成同口径）', () => {
+    renderWithTerms(['提现'], { body: '点击提现到账，{M}, {S1}' })
+    expect(document.body.querySelectorAll('.sop-recipe-preview__list li').length).toBeGreaterThan(0)
+  })
+
+  it('不给修改回调时词表按只读展示（不渲染编辑控件）', () => {
+    renderWithTerms(['提现', '军'], {}, false)
+    expect(termInputs()).toHaveLength(0)
+    expect(dialogText()).toContain('提现 · 军')
+  })
+})

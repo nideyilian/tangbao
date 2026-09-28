@@ -21,7 +21,7 @@
  *   上一版两处都报数字，被杰哥指出是重复（见 BACKLOG TB-054）。
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Badge, Button, Dialog, IconButton, TextArea, cx } from '../../design-system'
 import { AlertTriangleIcon, EyeIcon, FileTextIcon, PlusIcon, SparklesIcon, TrashIcon } from '../../design-system/icons'
 import {
@@ -54,6 +54,18 @@ export interface SopCampaignRecipeParseResultDialogProps {
   dominantSlots?: string[]
   /** 解析出的素材信息，仅用于「主控槽」的来源说明 */
   meta?: { name?: string; desc?: string; dominantSlots?: string[] }
+  /**
+   * 当前生效的合规红线词表（全局一份，来自 `AppSettings.recipeForbiddenTerms`）。
+   *
+   * 不传 = 内置默认 21 词 —— 于是本弹窗单独使用时也不会「没有红线」。
+   * 传 `[]` = 用户把红线全关了（与「没传」**语义不同**，别用长度判断）。
+   */
+  forbiddenTerms?: readonly string[]
+  /**
+   * 修改红线词表（增 / 删 / 改 / 恢复默认都走它）。
+   * 不传时词表按只读展示：编辑控件（输入框 / 删除 / 加一条 / 恢复默认）一律不渲染。
+   */
+  onForbiddenTermsChange?: (terms: string[]) => void
 }
 
 /**
@@ -132,33 +144,45 @@ export default function SopCampaignRecipeParseResultDialog({
   onChange,
   dominantSlots,
   meta,
+  forbiddenTerms,
+  onForbiddenTermsChange,
 }: SopCampaignRecipeParseResultDialogProps) {
   const close = () => onOpenChange(false)
+  /** 红线词表区默认展开（`<details>` 的 open 必须受控，否则用户收起后一旦重渲染就被弹回展开）。 */
+  const [termsOpen, setTermsOpen] = useState(true)
   const body = config.body ?? ''
   // config 每次编辑都是新对象，直接进 useMemo 依赖会让派生计算每次重算；拆出稳定引用
   const dimensions = useMemo(() => config.dimensions ?? [], [config.dimensions])
+  /**
+   * 当前生效词表。不传 → 默认 21 词。
+   * ⚠️ 不能写成 `forbiddenTerms && forbiddenTerms.length ? forbiddenTerms : 默认` ——
+   * 空数组是「用户把红线全关了」，那样写会让默认词表又冒回来（TB-142）。
+   */
+  const terms = forbiddenTerms ?? CAMPAIGN_RECIPE_FORBIDDEN_TERMS
+  const canEditTerms = typeof onForbiddenTermsChange === 'function'
 
   const placeholders = useMemo(() => extractPlaceholders(body), [body])
   const errors = useMemo(() => validateCampaignRecipeConfig(config), [config])
-  const bodyViolations = useMemo(() => findCampaignRecipeViolations(body), [body])
+  const bodyViolations = useMemo(() => findCampaignRecipeViolations(body, terms), [body, terms])
   const optionViolations = useMemo(
     () =>
       dimensions.flatMap((dimension, dimensionIndex) =>
         (dimension.options ?? []).flatMap((option, optionIndex) => {
-          const violations = findCampaignRecipeViolations(option)
+          const violations = findCampaignRecipeViolations(option, terms)
           return violations.length > 0 ? [{ dimensionIndex, optionIndex, option, violations }] : []
         }),
       ),
-    [dimensions],
+    [dimensions, terms],
   )
+  // 骨架命中**不再阻断预览**：生成链路也不再中断（TB-142），预览与真实生成必须同口径。
   const preview = useMemo(() => {
-    if (errors.length > 0 || bodyViolations.length > 0) return []
+    if (errors.length > 0) return []
     try {
       return renderCampaignRecipePrompts(config, { count: RECIPE_PREVIEW_COUNT, seed: 'preview' })
     } catch {
       return []
     }
-  }, [bodyViolations.length, config, errors.length])
+  }, [config, errors.length])
 
   const hasConfigContent = body.trim().length > 0 || dimensions.length > 0
   const summary = summarizeParsedRecipe(dimensions)
@@ -207,6 +231,26 @@ export default function SopCampaignRecipeParseResultDialog({
     const missing = placeholders.filter((name) => !dimensions.some((dimension) => dimension.name === name))
     if (missing.length === 0) return
     onChange({ ...config, dimensions: [...dimensions, ...missing.map((name) => ({ name, options: [''] }))] })
+  }
+
+  // ---- 红线词表：增 / 改 / 删 / 恢复默认（改动即时写回设置，全局生效） ----
+  // 空串允许暂存在界面状态里（用户点「加一条」时那一格本来就是空的）；
+  // 判定侧由 resolveRecipeForbiddenTerms 过滤空串，不会出现「空词命中一切」（见该函数注释）。
+
+  function addTerm() {
+    onForbiddenTermsChange?.([...terms, ''])
+  }
+
+  function updateTerm(index: number, value: string) {
+    onForbiddenTermsChange?.(terms.map((term, current) => (current === index ? value : term)))
+  }
+
+  function removeTerm(index: number) {
+    onForbiddenTermsChange?.(terms.filter((_, current) => current !== index))
+  }
+
+  function resetTerms() {
+    onForbiddenTermsChange?.([...CAMPAIGN_RECIPE_FORBIDDEN_TERMS])
   }
 
   return (
@@ -345,7 +389,10 @@ export default function SopCampaignRecipeParseResultDialog({
 
           {bodyViolations.length > 0 && (
             <p className="sop-recipe-panel__warning" role="alert">
-              骨架命中合规红线「{bodyViolations.join('、')}」，生成时整段骨架会被清空。请先改写。
+              骨架命中红线「{bodyViolations.join('、')}」。
+              {canEditTerms
+                ? '生成不会被中断 —— 判为误判就到下方词表里删掉这个词，确实违规再改写骨架。'
+                : '生成不会被中断，判为误判请调整红线词表，确实违规再改写骨架。'}
             </p>
           )}
 
@@ -468,18 +515,66 @@ export default function SopCampaignRecipeParseResultDialog({
               </ol>
             ) : (
               <p className="sop-recipe-panel__hint">
-                {bodyViolations.length > 0
-                  ? '骨架命中红线，暂不可预览。'
-                  : errors.length > 0
-                    ? '补齐骨架与维度后即可预览。'
-                    : '骨架未引用任何维度，暂不可预览。'}
+                {errors.length > 0 ? '补齐骨架与维度后即可预览。' : '骨架未引用任何维度，暂不可预览。'}
               </p>
             )}
           </div>
 
-          <details className="sop-recipe-panel__terms">
-            <summary>合规红线词表（{CAMPAIGN_RECIPE_FORBIDDEN_TERMS.length} 项，不可关闭）</summary>
-            <p>{CAMPAIGN_RECIPE_FORBIDDEN_TERMS.join(' · ')}</p>
+          {/* 红线词表：可编辑（增 / 改 / 删 / 恢复默认）。条目直接写回设置、全局生效。
+              默认展开 —— 命中之后要来这里删词，藏在折叠里等于让人多找一步（TB-142 的报障场景）。 */}
+          <details
+            className="sop-recipe-panel__terms"
+            open={termsOpen}
+            onToggle={(event) => setTermsOpen(event.currentTarget.open)}
+          >
+            <summary>
+              合规红线词表（{terms.length} 项 · 全局生效）
+              {bodyViolations.length > 0 ? ' · 本次骨架命中' : ''}
+            </summary>
+            {canEditTerms ? (
+              <>
+                <div className="sop-recipe-terms__grid">
+                  {terms.map((term, index) => {
+                    const hit = bodyViolations.includes(term)
+                    return (
+                      <label
+                        key={index}
+                        className={cx('sop-recipe-term', hit && 'sop-recipe-term--hit')}
+                        title={hit ? '命中当前骨架' : undefined}
+                      >
+                        <input
+                          value={term}
+                          placeholder="词"
+                          aria-label={`红线词 ${index + 1}`}
+                          onChange={(event) => updateTerm(index, event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="sop-recipe-term__remove"
+                          onClick={() => removeTerm(index)}
+                          aria-label={`删除红线词 ${term || index + 1}`}
+                          title="删除这个词"
+                        >
+                          <TrashIcon className="h-3 w-3" />
+                        </button>
+                      </label>
+                    )
+                  })}
+                  <button type="button" className="sop-recipe-terms__add" onClick={addTerm}>
+                    <PlusIcon className="h-3 w-3" />
+                    加一条
+                  </button>
+                </div>
+                <div className="sop-recipe-terms__actions">
+                  <span>命中只提示、不中断生成。判为误判的词删掉即可，改动立即对所有配方卡生效。</span>
+                  <Button size="sm" variant="secondary" onClick={resetTerms}>
+                    恢复默认 {CAMPAIGN_RECIPE_FORBIDDEN_TERMS.length} 词
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p>{terms.length > 0 ? terms.join(' · ') : '（当前词表为空，红线已关闭）'}</p>
+            )}
           </details>
 
           {/* 解析快照与当前配置可能不一致（用户改过），点明差异来源免得互相怀疑 */}

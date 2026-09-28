@@ -32,6 +32,7 @@ import { shouldUseApiProxy } from './devProxy'
 import { readRuntimeEnv } from './runtimeEnv'
 import { isImportableConfigUrl } from './customProviderConfigUrl'
 import { normalizeAdNegativeRuleProfiles } from './adNegativeRules'
+import { normalizeRecipeForbiddenTerms } from './recipeForbiddenTerms'
 import { isRecord } from './typeGuards'
 
 const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
@@ -811,6 +812,10 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
       record.assistantActions as Partial<AssistantActionPreferences> | undefined,
     ),
     adNegativeRuleProfiles,
+    // 配方卡合规红线词表（TB-142）：`undefined` = 没自定义过（用内置默认 21 词），
+    // `[]` = 用户明确清空（红线关闭）。**不能**把空数组折算成 undefined ——
+    // 用户把误判词全删光之后，默认词表不能又冒回来。
+    recipeForbiddenTerms: normalizeRecipeForbiddenTerms(record.recipeForbiddenTerms),
     wordLibraryDerivativeRule:
       typeof record.wordLibraryDerivativeRule === 'string' ? record.wordLibraryDerivativeRule : undefined,
     wordLibraryDerivativeRuleMode,

@@ -744,19 +744,15 @@ export async function generateCampaignRecipePromptsFromStore(
     throw new Error('配方卡配置缺失：需要在 SOP 中提供提示词骨架与维度池')
   }
 
-  // 合规红线内置且不可关闭：命中红线的候选值在生成前剔除，避免脏数据进入出图链路。
-  const { config, removed, bodyRemoved } = sanitizeCampaignRecipeConfig(rawConfig)
+  // 合规红线（TB-142）：词表可编辑（存 AppSettings.recipeForbiddenTerms，缺省 = 内置 21 词）。
+  // - **候选值**命中 → 生成前剔除（自动组合出来的值没人逐条看过，保留这层防护）；
+  // - **骨架**命中 → **只提示、绝不中断**。骨架是用户手写的文案，原先「命中即整段清空 + 抛错」
+  //   让误判直接变成「整批 0 条、我的提示词不能用了」；现在由界面在配方卡里标红，
+  //   用户判为误判就删掉那个词，或者自己去改骨架。
+  const { config, removed } = sanitizeCampaignRecipeConfig(rawConfig, useStore.getState().settings.recipeForbiddenTerms)
   if (removed.length > 0) {
-    console.warn(`[配方卡引擎] 已剔除命中合规红线的候选值：${removed.join('；')}`)
+    console.warn(`[配方卡引擎] 命中合规红线：${removed.join('；')}`)
     options.onSanitized?.(removed)
-  }
-  // body 被清空时的报错必须点名真因：否则下游 validateCampaignRecipeConfig 只会说
-  // 「缺少提示词骨架 body」，用户去检查骨架却发现它明明在，排查方向被彻底带偏。
-  if (bodyRemoved) {
-    throw new Error(
-      `配方卡提示词骨架命中合规红线，已被整段移除。请在「配方卡」页检查骨架文案，` +
-        `移除违规表述后重试（命中项：${removed.filter((item) => item.startsWith('提示词骨架')).join('；')}）。`,
-    )
   }
   const errors = validateCampaignRecipeConfig(config)
   if (errors.length > 0) throw new Error(`配方卡格式有误：${errors[0]}`)

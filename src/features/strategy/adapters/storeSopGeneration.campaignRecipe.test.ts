@@ -15,6 +15,11 @@ import type { SopCampaignRecipeConfig } from '../types'
 const storeMocks = vi.hoisted(() => ({
   submitTaskWithData: vi.fn(),
   getSopBatchSnapshots: vi.fn(async () => [] as unknown[]),
+  /**
+   * 当前设置（含配方卡红线词表）。**用属性访问而不是解构捕获** ——
+   * 测试里会整体替换这个对象来模拟「用户在配方卡里改了词表」，getState 每次读到的是新的那份。
+   */
+  settings: { model: 'gpt-test' } as { model: string; recipeForbiddenTerms?: string[] },
 }))
 
 vi.mock('../../../lib/apiProfiles', () => ({
@@ -43,7 +48,7 @@ vi.mock('../../../store', () => ({
   submitTaskWithData: storeMocks.submitTaskWithData,
   useStore: {
     getState: () => ({
-      settings: { model: 'gpt-test' },
+      settings: storeMocks.settings,
       addTask: vi.fn(),
       notifyError: vi.fn(),
       showToast: vi.fn(),
@@ -87,6 +92,7 @@ const healthyRecipe: SopCampaignRecipeConfig = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  storeMocks.settings = { model: 'gpt-test' }
   storeMocks.getSopBatchSnapshots.mockResolvedValue([])
 })
 
@@ -150,26 +156,84 @@ describe('配方卡引擎：占位符残留拦截', () => {
   })
 })
 
-describe('配方卡引擎：合规红线清空骨架时报错指向真因', () => {
-  it('骨架命中红线时，报错说明是「命中红线被移除」而不是「缺少骨架」', async () => {
+/**
+ * TB-142：骨架命中红线**不再中断生成、也不再清空骨架**。
+ *
+ * 原行为是「骨架整段清空 + 抛错」，误判（词表里那个词太宽，如「提现」「军」撞正常文案）时
+ * 用户看到的是一整批 0 条 + 「请在配方卡页检查骨架文案」—— 而骨架本身没毛病。
+ * 现在只提示，由用户裁决：删掉误判的那个词（改词表），或者改写骨架。
+ */
+describe('配方卡引擎：骨架命中红线只提示、不中断（TB-142）', () => {
+  /** 「稳赚」是内置默认红词汇里的词 */
+  const cashOutRecipe: SopCampaignRecipeConfig = {
+    body: '稳赚不赔的{{主视觉}}',
+    dimensions: [
+      { name: '主视觉', options: ['产品特写', '手持使用'] },
+      { name: '主体', options: ['咖啡杯', '保温杯'] },
+    ],
+  }
+
+  it('骨架命中红线时照常产出，并把「命中骨架」通过 onSanitized 报给调用方', async () => {
+    const onSanitized = vi.fn()
+
+    const prompts = await generateCampaignRecipePromptsFromStore(makeRecipeSop(cashOutRecipe), 2, '', {
+      exact: true,
+      onSanitized,
+    })
+
+    // 旧行为：骨架被清空 ⇒ 抛错（0 条）
+    expect(prompts).toHaveLength(2)
+    // 骨架一个字没动：命中词照旧出现在产出里（删词还是改文案，由用户决定）
+    expect(prompts[0]).toContain('稳赚')
+    const removed = onSanitized.mock.calls[0][0] as string[]
+    expect(removed.join('；')).toContain('提示词骨架')
+    expect(removed.join('；')).toContain('稳赚')
+  })
+
+  it('用户把该词从词表里删掉之后，生成链路不再报命中（改词表确实生效）', async () => {
+    const onSanitized = vi.fn()
+    storeMocks.settings = { model: 'gpt-test', recipeForbiddenTerms: ['提现'] }
+
+    const prompts = await generateCampaignRecipePromptsFromStore(makeRecipeSop(cashOutRecipe), 2, '', {
+      exact: true,
+      onSanitized,
+    })
+
+    expect(prompts).toHaveLength(2)
+    expect(onSanitized).not.toHaveBeenCalled()
+  })
+
+  it('没有配过词表时按内置默认表判定（老存档行为不变）', async () => {
+    const onSanitized = vi.fn()
     const recipe: SopCampaignRecipeConfig = {
-      // 「稳赚」是内置红线词
-      body: '稳赚不赔的{{主视觉}}',
+      body: '{{主视觉}}，主体是{{主体}}',
       dimensions: [
-        { name: '主视觉', options: ['产品特写', '手持使用'] },
-        { name: '主体', options: ['咖啡杯', '保温杯'] },
+        { name: '主视觉', options: ['产品特写', '稳赚促销', '使用场景'] },
+        { name: '主体', options: ['咖啡杯', '保温杯', '玻璃杯'] },
       ],
     }
 
-    const error = await generateCampaignRecipePromptsFromStore(makeRecipeSop(recipe), 1, '', {
-      exact: true,
-    }).catch((err: unknown) => err)
+    await generateCampaignRecipePromptsFromStore(makeRecipeSop(recipe), 4, '', { exact: true, onSanitized })
+    expect((onSanitized.mock.calls[0][0] as string[]).join('；')).toContain('稳赚促销')
+  })
 
-    expect(error).toBeInstanceOf(Error)
-    const message = (error as Error).message
-    expect(message).toContain('命中合规红线')
-    // 关键：不能再说「缺少提示词骨架」——骨架明明在，那样的文案会把排查带偏
-    expect(message).not.toContain('缺少提示词骨架')
+  it('把词表清空（空数组）后候选值也不再剔除（红线全关）', async () => {
+    const onSanitized = vi.fn()
+    storeMocks.settings = { model: 'gpt-test', recipeForbiddenTerms: [] }
+    const recipe: SopCampaignRecipeConfig = {
+      body: '{{主视觉}}，主体是{{主体}}',
+      dimensions: [
+        { name: '主视觉', options: ['产品特写', '稳赚促销', '使用场景'] },
+        { name: '主体', options: ['咖啡杯', '保温杯', '玻璃杯'] },
+      ],
+    }
+
+    const prompts = await generateCampaignRecipePromptsFromStore(makeRecipeSop(recipe), 4, '', {
+      exact: true,
+      onSanitized,
+    })
+    expect(prompts).toHaveLength(4)
+    expect(onSanitized).not.toHaveBeenCalled()
   })
 
   it('候选值命中红线时不算致命错误，只在剔除后正常产出', async () => {

@@ -6935,3 +6935,57 @@ localStorage 里的**过期**提示词把输入框盖回去，尺寸参数它不
   本轮按「够用就好」收手。
 - 磁盘上旧口径的 `*.v1.grid.webp` / `*.v2.grid.webp`（本机 `D:\AI生图2\thumbs` 有 300 余个）
   已无读取方但不会被自动清理，要清走设置页的缩略图清理入口。
+
+## TB-142 配方卡红线词表可编辑 + 骨架命中改为「配方卡内提示、不中断生成」（2026-09-28 阿伟）
+
+**报障**（杰哥原话）：
+
+> 配方卡中的红线规则目前无法编辑，既不能删除也不能新增，导致系统频繁产生误判，而我无法手动修正。
+> 一旦误判发生，我正常的提示词会被整体破坏而无法使用。
+
+现场（截图）：逐条生成完成 —— 已发送 0 条，提示词缺口 5 条；报错「配方卡提示词骨架命中合规红线，
+已被整段移除。请在「配方卡」页检查骨架文案，移除违规表述后重试（命中项：提示词骨架（命中：提现））」。
+
+**根因（两条叠加）**
+
+1. **词表写死、界面只读**：红线是 `campaignRecipe.ts` 里的 21 词常量（`as const`），
+   弹窗底部 `<details>` 只是 `join(' · ')` 展示，**没有任何增删改入口** —— 用户无从纠偏。
+2. **判定保守 × 处理过激**：判定是**子串匹配**（中文无词边界），「提现」会命中「点击提现到账」；
+   而 `sanitizeCampaignRecipeConfig` 在**骨架**命中时把 body **整段清空**，下游随即抛错中断
+   （报错还把人往「改骨架文案」上引，而文案本身没毛病）⇒ 一整批 0 条。
+
+**改法**
+
+| 层 | 改了什么 |
+| --- | --- |
+| 词表本体 | 新建 `lib/recipeForbiddenTerms.ts`（全应用唯一实现）：默认 21 词 `DEFAULT_RECIPE_FORBIDDEN_TERMS` + 归一化 + 判定。放 lib 是因为**设置归一化要用它**，而 `lib` 不能反向依赖 `features`（`campaignRecipe.ts` 保留旧导出名 re-export，引用点零改动） |
+| 存储 | `AppSettings.recipeForbiddenTerms?: string[]`；`normalizeSettings` 里走 `normalizeRecipeForbiddenTerms`。**三态不能折算**：`undefined` = 用默认、`[]` = 用户关闭红线、数组 = 用户那份 |
+| 判定 | `findCampaignRecipeViolations(text, terms)` / `sanitizeCampaignRecipeConfig(config, terms)` 全部带词表参数；`resolveRecipeForbiddenTerms` **滤掉空串**（`任意文本.includes('')` 恒真 —— 界面「加一条」时那格就是空的） |
+| 生成链路 | `storeSopGeneration` 读 `settings.recipeForbiddenTerms` 传入；**骨架命中不再抛错**（删掉整段 `throw`），改为 `onSanitized` 提示；候选值仍按原样剔除 |
+| UI | 弹窗底部词表从只读 `<details>` 改为**可编辑网格**（每格一个输入框 + 删除；「加一条」；「恢复默认 21 词」），命中当前骨架的那格标红；`SopCampaignRecipePanel` / `SopLibraryTab` 透传并写回 `setSettings`。骨架提示文案由「生成时整段骨架会被清空」改为「生成不会被中断」；预览不再因骨架命中而清空（与真实生成同口径） |
+
+**验收证据**
+
+- 新增 `lib/recipeForbiddenTerms.test.ts` 7 条（三态语义 / trim 去空去重 / **空串不命中一切** /
+  归一化→判定闭环）；`campaignRecipe.test.ts` 补 3 条（骨架原样保留 + bodyHit 标志 +
+  **闭合场景：骨架含「提现」仍出满 2 条、删词后 `removed` 为空**）；
+  `SopCampaignRecipeParseResultDialog.test.tsx` 补 5 条 UI（增 / 改 / 删 / 恢复默认 21 词 /
+  命中标红 + 「生成不会被中断」/ 只读回退）；
+  `storeSopGeneration.campaignRecipe.test.ts` 补 4 条链路级（骨架命中照常产出 + 命中项回传 /
+  **改词表后链路不再报命中** / 未配置走默认表 / 词表清空后候选值也不再剔除）。
+- **反向验证（精确命中，各自 1 条）**：① 把骨架清空改回去 ⇒ `骨架命中红线时保留骨架` 红；
+  ② `sanitize` 里忽略传入词表 ⇒ `清洗与判定按传入词表走` 红；③ 去掉空串过滤 ⇒
+  `空串（含全空白）不参与判定` 红。恢复后全绿。
+- 双端 tsc + lint + format:check 全过；全量 **282 文件 / 3541 用例全绿**。
+  第一次全量出现过 `electron/ipc-handlers.test.ts` 的 `afterAll` Hook 10s 超时（并发下的环境级假红，
+  R-102 同款；单独复跑 47/47 全过，重跑全量也全绿，与本次改动无关）。
+
+**未做 / 边界**
+
+- 词表是**全局一份**（所有配方卡共用），按「审核规则天然全局」定；不提供卡片级覆盖 ——
+  若将来出现「这张卡允许某个词」的真实需求再开。
+- 「一键把误判词从词表删掉」的入口只做在弹窗词表里（杰哥明确要「直接在配方卡修改」，
+  不做生成时弹框打断）。生成前若命中骨架，只在配方卡标红提示。
+- 候选值命中仍自动剔除（自动组合出的值没人逐条看过，保留这层防护）；若某维度被剔空，
+  仍会因「维度没有任何候选值」而拒绝生成 —— 这条保留原行为，未在本次放开。
+

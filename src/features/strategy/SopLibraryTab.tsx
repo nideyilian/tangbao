@@ -154,6 +154,13 @@ export default function SopLibraryTab({
 }: SopLibraryTabProps) {
   const { openConfirmDialog } = useAppDialog()
   const showToast = useStore((state) => state.showToast)
+  /**
+   * 配方卡合规红线词表（全局一份，存在设置里）。
+   * `undefined` = 没自定义过（弹窗回落到内置默认 21 词），`[]` = 用户把红线全关了 ——
+   * 直接透传，**不要在这里折算**（折算会让「全删光」退回默认词表）。
+   */
+  const recipeForbiddenTerms = useStore((state) => state.settings.recipeForbiddenTerms)
+  const setSettings = useStore((state) => state.setSettings)
   const [editorMenuOpen, setEditorMenuOpen] = useState(false)
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
   /** 折叠存档按「当前还存在的分组 id」筛一遍（删掉的分组不会在存档里累积）。 */
@@ -638,6 +645,8 @@ export default function SopLibraryTab({
                 config={itemDraft.campaignRecipe ?? { body: '', dimensions: [] }}
                 meta={{ name: itemDraft.name, desc: itemDraft.description, dominantSlots: itemDraft.dominantSlots }}
                 onChange={(campaignRecipe) => setItemDraft({ ...itemDraft, campaignRecipe })}
+                forbiddenTerms={recipeForbiddenTerms}
+                onForbiddenTermsChange={(terms) => setSettings({ recipeForbiddenTerms: terms })}
                 onMetaChange={(patch) => {
                   // 解析出的名称/说明/主控槽直接落到草案上，随保存一起持久化；
                   // 名称已有值时**不覆盖**用户手填的名字（只在识别到且当前为空时补）

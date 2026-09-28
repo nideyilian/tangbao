@@ -37,6 +37,16 @@ export type SopCampaignRecipePanelProps = {
   meta?: { name?: string; desc?: string; dominantSlots?: string[] }
   onChange: (config: SopCampaignRecipeConfig) => void
   onMetaChange?: (meta: { name?: string; desc?: string; dominantSlots?: string[] }) => void
+  /**
+   * 当前生效的合规红线词表（全局一份，来自设置）。
+   * 不传 = 内置默认 21 词；传 `[]` = 用户把红线全关了（与不传语义不同）。
+   */
+  forbiddenTerms?: readonly string[]
+  /**
+   * 修改红线词表（配方面板只是透传，真正的存储与生效在设置里）。
+   * 不传 = 词表按只读展示。
+   */
+  onForbiddenTermsChange?: (terms: string[]) => void
 }
 
 /**
@@ -66,7 +76,14 @@ export function countRecipeEnglishOptions(dimensions: Array<{ englishByOption?: 
   return dimensions.reduce((total, dimension) => total + Object.keys(dimension.englishByOption ?? {}).length, 0)
 }
 
-export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaChange }: SopCampaignRecipePanelProps) {
+export default function SopCampaignRecipePanel({
+  config,
+  meta,
+  onChange,
+  onMetaChange,
+  forbiddenTerms,
+  onForbiddenTermsChange,
+}: SopCampaignRecipePanelProps) {
   const [rawText, setRawText] = useState('')
   const [parseError, setParseError] = useState('')
   const [parsed, setParsed] = useState<ParsedCampaignRecipe | null>(null)
@@ -306,6 +323,8 @@ export default function SopCampaignRecipePanel({ config, meta, onChange, onMetaC
         onChange={onChange}
         dominantSlots={dominantSlotsForDisplay}
         meta={meta}
+        forbiddenTerms={forbiddenTerms}
+        onForbiddenTermsChange={onForbiddenTermsChange}
       />
     </section>
   )

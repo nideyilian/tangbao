@@ -172,6 +172,18 @@ export interface AppSettings {
   allowPromptRewrite: boolean
   assistantActions: AssistantActionPreferences
   adNegativeRuleProfiles: AdNegativeRuleProfile[]
+  /**
+   * 配方卡「合规红线」词表（全局一份，所有配方卡共用）。
+   *
+   * 三种值语义**必须分清**（见 `normalizeCampaignRecipeForbiddenTerms`）：
+   * - `undefined` —— 没自定义过（旧存档 / 新用户）⇒ 用内置默认 21 词；
+   * - `[]`        —— 用户**明确清空**了词表 ⇒ 红线关闭，一个词都不拦；
+   * - `string[]`  —— 用户那份词表（trim / 去空 / 去重后的结果）。
+   *
+   * 因此在归一化里**不能**把空数组折算成 undefined，也不能按长度判断「有没有配」——
+   * 否则用户「把误判词全删光」这个动作会被当成「没配过」，默认词表又冒回来。
+   */
+  recipeForbiddenTerms?: string[]
   wordLibraryDerivativeRule?: string
   wordLibraryDerivativeRuleMode: 'single' | 'multiple'
   wordLibraryDerivativeRules: WordLibraryDerivativeRule[]

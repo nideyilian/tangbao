@@ -16,6 +16,9 @@
  * 距离定义：两条提示词在「维度取值」上的汉明距离（不同维度计数）。
  */
 import { parseVariablePrompt } from '../../lib/variablePrompt'
+// 词表本体在 lib（设置归一化也要用），这里只 import 需要的两个：默认值用于旧名导出，
+// 判定函数用于 sanitize。其余名字走下方 `export { ... } from` 透传（re-export 不产生本地绑定）。
+import { DEFAULT_RECIPE_FORBIDDEN_TERMS, findRecipeForbiddenViolations } from '../../lib/recipeForbiddenTerms'
 import type { SopCampaignRecipeConfig, SopCampaignRecipeDimension } from './types'
 
 /** 配方卡维度的别名（语义等价，供引擎内部与调用方共用同一结构）。 */
@@ -160,57 +163,30 @@ export interface CampaignRecipeGenerationResult {
 export const MAX_DIMENSION_OPTIONS = 400
 
 // ---------------------------------------------------------------------------
-// 合规红线（内置，不可关闭）
+// 合规红线（词表本体见 lib/recipeForbiddenTerms.ts；此处保留旧导出名）
 // ---------------------------------------------------------------------------
 
 /**
- * 合规红线词表：命中任意一项即判定该候选值不合规，直接从候选池剔除。
- * 这些词属于广告法与平台审核的高危项，不允许进入任何生成的提示词。
- */
-export const CAMPAIGN_RECIPE_FORBIDDEN_TERMS = [
-  // 金融 / 收益承诺
-  '人民币',
-  '现金',
-  '钞票',
-  '提现',
-  '赚钱',
-  '日赚',
-  '月赚',
-  '保本',
-  '稳赚',
-  // 极限用语
-  '最高',
-  '必备',
-  '必看',
-  '第一',
-  // 国家 / 政治敏感
-  '国家级',
-  '领导人',
-  '毛泽东',
-  '军',
-  '警',
-  // 色情低俗
-  '色情',
-  '裸体',
-  '裸',
-] as const
-
-/**
- * 检测文本命中的合规红线词，返回命中的词表（空数组表示合规）。
+ * 默认词表（21 词）。
  *
- * 说明：中文没有词边界，这里对每个红线词做子串匹配。
- * 例如「军」会命中「军绿色」「行军床」，属刻意保守 —— 合规判定宁可误杀不可放过。
+ * ⚠️ 它**不是运行时的真相**（2026-09-28 TB-142 改）：实际生效词表存在
+ * `AppSettings.recipeForbiddenTerms`，用户可在「配方卡详情」里增删改。
+ * **判定处一律把当前词表传进去**（`findCampaignRecipeViolations(text, terms)`），
+ * 不要直接 filter 这个常量 —— 否则用户删了词、界面还报命中（「改了没反应」的标准成因）。
  */
-export function findCampaignRecipeViolations(text: string): string[] {
-  const normalized = text.trim()
-  if (!normalized) return []
-  return CAMPAIGN_RECIPE_FORBIDDEN_TERMS.filter((term) => normalized.includes(term))
-}
+export const DEFAULT_CAMPAIGN_RECIPE_FORBIDDEN_TERMS = DEFAULT_RECIPE_FORBIDDEN_TERMS
 
-/** 文本是否合规（未命中任何红线词）。 */
-export function isCampaignRecipeCompliant(text: string): boolean {
-  return findCampaignRecipeViolations(text).length === 0
-}
+/** 旧名 = 默认词表，保留给「展示默认值 / 恢复默认 / 测试」使用。 */
+export const CAMPAIGN_RECIPE_FORBIDDEN_TERMS = DEFAULT_RECIPE_FORBIDDEN_TERMS
+
+// 词表本体（默认值 / 归一化 / 判定）都在 lib/recipeForbiddenTerms.ts：它是全应用唯一实现，
+// 放在 lib 是因为设置归一化（lib/apiProfiles.ts）也要用它，而 lib 不能反向依赖 features。
+export {
+  findRecipeForbiddenViolations as findCampaignRecipeViolations,
+  isRecipeCompliant as isCampaignRecipeCompliant,
+  normalizeRecipeForbiddenTerms as normalizeCampaignRecipeForbiddenTerms,
+  resolveRecipeForbiddenTerms as resolveCampaignRecipeForbiddenTerms,
+} from '../../lib/recipeForbiddenTerms'
 
 /**
  * 校验并规整配方卡结构；返回错误列表（空数组表示可用）。
@@ -238,22 +214,32 @@ export function validateCampaignRecipeConfig(config: CampaignRecipeConfig): stri
 }
 
 /**
- * 用红线词表清洗配方卡：剔除命中红线的候选值与正文。
- * 返回清洗后的配方卡与被剔除项，便于向用户提示。
+ * 用红线词表清洗配方卡：剔除命中红线的**候选值**，并把命中项回传给调用方做提示。
  *
- * `bodyRemoved` 单独标记「骨架正文因命中红线被整段清空」。调用方必须据此给出
- * 与真因对齐的报错 —— 否则用户只会看到「配方卡缺少提示词骨架 body」，
- * 跑去检查骨架却发现骨架明明在，完全指向错误的排查方向。
+ * ## 骨架命中：只提示，不动它（2026-09-28 TB-142 改，勿改回）
+ *
+ * 原行为是「骨架命中 → body 整段清空 → 生成前抛错中断」。它有两个后果，都很致命：
+ * ① 骨架是**用户手写**的文案，误判时整批生成直接 0 条，用户看到的是「我的提示词不能用了」；
+ * ② 报错文案把人往「改骨架」上引，而真正的病根是词表里那个过宽的词（「提现」「军」这类
+ *    子串匹配在正常文案里极易撞车），改文案属于被误判逼着改自己的东西。
+ *
+ * 现在的分工：**词表可编辑**（误判就地删词）+ **骨架只标红不中断**，
+ * 候选值仍按原样剔除（那是自动组合出来的值，没人逐条看过，保留这层防护）。
+ * 调用方据 `bodyHit` 与 `removed` 在**配方卡里**提示，**不要**再抛错中断。
  */
-export function sanitizeCampaignRecipeConfig(config: CampaignRecipeConfig): {
+export function sanitizeCampaignRecipeConfig(
+  config: CampaignRecipeConfig,
+  terms?: readonly string[] | null,
+): {
   config: CampaignRecipeConfig
   removed: string[]
-  bodyRemoved: boolean
+  /** 骨架命中红线（**仅提示用**：骨架不再被清空、生成不再被中断）。 */
+  bodyHit: boolean
 } {
   const removed: string[] = []
   const dimensions = (config.dimensions ?? []).map((dimension) => {
     const options = (dimension.options ?? []).filter((option) => {
-      const violations = findCampaignRecipeViolations(option)
+      const violations = findRecipeForbiddenViolations(option, terms)
       if (violations.length === 0) return true
       removed.push(`维度「${dimension.name}」候选值「${option}」（命中：${violations.join('、')}）`)
       return false
@@ -267,14 +253,15 @@ export function sanitizeCampaignRecipeConfig(config: CampaignRecipeConfig): {
     // 清洗只应删候选值，不该动维度的元数据 —— 这是「剔污」与「重建」的边界。
     return { ...dimension, options }
   })
-  const bodyViolations = findCampaignRecipeViolations(config.body ?? '')
+  const bodyViolations = findRecipeForbiddenViolations(config.body ?? '', terms)
   if (bodyViolations.length > 0) {
     removed.push(`提示词骨架（命中：${bodyViolations.join('、')}）`)
   }
   return {
-    config: { body: bodyViolations.length > 0 ? '' : config.body, dimensions },
+    // 骨架**原样保留**（见上方「骨架命中：只提示，不动它」）
+    config: { body: config.body, dimensions },
     removed,
-    bodyRemoved: bodyViolations.length > 0,
+    bodyHit: bodyViolations.length > 0,
   }
 }
 

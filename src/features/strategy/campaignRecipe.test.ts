@@ -91,13 +91,63 @@ describe('campaignRecipe 合规红线', () => {
     expect(removed.some((item) => item.includes('日赚'))).toBe(true)
   })
 
-  it('骨架命中红线时清空骨架并报告', () => {
-    const { config, removed } = sanitizeCampaignRecipeConfig({
+  // 2026-09-28 TB-142：骨架命中**不再清空骨架**（即不再让整批生成中断）。
+  // 骨架是用户手写的文案，误判（「提现」撞正常文案、「军」撞「军绿色」）时把整段清掉，
+  // 用户看到的是「我正常的提示词不能用了」；现在只标红提示，由他改词表或改文案。
+  it('骨架命中红线时保留骨架（只提示，不中断）', () => {
+    const { config, removed, bodyHit } = sanitizeCampaignRecipeConfig({
       body: '保证稳赚，{{主体}}',
       dimensions: [{ name: '主体', options: ['杯子'] }],
     })
-    expect(config.body).toBe('')
+    expect(config.body).toBe('保证稳赚，{{主体}}')
+    expect(bodyHit).toBe(true)
     expect(removed.some((item) => item.includes('骨架'))).toBe(true)
+  })
+
+  it('骨架不含红线时 bodyHit 为 false', () => {
+    const { bodyHit } = sanitizeCampaignRecipeConfig({
+      body: '产品特写，{{主体}}',
+      dimensions: [{ name: '主体', options: ['杯子'] }],
+    })
+    expect(bodyHit).toBe(false)
+  })
+
+  // TB-142 报障场景的闭环：骨架含「提现」的配方卡，过去会被整段清空 + 抛错（0 条），
+  // 现在**默认词表下也照常出词**；用户把「提现」从词表删掉之后，连提示都没有了。
+  it('骨架命中红线时仍能生成；删掉该词后不再命中', () => {
+    const config: CampaignRecipeConfig = {
+      body: '点击提现到账，{{主体}}',
+      dimensions: [
+        { name: '主体', options: ['杯子', '耳机'] },
+        { name: '场景', options: ['棚拍', '居家'] },
+      ],
+    }
+
+    const withDefault = sanitizeCampaignRecipeConfig(config)
+    expect(withDefault.bodyHit).toBe(true)
+    // 旧行为在这里 config.body === '' ⇒ 下面两行都会失败（validate 报「缺少骨架」、渲染 0 条）
+    expect(validateCampaignRecipeConfig(withDefault.config)).toEqual([])
+    expect(renderCampaignRecipePrompts(withDefault.config, { count: 2 })).toHaveLength(2)
+
+    const custom = CAMPAIGN_RECIPE_FORBIDDEN_TERMS.filter((term) => term !== '提现')
+    const cleaned = sanitizeCampaignRecipeConfig(config, custom)
+    expect(cleaned.bodyHit).toBe(false)
+    expect(cleaned.removed).toEqual([])
+    expect(renderCampaignRecipePrompts(cleaned.config, { count: 2 })).toHaveLength(2)
+  })
+
+  // TB-142：判定与剔除都按**传入的当前词表**走，不再读那 21 词常量。
+  it('清洗与判定按传入词表走（删掉误判词之后不再命中）', () => {
+    const withoutCashOut = CAMPAIGN_RECIPE_FORBIDDEN_TERMS.filter((term) => term !== '提现')
+    expect(findCampaignRecipeViolations('点击提现到账')).toEqual(['提现'])
+    expect(findCampaignRecipeViolations('点击提现到账', withoutCashOut)).toEqual([])
+
+    const dirty: CampaignRecipeConfig = {
+      body: '{{卖点}}',
+      dimensions: [{ name: '卖点', options: ['日赚稳定', '手感出色'] }],
+    }
+    expect(sanitizeCampaignRecipeConfig(dirty, []).config.dimensions[0].options).toEqual(['日赚稳定', '手感出色'])
+    expect(sanitizeCampaignRecipeConfig(dirty, ['日赚']).config.dimensions[0].options).toEqual(['手感出色'])
   })
 
   // 回归用例（2026-09-20）：清洗曾经用 `{ name, options }` 重建维度，把 weight 丢掉，
