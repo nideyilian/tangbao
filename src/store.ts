@@ -6714,7 +6714,15 @@ export async function submitTaskWithData(
 
   const variablePrompt = parseVariablePrompt(prompt)
   if (variablePrompt.detected && !variablePrompt.enabled) {
-    showToast(`变量提示词格式有误：${variablePrompt.errors[0] ?? '请检查可变项格式'}`, 'error')
+    // 报错要能定位（2026-09-28 TB-143）：toast 装不下全部问题，就把「共几处 + 第一条」说清，
+    // 明细常驻在输入框下方那个警示块里 —— 不再只闪一下、只报 errors[0] 就没了。
+    const [firstError, ...restErrors] = variablePrompt.errors
+    showToast(
+      restErrors.length > 0
+        ? `变量提示词格式有误（共 ${variablePrompt.errors.length} 处）：${firstError}；其余见输入框下方提示`
+        : `变量提示词格式有误：${firstError ?? '请检查可变项格式'}`,
+      'error',
+    )
     return
   }
 

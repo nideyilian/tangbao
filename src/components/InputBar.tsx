@@ -4801,13 +4801,25 @@ export default function InputBar() {
                 </Badge>
               )}
               {variablePromptState.detected && !variablePromptState.enabled && (
-                <Badge tone="warning" title={variablePromptState.errors.join('\n')}>
-                  变量提示词格式有误：{variablePromptState.errors[0]}
-                </Badge>
+                <Badge tone="warning">变量提示词格式有误（{variablePromptState.errors.length} 处）</Badge>
               )}
             </div>
             <span className="tabular-nums">{prompt.trim().length} 字</span>
           </div>
+
+          {/* 变量提示词有问题时把**全部**问题常驻列出来（TB-143）。
+              以前只有一条 toast 报 errors[0]、闪一下就没，用户既不知道该改哪一行，
+              也不知道一共错了几处 —— 现在明细留在这里，对着改就行。 */}
+          {variablePromptState.detected && !variablePromptState.enabled && (
+            <ul
+              className="mt-2 list-disc space-y-0.5 rounded-ds-lg border border-ds-warning/35 bg-ds-warning-subtle px-2 py-1.5 pl-6 text-xs text-ds-warning dark:border-ds-warning/40 dark:bg-ds-warning/10 dark:text-ds-warning"
+              role="alert"
+            >
+              {variablePromptState.errors.map((error, index) => (
+                <li key={`${index}:${error}`}>{error}</li>
+              ))}
+            </ul>
+          )}
 
           {/* 参数 + 按钮 */}
           <div className="mt-3">

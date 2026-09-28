@@ -23,10 +23,42 @@ export interface VariablePromptParseResult {
   aspectRatio?: '1:1' | '3:4' | '4:3' | '9:16' | '16:9'
 }
 
-const VARIABLE_SECTION_LINE = /^\s*可变项\s*[：:]\s*$/u
-const VARIABLE_DEFINITION_LINE = /^\s*\{\{\s*([^{}\r\n]+?)\s*\}\}\s*[：:]\s*(.*?)\s*$/u
+/**
+ * 行首装饰（Markdown 列表符号 / 有序列表编号 / `#` 标题）。**只作用于行首**，
+ * 不碰选项正文 —— 用于容忍 AI 生成与从文档、聊天里粘贴过来的写法。
+ *
+ * 为什么要容忍（2026-09-28 TB-143）：一键衍生 / SOP 里的变量提示词资产产出的模板，
+ * 定义行常写成 `- {{主体}}：猫 / 狗` 或 `**{{主体}}**：猫 / 狗`——**视觉上每行一个、
+ * 看着很标准**，旧的严格匹配却判「格式有误」，于是用户在输入框里点生成直接被拦下、
+ * 却完全看不出哪里错了。实测（`variablePrompt.test.ts`）：这两种写法以前会报
+ * 「可变项第 1 行格式不正确，每个变量必须单独占一行」——文案本身还自相矛盾。
+ */
+const LINE_PREFIX = String.raw`(?:[-*+]\s+|\d+\s*[.、)]\s*|#{1,6}\s+)?`
+/** 变量名/标题外面的加粗包裹（`**x**` 或 `__x__`）。 */
+const BOLD_WRAP = String.raw`(?:\*\*|__)?`
+
+const VARIABLE_SECTION_LINE = new RegExp(
+  // 尾部的 BOLD_WRAP 是给 `**可变项：**` 这种整行加粗用的（加粗在冒号**外侧**，与定义行不同）。
+  String.raw`^\s*${LINE_PREFIX}${BOLD_WRAP}\s*可变项\s*${BOLD_WRAP}\s*[：:]\s*${BOLD_WRAP}\s*$`,
+  'u',
+)
+const VARIABLE_SECTION_CANDIDATE_LINE = new RegExp(
+  String.raw`^\s*${LINE_PREFIX}${BOLD_WRAP}\s*可变项\s*${BOLD_WRAP}\s*[：:]\s*${BOLD_WRAP}`,
+  'u',
+)
+const VARIABLE_DEFINITION_LINE = new RegExp(
+  // 定义行**不**吃冒号后的加粗：那部分属于选项正文，剥掉会改变送进模型的措辞。
+  String.raw`^\s*${LINE_PREFIX}${BOLD_WRAP}\s*\{\{\s*([^{}\r\n]+?)\s*\}\}\s*${BOLD_WRAP}\s*[：:]\s*(.*?)\s*$`,
+  'u',
+)
 const VARIABLE_MARKER = /\{\{\s*([^{}\r\n]+?)\s*\}\}/gu
 const SUPPORTED_ASPECT_RATIOS = new Set(['1:1', '3:4', '4:3', '9:16', '16:9'])
+
+/** 报错里引用原始行时截断，避免一条错误把整段模板抄进提示。 */
+function shortenLine(line: string) {
+  const text = line.trim()
+  return text.length > 40 ? `${text.slice(0, 40)}…` : text
+}
 
 function unique(values: string[]) {
   return [...new Set(values)]
@@ -49,7 +81,7 @@ export function parseVariablePrompt(prompt: string): VariablePromptParseResult {
   const normalized = prompt.replace(/\r\n?/g, '\n')
   const lines = normalized.split('\n')
   const strictSectionIndex = lines.findIndex((line) => VARIABLE_SECTION_LINE.test(line))
-  const candidateSectionIndex = lines.findIndex((line) => /^\s*可变项\s*[：:]/u.test(line))
+  const candidateSectionIndex = lines.findIndex((line) => VARIABLE_SECTION_CANDIDATE_LINE.test(line))
   const sectionIndex = strictSectionIndex >= 0 ? strictSectionIndex : candidateSectionIndex
   const detected = sectionIndex >= 0
   const body = detected ? lines.slice(0, sectionIndex).join('\n').trim() : normalized.trim()
@@ -70,7 +102,7 @@ export function parseVariablePrompt(prompt: string): VariablePromptParseResult {
   }
 
   if (strictSectionIndex < 0) {
-    errors.push('“可变项：”必须单独占一行，变量定义从下一行开始')
+    errors.push('“可变项：”必须单独占一行（当前这一行后面直接跟了内容），变量定义从下一行开始')
   }
 
   if (!body) errors.push('“可变项”前缺少提示词正文')
@@ -79,7 +111,13 @@ export function parseVariablePrompt(prompt: string): VariablePromptParseResult {
     if (!line.trim()) return
     const match = line.match(VARIABLE_DEFINITION_LINE)
     if (!match) {
-      errors.push(`可变项第 ${offset + 1} 行格式不正确，每个变量必须单独占一行`)
+      // 报错必须能自解释：给出**这一行原文**与**期望写法**。
+      // 旧文案只说「必须单独占一行」——对着一份每行一个变量的模板说这句话，用户只会觉得莫名其妙
+      // （2026-09-28 TB-143 报障现场：行首带了 `- `，但看肉眼确实"每行一个"）。
+      errors.push(
+        `可变项第 ${offset + 1} 行读不出变量定义：「${shortenLine(line)}」` +
+          `（应写成 {{变量名}}：选项A / 选项B，行首不要带符号）`,
+      )
       return
     }
     const name = normalizeVariableName(match[1])
