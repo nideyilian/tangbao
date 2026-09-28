@@ -2791,7 +2791,16 @@
   border-collapse: separate;
   border-spacing: 0;
   font-size: var(--ds-font-size-xs);
-  width: 100%;
+  /*
+   * 列宽一律由列定义写死（`DataGridColumn.width`），这里关掉浏览器的自动分配。
+   * auto 布局下「哪列内容长哪列就被撑宽」——同一张表换个方向数据，列宽就换一套，
+   * 表头跟着跑，列与列对不齐；屏幕越宽越明显。
+   * `max-content` 让表格宽度恒等于列宽之和：窄屏装不下就横向滚动（首列冻结，仍能对上号），
+   * 而不是把各列压扁、让文字换行。`min-width: 100%` 只负责列少时仍然铺满容器。
+   */
+  table-layout: fixed;
+  width: max-content;
+  min-width: 100%;
 }
 
 .ds-data-grid__head-cell {
@@ -2843,14 +2852,15 @@
   border-bottom: 1px solid hsl(var(--ds-color-border));
   border-right: 1px solid hsl(var(--ds-color-border));
   /*
-   * 上下 16px（2026-09-22 杰哥反馈「尺寸组件跟表格上下的间距基本为 0」）。
+   * 上下 8px（2026-09-28 从 16px 收回）：20 列的表现在一行占 60px，一屏看不到几行 ——
+   * 密集数据面该把高度让给「看得见的行数」。8px + 控件 28px = 44px 行高，控件上下仍有呼吸。
    * 行高不再由 `--ds-data-grid-row-height` 定，而是被内容撑开 —— 那个变量现在是**最小行高**（30px），
    * 保证没有内容的行也不会塌成一条线。
    *
-   * 左右 8px（同日反馈「尺寸组件、选择地址的按钮边距太小」后从 4 调回来）：
-   * 加上内容自带的 8px = 16px，与表头的 `--ds-space-4` 对齐；路径「选择」按钮也才有呼吸。
+   * 左右 8px：加上内容自带的 8px = 16px，与表头的 `--ds-space-4` 对齐；路径「选择」按钮也才有呼吸。
+   * **表头与内容必须共用这一份口径**，差一点整列就会歪。
    */
-  padding: var(--ds-space-4) var(--ds-space-2);
+  padding: var(--ds-space-2);
   vertical-align: middle;
 }
 
@@ -2938,10 +2948,55 @@
   text-align: right;
 }
 
+/*
+ * 下拉：把系统外观整个接管，与旁边无边框的输入框长成一套。
+ *
+ * 系统箭头会按平台画成不同大小、还自带一坨右侧内边距 —— 同一个格子里，
+ * 下拉里的文字和输入框里的数字就永远对不到一条线上，宽度也跟着平台变。
+ * 箭头由外层 `__select-wrap::after` 画（`<select>` 是替换元素，伪元素挂不上去），
+ * 内边距与输入框同源，只在右侧多留出箭头的位置。
+ */
+select.ds-data-grid__editor.ds-input {
+  appearance: none;
+  cursor: pointer;
+  padding-right: var(--ds-space-5);
+}
+
+.ds-data-grid__select-wrap {
+  display: block;
+  position: relative;
+  width: 100%;
+}
+
+.ds-data-grid__select-wrap::after {
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid hsl(var(--ds-color-text-subtle));
+  content: '';
+  margin-top: -2px;
+  pointer-events: none;
+  position: absolute;
+  right: var(--ds-space-2);
+  top: 50%;
+}
+
+/*
+ * 「跟随上级」态：文字调暗，与「自己定了值」一眼分得开。
+ * 输入框靠 placeholder 天然有这层区分，下拉没有 placeholder 机制，只能靠这一条补上。
+ */
+.ds-data-grid__editor--inherit {
+  color: hsl(var(--ds-color-text-subtle));
+}
+
 .ds-data-grid__readonly {
   color: hsl(var(--ds-color-text-muted));
   display: block;
+  /* 定长列里的长内容（如「保险 / 百万医疗险 / 用…」）截断，而不是把列撑宽 ——
+   * 完整值挂在单元格的 `title` 上，鼠标停一下能看全。 */
+  overflow: hidden;
   padding: 0 var(--ds-space-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*

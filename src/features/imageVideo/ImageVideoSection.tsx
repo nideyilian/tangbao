@@ -32,7 +32,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Badge, Button, DataGrid, Inline, Stack } from '../../design-system'
-import type { DataGridColumn } from '../../design-system'
+import type { DataGridColumn, SelectOption } from '../../design-system'
 import { useStore } from '../../store'
 import type { TaskRecord } from '../../types'
 import { useAssetLibraryStore } from '../assetLibrary/store'
@@ -70,6 +70,23 @@ const ENABLED_OFF = 'off'
  * 而 `undefined` = 没表态（继续继承）。两件事，界面上也得是两个选项。
  */
 const LIBRARY_ALL = '__all__'
+
+/**
+ * 给下拉补上「跟随上级」那一档。
+ *
+ * 两件事必须一起做，少一件这一档就等于没做：
+ * - **值**用 `ENABLED_INHERIT`（空串）—— 这是数据层「没表态」的表示，提交上去才能真正恢复继承；
+ * - **文字**写出会生效成什么（「跟随上级：淡入淡出」）—— 下拉没有 placeholder 机制，
+ *   不写出来用户就只能靠猜。输入框一直有这层提示（`placeholderForRow`），
+ *   下拉列以前是空档：格子显示「不用」，实际生效的却是上层配的「淡入淡出」。
+ *
+ * 全局行**不给**这一档：它上面没有东西可跟随，留空的含义是「回默认值」，
+ * 与「继续向上继承」是两件事，混成一档用户永远不知道自己选了什么。
+ */
+function withInherit(row: ImageVideoRow, base: SelectOption[], inheritedLabel: string): SelectOption[] {
+  if (row.isGlobal) return base
+  return [{ value: ENABLED_INHERIT, label: `跟随：${inheritedLabel}` }, ...base]
+}
 
 /** 三态下拉的值 → `boolean | undefined`（`undefined` = 恢复继承）。 */
 function triStateToBoolean(value: unknown): boolean | undefined {
@@ -166,7 +183,14 @@ export function ImageVideoSection({ scope }: Props) {
       id: GLOBAL_NODE_ID,
       name: '全局（所有方向）',
       isGlobal: true,
-      override: {},
+      /**
+       * 全局层没有「上级」，它的表态就是全局基线本身。
+       *
+       * ⚠️ 这里**必须**是 `globals`，不能写死空对象：表格读的是 `override`，
+       * 而写回走的是 `setGlobals`（见 `commitPatch`）。两边不同源的话，全局行每个
+       * 下拉都会「改完立刻弹回原样」—— 值其实写进去了，只是没有任何一格去读它。
+       */
+      override: globals,
       effective: globals,
       inherited: globals,
       inputDirCount: 0,
@@ -258,9 +282,60 @@ export function ImageVideoSection({ scope }: Props) {
   )
 
   const columns = useMemo<Array<DataGridColumn<ImageVideoRow>>>(() => {
-    /** 占位文字：节点行念继承值，全局行念默认值。 */
+    /** 占位文字：方向行念继承值（全局行总有值，走不到这里）。口径与下拉里那一档一致。 */
     const inheritHint = (row: ImageVideoRow, pick: (params: ImageVideoParams) => string, label: string) =>
       row.isGlobal ? label : `跟随：${pick(row.inherited)}`
+
+    /**
+     * 读本级表了态的值；没表态就是 `undefined`（格子显示成空，由占位文字说明会跟随成什么）。
+     *
+     * ⚠️ 每个编辑列都必须显式写 `getValue`：不写的话组件会按 `key` 直接从行对象上取，
+     * 而这一行是包装对象（只有 `override` / `effective` / `inherited`），根本没有
+     * `imagesPerVideo`、`bitrate` 这些键 —— 结果是每一格都取到 `undefined`，
+     * 用户填的值确实写进库了，格子却永远显示不出来（只剩占位文字）。
+     */
+    const own = (row: ImageVideoRow, key: keyof ImageVideoParams) => row.override[key]
+
+    // 下拉选项的基底，不含「跟随上级」那一档 —— 它由 `withInherit` 按行补（全局行不该有）
+    const ENABLED_BASE: SelectOption[] = [
+      { value: ENABLED_ON, label: '出' },
+      { value: ENABLED_OFF, label: '不出' },
+    ]
+    const SWITCH_BASE: SelectOption[] = [
+      { value: ENABLED_ON, label: '用' },
+      { value: ENABLED_OFF, label: '不用' },
+    ]
+    const RESOLUTION_BASE: SelectOption[] = IMAGE_VIDEO_RESOLUTIONS.map((item) => ({ value: item, label: item }))
+    const TRANSITION_BASE: SelectOption[] = [
+      { value: MODE_OFF, label: '不用' },
+      { value: MODE_RANDOM, label: '随机' },
+      ...IMAGE_VIDEO_TRANSITIONS.map((item) => ({ value: item, label: item })),
+    ]
+    const EFFECT_BASE: SelectOption[] = [
+      { value: MODE_OFF, label: '不动' },
+      { value: MODE_RANDOM, label: '随机' },
+      ...IMAGE_VIDEO_EFFECTS.map((item) => ({ value: item, label: item })),
+    ]
+    const POSITION_BASE: SelectOption[] = IMAGE_VIDEO_WATERMARK_POSITIONS.map((item) => ({
+      value: item,
+      label: item,
+    }))
+    // 两个库下拉的候选依赖素材库快照（读不到时就只剩「整个库」这一档，编辑照常）
+    const BGM_FOLDER_BASE: SelectOption[] = [
+      { value: LIBRARY_ALL, label: '整个库' },
+      ...(library?.bgm_folders ?? []).map((folder) => ({ value: folder.relative, label: folder.name })),
+    ]
+    const WATERMARK_BASE: SelectOption[] = [
+      { value: LIBRARY_ALL, label: '整个库（轮转）' },
+      ...(library?.watermark_folders ?? []).map((folder) => ({
+        value: `folder:${folder.relative}`,
+        label: `${folder.name}/（轮转）`,
+      })),
+      ...(library?.watermark ?? []).map((item) => ({
+        value: `file:${item.folder ? `${item.folder}/${item.name}` : item.name}`,
+        label: item.name,
+      })),
+    ]
 
     return [
       {
@@ -282,15 +357,10 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'select',
         width: 96,
         align: 'center',
-        options: [
-          { value: ENABLED_INHERIT, label: '跟随上级' },
-          { value: ENABLED_ON, label: '出' },
-          { value: ENABLED_OFF, label: '不出' },
-        ],
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, ENABLED_BASE, row.inherited.enabled ? '出' : '不出'),
         getValue: (row) =>
           row.override.enabled === undefined ? ENABLED_INHERIT : row.override.enabled ? ENABLED_ON : ENABLED_OFF,
-        placeholderForRow: (row) =>
-          row.isGlobal ? '不出' : row.inherited.enabled ? '跟随上级（出）' : '跟随上级（不出）',
       },
       {
         key: 'imagesPerVideo',
@@ -299,6 +369,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 110,
         align: 'end',
+        getValue: (row) => own(row, 'imagesPerVideo'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.imagesPerVideo), '6'),
       },
       {
@@ -308,6 +379,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 96,
         align: 'end',
+        getValue: (row) => own(row, 'secondsPerImage'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.secondsPerImage), '2'),
       },
       {
@@ -317,6 +389,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 104,
         align: 'end',
+        getValue: (row) => own(row, 'totalDuration'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.totalDuration), '0'),
       },
       {
@@ -326,6 +399,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 84,
         align: 'end',
+        getValue: (row) => own(row, 'videoCount'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.videoCount), '1'),
       },
       {
@@ -334,8 +408,9 @@ export function ImageVideoSection({ scope }: Props) {
         help: '成片尺寸',
         editor: 'select',
         width: 116,
-        options: IMAGE_VIDEO_RESOLUTIONS.map((item) => ({ value: item, label: item })),
-        placeholderForRow: (row) => inheritHint(row, (params) => params.resolution, '1280x720'),
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, RESOLUTION_BASE, row.inherited.resolution),
+        getValue: (row) => own(row, 'resolution'),
       },
       {
         key: 'fps',
@@ -344,6 +419,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 76,
         align: 'end',
+        getValue: (row) => own(row, 'fps'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.fps), '30'),
       },
       {
@@ -352,20 +428,16 @@ export function ImageVideoSection({ scope }: Props) {
         help: '图片之间怎么切换。「随机」是每个视频各随机一种',
         editor: 'select',
         width: 116,
-        options: [
-          { value: MODE_OFF, label: '不用' },
-          { value: MODE_RANDOM, label: '随机' },
-          ...IMAGE_VIDEO_TRANSITIONS.map((item) => ({ value: item, label: item })),
-        ],
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, TRANSITION_BASE, describeTransition(row.inherited)),
         getValue: (row) =>
           row.override.transitionMode === undefined
-            ? ''
+            ? ENABLED_INHERIT
             : row.override.transitionMode === 'off'
               ? MODE_OFF
               : row.override.transitionMode === 'random'
                 ? MODE_RANDOM
                 : (row.override.transitionType ?? ''),
-        placeholderForRow: (row) => (row.isGlobal ? '淡入淡出' : `跟随：${describeTransition(row.inherited)}`),
       },
       {
         key: 'effect',
@@ -373,20 +445,16 @@ export function ImageVideoSection({ scope }: Props) {
         help: '画面在动画里的动态（缓慢推拉、呼吸等）。「随机」是每个视频各随机一种',
         editor: 'select',
         width: 132,
-        options: [
-          { value: MODE_OFF, label: '不动' },
-          { value: MODE_RANDOM, label: '随机' },
-          ...IMAGE_VIDEO_EFFECTS.map((item) => ({ value: item, label: item })),
-        ],
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, EFFECT_BASE, describeEffect(row.inherited)),
         getValue: (row) =>
           row.override.effectMode === undefined
-            ? ''
+            ? ENABLED_INHERIT
             : row.override.effectMode === 'off'
               ? MODE_OFF
               : row.override.effectMode === 'random'
                 ? MODE_RANDOM
                 : (row.override.effectType ?? ''),
-        placeholderForRow: (row) => (row.isGlobal ? '镜头呼吸' : `跟随：${describeEffect(row.inherited)}`),
       },
       {
         key: 'effectIntensity',
@@ -395,6 +463,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 96,
         align: 'end',
+        getValue: (row) => own(row, 'effectIntensity'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.effectIntensity), '100'),
       },
       {
@@ -404,6 +473,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 104,
         align: 'end',
+        getValue: (row) => own(row, 'bitrate'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.bitrate), '2000'),
       },
       {
@@ -412,15 +482,21 @@ export function ImageVideoSection({ scope }: Props) {
         help: '视频文件名的开头；留空则只有序号（如 1.mp4）',
         editor: 'text',
         width: 118,
-        placeholderForRow: (row) => (row.isGlobal ? '（只有序号）' : '跟随上级'),
+        getValue: (row) => own(row, 'filePrefix'),
+        placeholderForRow: (row) =>
+          row.isGlobal ? '（只有序号）' : `跟随：${row.inherited.filePrefix || '（只有序号）'}`,
       },
       {
         key: 'outputDir',
         header: '输出位置',
         help: '视频写到哪。留空 = 写在图片目录同级的「<目录名>-视频」里',
         editor: 'path',
+        // 定长列：这一格以前靠「吃剩余宽度」拿空间，列宽锁死之后必须自己声明宽度
+        width: 240,
         pickPath: async () => (await window.electronAPI?.selectDirectory?.()) ?? null,
-        placeholderForRow: (row) => (row.isGlobal ? '（图片目录同级 -视频）' : '留空 = 图片目录同级'),
+        getValue: (row) => own(row, 'outputDir'),
+        placeholderForRow: (row) =>
+          row.isGlobal ? '（图片目录同级 -视频）' : `跟随：${row.inherited.outputDir || '（图片目录同级）'}`,
       },
       {
         key: 'useBgm',
@@ -429,34 +505,25 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'select',
         width: 92,
         align: 'center',
-        options: [
-          { value: ENABLED_INHERIT, label: '跟随上级' },
-          { value: ENABLED_ON, label: '用' },
-          { value: ENABLED_OFF, label: '不用' },
-        ],
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, SWITCH_BASE, row.inherited.useBgm ? '用' : '不用'),
         getValue: (row) =>
           row.override.useBgm === undefined ? ENABLED_INHERIT : row.override.useBgm ? ENABLED_ON : ENABLED_OFF,
-        placeholderForRow: (row) =>
-          row.isGlobal ? '不用' : row.inherited.useBgm ? '跟随上级（用）' : '跟随上级（不用）',
       },
       {
         key: 'bgmFolder',
         header: '用哪组曲子',
         help: '「整个库」= 库里所有曲子；也可以只用一个文件夹里的（在「视频素材」分区建文件夹分类）',
         editor: 'select',
-        width: 144,
-        options: [
-          { value: ENABLED_INHERIT, label: '跟随上级' },
-          { value: LIBRARY_ALL, label: '整个库' },
-          ...(library?.bgm_folders ?? []).map((folder) => ({ value: folder.relative, label: folder.name })),
-        ],
+        width: 152,
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, BGM_FOLDER_BASE, row.inherited.bgmFolder || '整个库'),
         getValue: (row) =>
           row.override.bgmFolder === undefined
             ? ENABLED_INHERIT
             : row.override.bgmFolder === ''
               ? LIBRARY_ALL
               : row.override.bgmFolder,
-        placeholderForRow: (row) => (row.isGlobal ? '整个库' : '跟随上级'),
       },
       {
         key: 'bgmVolume',
@@ -465,6 +532,7 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'number',
         width: 104,
         align: 'end',
+        getValue: (row) => own(row, 'bgmVolume'),
         placeholderForRow: (row) => inheritHint(row, (params) => String(params.bgmVolume), '0.5'),
       },
       {
@@ -474,54 +542,47 @@ export function ImageVideoSection({ scope }: Props) {
         editor: 'select',
         width: 100,
         align: 'center',
-        options: [
-          { value: ENABLED_INHERIT, label: '跟随上级' },
-          { value: ENABLED_ON, label: '用' },
-          { value: ENABLED_OFF, label: '不用' },
-        ],
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, SWITCH_BASE, row.inherited.useVideoWatermark ? '用' : '不用'),
         getValue: (row) =>
           row.override.useVideoWatermark === undefined
             ? ENABLED_INHERIT
             : row.override.useVideoWatermark
               ? ENABLED_ON
               : ENABLED_OFF,
-        placeholderForRow: (row) =>
-          row.isGlobal ? '不用' : row.inherited.useVideoWatermark ? '跟随上级（用）' : '跟随上级（不用）',
       },
       {
         key: 'watermarkTarget',
         header: '用哪个水印',
         help: '选一个文件 = 同一个水印贴所有视频；选文件夹或整个库 = 按视频序号轮转着用',
         editor: 'select',
-        width: 168,
-        options: [
-          { value: ENABLED_INHERIT, label: '跟随上级' },
-          { value: LIBRARY_ALL, label: '整个库（轮转）' },
-          ...(library?.watermark_folders ?? []).map((folder) => ({
-            value: `folder:${folder.relative}`,
-            label: `${folder.name}/（轮转）`,
-          })),
-          ...(library?.watermark ?? []).map((item) => ({
-            value: `file:${item.folder ? `${item.folder}/${item.name}` : item.name}`,
-            label: item.name,
-          })),
-        ],
+        width: 176,
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) =>
+          withInherit(
+            row,
+            WATERMARK_BASE,
+            // 继承来的可能是一个文件、一个子文件夹或「整个库」—— 念得出名字才核对得了
+            row.inherited.watermarkPath
+              ? (row.inherited.watermarkPath.split('/').pop() ?? row.inherited.watermarkPath)
+              : '整个库（轮转）',
+          ),
         getValue: (row) => {
           const path = row.override.watermarkPath
           if (path === undefined) return ENABLED_INHERIT
           if (path === '') return LIBRARY_ALL
           return `${row.override.watermarkMode === 'single' ? 'file' : 'folder'}:${path}`
         },
-        placeholderForRow: (row) => (row.isGlobal ? '整个库（轮转）' : '跟随上级'),
       },
       {
         key: 'watermarkPosition',
         header: '水印位置',
         help: '水印贴在哪；默认右下（引擎默认是「中心」，会压住画面主体，这里刻意改掉了）',
         editor: 'select',
-        width: 110,
-        options: IMAGE_VIDEO_WATERMARK_POSITIONS.map((item) => ({ value: item, label: item })),
-        placeholderForRow: (row) => inheritHint(row, (params) => params.watermarkPosition, '右下'),
+        width: 112,
+        inheritValue: ENABLED_INHERIT,
+        optionsForRow: (row) => withInherit(row, POSITION_BASE, row.inherited.watermarkPosition),
+        getValue: (row) => own(row, 'watermarkPosition'),
       },
     ]
   }, [library])

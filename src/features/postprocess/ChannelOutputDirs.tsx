@@ -221,6 +221,8 @@ export default function ChannelOutputDirs({
       key: 'outputDir',
       header: '导出位置',
       editor: 'path',
+      // 列宽锁死（`table-layout: fixed`）之后，这一格不能再靠「吃剩余宽度」拿空间，必须自己声明
+      width: 300,
       pickPath,
       placeholderForRow: (row) => {
         // 第一行永远念**全部**继承来源（TB-095：只说一处会让人以为「跟随只跟一处」）；

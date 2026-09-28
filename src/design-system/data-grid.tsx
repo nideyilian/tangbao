@@ -64,6 +64,14 @@ export interface DataGridColumn<Row> {
    * 与 `optionsForRow` 同一套思路。
    */
   placeholderForRow?: (row: Row) => string
+  /**
+   * `select` 编辑器里**哪个值代表「没表态」**（跟随上级 / 用默认值）。
+   *
+   * 下拉没有 placeholder 机制（`placeholderForRow` 只喂给输入框），不声明这一项的话，
+   * 「跟随上级」和「明确选了个值」在下拉里长得一模一样 —— 用户分不清这一格是自己定的
+   * 还是跟着上面的，也就没法核对别人改上层之后自己会变成什么。命中它的下拉文字调暗。
+   */
+  inheritValue?: string
   /** `select` 编辑器的候选（全表共用一套时给这个）。 */
   options?: SelectOption[]
   /** `select` 编辑器的候选（逐行不同时给这个，如「渠道」取决于行）。优先于 `options`。 */
@@ -203,19 +211,25 @@ function GridCell<Row extends object>({ column, row, rowId, onCommit }: GridCell
   if (column.editor === 'select') {
     const options = column.optionsForRow?.(row) ?? column.options ?? []
     const current = toEditorText(rawValue)
+    // 命中列上声明的「没表态」值 → 文字调暗（下拉没有 placeholder 可用，见 `inheritValue`）
+    const inherited = column.inheritValue !== undefined && current === column.inheritValue
     return (
-      <select
-        className="ds-input ds-data-grid__editor"
-        aria-label={`${column.header}：${getRowLabel(row)}`}
-        value={current}
-        onChange={(event) => commit(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      // 套一层 span 是为了放自绘箭头：`<select>` 是替换元素，伪元素挂不上去，
+      // 而系统自带的那个箭头在 28px 高的密集表格里又大又压字，与旁边无边框的输入框不成一套。
+      <span className="ds-data-grid__select-wrap">
+        <select
+          className={cx('ds-input', 'ds-data-grid__editor', inherited && 'ds-data-grid__editor--inherit')}
+          aria-label={`${column.header}：${getRowLabel(row)}`}
+          value={current}
+          onChange={(event) => commit(event.target.value)}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </span>
     )
   }
 

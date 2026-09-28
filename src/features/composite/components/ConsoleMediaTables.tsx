@@ -414,6 +414,8 @@ export function ConsoleMediaTables({
         header: '导出位置',
         help: '留空 = 用默认输出位置（节点作用域下继续沿树向上继承）；给两个 = 双写，同一份产物两处各写一份。',
         editor: 'path',
+        // 列宽锁死（`table-layout: fixed`）之后，这一格不能再靠「吃剩余宽度」拿空间，必须自己声明
+        width: 320,
         pickPath,
         // 留空的含义逐行不同：第一行是「继承上级」（**几个位置都要念出来**，见
         // `formatInheritedOutputDirsHint`），第二行是「不多写这一份」
