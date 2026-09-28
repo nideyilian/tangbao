@@ -231,6 +231,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   imageVideoProbeSystem: () => ipcRenderer.invoke('image-video:probe-system'),
   imageVideoCall: (payload: { method: string; params?: Record<string, unknown>; timeoutMs?: number }) =>
     ipcRenderer.invoke('image-video:engine-call', payload),
+  /** 视频素材库（BGM / 视频水印）的两个目录；由主进程保证存在 */
+  imageVideoLibraryDirs: () => ipcRenderer.invoke('image-video:library-dirs'),
+  /**
+   * 永久删除库里的素材。
+   *
+   * 刻意走糖包自己的通道（不是引擎的 `library_remove`）：引擎那边丢系统回收站，
+   * 而糖包的口径是「删除即永久删除」（ADR-0021）。
+   */
+  imageVideoLibraryDelete: (paths: string[]) => ipcRenderer.invoke('image-video:library-delete', { paths }),
   onImageVideoEvent: (callback: (payload: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload)
     ipcRenderer.on('image-video:event', handler)

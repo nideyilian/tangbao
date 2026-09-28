@@ -967,6 +967,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['DataGrid', 'Button', 'Badge', 'Inline', 'Stack'],
   },
   {
+    module: 'src/features/imageVideo/VideoLibrarySection.tsx',
+    responsibility:
+      '中控台「视频素材」分区：BGM 库与视频水印库（MOV / MP4 / 图片）两个 tab —— 导入（复制进库、引擎按 sha256 与音频指纹去重）、列表、就地重命名、试听音频、转码预览视频、永久删除（走糖包自己的通道，不是引擎的回收站那套）',
+    decision: 'compose',
+    targets: ['Tabs', 'DataGrid', 'Button', 'Badge', 'TextField', 'Inline', 'Stack'],
+  },
+  {
     module: 'src/features/composite/CompositeWorkspace.tsx',
     responsibility:
       '中控台工作区装配（复刻灵境策略中心）：左栏作用域树 + 右区（作用域标题 + 分区 tab + 分区内容）；水印分区打开即编辑器（不做卡片中转），高度按分区给（编辑器撑满、表格走滚动）+ 撤销栈',
@@ -1335,6 +1342,7 @@ export const pageCoverage: PageCoverage[] = [
       '工作区顶部功能分区（水印为首个分区）',
       '水印分区内图层拖拽编辑',
       '视频分区：参数按项目树分层，一行一个方向，触发生成本地视频',
+      '视频素材分区：BGM 库与视频水印库（导入 / 试听预览 / 永久删除，库在糖包库根下）',
       'Ctrl+Z 撤销',
     ],
     document: 'design-system/tangbao/pages/postprocess.md',

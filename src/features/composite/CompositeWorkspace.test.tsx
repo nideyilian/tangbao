@@ -26,6 +26,9 @@ vi.mock('./components/PresetManagementTab', () => ({
 vi.mock('../imageVideo/ImageVideoSection', () => ({
   ImageVideoSection: () => <div>video-screen</div>,
 }))
+vi.mock('../imageVideo/VideoLibrarySection', () => ({
+  VideoLibrarySection: () => <div>video-library-screen</div>,
+}))
 
 /** 递归收集 props.children 里的全部文本（children 可能是字符串 / 单元素 / 数组） */
 function collectText(children: unknown): string {
@@ -45,7 +48,13 @@ function switchSection(renderer: ReturnType<typeof create>, sectionId: string) {
   const label = CONTROL_CONSOLE_SECTIONS.find((item) => item.id === sectionId)?.label
   if (!label) throw new Error(`未知分区：${sectionId}`)
   const tab = renderer.root.find(
-    (node) => node.type === 'button' && node.props.role === 'tab' && collectText(node.props.children).includes(label),
+    (node) =>
+      node.type === 'button' &&
+      node.props.role === 'tab' &&
+      // ⚠️ 必须**精确**比较，不能用 includes：分区名之间有前缀包含关系时会一次匹配到两个
+      // （2026-09-27 加「视频素材」时踩到 —— 「视频素材」includes「视频」，helper 直接抛
+      // 「Expected 1 but found 2」）。
+      collectText(node.props.children).trim() === label,
   )
   act(() => {
     ;(tab.props.onClick as () => void)()
@@ -121,11 +130,13 @@ describe('CompositeWorkspace', () => {
 
     // 2026-09-22 起右区并入过两个分区：「输出位置」并入「渠道与尺寸」（合称「渠道与输出」），
     // 所以别指望还有它们的占位 —— 合并前那两个 id 现在都由别名收敛到 `channel`。
-    // 2026-09-26 新增「视频」分区（图转视频），它有自己的一段渲染分支。
+    // 2026-09-26 新增「视频」分区（图转视频参数），2026-09-27 再加「视频素材」（BGM / 视频水印两个库），
+    // 各自有独立的一段渲染分支。
     const expectations: Record<string, string> = {
       watermark: 'editor-screen',
       channel: 'channel-screen',
       video: 'video-screen',
+      videoLibrary: 'video-library-screen',
     }
     // 注册表里的每个分区都要真的能切过去 —— 加了分区却忘了接线是这类注册表最常见的失效
     for (const section of CONTROL_CONSOLE_SECTIONS) {

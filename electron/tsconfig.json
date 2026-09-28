@@ -37,6 +37,7 @@
     "image-video/engine-bridge.ts",
     "image-video/engine-manager.ts",
     "image-video/engine-ipc.ts",
+    "image-video/library-fs.ts",
     "node-sqlite.d.ts"
   ]
 }

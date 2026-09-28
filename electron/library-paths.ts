@@ -43,6 +43,18 @@ export interface LibraryPaths {
   backups: string
   /** 库元数据文件（库根/library.json）。 */
   metaFile: string
+  /**
+   * 图转视频的素材库根（库根/video-library）。
+   *
+   * **刻意放在糖包库根下**，而不是引擎默认的「我的文档/图转视频素材库」：库素材属于糖包的数据，
+   * 该跟着库根走 —— 复制库根 = 整库搬家，备份与换机一并覆盖。代价是原程序里已经攒下的素材
+   * 要手动搬一次（2026-09-27 杰哥选定）。
+   */
+  videoLibrary: string
+  /** BGM 库（video-library/bgm）。 */
+  videoBgm: string
+  /** 视频水印库（video-library/watermark）—— 支持图片与视频（MOV / MP4）。 */
+  videoWatermark: string
 }
 
 function readLocalSettings(): Record<string, unknown> {
@@ -68,6 +80,7 @@ export function getLibraryRoot(): string {
 
 export function getLibraryPaths(): LibraryPaths {
   const root = getLibraryRoot()
+  const videoLibrary = path.join(root, 'video-library')
   return {
     root,
     db: path.join(root, 'db'),
@@ -75,6 +88,9 @@ export function getLibraryPaths(): LibraryPaths {
     thumbs: path.join(root, 'thumbs'),
     backups: path.join(root, 'backups'),
     metaFile: path.join(root, LIBRARY_META_FILE),
+    videoLibrary,
+    videoBgm: path.join(videoLibrary, 'bgm'),
+    videoWatermark: path.join(videoLibrary, 'watermark'),
   }
 }
 

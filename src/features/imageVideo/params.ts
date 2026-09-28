@@ -25,9 +25,15 @@ import {
   IMAGE_VIDEO_RESOLUTIONS,
   IMAGE_VIDEO_SELECTION_MODES,
   IMAGE_VIDEO_TRANSITIONS,
+  IMAGE_VIDEO_WATERMARK_AUDIO_MODES,
+  IMAGE_VIDEO_WATERMARK_BLEND_MODES,
+  IMAGE_VIDEO_WATERMARK_MATCH_METHODS,
+  IMAGE_VIDEO_WATERMARK_POSITIONS,
+  IMAGE_VIDEO_WATERMARK_SIZE_MODES,
   type ImageVideoMode,
   type ImageVideoNodeOverride,
   type ImageVideoParams,
+  type ImageVideoWatermarkMode,
 } from './types'
 
 /** 各数值字段的取值范围；界面校验与归一化共用同一份，避免两处写两套。 */
@@ -89,6 +95,30 @@ function optionalAllowed(value: unknown, allowed: readonly string[]): string | u
   return allowed.includes(trimmed) ? trimmed : undefined
 }
 
+/**
+ * 库内相对路径（BGM 选哪个文件夹 / 水印选哪个文件或文件夹）。
+ *
+ * ⚠️ **空串在这里是有意义的显式值**：它表示「用库根本身」= 整个库。
+ * 这与其它字段「空 = 没表态」的口径**刻意不同** —— 「用整个库」和「我没意见（继续继承）」
+ * 是两件事，界面上的下拉也据此分成「跟随上级 / 整个库 / 某个子文件夹」三档。
+ * 所以这里只把 `undefined` / `null` 当没表态。
+ *
+ * 另一件必须做的事：这两个值会被拼成绝对路径交给引擎，所以要挡住 `..` 穿越与盘符 ——
+ * 否则一个被改坏的落盘值（手改 JSON、旧版本残留）就能让引擎去读**库外**的文件。
+ * 顺带把 `\` 归一化成 `/`（用户从资源管理器粘过来的多半是反斜杠）。
+ */
+function optionalLibraryPath(value: unknown, maxLength = 400): string | undefined {
+  if (value === undefined || value === null) return undefined
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return ''
+  if (text.length > maxLength) return undefined
+  const normalized = text.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  if (!normalized || normalized.includes(':')) return undefined
+  const segments = normalized.split('/')
+  if (segments.some((segment) => segment === '..' || segment === '.' || segment === '')) return undefined
+  return normalized
+}
+
 function optionalMode(value: unknown): ImageVideoMode | undefined {
   return value === 'off' || value === 'fixed' || value === 'random' ? value : undefined
 }
@@ -142,6 +172,23 @@ export function normalizeImageVideoOverride(raw: unknown): ImageVideoNodeOverrid
     filePrefix: optionalFilePrefix(raw.filePrefix),
     datePrefix: optionalBoolean(raw.datePrefix),
     outputDir: optionalString(raw.outputDir, 500),
+    useBgm: optionalBoolean(raw.useBgm),
+    bgmVolume: optionalNumber(raw.bgmVolume, 0, 1),
+    bgmRandom: optionalBoolean(raw.bgmRandom),
+    bgmLoop: optionalBoolean(raw.bgmLoop),
+    bgmFolder: optionalLibraryPath(raw.bgmFolder),
+    useVideoWatermark: optionalBoolean(raw.useVideoWatermark),
+    watermarkMode:
+      raw.watermarkMode === 'single' || raw.watermarkMode === 'folder'
+        ? (raw.watermarkMode as ImageVideoWatermarkMode)
+        : undefined,
+    watermarkPath: optionalLibraryPath(raw.watermarkPath),
+    watermarkPosition: optionalAllowed(raw.watermarkPosition, IMAGE_VIDEO_WATERMARK_POSITIONS),
+    watermarkSizeMode: optionalAllowed(raw.watermarkSizeMode, IMAGE_VIDEO_WATERMARK_SIZE_MODES),
+    watermarkScale: optionalNumber(raw.watermarkScale, 1, 1000),
+    watermarkBlendMode: optionalAllowed(raw.watermarkBlendMode, IMAGE_VIDEO_WATERMARK_BLEND_MODES),
+    watermarkMatchMethod: optionalAllowed(raw.watermarkMatchMethod, IMAGE_VIDEO_WATERMARK_MATCH_METHODS),
+    watermarkAudio: optionalAllowed(raw.watermarkAudio, IMAGE_VIDEO_WATERMARK_AUDIO_MODES),
   }
   return compact(override)
 }
@@ -174,22 +221,47 @@ export function resolveImageVideoParams(chain: readonly ImageVideoNodeOverride[]
   return merged
 }
 
-/** 引擎一次渲染需要的两个目录。 */
+/** 引擎一次渲染要知道的目录。 */
 export interface ImageVideoEnginePaths {
   /** 输入：这个方向的产出图片目录 */
   inputDir: string
   /** 输出：视频落点 */
   outputDir: string
+  /**
+   * 视频素材库的两个根（绝对路径，由主进程给）。
+   *
+   * 参数里存的是**库内相对路径**（`bgmFolder` / `watermarkPath`），在这里拼成引擎要的绝对路径 ——
+   * 于是库搬家（换盘、共享盘路径变）之后配置仍然指得对。
+   * 库根拿不到时给空串，得到的就是「引擎配置里没这个路径」而不是一个相对路径。
+   */
+  library: { bgm: string; watermark: string }
+}
+
+/**
+ * 把「库根 + 库内相对路径」拼成绝对路径（相对为空就是库根本身）。
+ *
+ * 统一用 `/` 拼：渲染进程没有 `node:path`，而 Python 的 `Path` 认得 `/`。
+ * ⚠️ 库根为空时**返回空串**，绝不能退化成只给相对路径 —— 那个相对路径会被引擎按
+ * 它自己的工作目录解析，指到哪儿就说不准了（最坏的情况是它扫了一个满是素材的目录）。
+ */
+export function joinLibraryPath(root: string, relative: string): string {
+  const base = root.trim().replace(/[\\/]+$/, '')
+  if (!base) return ''
+  const tail = relative
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '')
+  return tail ? `${base}/${tail}` : base
 }
 
 /**
  * 把糖包的参数翻译成引擎配置。
  *
- * 三个固定值是有意为之，不是漏了：
- * - `use_watermark` / `use_image_watermark`：引擎自带一套水印体系，与糖包的水印库是两回事。
- *   第一版不接，显式关掉 —— 引擎的默认值一旦是开的，就会悄悄往成片上打东西。
- * - `use_bgm`：同上，第一版不出声。
+ * 2026-09-27 起 BGM 与视频水印（MOV）都接了（此前第一版刻意全部关掉，怕引擎那套体系
+ * 与糖包的水印库打架）。仍然固定的是两个：
  * - `codec`：固定 H264（投放平台兼容性最好）；要换编码器的人自己改引擎配置，不在糖包这层暴露。
+ * - `use_image_watermark` / `watermark_layers`：引擎自带的**图片水印图层**与糖包的水印库是两回事，
+ *   继续保持关 —— 糖包的水印由自己的后处理链路叠，不从这里再叠一次。
  */
 export function buildEngineConfig(params: ImageVideoParams, paths: ImageVideoEnginePaths): Record<string, unknown> {
   return {
@@ -214,13 +286,29 @@ export function buildEngineConfig(params: ImageVideoParams, paths: ImageVideoEng
     enabled_video_effects: [...IMAGE_VIDEO_EFFECTS],
     video_effect_intensity: params.effectIntensity,
     video_effect_speed: params.effectSpeed,
-    use_bgm: false,
-    bgm_dir: '',
+    // ---- BGM ----
+    use_bgm: params.useBgm,
+    bgm_dir: joinLibraryPath(paths.library.bgm, params.bgmFolder),
+    // ⚠️ `bgm_files`（显式挑曲）在**无界面 worker 里读不到**：worker 的 state 只是 config 的浅拷贝，
+    // 而 `render/audio.py` 读的键名是 `_bgm_files`（旧 Tk 界面同进程注入的内部名）。
+    // 所以选曲只能靠「指向库里的哪个文件夹」—— 这也是我们把 BGM 按文件夹组织的原因。
     bgm_files: [],
-    random_bgm: false,
-    loop_bgm: false,
+    random_bgm: params.bgmRandom,
+    bgm_volume: params.bgmVolume,
+    loop_bgm: params.bgmLoop,
     codec: 'H264',
-    use_watermark: false,
+    // ---- 视频水印（MOV / MP4 / 图片都行，取用方式由 `watermark_mode` 决定）----
+    use_watermark: params.useVideoWatermark,
+    watermark_type: '视频',
+    watermark_mode: params.watermarkMode === 'folder' ? '文件夹' : '单文件',
+    watermark_path: joinLibraryPath(paths.library.watermark, params.watermarkPath),
+    watermark_position: params.watermarkPosition,
+    watermark_size_mode: params.watermarkSizeMode,
+    watermark_scale: params.watermarkScale,
+    watermark_blend_mode: params.watermarkBlendMode,
+    watermark_match_method: params.watermarkMatchMethod,
+    watermark_audio: params.watermarkAudio,
+    // 引擎自带的那套「图片水印图层」糖包不用（糖包有自己的水印体系），显式关掉
     use_image_watermark: false,
     watermark_layers: [],
     use_date_prefix: params.datePrefix,

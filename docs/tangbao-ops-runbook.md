@@ -1929,3 +1929,32 @@ tasklist //FI "IMAGENAME eq image-to-video-engine.exe"
 dev 里若引擎状态显示「引擎不可用」，先按上面的自检验一次 exe 在不在
 （`resources/image-engine/`），再看 `TANGBAO_ENGINE_PATH` 有没有指向别处。
 界面上的 `ffmpeg` 路径与版本来自 `probeImageEngineSystem`，它就是给人排查用的。
+
+### 视频素材库（BGM / 视频水印，2026-09-27 TB-136 补）
+
+**在哪**：`<糖包库根>/video-library/{bgm,watermark}`。库根 = 设置里的「本地保存路径」，
+缺省是 `%APPDATA%\糖包\local-saves`（dev 是 `%APPDATA%\tangbao\...`）。
+
+**每个目录里有个 `.library_index.json`**（引擎写的索引：按文件名存 sha256，BGM 还存音频指纹）。
+它同时是**导入去重的依据** —— 所以：
+
+- **删素材必须清索引**（界面上的删除已经做了；手工删文件时别忘了）。
+  只删文件不清索引的后果是「同一个文件再也导不回来」：引擎答「库中已有相同素材」，
+  而那个「已有」的其实早没了（R-111）。
+- 索引坏了不用慌：引擎下次扫描会按磁盘重建（但会重算一遍 sha256 / 音频指纹，库里东西多时会慢）。
+
+**手工排查用**：
+
+```bash
+# 库里有什么
+ls "<库根>/video-library/bgm" "<库根>/video-library/watermark"
+# 引擎认不认这个目录（走引擎自己的库快照，正常会返回两份列表）
+printf '{"id":"1","method":"library_snapshot","params":{"bgm_dir":"<库根>/video-library/bgm","watermark_dir":"<库根>/video-library/watermark"}}\n' | resources/image-engine/image-to-video-engine.exe
+```
+
+**为什么出片没声音**：查三件事 —— ① 方向行上「BGM」是不是「用」；② `bgm_dir` 指向的目录里
+真有音频（`''` 表示整个 `bgm` 目录）；③ 水印视频如果带音轨，「水印音轨」那一档决定成片留谁的声音
+（默认「使用BGM」，没开 BGM 就是静音）。
+
+**为什么挑的曲子没生效**：引擎的 `bgm_files`（显式挑曲）在无界面 worker 里**读不到**（R-110），
+所以糖包只提供「按文件夹选一组曲子」。要精确控曲，就在库里建文件夹分组。

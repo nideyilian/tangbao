@@ -122,6 +122,22 @@ export type ImageVideoMode = 'off' | 'fixed' | 'random'
  */
 export const IMAGE_VIDEO_SELECTION_MODES = ['按名称排序', '随机选择', '按子文件夹抽取'] as const
 
+/**
+ * 视频水印的各档取值：**逐字照抄引擎的下拉表**（`src/gui_qt/main_window.py` 的 addItems）。
+ *
+ * 引擎按中文名查映射表（`watermark.py` 的 `get_ffmpeg_blend_mode` 等），写错一个字符就是
+ * 静默按默认值处理 —— 界面上显示着你选的、成片用的是另一个，这类不一致最难查。
+ */
+export const IMAGE_VIDEO_WATERMARK_POSITIONS = ['左上', '右上', '左下', '右下', '中心'] as const
+export const IMAGE_VIDEO_WATERMARK_SIZE_MODES = ['固定比例', '自适应覆盖', '完全覆盖'] as const
+export const IMAGE_VIDEO_WATERMARK_BLEND_MODES = ['正常', '滤色', '叠加', '正片叠底', '变亮', '变暗', '相加'] as const
+export const IMAGE_VIDEO_WATERMARK_MATCH_METHODS = ['循环', '拉伸', '单次'] as const
+/** 成片音轨：用了带音轨的水印视频时，成片留谁的声音。 */
+export const IMAGE_VIDEO_WATERMARK_AUDIO_MODES = ['使用BGM', '使用水印', '两者混合', '静音'] as const
+
+/** 水印取用方式：单个文件，还是从文件夹里按视频序号轮转取。 */
+export type ImageVideoWatermarkMode = 'single' | 'folder'
+
 /** 一套完整的图转视频参数（全局基线就是这个形状，节点覆盖是它的 Partial）。 */
 export interface ImageVideoParams {
   /**
@@ -179,6 +195,59 @@ export interface ImageVideoParams {
    * （投放、上传、再分发）拿到一堆不是素材的文件。
    */
   outputDir: string
+
+  // ---------- BGM（背景音乐）----------
+
+  /**
+   * 要不要配背景音乐。
+   *
+   * **默认关**，与「出视频」「加水印」同一个口径：靠默认值把声音加进成片，
+   * 用户拿去投放时才会发现不对（那时候已经导出几十条了）。
+   */
+  useBgm: boolean
+  /** 音量 0~1（引擎量纲就是 0~1，不是百分比）。 */
+  bgmVolume: number
+  /**
+   * 选曲方式：`true` = 每个视频随机抽一首，`false` = 按视频序号**轮转**。
+   *
+   * 默认轮转：糖包的口径是「同样的配置跑出同样的结果」，随机选曲会让同一个方向跑两次
+   * 拿到不同的成片，出了问题没法复现。要随机的人自己在表格里改。
+   */
+  bgmRandom: boolean
+  /** 一首放完了循环播；关掉就是放完即止（视频比曲子长时会静音） */
+  bgmLoop: boolean
+  /**
+   * 用 BGM 库里的哪个文件夹的曲子；`''` = 整个库。
+   *
+   * 存**库内相对路径**而不是绝对路径：库搬家（换盘 / 共享盘路径变）之后仍然指得对。
+   * 绝对路径由 `params.ts` 在生成引擎配置时拼出来。
+   */
+  bgmFolder: string
+
+  // ---------- 视频水印（MOV / MP4，也支持图片）----------
+
+  /** 要不要叠视频水印。默认关（同上，不靠默认值改用户的成片）。 */
+  useVideoWatermark: boolean
+  /** 单个文件 还是 从文件夹里轮转取 */
+  watermarkMode: ImageVideoWatermarkMode
+  /**
+   * 库内相对路径：`single` 时是文件、`folder` 时是文件夹；`''` = 用整个水印库。
+   *
+   * 同样存相对路径（理由见 `bgmFolder`）。
+   */
+  watermarkPath: string
+  /** 位置，取值见 `IMAGE_VIDEO_WATERMARK_POSITIONS` */
+  watermarkPosition: string
+  /** 大小模式，见 `IMAGE_VIDEO_WATERMARK_SIZE_MODES` */
+  watermarkSizeMode: string
+  /** 缩放百分比（引擎默认 100） */
+  watermarkScale: number
+  /** 混合模式，见 `IMAGE_VIDEO_WATERMARK_BLEND_MODES` */
+  watermarkBlendMode: string
+  /** 水印时长的匹配方式，见 `IMAGE_VIDEO_WATERMARK_MATCH_METHODS` */
+  watermarkMatchMethod: string
+  /** 成片音轨，见 `IMAGE_VIDEO_WATERMARK_AUDIO_MODES` */
+  watermarkAudio: string
 }
 
 /**
@@ -218,4 +287,22 @@ export const DEFAULT_IMAGE_VIDEO_PARAMS: ImageVideoParams = {
   filePrefix: '',
   datePrefix: false,
   outputDir: '',
+  useBgm: false,
+  bgmVolume: 0.5,
+  bgmRandom: false,
+  bgmLoop: false,
+  bgmFolder: '',
+  useVideoWatermark: false,
+  // 默认「文件夹轮转」而不是引擎默认的「单文件」：这个功能的库本来就是按文件夹收素材的
+  // （一个方向换一批水印是常态），单文件反而要用户每次先挑一个。
+  watermarkMode: 'folder',
+  watermarkPath: '',
+  // ⚠️ 位置**刻意不用引擎默认的「中心」**：中心水印会直接压住画面主体，
+  // 作为默认值不合理（用户开了水印没改位置，成片就废了）。角落是水印的常态位置。
+  watermarkPosition: '右下',
+  watermarkSizeMode: '自适应覆盖',
+  watermarkScale: 100,
+  watermarkBlendMode: '正常',
+  watermarkMatchMethod: '循环',
+  watermarkAudio: '使用BGM',
 }

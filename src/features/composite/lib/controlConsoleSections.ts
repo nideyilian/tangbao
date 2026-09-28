@@ -50,7 +50,7 @@ export function isGlobalScope(scope: ConsoleScope): boolean {
   return scope === GLOBAL_NODE_ID
 }
 
-export type ControlConsoleSectionId = 'watermark' | 'channel' | 'video'
+export type ControlConsoleSectionId = 'watermark' | 'channel' | 'video' | 'videoLibrary'
 
 export interface ControlConsoleSection {
   id: ControlConsoleSectionId
@@ -97,6 +97,11 @@ export const CONTROL_CONSOLE_SECTIONS: ControlConsoleSection[] = [
     label: '视频',
     description:
       '把导出好的图片做成视频（独立引擎，本地渲染）。一行一个方向：全局行改基线，点某个方向的行只改它自己，留空向上继承。',
+  },
+  {
+    id: 'videoLibrary',
+    label: '视频素材',
+    description: '出视频要用的料：BGM（背景音乐）与视频水印（MOV / MP4 / 图片）。导入是复制进来，删除是永久删除。',
   },
 ]
 

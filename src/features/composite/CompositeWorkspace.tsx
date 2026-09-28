@@ -11,6 +11,7 @@ import { ConsoleAssetTree } from './components/ConsoleAssetTree'
 import { ChannelSection } from './components/ChannelSection'
 import { PresetManagementTab } from './components/PresetManagementTab'
 import { ImageVideoSection } from '../imageVideo/ImageVideoSection'
+import { VideoLibrarySection } from '../imageVideo/VideoLibrarySection'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 import { resolveCollectionPath } from '../../lib/postprocessProjectTree'
@@ -352,11 +353,16 @@ export default function CompositeWorkspace() {
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
             {/*
-             * 两个非水印分区都消费作用域（各自内部由列说明与作用域条说清）。
-             * 原先这里按 `active.globalOnly` 挂过一句「全局设置，所有方向共用」——
-             * 2026-09-21 连同那个字段一起删了，理由见文件头注。
+             * 三个非水印分区：两个消费作用域（视频参数、渠道与输出），
+             * 一个不消费（视频素材 —— 它管的是库，与左树选哪个方向无关）。
              */}
-            {activeSection === 'video' ? <ImageVideoSection scope={scope} /> : <ChannelSection scope={scope} />}
+            {activeSection === 'video' ? (
+              <ImageVideoSection scope={scope} />
+            ) : activeSection === 'videoLibrary' ? (
+              <VideoLibrarySection />
+            ) : (
+              <ChannelSection scope={scope} />
+            )}
           </div>
         )}
       </div>

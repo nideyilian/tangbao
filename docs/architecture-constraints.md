@@ -550,3 +550,15 @@ prompt 同时存在于 store 与 contentEditable，靠 4 个入口双向同步�
   **先系统 PATH 后自带**，所以界面必须把「实际用的是哪一份」显示出来。
 - **持久化 namespace `imageVideo` 必须留在主进程白名单**（`electron/asset-kernel.ts` 的
   `APP_DATA_NAMESPACES`），否则设置改完重启就没了且 UI 不报错（R-07）。
+
+### 素材库（BGM / 视频水印，TB-136）
+
+- **库目录由主进程注入**（`engine-ipc.ts` 的 `LIBRARY_AWARE_METHODS`），渲染端不认识库在哪。
+  别改成「让渲染端传 `bgm_dir` / `watermark_dir`」—— 那个通道能导入与**永久删除**文件，
+  把路径参数化等于把「指到哪儿」交给了渲染端。
+- **删除必须顺手清 `<目录>/.library_index.json` 里的对应条目**（`library-fs.ts` 的 `pruneIndex`）：
+  引擎的导入去重**先查索引**，不清就会让「删掉的素材再也导不回来」（R-111）。
+- **BGM 选曲只能走文件夹**（`bgm_dir` 指向库内子文件夹）：引擎的 `bgm_files`
+  在无界面 worker 里读不到（读的是 `_bgm_files`，R-110）—— **别再试图接它**。
+- 参数里存的是**库内相对路径**（`bgmFolder` / `watermarkPath`），生成引擎配置时才拼绝对路径
+  （`joinLibraryPath`）。库根拿不到时给空串，**绝不退化成相对路径**（那会被引擎按它自己的工作目录解析）。

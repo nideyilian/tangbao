@@ -250,6 +250,16 @@ type ElectronAPI = {
   }) => Promise<ImageVideoCallResult>
   /** 引擎事件（`engine.ready` / `job.progress` / `job.finished` / 日志）；返回取消订阅函数。 */
   onImageVideoEvent?: (callback: (payload: unknown) => void) => () => void
+  /** 视频素材库（BGM / 视频水印）的两个目录；主进程保证它们存在。 */
+  imageVideoLibraryDirs?: () => Promise<{ root: string; bgm: string; watermark: string }>
+  /** 永久删除库素材；`paths` 必须落在库目录内，否则逐条拒绝。 */
+  imageVideoLibraryDelete?: (paths: string[]) => Promise<{
+    success: boolean
+    error?: string
+    deleted?: string[]
+    failed?: Array<{ path: string; error: string }>
+    indexEntriesRemoved?: number
+  }>
   completeExternalAssetCommand?: (payload: { id: string; result?: unknown; error?: string }) => void
   /** 扫描旧版本 userData 目录（糖包 / tangbao / 糖包 V2 等），返回可导入内容概况 */
   scanLegacySources?: () => Promise<LegacySourceInfo[]>

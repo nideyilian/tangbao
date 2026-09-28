@@ -32,12 +32,18 @@ describe('controlConsoleSections', () => {
     expect(normalizeControlConsoleSection(42)).toBe(DEFAULT_CONTROL_CONSOLE_SECTION)
   })
 
-  it('⭐ 分区表：水印 / 渠道与输出 / 视频（被合并过的两个别再拆回去）', () => {
+  it('⭐ 分区表：水印 / 渠道与输出 / 视频 / 视频素材（被合并过的两个别再拆回去）', () => {
     // 2026-09-21「分发」并入「输出位置」，2026-09-22「输出位置」再并入「渠道与尺寸」——
     // 两步是同一个道理（同一份数据的半张表不该各占一个 tab），**别再拆回去**。
-    // 2026-09-26 新增 `video`（图转视频）：它是一份**新的数据**（视频参数），
-    // 与前面两块零重叠，所以单独占一个 tab 是对的 —— 不是当年那种「同一份数据被劈成两半」。
-    expect(CONTROL_CONSOLE_SECTIONS.map((section) => section.id)).toEqual(['watermark', 'channel', 'video'])
+    // 2026-09-26 新增 `video`（图转视频的参数）、2026-09-27 新增 `videoLibrary`（BGM 与视频水印两个库）：
+    // 两块都是**新的数据**，与前两块零重叠，所以各占一个 tab 是对的 ——
+    // 不是当年那种「同一份数据被劈成两半」。参数与素材也刻意分开：改参数的人不必看见素材管理。
+    expect(CONTROL_CONSOLE_SECTIONS.map((section) => section.id)).toEqual([
+      'watermark',
+      'channel',
+      'video',
+      'videoLibrary',
+    ])
   })
 
   it('⭐ 退役的分区值收敛到它搬去的地方，而不是弹回默认分区', () => {

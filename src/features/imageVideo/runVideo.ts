@@ -30,6 +30,7 @@ import type {
   ImageVideoScanResult,
   ImageVideoStartResult,
 } from './engineTypes'
+import { getVideoLibraryDirs } from './library'
 import { buildEngineConfig, resolveVideoOutputDir } from './params'
 import type { ImageVideoParams } from './types'
 
@@ -115,7 +116,18 @@ export async function runImageVideoJob(input: ImageVideoRunInput): Promise<Image
   }
 
   // ② 起任务
-  const config = buildEngineConfig(input.params, { inputDir, outputDir })
+  /**
+   * 素材库的两个根：BGM 与视频水印的路径都要拼在它下面。
+   *
+   * 拿不到库目录时**不能静默降级** —— 用户开着 BGM / 水印却拿到一条无声、无水印的成片，
+   * 是最难自查的一类错（成片看着「就是没生效」）。所以只在两个开关都关着时才允许继续。
+   */
+  const dirs = await getVideoLibraryDirs().catch(() => null)
+  if (!dirs && (input.params.useBgm || input.params.useVideoWatermark)) {
+    throw new Error('开着背景音乐或视频水印，但读不到素材库位置，先打开一次「视频素材」分区再试')
+  }
+  const library = { bgm: dirs?.bgm ?? '', watermark: dirs?.watermark ?? '' }
+  const config = buildEngineConfig(input.params, { inputDir, outputDir, library })
   const started = await api.imageVideoCall({
     method: 'start_job',
     params: { config },

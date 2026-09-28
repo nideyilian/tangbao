@@ -30,7 +30,7 @@
  * 那应该是显式多次点击的结果，不是一个顺手点的按钮。
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Badge, Button, DataGrid, Inline, Stack } from '../../design-system'
 import type { DataGridColumn } from '../../design-system'
 import { useStore } from '../../store'
@@ -41,12 +41,14 @@ import { collectDirectionIds, describeCollectionPath } from '../dailyBatch/scope
 import { GLOBAL_NODE_ID } from '../postprocess/paramSchema'
 import { resolveProjectImageVideoParams } from '../projectTree/params'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
+import { loadVideoLibrary, type VideoLibrarySnapshot } from './library'
 import { resolveDirectionInputDirs, runImageVideoJob } from './runVideo'
 import { useImageVideoStore } from './store'
 import {
   IMAGE_VIDEO_EFFECTS,
   IMAGE_VIDEO_RESOLUTIONS,
   IMAGE_VIDEO_TRANSITIONS,
+  IMAGE_VIDEO_WATERMARK_POSITIONS,
   type ImageVideoNodeOverride,
   type ImageVideoParams,
 } from './types'
@@ -60,6 +62,21 @@ const MODE_RANDOM = '__random__'
 const ENABLED_INHERIT = ''
 const ENABLED_ON = 'on'
 const ENABLED_OFF = 'off'
+
+/**
+ * 「用整个库」在下拉里的哨兵值。
+ *
+ * 它与「跟随上级」必须分开：数据层里 `''` = 用库根本身（整个库），
+ * 而 `undefined` = 没表态（继续继承）。两件事，界面上也得是两个选项。
+ */
+const LIBRARY_ALL = '__all__'
+
+/** 三态下拉的值 → `boolean | undefined`（`undefined` = 恢复继承）。 */
+function triStateToBoolean(value: unknown): boolean | undefined {
+  if (value === ENABLED_ON) return true
+  if (value === ENABLED_OFF) return false
+  return undefined
+}
 
 interface ImageVideoRow {
   id: string
@@ -88,6 +105,27 @@ export function ImageVideoSection({ scope }: Props) {
   const setGlobals = useImageVideoStore((state) => state.setGlobals)
   const tasks = useStore((state) => state.tasks)
   const engine = useImageVideoEngine()
+
+  /**
+   * 素材库快照：BGM 的文件夹、水印的素材都要做成下拉选项。
+   *
+   * 读失败**不影响参数编辑**（下拉退化成「跟随上级 / 整个库」两档，其余列照旧）——
+   * 库不可用不该让整张表变成只读。
+   */
+  const [library, setLibrary] = useState<VideoLibrarySnapshot | null>(null)
+  useEffect(() => {
+    let alive = true
+    void loadVideoLibrary()
+      .then((snapshot) => {
+        if (alive) setLibrary(snapshot)
+      })
+      .catch(() => {
+        /* 库读不到：下拉里就没有具体文件夹/素材可选，别的功能不受影响 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const [running, setRunning] = useState<{
     directionId: string
@@ -166,8 +204,33 @@ export function ImageVideoSection({ scope }: Props) {
     (rowId: string, columnKey: string, value: unknown) => {
       switch (columnKey) {
         case 'enabled':
-          commitPatch(rowId, { enabled: value === ENABLED_ON ? true : value === ENABLED_OFF ? false : undefined })
+          commitPatch(rowId, { enabled: triStateToBoolean(value) })
           return
+        case 'useBgm':
+          commitPatch(rowId, { useBgm: triStateToBoolean(value) })
+          return
+        case 'useVideoWatermark':
+          commitPatch(rowId, { useVideoWatermark: triStateToBoolean(value) })
+          return
+        case 'bgmFolder': {
+          const text = typeof value === 'string' ? value : ''
+          // 三档：'' = 跟随上级（恢复继承）、哨兵值 = 整个库、其余 = 库里的某个文件夹
+          if (text === ENABLED_INHERIT) commitPatch(rowId, { bgmFolder: undefined })
+          else if (text === LIBRARY_ALL) commitPatch(rowId, { bgmFolder: '' })
+          else if (text) commitPatch(rowId, { bgmFolder: text })
+          return
+        }
+        case 'watermarkTarget': {
+          const text = typeof value === 'string' ? value : ''
+          // 一列表达两态：挑中具体文件 = 单文件模式；挑中文件夹或整个库 = 按视频序号轮转
+          if (text === ENABLED_INHERIT) commitPatch(rowId, { watermarkPath: undefined, watermarkMode: undefined })
+          else if (text === LIBRARY_ALL) commitPatch(rowId, { watermarkPath: '', watermarkMode: 'folder' })
+          else if (text.startsWith('file:'))
+            commitPatch(rowId, { watermarkPath: text.slice(5), watermarkMode: 'single' })
+          else if (text.startsWith('folder:'))
+            commitPatch(rowId, { watermarkPath: text.slice(7), watermarkMode: 'folder' })
+          return
+        }
         case 'transition': {
           const text = typeof value === 'string' ? value : ''
           if (text === MODE_OFF) commitPatch(rowId, { transitionMode: 'off' })
@@ -359,8 +422,109 @@ export function ImageVideoSection({ scope }: Props) {
         pickPath: async () => (await window.electronAPI?.selectDirectory?.()) ?? null,
         placeholderForRow: (row) => (row.isGlobal ? '（图片目录同级 -视频）' : '留空 = 图片目录同级'),
       },
+      {
+        key: 'useBgm',
+        header: 'BGM',
+        help: '要不要配背景音乐；曲子来自「视频素材」分区的 BGM 库',
+        editor: 'select',
+        width: 92,
+        align: 'center',
+        options: [
+          { value: ENABLED_INHERIT, label: '跟随上级' },
+          { value: ENABLED_ON, label: '用' },
+          { value: ENABLED_OFF, label: '不用' },
+        ],
+        getValue: (row) =>
+          row.override.useBgm === undefined ? ENABLED_INHERIT : row.override.useBgm ? ENABLED_ON : ENABLED_OFF,
+        placeholderForRow: (row) =>
+          row.isGlobal ? '不用' : row.inherited.useBgm ? '跟随上级（用）' : '跟随上级（不用）',
+      },
+      {
+        key: 'bgmFolder',
+        header: '用哪组曲子',
+        help: '「整个库」= 库里所有曲子；也可以只用一个文件夹里的（在「视频素材」分区建文件夹分类）',
+        editor: 'select',
+        width: 144,
+        options: [
+          { value: ENABLED_INHERIT, label: '跟随上级' },
+          { value: LIBRARY_ALL, label: '整个库' },
+          ...(library?.bgm_folders ?? []).map((folder) => ({ value: folder.relative, label: folder.name })),
+        ],
+        getValue: (row) =>
+          row.override.bgmFolder === undefined
+            ? ENABLED_INHERIT
+            : row.override.bgmFolder === ''
+              ? LIBRARY_ALL
+              : row.override.bgmFolder,
+        placeholderForRow: (row) => (row.isGlobal ? '整个库' : '跟随上级'),
+      },
+      {
+        key: 'bgmVolume',
+        header: '音量(0~1)',
+        help: '0.5 = 一半音量。引擎的量纲就是 0~1，别按百分比填',
+        editor: 'number',
+        width: 104,
+        align: 'end',
+        placeholderForRow: (row) => inheritHint(row, (params) => String(params.bgmVolume), '0.5'),
+      },
+      {
+        key: 'useVideoWatermark',
+        header: '视频水印',
+        help: '要不要叠视频水印（MOV / MP4 / 图片都行）',
+        editor: 'select',
+        width: 100,
+        align: 'center',
+        options: [
+          { value: ENABLED_INHERIT, label: '跟随上级' },
+          { value: ENABLED_ON, label: '用' },
+          { value: ENABLED_OFF, label: '不用' },
+        ],
+        getValue: (row) =>
+          row.override.useVideoWatermark === undefined
+            ? ENABLED_INHERIT
+            : row.override.useVideoWatermark
+              ? ENABLED_ON
+              : ENABLED_OFF,
+        placeholderForRow: (row) =>
+          row.isGlobal ? '不用' : row.inherited.useVideoWatermark ? '跟随上级（用）' : '跟随上级（不用）',
+      },
+      {
+        key: 'watermarkTarget',
+        header: '用哪个水印',
+        help: '选一个文件 = 同一个水印贴所有视频；选文件夹或整个库 = 按视频序号轮转着用',
+        editor: 'select',
+        width: 168,
+        options: [
+          { value: ENABLED_INHERIT, label: '跟随上级' },
+          { value: LIBRARY_ALL, label: '整个库（轮转）' },
+          ...(library?.watermark_folders ?? []).map((folder) => ({
+            value: `folder:${folder.relative}`,
+            label: `${folder.name}/（轮转）`,
+          })),
+          ...(library?.watermark ?? []).map((item) => ({
+            value: `file:${item.folder ? `${item.folder}/${item.name}` : item.name}`,
+            label: item.name,
+          })),
+        ],
+        getValue: (row) => {
+          const path = row.override.watermarkPath
+          if (path === undefined) return ENABLED_INHERIT
+          if (path === '') return LIBRARY_ALL
+          return `${row.override.watermarkMode === 'single' ? 'file' : 'folder'}:${path}`
+        },
+        placeholderForRow: (row) => (row.isGlobal ? '整个库（轮转）' : '跟随上级'),
+      },
+      {
+        key: 'watermarkPosition',
+        header: '水印位置',
+        help: '水印贴在哪；默认右下（引擎默认是「中心」，会压住画面主体，这里刻意改掉了）',
+        editor: 'select',
+        width: 110,
+        options: IMAGE_VIDEO_WATERMARK_POSITIONS.map((item) => ({ value: item, label: item })),
+        placeholderForRow: (row) => inheritHint(row, (params) => params.watermarkPosition, '右下'),
+      },
     ]
-  }, [])
+  }, [library])
 
   const selectedDirectionId = isGlobal ? null : scope
   const selectedRow = selectedDirectionId ? rows.find((row) => row.id === selectedDirectionId) : undefined

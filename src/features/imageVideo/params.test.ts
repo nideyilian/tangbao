@@ -110,7 +110,11 @@ describe('resolveImageVideoParams（继承链）', () => {
 })
 
 describe('buildEngineConfig', () => {
-  const paths = { inputDir: 'D:/导出/方向A', outputDir: 'D:/导出/方向A-视频' }
+  const paths = {
+    inputDir: 'D:/导出/方向A',
+    outputDir: 'D:/导出/方向A-视频',
+    library: { bgm: 'D:/库/bgm', watermark: 'D:/库/watermark' },
+  }
 
   it('三个固定关掉的开关：引擎自带的水印与 BGM 不能悄悄生效', () => {
     const config = buildEngineConfig(BASE, paths)
@@ -180,5 +184,104 @@ describe('summarizeImageVideoParams', () => {
 
   it('固定总时长时带上它', () => {
     expect(summarizeImageVideoParams({ ...BASE, totalDuration: 30 })).toContain('固定总长 30s')
+  })
+})
+
+describe('BGM 与视频水印映射（2026-09-27 接上）', () => {
+  const paths = {
+    inputDir: 'D:/导出/A',
+    outputDir: 'D:/导出/A-视频',
+    library: { bgm: 'D:/库/bgm', watermark: 'D:/库/watermark' },
+  }
+
+  it('默认不出声、不加水印 —— 不靠默认值去改用户的成片', () => {
+    const config = buildEngineConfig(BASE, paths)
+    expect(config.use_bgm).toBe(false)
+    expect(config.use_watermark).toBe(false)
+  })
+
+  it('BGM 选了文件夹：拼成库内的绝对路径', () => {
+    const config = buildEngineConfig({ ...BASE, useBgm: true, bgmFolder: '轻快' }, paths)
+    expect(config.use_bgm).toBe(true)
+    expect(config.bgm_dir).toBe('D:/库/bgm/轻快')
+  })
+
+  it('BGM 不选文件夹 = 用整个库', () => {
+    expect(buildEngineConfig({ ...BASE, useBgm: true }, paths).bgm_dir).toBe('D:/库/bgm')
+  })
+
+  it('显式挑曲那一栏永远空着 —— 无界面 worker 读不到 bgm_files（读的是 _bgm_files）', () => {
+    expect(buildEngineConfig({ ...BASE, useBgm: true }, paths).bgm_files).toEqual([])
+  })
+
+  it('水印两态：文件夹轮转 / 单文件', () => {
+    const folder = buildEngineConfig(
+      { ...BASE, useVideoWatermark: true, watermarkMode: 'folder', watermarkPath: '角标' },
+      paths,
+    )
+    expect(folder.watermark_mode).toBe('文件夹')
+    expect(folder.watermark_path).toBe('D:/库/watermark/角标')
+
+    const single = buildEngineConfig(
+      { ...BASE, useVideoWatermark: true, watermarkMode: 'single', watermarkPath: 'logo.mov' },
+      paths,
+    )
+    expect(single.watermark_mode).toBe('单文件')
+    expect(single.watermark_path).toBe('D:/库/watermark/logo.mov')
+  })
+
+  it('⭐ 库根拿不到时给空串 —— 绝不退化成相对路径让引擎按自己的工作目录去猜', () => {
+    const config = buildEngineConfig(
+      { ...BASE, useBgm: true, bgmFolder: '轻快', useVideoWatermark: true, watermarkPath: 'a.mov' },
+      { ...paths, library: { bgm: '', watermark: '' } },
+    )
+    expect(config.bgm_dir).toBe('')
+    expect(config.watermark_path).toBe('')
+  })
+
+  it('引擎自带的图片水印图层继续关着（与糖包水印库是两回事，别叠两次）', () => {
+    const config = buildEngineConfig({ ...BASE, useVideoWatermark: true }, paths)
+    expect(config.use_image_watermark).toBe(false)
+    expect(config.watermark_layers).toEqual([])
+  })
+
+  it('各档取值原样带给引擎（引擎按中文名查映射表）', () => {
+    const config = buildEngineConfig(
+      {
+        ...BASE,
+        useVideoWatermark: true,
+        watermarkPosition: '左下',
+        watermarkSizeMode: '完全覆盖',
+        watermarkBlendMode: '滤色',
+        watermarkMatchMethod: '拉伸',
+        watermarkAudio: '两者混合',
+      },
+      paths,
+    )
+    expect(config.watermark_position).toBe('左下')
+    expect(config.watermark_size_mode).toBe('完全覆盖')
+    expect(config.watermark_blend_mode).toBe('滤色')
+    expect(config.watermark_match_method).toBe('拉伸')
+    expect(config.watermark_audio).toBe('两者混合')
+  })
+})
+
+describe('库内相对路径的清洗（这两个值会被拼成绝对路径交给引擎）', () => {
+  it('挡住 .. 穿越', () => {
+    expect(normalizeImageVideoOverride({ bgmFolder: '../../Windows' })).toEqual({})
+    expect(normalizeImageVideoOverride({ watermarkPath: 'a/../../b' })).toEqual({})
+  })
+
+  it('挡住带盘符的绝对路径（拼接后会指向库外）', () => {
+    expect(normalizeImageVideoOverride({ bgmFolder: 'C:/Windows' })).toEqual({})
+    expect(normalizeImageVideoOverride({ watermarkPath: 'D:\\其它' })).toEqual({})
+  })
+
+  it('反斜杠归一化成 /，首尾斜杠剥掉', () => {
+    expect(normalizeImageVideoOverride({ bgmFolder: '\\轻快\\子目录\\' })).toEqual({ bgmFolder: '轻快/子目录' })
+  })
+
+  it('单个前导斜杠只是剥掉、不算穿越（拼出来仍在库内）', () => {
+    expect(normalizeImageVideoOverride({ watermarkPath: '/logo.mov' })).toEqual({ watermarkPath: 'logo.mov' })
   })
 })
