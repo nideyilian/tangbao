@@ -35,6 +35,19 @@
  * - 例外表与词表同口径归一化（trim / 去空 / 去重）。⚠️ 空串漏进例外表的后果**比词表更隐蔽**：
  *   `'裸妆'.split('').join('\u0000')` 会把正文**逐字拆散**，该词的例外从此静默失效，
  *   而界面上它看起来还在工作（详见 RISK 的对应条目）。
+ *
+ * ## 误判的三条出路：加白 / 例外 / 删除（2026-09-29 TB-146）
+ *
+ * 粒度从粗到细，**各管一段、不要混用**：
+ *
+ * | 做法 | 粒度 | 效果 | 什么时候用 |
+ * | --- | --- | --- | --- |
+ * | **加白**（`disabled`） | 整词 | 词留在表里但不参与判定，一键可切回 | 「这个词在我这儿是正常词」（做财经内容时的「提现」） |
+ * | **例外**（`allow`） | 词 × 搭配 | 词照常生效，只放过指定搭配 | 「这个搭配正常，那个用法要拦」（军绿色 vs 参军） |
+ * | 删除 | 整词 | 从表里移除，恢复只能靠「恢复默认」或手打 | 「确定永远不要它」 |
+ *
+ * 优先级：**加白 > 例外**。加白的词不进判定流程，它的例外自然也不生效
+ * （这就是为什么下面 `filter((item) => !item.disabled)` 必须写在挖空**之前**）。
  */
 
 import type { RecipeForbiddenRule } from '../types'
@@ -118,7 +131,7 @@ function normalizeAllowList(value: unknown): string[] {
   return allow
 }
 
-/** 归一化单条规则：接受 `string`（旧形态）或 `{ term, allow }`；认不出返回 null。 */
+/** 归一化单条规则：接受 `string`（旧形态）或 `{ term, allow, disabled }`；认不出返回 null。 */
 function normalizeRuleItem(value: unknown): RecipeForbiddenRule | null {
   if (typeof value === 'string') {
     const term = value.trim()
@@ -128,7 +141,15 @@ function normalizeRuleItem(value: unknown): RecipeForbiddenRule | null {
   const record = value as Record<string, unknown>
   const term = typeof record.term === 'string' ? record.term.trim() : ''
   if (!term) return null
-  return { term, allow: normalizeAllowList(record.allow) }
+  return {
+    term,
+    allow: normalizeAllowList(record.allow),
+    // 只有**显式 true** 才算加白；缺省（旧存档 / 新建的词）一律视为生效 ——
+    // 与 `AppSettings.recipeComplianceHints` 同口径（`=== false ? false : true` 的镜像）。
+    // ⚠️ 不能写成 `disabled: Boolean(record.disabled)`：那样任何非布尔脏值都会被判成加白，
+    // 用户会看到「词莫名不生效」而完全无从排查。
+    ...(record.disabled === true ? { disabled: true } : {}),
+  }
 }
 
 /**
@@ -205,7 +226,10 @@ function maskAllowWords(text: string, rules: readonly RecipeForbiddenRule[]): st
 export function findRecipeForbiddenViolations(text: string, terms?: RecipeForbiddenTermsInput | null): string[] {
   const normalized = text.trim()
   if (!normalized) return []
-  const rules = resolveRecipeForbiddenTerms(terms)
+  // **已加白（`disabled`）的词直接不进判定** —— 连它的例外也不再参与挖空：
+  // 那个词已经不判了，它的例外没有服务对象；反过来若还拿它去挖空，
+  // 会把恰好等于该例外词的**另一个启用词**一并挖掉（静默漏判）。
+  const rules = resolveRecipeForbiddenTerms(terms).filter((item) => !item.disabled)
   if (rules.length === 0) return []
 
   const masked = maskAllowWords(normalized, rules)

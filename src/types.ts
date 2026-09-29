@@ -139,6 +139,17 @@ export interface RecipeForbiddenRule {
    * 详见 `lib/recipeForbiddenTerms.ts` 的 `findRecipeForbiddenViolations`。
    */
   allow: string[]
+  /**
+   * 是否**已加白**（停用这个词）。`true` = 不参与红线判定；缺省 / `false` = 正常生效（TB-146）。
+   *
+   * ⚠️ 用 `disabled` 而不是 `enabled`：界面上的勾选框**打勾 = 加白**（「把我判为误判的词
+   * 放进白名单」是这个动作的心智），存 `disabled` 可以让 UI 与存储**同向**，
+   * 免掉一层 `checked={!enabled}` 的取反 —— 那层取反最容易在后续改动里被写错。
+   *
+   * 加白**不删除**词与它的例外（撤白后原样恢复），所以它是「可逆的删除」。
+   * 与另外两条路的分工见 `findRecipeForbiddenViolations` 顶部说明。
+   */
+  disabled?: boolean
 }
 
 export interface AppSettings {

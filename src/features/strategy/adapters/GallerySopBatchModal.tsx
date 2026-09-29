@@ -2351,7 +2351,7 @@ export default function GallerySopBatchModal({
           onSanitized: (removed: string[]) => {
             redlineSanitizeNotice = `已按红线剔除 ${removed.length} 个候选值：${removed.slice(0, 2).join('；')}${
               removed.length > 2 ? ' 等' : ''
-            }（判为误判可到配方卡详情里删掉那个词，或给它加例外）`
+            }（判为误判可到配方卡详情里把那个词加白，或给它加例外）`
             setStatusMessage(redlineSanitizeNotice)
           },
           onBatch: async (batchPrompts) => {

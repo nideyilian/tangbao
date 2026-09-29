@@ -382,7 +382,9 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
     expect(text).toContain('已列入下方「红线复核」')
     const hit = document.body.querySelectorAll('.sop-recipe-term--hit')
     expect(hit).toHaveLength(1)
-    expect(hit[0].querySelector<HTMLInputElement>('input')?.value).toBe('提现')
+    // ⚠️ 必须用类选择器定位「词」输入框：格子里还有一个加白勾选框（TB-146），
+    // 直接 querySelector('input') 会先命中勾选框（它的 value 是 'on'）。
+    expect(hit[0].querySelector<HTMLInputElement>('input.sop-recipe-term__word')?.value).toBe('提现')
   })
 
   it('骨架命中红线也照常出预览（与真实生成同口径）', () => {
@@ -417,10 +419,73 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
     expect(document.body.querySelectorAll('.sop-recipe-option--blocked')).toHaveLength(1)
   })
 
-  it('不给修改回调时词表按只读展示，且把例外一并写明', () => {
-    renderWithTerms([{ term: '裸', allow: ['裸妆'] }, '军'], {}, false)
+  /**
+   * 加白（TB-146）—— 需求原话：「被错误判定为红线的词只能通过删除来绕过，这不合理。」
+   *
+   * 与「删除」的关键差别就一条：**词还在表里**，撤白即恢复；删除是不可逆的。
+   */
+  it('勾选框 = 加白：整词停用，不再判定也不再标红', () => {
+    const changes = renderWithTerms(['提现'], { body: '点击提现到账，{M}' })
+    expect(dialogText()).toContain('骨架命中红线「提现」')
+    expect(document.body.querySelectorAll('.sop-recipe-term--hit')).toHaveLength(1)
+
+    const box = document.body.querySelector<HTMLInputElement>('.sop-recipe-term__whitelist')
+    expect(box?.checked).toBe(false)
+    act(() => {
+      box?.click()
+    })
+
+    expect(changes[changes.length - 1]).toEqual([{ term: '提现', allow: [], disabled: true }])
+    // 加白后：不再命中骨架、不再标红、整格进入「已加白」态
+    expect(dialogText()).not.toContain('骨架命中红线')
+    expect(document.body.querySelectorAll('.sop-recipe-term--hit')).toHaveLength(0)
+    expect(document.body.querySelectorAll('.sop-recipe-term--muted')).toHaveLength(1)
+    // 第二行从「例外输入」换成状态说明 —— 例外已没有服务对象
+    expect(dialogText()).toContain('已加白')
+    expect(document.body.querySelectorAll('input[aria-label^="例外词"]')).toHaveLength(0)
+  })
+
+  it('加白是「可逆的删除」：再点一次恢复，例外配置原样保留', () => {
+    const changes = renderWithTerms([{ term: '裸', allow: ['裸妆'] }], { body: '裸妆效果，{M}' })
+    act(() => {
+      document.body.querySelector<HTMLInputElement>('.sop-recipe-term__whitelist')?.click()
+    })
+    expect(changes[changes.length - 1][0]).toEqual({ term: '裸', allow: ['裸妆'], disabled: true })
+
+    act(() => {
+      document.body.querySelector<HTMLInputElement>('.sop-recipe-term__whitelist')?.click()
+    })
+    expect(changes[changes.length - 1][0]).toEqual({ term: '裸', allow: ['裸妆'], disabled: false })
+    // 撤白后例外输入回到界面上（配置一直没丢）
+    expect(document.body.querySelectorAll('input[aria-label^="例外词"]')).toHaveLength(1)
+  })
+
+  it('标题行报出已加白条数（否则「词还在、却不生效」会让人以为坏了）', () => {
+    renderWithTerms([{ term: '军', allow: [], disabled: true }, '提现'])
+    expect(dialogText()).toContain('2 项 · 1 项已加白 · 全局生效')
+  })
+
+  it('存档里缺 allow 字段时不崩（渲染成空例外，而不是白屏）', () => {
+    // 手工改过库 / 旧格式可能缺这个字段：类型上它必填，但运行时不能假设它一定在 ——
+    // 缺字段时 `.join()` 会抛错，把整个弹窗渲染崩掉（比显示不对难查得多）。
+    const broken = [{ term: '提现', disabled: true } as unknown as RecipeForbiddenRule]
+    expect(() => renderWithTerms(broken)).not.toThrow()
+    // 词在输入框里（`textContent` 不含 input 的 value），所以查 DOM 而不是查文本
+    expect(document.body.querySelector<HTMLInputElement>('input.sop-recipe-term__word')?.value).toBe('提现')
+    expect(dialogText()).toContain('已加白')
+  })
+
+  it('不给修改回调时词表按只读展示，且把例外与加白一并写明', () => {
+    renderWithTerms(
+      [
+        { term: '裸', allow: ['裸妆'] },
+        { term: '军', allow: [], disabled: true },
+      ],
+      {},
+      false,
+    )
     expect(termInputs()).toHaveLength(0)
-    expect(dialogText()).toContain('裸（例外：裸妆） · 军')
+    expect(dialogText()).toContain('裸（例外：裸妆） · 军（已加白）')
   })
 })
 
@@ -479,14 +544,19 @@ describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () =>
     const text = dialogText()
     expect(text).toContain('红线复核 · 本次命中 2 处')
     expect(text).toContain('候选值命中会在生成前被剔除')
-    expect(text).toContain('这不是红线，删掉这个词')
+    // TB-146：首选动作从「删掉这个词」改成「加白」（可逆，比删除安全）
+    expect(text).toContain('这不是红线，加白')
     expect(text).toContain('确认违规，剔除')
   })
 
-  it('「这不是红线」把该词从红线词表里删掉（全局生效的落点）', () => {
+  it('「这不是红线」把该词加白（词留在表里，只是不参与判定）', () => {
     const { termsChanges } = renderReview({})
-    clickButton('这不是红线，删掉这个词')
-    expect(termsChanges[termsChanges.length - 1]).toEqual(toRules(['军']))
+    clickButton('这不是红线，加白')
+    // 关键：词**还在**（草稿里看得见、可随时切回），这正是它比「删掉」安全的地方
+    expect(termsChanges[termsChanges.length - 1]).toEqual([
+      { term: '提现', allow: [], disabled: true },
+      { term: '军', allow: [] },
+    ])
   })
 
   it('「确认违规，剔除」从维度池删掉这个候选值', () => {
@@ -513,8 +583,8 @@ describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () =>
   it('复核完（命中清零）后复核区自动消失', () => {
     renderReview({ terms: ['提现'], config: { body: '{M}', dimensions: [{ name: 'M', options: ['提现金色文案'] }] } })
     expect(dialogText()).toContain('红线复核')
-    // 判为误判：删掉词 → 命中清零 → 整块消失
-    clickButton('这不是红线，删掉这个词')
+    // 判为误判：加白 → 该词不再参与判定 → 命中清零 → 整块消失
+    clickButton('这不是红线，加白')
     expect(dialogText()).not.toContain('红线复核')
   })
 

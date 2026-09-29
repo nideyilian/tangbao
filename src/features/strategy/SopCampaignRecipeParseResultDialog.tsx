@@ -180,6 +180,16 @@ export default function SopCampaignRecipeParseResultDialog({
    * 失焦后再回显规整结果。
    */
   const [allowDraft, setAllowDraft] = useState<{ index: number; text: string } | null>(null)
+  /**
+   * 已加白的条数（TB-146）。标题行必须报出来 —— 加白后词仍留在表里却不生效，
+   * 不说明的话用户会以为「表里有这个词、怎么不拦了」。
+   */
+  const whitelistedCount = terms.filter((item) => item.disabled).length
+  /**
+   * 词表标题。用模板串拼好而不是散在 JSX 里 —— JSX 的换行缩进会折成空白，
+   * 断言与所见文本就未必一致了（TB-146 的测试要按这段文字断言）。
+   */
+  const termsSummary = `合规红线词表（${terms.length} 项${whitelistedCount > 0 ? ` · ${whitelistedCount} 项已加白` : ''} · 全局生效）`
   /** 红线标记是否显示：关掉只停止标红，判定与生成前剔除照旧（TB-144）。 */
   const showRedlineHints = showComplianceHints ?? true
   const canToggleHints = typeof onShowComplianceHintsChange === 'function'
@@ -301,18 +311,29 @@ export default function SopCampaignRecipeParseResultDialog({
   }
 
   /**
-   * 复核动作「这不是红线」：把命中它的词从红线词表里删掉。
+   * 切换「加白」（TB-146）。
+   *
+   * 只动 `disabled` 一个字段 —— **词与它的例外都原样保留**，撤白后立即恢复用途。
+   * 这正是它比「删掉这个词」安全的地方：删除是不可逆的（要回来只能「恢复默认」或手打）。
+   */
+  function toggleTermDisabled(index: number, disabled: boolean) {
+    setAllowDraft(null)
+    onForbiddenTermsChange?.(terms.map((item, current) => (current === index ? { ...item, disabled } : item)))
+  }
+
+  /**
+   * 复核动作「这不是红线」：把命中它的词**加白**（整词不再参与判定，可一键恢复）。
    *
    * 落点刻意选**词表**而不是给这个候选值开豁免：误判的根因是那个词太宽（「军」撞「军绿色」），
-   * 删一次全局受益；给单个值开豁免，同一个词换个值还会再撞（TB-144 的口径）。
+   * 处置一次全局受益；给单个值开豁免，同一个词换个值还会再撞（TB-144 的口径）。
    *
-   * TB-145 补充：删词是**粗**动作（删掉「军」，「参军」也跟着漏）。若只是这个词在某个正常
-   * 搭配里被误伤，更该用下方词表那一格的**例外**输入框 —— 拦住违规用法的同时放过正常写法。
+   * TB-146：这里从「删掉这个词」改成「加白」—— 误判的常见语义是「这个词在我的场景里是正常的」，
+   * 而它**会变**（换个方向可能又要拦）。可逆动作更适合做默认，删除留给词表里的 × 。
    */
-  function removeTerms(words: string[]) {
+  function whitelistTerms(words: string[]) {
     setAllowDraft(null)
-    const drop = new Set(words)
-    onForbiddenTermsChange?.(terms.filter((item) => !drop.has(item.term)))
+    const target = new Set(words)
+    onForbiddenTermsChange?.(terms.map((item) => (target.has(item.term) ? { ...item, disabled: true } : item)))
   }
 
   return (
@@ -547,7 +568,7 @@ export default function SopCampaignRecipeParseResultDialog({
 
           {/* 红线复核（TB-144）：命中项一条条摆出来让用户裁决，而不是只标个红、值还被静默丢掉。
               两个动作各自落到**已有的真相源**，不需要另存复核结果：
-              「这不是红线」→ 删词（红线词表，全局 + 持久）；「确认违规，剔除」→ 删候选值（随这张卡）。
+              「这不是红线」→ 把词加白（红线词表，全局 + 持久 + 可逆）；「确认违规，剔除」→ 删候选值（随这张卡）。
               命中清零后整块消失，不留常驻噪音。 */}
           {showRedlineHints && (bodyViolations.length > 0 || optionViolations.length > 0) && (
             <section
@@ -560,8 +581,8 @@ export default function SopCampaignRecipeParseResultDialog({
                   红线复核 · 本次命中 {bodyViolations.length + optionViolations.length} 处
                 </strong>
                 <span className="text-xs text-ds-muted dark:text-ds-muted">
-                  候选值命中会在生成前被剔除。判为误判：「删掉这个词」是全局放行；若只是某个正常搭配被误伤，
-                  到下方词表里给这个词加例外（更精准）。
+                  候选值命中会在生成前被剔除。判为误判：「加白」= 整个词不再判（可随时恢复）；
+                  只有某个正常搭配被误伤，就到下方词表里给这个词加例外（更精准）。
                 </span>
               </div>
               <div className="mt-1.5 grid gap-1">
@@ -572,8 +593,8 @@ export default function SopCampaignRecipeParseResultDialog({
                       命中「{bodyViolations.join('、')}」
                     </span>
                     {canEditTerms && (
-                      <Button size="sm" variant="secondary" onClick={() => removeTerms(bodyViolations)}>
-                        这不是红线，删掉这个词
+                      <Button size="sm" variant="secondary" onClick={() => whitelistTerms(bodyViolations)}>
+                        这不是红线，加白
                       </Button>
                     )}
                   </div>
@@ -590,8 +611,8 @@ export default function SopCampaignRecipeParseResultDialog({
                       命中「{entry.violations.join('、')}」
                     </span>
                     {canEditTerms && (
-                      <Button size="sm" variant="secondary" onClick={() => removeTerms(entry.violations)}>
-                        这不是红线，删掉这个词
+                      <Button size="sm" variant="secondary" onClick={() => whitelistTerms(entry.violations)}>
+                        这不是红线，加白
                       </Button>
                     )}
                     <Button
@@ -640,17 +661,17 @@ export default function SopCampaignRecipeParseResultDialog({
             onToggle={(event) => setTermsOpen(event.currentTarget.open)}
           >
             <summary>
-              合规红线词表（{terms.length} 项 · 全局生效）
+              {termsSummary}
               {bodyViolations.length > 0 ? ' · 本次骨架命中' : ''}
             </summary>
             {/* 显示开关（TB-144）：手动关掉这些标记。⚠️ 只关显示，判定与生成前剔除照旧 ——
-                想真正不拦某个误判词，用上方复核区的「这不是红线，删掉这个词」，
+                想真正不拦某个误判词，用上方复核区的「这不是红线，加白」（TB-146），
                 或到下方词表里给那个词配例外（TB-145）。 */}
             {canToggleHints && (
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-ds-muted dark:text-ds-muted">
                   关掉只停用标红与复核提示，不改变判定；想放过某个词或某种正常搭配，
-                  用上面的「删掉这个词」或下方词表里的「例外」。
+                  用上面的「加白」或下方词表里的「例外」。
                 </span>
                 <Button
                   size="sm"
@@ -665,17 +686,37 @@ export default function SopCampaignRecipeParseResultDialog({
               <>
                 <div className="sop-recipe-terms__grid">
                   {terms.map((item, index) => {
-                    const hit = bodyViolations.includes(item.term)
+                    // 加白的词不参与判定，也就不该再标红 —— 否则「明明加白了还红着」很吓人
+                    const hit = !item.disabled && bodyViolations.includes(item.term)
+                    // ⚠️ `allow` 走一次 `?? []`：类型上它必填，但数据是从设置读回来的，
+                    // 手工改过库 / 旧格式缺这个字段时，`.join` 会**把整个弹窗渲染崩掉**（白屏），
+                    // 而不是显示成空 —— 这种崩法比显示不对难查得多。
+                    const allow = item.allow ?? []
                     // 编辑期间显示原始串（保住用户刚敲的顿号），失焦后回显规整结果
-                    const allowText = allowDraft?.index === index ? allowDraft.text : item.allow.join('、')
+                    const allowText = allowDraft?.index === index ? allowDraft.text : allow.join('、')
                     return (
                       <div
                         key={index}
-                        className={cx('sop-recipe-term', hit && 'sop-recipe-term--hit')}
+                        className={cx(
+                          'sop-recipe-term',
+                          hit && 'sop-recipe-term--hit',
+                          item.disabled && 'sop-recipe-term--muted',
+                        )}
                         title={hit ? '命中当前骨架' : undefined}
                       >
                         <div className="sop-recipe-term__head">
+                          {/* 勾选 = 加白（TB-146）：整词停用，词与例外都留着，可随时切回。
+                              存的是 `disabled` 而非 `enabled` —— 让勾选框与数据同向，免掉取反写错。 */}
                           <input
+                            type="checkbox"
+                            className="sop-recipe-term__whitelist"
+                            checked={Boolean(item.disabled)}
+                            aria-label={`把红线词「${item.term || index + 1}」加白（不再参与判定）`}
+                            title="加白：这个词不再参与红线判定；再点一次恢复"
+                            onChange={(event) => toggleTermDisabled(index, event.target.checked)}
+                          />
+                          <input
+                            className="sop-recipe-term__word"
                             value={item.term}
                             placeholder="违规词"
                             aria-label={`红线词 ${index + 1}`}
@@ -686,22 +727,30 @@ export default function SopCampaignRecipeParseResultDialog({
                             className="sop-recipe-term__remove"
                             onClick={() => removeTerm(index)}
                             aria-label={`删除红线词 ${item.term || index + 1}`}
-                            title="删除这个词"
+                            title="彻底删除这个词（不可恢复，要回来只能「恢复默认」）"
                           >
                             <TrashIcon className="h-3 w-3" />
                           </button>
                         </div>
-                        {/* 例外词（TB-145）：写在这里的搭配，判定前会被挖空 ——
-                            「裸妆」放行，而同一条里出现的「裸体」照拦。 */}
-                        <input
-                          className="sop-recipe-term__allow"
-                          value={allowText}
-                          placeholder="例外：填正常搭配"
-                          aria-label={`例外词 ${index + 1}（${item.term || '未命名'}）`}
-                          title="这些正常搭配不算违规（顿号分隔）"
-                          onChange={(event) => updateTermAllow(index, event.target.value)}
-                          onBlur={() => setAllowDraft(null)}
-                        />
+                        {item.disabled ? (
+                          // 加白态：例外已经没有服务对象，改成状态说明（配置仍保留在数据里）
+                          <div className="sop-recipe-term__muted-note">
+                            <Badge tone="info">已加白</Badge>
+                            <span>不参与判定</span>
+                          </div>
+                        ) : (
+                          /* 例外词（TB-145）：写在这里的搭配，判定前会被挖空 ——
+                             「裸妆」放行，而同一条里出现的「裸体」照拦。 */
+                          <input
+                            className="sop-recipe-term__allow"
+                            value={allowText}
+                            placeholder="例外：填正常搭配"
+                            aria-label={`例外词 ${index + 1}（${item.term || '未命名'}）`}
+                            title="这些正常搭配不算违规（顿号分隔）"
+                            onChange={(event) => updateTermAllow(index, event.target.value)}
+                            onBlur={() => setAllowDraft(null)}
+                          />
+                        )}
                       </div>
                     )
                   })}
@@ -712,8 +761,8 @@ export default function SopCampaignRecipeParseResultDialog({
                 </div>
                 <div className="sop-recipe-terms__actions">
                   <span>
-                    命中只提示、不中断生成。每格右下的「例外」填正常搭配（如「裸妆」）——
-                    填了就不再误伤，而违规用法照拦。改动立即对所有配方卡生效。
+                    命中只提示、不中断生成。误判有两条路：勾选框「加白」= 整个词不再判、可随时恢复；
+                    右下的「例外」填正常搭配（如「裸妆」）= 只放过那一种写法。改动立即对所有配方卡生效。
                   </span>
                   <Button size="sm" variant="secondary" onClick={resetTerms}>
                     恢复默认 {CAMPAIGN_RECIPE_FORBIDDEN_RULES.length} 词
@@ -724,9 +773,11 @@ export default function SopCampaignRecipeParseResultDialog({
               <p>
                 {terms.length > 0
                   ? terms
-                      .map((item) =>
-                        item.allow.length > 0 ? `${item.term}（例外：${item.allow.join('、')}）` : item.term,
-                      )
+                      .map((item) => {
+                        if (item.disabled) return `${item.term}（已加白）`
+                        const allow = item.allow ?? []
+                        return allow.length > 0 ? `${item.term}（例外：${allow.join('、')}）` : item.term
+                      })
                       .join(' · ')
                   : '（当前词表为空，红线已关闭）'}
               </p>

@@ -189,3 +189,63 @@ describe('recipeForbiddenTerms 例外词（TB-145）', () => {
     expect(isRecipeCompliant('日赚千元', [])).toBe(true)
   })
 })
+
+/**
+ * TB-146：**加白**（整词停用）。需求原话：「被错误判定为红线的词只能通过删除来绕过，这不合理。」
+ *
+ * 与 TB-145 的「例外」分工：例外 = 词还生效、只放过某个搭配；加白 = 整词不生效。
+ * 优先级：**加白 > 例外**。
+ */
+describe('recipeForbiddenTerms 加白（TB-146）', () => {
+  it('加白的词不再命中（整词停用）', () => {
+    const rules = [
+      { term: '提现', allow: [], disabled: true },
+      { term: '日赚', allow: [] },
+    ]
+    expect(findRecipeForbiddenViolations('点击提现到账', rules)).toEqual([])
+    // 没加白的词照旧
+    expect(findRecipeForbiddenViolations('日赚千元', rules)).toEqual(['日赚'])
+  })
+
+  /**
+   * ⚠️ 加白必须写在**挖空之前**：「裸」被加白、而「裸妆」恰好是另一个**启用中**的词时，
+   * 若实现还拿加白词的例外去挖空，「裸妆效果」会被挖成空 → 静默漏判。
+   */
+  it('加白优先于例外：加白词的例外不再参与挖空', () => {
+    const rules = [
+      { term: '裸', allow: ['裸妆'], disabled: true },
+      { term: '裸妆', allow: [] },
+    ]
+    expect(findRecipeForbiddenViolations('裸妆效果', rules)).toEqual(['裸妆'])
+  })
+
+  it('全部加白 = 不拦任何东西（与空词表等效）', () => {
+    const rules = [
+      { term: '裸', allow: [], disabled: true },
+      { term: '色情', allow: [], disabled: true },
+    ]
+    expect(findRecipeForbiddenViolations('裸体艺术，色情内容', rules)).toEqual([])
+    expect(isRecipeCompliant('日赚千元', rules)).toBe(true)
+  })
+
+  it('归一化：只有显式 true 才算加白，缺省一律视为生效', () => {
+    // 旧存档 / 新建的词都没有这个字段 ⇒ 必须照常生效（不能让老用户「什么都没做就少拦了词」）
+    expect(normalizeRecipeForbiddenTerms(['军'])).toEqual([{ term: '军', allow: [] }])
+    expect(normalizeRecipeForbiddenTerms([{ term: '军', allow: ['军绿色'] }])).toEqual([
+      { term: '军', allow: ['军绿色'] },
+    ])
+    expect(normalizeRecipeForbiddenTerms([{ term: '军', disabled: true }])).toEqual([
+      { term: '军', allow: [], disabled: true },
+    ])
+  })
+
+  /**
+   * ⚠️ 非布尔脏值**不能**把词判成加白：`Boolean('no')` 是 true ⇒ 存档里一个字符串就能让词
+   * 静默失效，用户看到「表里有这个词、就是不拦」，完全无从排查。
+   */
+  it('归一化：非布尔脏值不构成加白', () => {
+    const dirty = normalizeRecipeForbiddenTerms([{ term: '军', disabled: 'yes' }])
+    expect(dirty).toEqual([{ term: '军', allow: [] }])
+    expect(findRecipeForbiddenViolations('参军报国', dirty)).toEqual(['军'])
+  })
+})
