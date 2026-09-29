@@ -115,14 +115,28 @@ export function summarizeParsedRecipe(
 }
 
 /**
- * 解析结果里「需要用户留意」的条数 = 告警 + 缺失池。
+ * 解析结果里「需要用户留意」的明细（缺失池 + 告警），逐条成文。
  *
- * 给面板那个入口按钮用：**外面不铺细节，只报「有几条要留意」**，
- * 让人知道「弹窗里有没有事要看」，但不把内容再抄一遍到界面上。
+ * **条数与文案的唯一构造处**：面板上的徽章数字、弹窗里的徽章数字、弹窗里列出的
+ * 每一条，全都从这里走 ⇒ 三者**不可能对不上**。
+ *
+ * 上一版是「数字在一处算、明细在另一处渲染」，于是出现了最难受的一种不一致：
+ * 徽章报着「1 条待注意」，而下面那行明细长得像普通说明文字、用户根本认不出来
+ * （2026-09-29 TB-148 报障现场）。条数必须由明细**数出来**，不能另算。
+ *
+ * 缺失池单独成文而不是把几个占位符合并成一句：合并会让「N 条」和「看到的行数」再次脱钩。
  */
+export function listParsedRecipeAttention(parsed: ParsedCampaignRecipe | null): string[] {
+  if (!parsed) return []
+  return [
+    ...parsed.missingPools.map((name) => `模板引用了未定义的占位符「${name}」——不补候选值，引擎会拒绝生成`),
+    ...parsed.warnings,
+  ]
+}
+
+/** 条数 = 明细长度。别再各算一遍（那正是上面注释里说的漂移源头）。 */
 export function countParsedRecipeAttention(parsed: ParsedCampaignRecipe | null): number {
-  if (!parsed) return 0
-  return parsed.warnings.length + parsed.missingPools.length
+  return listParsedRecipeAttention(parsed).length
 }
 
 const SOURCE_LABEL: Record<ParsedCampaignRecipe['source'], string> = {
@@ -230,6 +244,12 @@ export default function SopCampaignRecipeParseResultDialog({
   /** 红线标记是否显示：关掉只停止标红，判定与生成前剔除照旧（TB-144）。 */
   const showRedlineHints = showComplianceHints ?? true
   const canToggleHints = typeof onShowComplianceHintsChange === 'function'
+
+  /**
+   * 「待注意」明细（TB-148）。徽章数字与下面列出的行**共用这一份**，
+   * 所以「报几条」和「列几条」永远一致。
+   */
+  const attentionItems = useMemo(() => listParsedRecipeAttention(parsed), [parsed])
 
   const placeholders = useMemo(() => extractPlaceholders(body), [body])
   const errors = useMemo(() => validateCampaignRecipeConfig(config), [config])
@@ -403,9 +423,7 @@ export default function SopCampaignRecipeParseResultDialog({
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={parsed.ok ? 'success' : 'danger'}>{parsed.ok ? '解析成功' : '解析失败'}</Badge>
                 <Badge tone="neutral">识别来源：{SOURCE_LABEL[parsed.source]}</Badge>
-                {countParsedRecipeAttention(parsed) > 0 && (
-                  <Badge tone="warning">{countParsedRecipeAttention(parsed)} 条待注意</Badge>
-                )}
+                {attentionItems.length > 0 && <Badge tone="warning">{attentionItems.length} 条待注意</Badge>}
               </div>
 
               {!parsed.ok && (
@@ -446,19 +464,26 @@ export default function SopCampaignRecipeParseResultDialog({
                 )}
               </section>
 
-              {/* 解析过程中的提醒：缺失池 + 非致命告警 */}
-              {parsed.missingPools.length > 0 && (
-                <p className="rounded-ds-lg border border-ds-warning/35 bg-ds-warning-subtle px-3 py-2 text-xs text-ds-warning dark:border-ds-warning/40 dark:bg-ds-warning/10 dark:text-ds-warning">
-                  模板引用了但候选池缺失的占位符：<strong>{parsed.missingPools.join('、')}</strong>
-                  （不补齐引擎会拒绝生成）
-                </p>
-              )}
-              {parsed.warnings.length > 0 && (
-                <ul className="list-disc space-y-0.5 pl-4 text-xs text-ds-muted dark:text-ds-muted">
-                  {parsed.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
+              {/* 解析过程中的提醒（TB-148）：缺失池与告警合成**一块**，统一警示外观。
+                  上一版是「一个黄条（缺池）+ 一串灰色小字（告警）」，其中灰字跟普通说明
+                  长得毫无区别 —— 徽章在报「N 条待注意」，用户却找不到是哪一条。 */}
+              {attentionItems.length > 0 && (
+                <section
+                  className="space-y-1.5 rounded-ds-lg border border-ds-warning/35 bg-ds-warning-subtle px-3 py-2 dark:border-ds-warning/40 dark:bg-ds-warning/10"
+                  aria-label="解析待注意"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <AlertTriangleIcon className="h-3.5 w-3.5 shrink-0 text-ds-warning dark:text-ds-warning" />
+                    <span className="text-xs font-medium text-ds-warning dark:text-ds-warning">
+                      {attentionItems.length} 条待注意
+                    </span>
+                  </div>
+                  <ul className="list-inside list-disc space-y-0.5 text-xs text-ds-warning dark:text-ds-warning">
+                    {attentionItems.map((item, index) => (
+                      <li key={index}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
               )}
             </>
           )}

@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Button, TextArea } from '../../design-system'
 import { EyeIcon as Eye, ShuffleIcon as Shuffle, SparklesIcon as Sparkles } from '../../design-system/icons'
 import { parseCampaignRecipeText, toCampaignRecipeConfig, type ParsedCampaignRecipe } from './campaignRecipeImport'
 import SopCampaignRecipeParseResultDialog, {
-  countParsedRecipeAttention,
+  listParsedRecipeAttention,
   summarizeParsedRecipe,
 } from './SopCampaignRecipeParseResultDialog'
 import { resolveEffectiveDominantSlots } from './campaignRecipe'
@@ -31,6 +31,9 @@ import type { RecipeForbiddenRule } from '../../types'
  * 关键约束：解析**只填能确定的字段**，认不出的一律留空并在详情里点明，
  * 绝不静默编造 —— 一个错的配方比一个报错的配方危险得多。
  */
+
+/** 外面最多铺几条「待注意」明细：再多就让明细进弹窗，别把概览区挤没。 */
+const ATTENTION_PREVIEW_LIMIT = 2
 
 export type SopCampaignRecipePanelProps = {
   config: SopCampaignRecipeConfig
@@ -119,8 +122,28 @@ export default function SopCampaignRecipePanel({
   const [lastParsedText, setLastParsedText] = useState('')
   const parseTimerRef = useRef<number | null>(null)
 
-  /** 入口按钮上只报「有几条要留意」，细节进弹窗（外面不重复铺内容） */
-  const attentionCount = countParsedRecipeAttention(parsed)
+  /**
+   * 「待注意」的明细与条数（TB-148）。
+   *
+   * **条数由明细数出来**（`attentionItems.length`），不再单独算一遍 ——
+   * 上一版外面只报数字、内容全在弹窗里且长得像普通说明文字，于是出现了
+   * 「看到『1 条待注意』却不知道是哪条」。明细与数字同源就不会对不上。
+   */
+  const attentionItems = useMemo(() => listParsedRecipeAttention(parsed), [parsed])
+  const attentionCount = attentionItems.length
+  /**
+   * 外面铺前几条（全文走 `title`，悬停可见）。不整段铺开：
+   * 一屏告警会把「内容概览」这块挤没，而这里的作用只是「告诉你有没有事、大概是什么事」。
+   */
+  const attentionPreview = useMemo(() => {
+    if (attentionItems.length === 0) return ''
+    const head = attentionItems.slice(0, ATTENTION_PREVIEW_LIMIT)
+    return attentionItems.length > ATTENTION_PREVIEW_LIMIT
+      ? `${head.join('；')} 等 ${attentionItems.length} 条`
+      : head.join('；')
+  }, [attentionItems])
+  /** 悬停全文（原生 tooltip 用换行拼接，读起来是列表而不是一行） */
+  const attentionFullText = useMemo(() => attentionItems.join('\n'), [attentionItems])
 
   /** 已保存的骨架与维度规模：外面据此判断「这个配方卡填了没有、大概填了多少」 */
   const body = config.body ?? ''
@@ -297,13 +320,26 @@ export default function SopCampaignRecipePanel({
         <section className="sop-recipe-overview" aria-label="配方卡内容概览">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
-            {attentionCount > 0 && <Badge tone="warning">{attentionCount} 条待注意</Badge>}
+            {attentionCount > 0 && (
+              <Badge tone="warning" title={attentionFullText}>
+                {attentionCount} 条待注意
+              </Badge>
+            )}
             <span className="text-xs text-ds-muted dark:text-ds-muted">
               {hasConfigContent
                 ? `${dimensions.length} 个维度 · ${summary.optionCount} 个候选值 · 组合空间 ${summary.combinationCount} 条`
                 : '尚未填写内容'}
             </span>
           </div>
+
+          {/* 待注意的具体内容（TB-148）：徽章只报个数，这里把前几条摊开 ——
+              上一版外面只有一个数字、一个字内容都没有，看到「1 条待注意」无从下手；
+              全文挂在 `title` 上，悬停可读。 */}
+          {attentionCount > 0 && (
+            <p className="mt-1.5 text-xs text-ds-warning dark:text-ds-warning" title={attentionFullText}>
+              {attentionPreview}
+            </p>
+          )}
 
           {parseError && (
             <p className="sop-recipe-panel__warning" role="alert">

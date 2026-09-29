@@ -21,6 +21,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import SopCampaignRecipeParseResultDialog, {
   countParsedRecipeAttention,
+  listParsedRecipeAttention,
   summarizeParsedRecipe,
 } from './SopCampaignRecipeParseResultDialog'
 import { __resetOverlayManager } from '../../design-system/overlayManager'
@@ -166,6 +167,25 @@ describe('countParsedRecipeAttention', () => {
     expect(countParsedRecipeAttention(makeParsed({ warnings: [], missingPools: [] }))).toBe(0)
     expect(countParsedRecipeAttention(null)).toBe(0)
   })
+
+  it('条数**由明细数出来**：两者永远相等（TB-148）', () => {
+    const parsed = makeParsed({
+      missingPools: ['S3', 'S4', 'S5'],
+      warnings: ['字段「desc」未识别，请手动补充', '未识别到配方名称，请手动填写'],
+    })
+    const items = listParsedRecipeAttention(parsed)
+    expect(items).toHaveLength(5)
+    // 关键：不是「各算一遍再祈祷它们相等」，而是同一个数组的长度
+    expect(countParsedRecipeAttention(parsed)).toBe(items.length)
+  })
+
+  it('每个缺失占位符**单独成条**（合并成一句会让「N 条」和「看到几行」脱钩）', () => {
+    const items = listParsedRecipeAttention(makeParsed({ missingPools: ['S3', 'S4'], warnings: [] }))
+    expect(items).toHaveLength(2)
+    expect(items[0]).toContain('S3')
+    expect(items[1]).toContain('S4')
+    expect(listParsedRecipeAttention(null)).toEqual([])
+  })
 })
 
 describe('SopCampaignRecipeParseResultDialog', () => {
@@ -182,6 +202,24 @@ describe('SopCampaignRecipeParseResultDialog', () => {
     expect(text).toContain('字段「desc」未识别，请手动补充')
     expect(text).toContain('gpt-image-1')
     expect(text).toContain('敏感词A')
+  })
+
+  it('「N 条待注意」与明细行数对得上，明细块自带警示外观（TB-148）', () => {
+    // 2 个缺失占位符 + 1 条告警 = 3
+    const parsed = makeParsed({ missingPools: ['S3', 'S4'], warnings: ['字段「desc」未识别，请手动补充'] })
+    renderDialog({ parsed })
+
+    // 徽章与明细块标题都报这个数 ⇒ 同一句出现两次，互为印证（不是各写各的）
+    const shown = dialogText().match(new RegExp(`${countParsedRecipeAttention(parsed)} 条待注意`, 'g')) ?? []
+    expect(shown).toHaveLength(2)
+
+    // 明细逐条列出，**行数 = 报出来的数**（上一版这里是灰字，用户找不到是哪一条）
+    const block = document.body.querySelector('[aria-label="解析待注意"]')
+    expect(block).not.toBeNull()
+    expect(block!.querySelectorAll('li')).toHaveLength(countParsedRecipeAttention(parsed))
+    expect(block!.textContent).toContain('S3')
+    expect(block!.textContent).toContain('S4')
+    expect(block!.textContent).toContain('字段「desc」未识别，请手动补充')
   })
 
   it('骨架与维度池都在弹窗里（外面已无编辑入口）', () => {

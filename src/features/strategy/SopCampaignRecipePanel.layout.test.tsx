@@ -157,6 +157,22 @@ describe('SopCampaignRecipePanel · 外面只留原文 + 能看出内容与状�
     expect(text).toMatch(/\d+ 个维度 · \d+ 个候选值 · 组合空间 \d+ 条/)
   })
 
+  it('有待注意时外面不只报个数：摘要直接摊出具体是哪一条（TB-148）', async () => {
+    const renderer = renderPanel(EMPTY_CONFIG)
+    // 没写 name ⇒ 解析会给一条「未识别到配方名称」告警（正好 1 条，便于断言）
+    typeRawText(renderer, JSON.stringify({ template: '{M}', master: [{ name: 'M', values: ['甲', '乙'] }] }))
+    act(() => {
+      ;(findButton(renderer, '解析').props.onClick as () => void)()
+    })
+    await flushParse()
+
+    const text = panelText(renderer)
+    // 数字仍在（徽章 + 入口按钮都报这个数）
+    expect(text).toContain('1 条待注意')
+    // 但后面跟着**具体是哪一条** —— 上一版外面一个字内容都没有，看到数字无从下手
+    expect(text).toContain('未识别到配方名称，请手动填写')
+  })
+
   it('解析失败：状态「解析失败」且原因就地可见', async () => {
     const renderer = renderPanel(EMPTY_CONFIG)
     typeRawText(renderer, '这不是配方卡，也不是 JSON')
