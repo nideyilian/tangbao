@@ -44,6 +44,7 @@ import {
   isVariablePromptSop as isVariablePromptSopShared,
   MAX_DIMENSION_OPTIONS,
   parseCampaignRecipeConfigFromContent,
+  resolveEnabledCampaignRecipeForbiddenTerms,
   sanitizeCampaignRecipeConfig,
   validateCampaignRecipeConfig,
   type CampaignRecipeConfig,
@@ -749,7 +750,17 @@ export async function generateCampaignRecipePromptsFromStore(
   // - **骨架**命中 → **只提示、绝不中断**。骨架是用户手写的文案，原先「命中即整段清空 + 抛错」
   //   让误判直接变成「整批 0 条、我的提示词不能用了」；现在由界面在配方卡里标红，
   //   用户判为误判就删掉那个词，或者自己去改骨架。
-  const { config, removed } = sanitizeCampaignRecipeConfig(rawConfig, useStore.getState().settings.recipeForbiddenTerms)
+  //
+  // 总开关（TB-147，**默认关闭**）：关掉时这里拿到的是空词表 ⇒ 不剔除、不回执。
+  // 判断收在 `resolveEnabledCampaignRecipeForbiddenTerms` 一处，不在这里再写一遍。
+  const redlineSettings = useStore.getState().settings
+  const { config, removed } = sanitizeCampaignRecipeConfig(
+    rawConfig,
+    resolveEnabledCampaignRecipeForbiddenTerms(
+      redlineSettings.recipeForbiddenEnabled,
+      redlineSettings.recipeForbiddenTerms,
+    ),
+  )
   if (removed.length > 0) {
     console.warn(`[配方卡引擎] 命中合规红线：${removed.join('；')}`)
     options.onSanitized?.(removed)

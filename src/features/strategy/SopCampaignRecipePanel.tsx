@@ -48,6 +48,13 @@ export type SopCampaignRecipePanelProps = {
    * 不传 = 词表按只读展示。
    */
   onForbiddenTermsChange?: (terms: RecipeForbiddenRule[]) => void
+  /**
+   * 红线**总开关**（TB-147）：**默认关闭** —— 关闭时不判定 / 不标红 / 生成前也不剔除。
+   * 不传 = 关闭（与设置的缺省一致，避免"忘了传就当开着"）。
+   */
+  complianceEnabled?: boolean
+  /** 切换总开关；不传时开关不渲染（只读场景）。 */
+  onComplianceEnabledChange?: (value: boolean) => void
   /** 是否显示红线标记；不传 = 显示。只管显示，判定与生成前剔除照旧。 */
   showComplianceHints?: boolean
   /** 切换红线标记显示；不传则开关不渲染。 */
@@ -88,6 +95,8 @@ export default function SopCampaignRecipePanel({
   onMetaChange,
   forbiddenTerms,
   onForbiddenTermsChange,
+  complianceEnabled,
+  onComplianceEnabledChange,
   showComplianceHints,
   onShowComplianceHintsChange,
 }: SopCampaignRecipePanelProps) {
@@ -332,6 +341,8 @@ export default function SopCampaignRecipePanel({
         meta={meta}
         forbiddenTerms={forbiddenTerms}
         onForbiddenTermsChange={onForbiddenTermsChange}
+        complianceEnabled={complianceEnabled}
+        onComplianceEnabledChange={onComplianceEnabledChange}
         showComplianceHints={showComplianceHints}
         onShowComplianceHintsChange={onShowComplianceHintsChange}
       />

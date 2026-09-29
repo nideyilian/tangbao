@@ -19,7 +19,12 @@ const storeMocks = vi.hoisted(() => ({
    * 当前设置（含配方卡红线词表）。**用属性访问而不是解构捕获** ——
    * 测试里会整体替换这个对象来模拟「用户在配方卡里改了词表」，getState 每次读到的是新的那份。
    */
-  settings: { model: 'gpt-test' } as { model: string; recipeForbiddenTerms?: string[] },
+  settings: { model: 'gpt-test' } as {
+    model: string
+    recipeForbiddenTerms?: string[]
+    /** 红线总开关（TB-147）：不设 = 关闭。 */
+    recipeForbiddenEnabled?: boolean
+  },
 }))
 
 vi.mock('../../../lib/apiProfiles', () => ({
@@ -92,7 +97,9 @@ const healthyRecipe: SopCampaignRecipeConfig = {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  storeMocks.settings = { model: 'gpt-test' }
+  // 红线**总开关**（TB-147）实际默认是关的；这个文件里的用例多数测的是「命中红线」的行为，
+  // 所以在脚手架里默认打开，要测「关闭」的用例自己覆盖成 false（见文件末尾那两条）。
+  storeMocks.settings = { model: 'gpt-test', recipeForbiddenEnabled: true }
   storeMocks.getSopBatchSnapshots.mockResolvedValue([])
 })
 
@@ -252,6 +259,49 @@ describe('配方卡引擎：骨架命中红线只提示、不中断（TB-142）'
     for (const prompt of prompts) {
       expect(prompt).not.toContain('稳赚')
     }
+  })
+
+  /**
+   * ⭐ 成对守卫（TB-147）：**同一条**命中红线的候选值，开关关着就保留、开着就剔除。
+   *
+   * 单测「关闭时保留」会被「压根没配词表」蒙混过去（两者结果一样），所以必须成对 ——
+   * 上面那条就是「开着 → 剔除」的那一半。
+   */
+  it('总开关关闭时：命中的候选值照常保留、也不回调 onSanitized', async () => {
+    const recipe: SopCampaignRecipeConfig = {
+      body: '{{主视觉}}，主体是{{主体}}',
+      dimensions: [
+        { name: '主视觉', options: ['产品特写', '稳赚促销'] },
+        { name: '主体', options: ['咖啡杯', '保温杯'] },
+      ],
+    }
+    storeMocks.settings = { model: 'gpt-test', recipeForbiddenEnabled: false, recipeForbiddenTerms: ['稳赚'] }
+    const onSanitized = vi.fn()
+
+    const prompts = await generateCampaignRecipePromptsFromStore(makeRecipeSop(recipe), 4, '', {
+      exact: true,
+      onSanitized,
+    })
+
+    expect(onSanitized).not.toHaveBeenCalled()
+    expect(prompts.some((prompt) => prompt.includes('稳赚'))).toBe(true)
+  })
+
+  it('总开关关闭时：骨架命中也不回执（提示与剔除同源，不会只剩一半）', async () => {
+    const recipe: SopCampaignRecipeConfig = {
+      body: '稳赚的{{主视觉}}',
+      dimensions: [{ name: '主视觉', options: ['产品特写', '使用场景'] }],
+    }
+    storeMocks.settings = { model: 'gpt-test', recipeForbiddenEnabled: false, recipeForbiddenTerms: ['稳赚'] }
+    const onSanitized = vi.fn()
+
+    const prompts = await generateCampaignRecipePromptsFromStore(makeRecipeSop(recipe), 2, '', {
+      exact: true,
+      onSanitized,
+    })
+
+    expect(prompts).toHaveLength(2)
+    expect(onSanitized).not.toHaveBeenCalled()
   })
 
   it('剔除候选值时通过 onSanitized 回调告知调用方', async () => {

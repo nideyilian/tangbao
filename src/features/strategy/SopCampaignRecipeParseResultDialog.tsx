@@ -38,6 +38,14 @@ import type { RecipeForbiddenRule } from '../../types'
 /** 一键铺开的预览条数；只用于看效果，不影响实际生成数量。 */
 const RECIPE_PREVIEW_COUNT = 6
 
+/**
+ * 总开关关闭时用的空词表（TB-147）。
+ *
+ * 刻意做成**模块级常量**而不是每次渲染写 `[]`：数组字面量每次都是新引用，
+ * 会把下面依赖它的 `useMemo` 全部打穿（每渲染一次就重算一遍判定）。
+ */
+const NO_TERMS: readonly RecipeForbiddenRule[] = []
+
 export interface SopCampaignRecipeParseResultDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -68,6 +76,15 @@ export interface SopCampaignRecipeParseResultDialogProps {
    * 不传时词表按只读展示：编辑控件（输入框 / 删除 / 加一条 / 恢复默认）一律不渲染。
    */
   onForbiddenTermsChange?: (terms: RecipeForbiddenRule[]) => void
+  /**
+   * 红线**总开关**（TB-147）：**默认关闭** —— 只有 `true` 才判定 / 标红 / 显示复核区。
+   *
+   * 不传 = 关闭（与设置的缺省一致）。刻意**不给"缺省即开"**的兜底：
+   * 那样任何一处忘了传就会把功能又打开，而这是个「默认该关」的能力。
+   */
+  complianceEnabled?: boolean
+  /** 切换总开关；不传时开关不渲染（只读场景）。 */
+  onComplianceEnabledChange?: (value: boolean) => void
   /**
    * 是否显示红线标记（候选值标红 / 骨架命中提示 / 复核区）。
    * 不传 = 显示。**它只管显示**，判定与生成前剔除照旧（TB-144）。
@@ -155,6 +172,8 @@ export default function SopCampaignRecipeParseResultDialog({
   meta,
   forbiddenTerms,
   onForbiddenTermsChange,
+  complianceEnabled,
+  onComplianceEnabledChange,
   showComplianceHints,
   onShowComplianceHintsChange,
 }: SopCampaignRecipeParseResultDialogProps) {
@@ -186,26 +205,44 @@ export default function SopCampaignRecipeParseResultDialog({
    */
   const whitelistedCount = terms.filter((item) => item.disabled).length
   /**
+   * 红线**总开关**（TB-147）：**默认关闭**（与设置缺省一致，不传 = 关）。
+   * 与 `showComplianceHints` 是两层：这个决定「判不判」，那个只管「标不标」。
+   */
+  const complianceOn = complianceEnabled === true
+  const canToggleCompliance = typeof onComplianceEnabledChange === 'function'
+  /**
+   * **判定实际用的**词表：总开关关闭时为空数组 —— 复用「空词表 = 红线全关」的既有语义，
+   * 于是标红 / 复核区 / 骨架命中提示**一次全部消失**（不必在三个判定点各包一层 `if`）。
+   *
+   * ⚠️ 这里**刻意不走** `resolveEnabledRecipeForbiddenTerms`：那个会顺手把词表归一化，
+   * 而界面上的词表带着「用户正在输入的中间态」（点「加一条」留下的空词、只敲了一半的例外），
+   * 归一化会把这些吃掉 ⇒ 输入框内容凭空消失。生成链路（`storeSopGeneration`）拿的是
+   * 设置里的成品，那边才用那个 helper。
+   */
+  const activeTerms = complianceOn ? terms : NO_TERMS
+  /**
    * 词表标题。用模板串拼好而不是散在 JSX 里 —— JSX 的换行缩进会折成空白，
    * 断言与所见文本就未必一致了（TB-146 的测试要按这段文字断言）。
    */
-  const termsSummary = `合规红线词表（${terms.length} 项${whitelistedCount > 0 ? ` · ${whitelistedCount} 项已加白` : ''} · 全局生效）`
+  const termsSummary = `合规红线词表（${terms.length} 项${
+    whitelistedCount > 0 ? ` · ${whitelistedCount} 项已加白` : ''
+  } · ${complianceOn ? '已启用' : '已关闭'}）`
   /** 红线标记是否显示：关掉只停止标红，判定与生成前剔除照旧（TB-144）。 */
   const showRedlineHints = showComplianceHints ?? true
   const canToggleHints = typeof onShowComplianceHintsChange === 'function'
 
   const placeholders = useMemo(() => extractPlaceholders(body), [body])
   const errors = useMemo(() => validateCampaignRecipeConfig(config), [config])
-  const bodyViolations = useMemo(() => findCampaignRecipeViolations(body, terms), [body, terms])
+  const bodyViolations = useMemo(() => findCampaignRecipeViolations(body, activeTerms), [body, activeTerms])
   const optionViolations = useMemo(
     () =>
       dimensions.flatMap((dimension, dimensionIndex) =>
         (dimension.options ?? []).flatMap((option, optionIndex) => {
-          const violations = findCampaignRecipeViolations(option, terms)
+          const violations = findCampaignRecipeViolations(option, activeTerms)
           return violations.length > 0 ? [{ dimensionIndex, optionIndex, option, violations }] : []
         }),
       ),
-    [dimensions, terms],
+    [dimensions, activeTerms],
   )
   // 骨架命中**不再阻断预览**：生成链路也不再中断（TB-142），预览与真实生成必须同口径。
   const preview = useMemo(() => {
@@ -521,7 +558,7 @@ export default function SopCampaignRecipeParseResultDialog({
                     {dimension.options.map((option, optionIndex) => {
                       // ⚠️ 必须把当前词表传进去：漏传会用**内置 21 词**判定，
                       // 于是用户删掉误判词之后，格子照旧标红（"删了还标红"就是这么来的，TB-144 实测）。
-                      const hit = showRedlineHints ? findCampaignRecipeViolations(option, terms) : []
+                      const hit = showRedlineHints ? findCampaignRecipeViolations(option, activeTerms) : []
                       return (
                         <label
                           key={optionIndex}
@@ -664,10 +701,29 @@ export default function SopCampaignRecipeParseResultDialog({
               {termsSummary}
               {bodyViolations.length > 0 ? ' · 本次骨架命中' : ''}
             </summary>
+            {/* 总开关（TB-147）：**默认关闭**。关闭时下面整块仍可查看与编辑（先把词配好、
+                再打开开关），只是不判定 —— 所以这里特意不把编辑区禁掉。 */}
+            {canToggleCompliance && (
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-ds-muted dark:text-ds-muted">
+                  {complianceOn
+                    ? '已启用：命中的地方会标红，生成前会剔除命中的候选值。'
+                    : '已关闭：不判定、不标红，生成前也不剔除。下面的词表只是留档。'}
+                </span>
+                <Button
+                  size="sm"
+                  variant={complianceOn ? 'primary' : 'secondary'}
+                  onClick={() => onComplianceEnabledChange?.(!complianceOn)}
+                >
+                  {complianceOn ? '合规红线：开' : '合规红线：关'}
+                </Button>
+              </div>
+            )}
             {/* 显示开关（TB-144）：手动关掉这些标记。⚠️ 只关显示，判定与生成前剔除照旧 ——
                 想真正不拦某个误判词，用上方复核区的「这不是红线，加白」（TB-146），
-                或到下方词表里给那个词配例外（TB-145）。 */}
-            {canToggleHints && (
+                或到下方词表里给那个词配例外（TB-145）。
+                总开关关着时不渲染它：没东西可标，留着只是噪音。 */}
+            {complianceOn && canToggleHints && (
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-ds-muted dark:text-ds-muted">
                   关掉只停用标红与复核提示，不改变判定；想放过某个词或某种正常搭配，

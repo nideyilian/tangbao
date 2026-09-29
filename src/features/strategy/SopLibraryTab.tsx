@@ -160,6 +160,11 @@ export default function SopLibraryTab({
    * 直接透传，**不要在这里折算**（折算会让「全删光」退回默认词表）。
    */
   const recipeForbiddenTerms = useStore((state) => state.settings.recipeForbiddenTerms)
+  /**
+   * 红线**总开关**（TB-147）：**默认关闭** —— 关闭时不判定、不标红、生成前也不剔除。
+   * 与下面的 `recipeComplianceHints` 是两层：这个决定「判不判」，那个只管「标不标」。
+   */
+  const recipeForbiddenEnabled = useStore((state) => state.settings.recipeForbiddenEnabled)
   /** 红线标记显示开关（TB-144）：只管显示，判定与生成前剔除照旧。 */
   const recipeComplianceHints = useStore((state) => state.settings.recipeComplianceHints)
   const setSettings = useStore((state) => state.setSettings)
@@ -649,6 +654,8 @@ export default function SopLibraryTab({
                 onChange={(campaignRecipe) => setItemDraft({ ...itemDraft, campaignRecipe })}
                 forbiddenTerms={recipeForbiddenTerms}
                 onForbiddenTermsChange={(terms) => setSettings({ recipeForbiddenTerms: terms })}
+                complianceEnabled={recipeForbiddenEnabled}
+                onComplianceEnabledChange={(value) => setSettings({ recipeForbiddenEnabled: value })}
                 showComplianceHints={recipeComplianceHints}
                 onShowComplianceHintsChange={(value) => setSettings({ recipeComplianceHints: value })}
                 onMetaChange={(patch) => {

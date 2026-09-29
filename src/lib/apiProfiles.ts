@@ -812,6 +812,9 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
       record.assistantActions as Partial<AssistantActionPreferences> | undefined,
     ),
     adNegativeRuleProfiles,
+    // 配方卡合规红线**总开关**（TB-147）：**默认关闭**，只有显式 true 才启用。
+    // 与 `recipeComplianceHints`（只管显示）是两层，别混：这个决定「判不判」。
+    recipeForbiddenEnabled: record.recipeForbiddenEnabled === true,
     // 配方卡合规红线词表（TB-142 / TB-145）：`undefined` = 没自定义过（用内置默认 21 词），
     // `[]` = 用户明确清空（红线关闭）。**不能**把空数组折算成 undefined ——
     // 用户把误判词全删光之后，默认词表不能又冒回来。

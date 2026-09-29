@@ -308,44 +308,56 @@ describe('SopCampaignRecipeParseResultDialog', () => {
  * **能看见**（命中当前骨架的词在词表里标红，且写明不会中断生成）、
  * **能退回只读**（不传修改回调时不渲染编辑控件）。
  */
-describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () => {
-  /** 渲染一个词表可编辑的弹窗，返回「每次写回的词表」记录。 */
-  function renderWithTerms(
-    initial: Array<string | RecipeForbiddenRule>,
-    configOverrides: Partial<SopCampaignRecipeConfig> = {},
-    editable = true,
-  ) {
-    const changes: RecipeForbiddenRule[][] = []
-    const config = { ...makeConfig(), ...configOverrides }
-    function Harness() {
-      const [terms, setTerms] = useState<RecipeForbiddenRule[]>(toRules(initial))
-      return (
-        <SopCampaignRecipeParseResultDialog
-          open
-          onOpenChange={() => {}}
-          parsed={makeParsed()}
-          config={config}
-          onChange={() => {}}
-          forbiddenTerms={terms}
-          onForbiddenTermsChange={
-            editable
-              ? (next) => {
-                  changes.push(next)
-                  setTerms(next)
-                }
-              : undefined
-          }
-        />
-      )
-    }
-    act(() => {
-      root.render(<Harness />)
-    })
-    return changes
+/**
+ * 词表可编辑的弹窗脚手架（TB-142 / TB-146 / TB-147 三组用例共用）。
+ *
+ * 定义在**文件级**而不是某个 describe 内：TB-147 那组要单独测「总开关关闭」，
+ * 放在 describe 里会让它看不到这个 helper。
+ *
+ * `compliance` 默认 `true`：总开关的**实际默认是关的**，而这些用例多数测的是"开着时"的行为，
+ * 显式打开才保持原语义（否则每条都会因为不判定而红）。
+ */
+function renderWithTerms(
+  initial: Array<string | RecipeForbiddenRule>,
+  configOverrides: Partial<SopCampaignRecipeConfig> = {},
+  editable = true,
+  compliance = true,
+) {
+  const changes: RecipeForbiddenRule[][] = []
+  const config = { ...makeConfig(), ...configOverrides }
+  function Harness() {
+    const [terms, setTerms] = useState<RecipeForbiddenRule[]>(toRules(initial))
+    return (
+      <SopCampaignRecipeParseResultDialog
+        open
+        onOpenChange={() => {}}
+        parsed={makeParsed()}
+        config={config}
+        onChange={() => {}}
+        forbiddenTerms={terms}
+        onForbiddenTermsChange={
+          editable
+            ? (next) => {
+                changes.push(next)
+                setTerms(next)
+              }
+            : undefined
+        }
+        complianceEnabled={compliance}
+        onComplianceEnabledChange={() => {}}
+      />
+    )
   }
+  act(() => {
+    root.render(<Harness />)
+  })
+  return changes
+}
 
-  const termInputs = () => Array.from(document.body.querySelectorAll<HTMLInputElement>('input[aria-label^="红线词"]'))
+/** 词表里所有「词」输入框（例外框的 aria-label 前缀是「例外词」，不会被这个选择器命中）。 */
+const termInputs = () => Array.from(document.body.querySelectorAll<HTMLInputElement>('input[aria-label^="红线词"]'))
 
+describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () => {
   it('词表条目就是输入框：可加一条、可改字、可删除', () => {
     const changes = renderWithTerms(['提现', '军'])
     expect(termInputs().map((input) => input.value)).toEqual(['提现', '军'])
@@ -462,7 +474,7 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
 
   it('标题行报出已加白条数（否则「词还在、却不生效」会让人以为坏了）', () => {
     renderWithTerms([{ term: '军', allow: [], disabled: true }, '提现'])
-    expect(dialogText()).toContain('2 项 · 1 项已加白 · 全局生效')
+    expect(dialogText()).toContain('2 项 · 1 项已加白 · 已启用')
   })
 
   it('存档里缺 allow 字段时不崩（渲染成空例外，而不是白屏）', () => {
@@ -498,7 +510,13 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
  * **复核完（命中清零）整块消失**。
  */
 describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () => {
-  function renderReview(options: { terms?: string[]; config?: Partial<SopCampaignRecipeConfig>; hints?: boolean }) {
+  function renderReview(options: {
+    terms?: string[]
+    config?: Partial<SopCampaignRecipeConfig>
+    hints?: boolean
+    /** TB-147 总开关；默认 `true`（这组用例测的是「启用时」的行为）。 */
+    compliance?: boolean
+  }) {
     const termsChanges: RecipeForbiddenRule[][] = []
     const hintsChanges: boolean[] = []
     const initial = {
@@ -525,6 +543,8 @@ describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () =>
             termsChanges.push(next)
             setTerms(next)
           }}
+          complianceEnabled={options.compliance ?? true}
+          onComplianceEnabledChange={() => {}}
           showComplianceHints={hints}
           onShowComplianceHintsChange={(value) => {
             hintsChanges.push(value)
@@ -594,5 +614,50 @@ describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () =>
     renderReview({ terms: ['军'], config: { body: '{M}', dimensions: [{ name: 'M', options: ['提现金色文案'] }] } })
     expect(document.body.querySelectorAll('.sop-recipe-option--blocked')).toHaveLength(0)
     expect(dialogText()).not.toContain('红线复核')
+  })
+})
+
+/**
+ * 红线**总开关**（TB-147）—— 需求原话：「直接帮我屏蔽红线词功能」。
+ *
+ * 关键是**默认关闭**：不传 / `undefined` / `false` 一律不生效。关闭时标红、复核区、
+ * 骨架命中提示**一起**消失 —— 因为它把判定用的词表置空，复用「空词表 = 红线全关」的既有语义。
+ */
+describe('SopCampaignRecipeParseResultDialog · 红线总开关（TB-147）', () => {
+  it('⭐ 不传开关时按【关闭】处理（不留「缺省即开」的兜底）', () => {
+    act(() => {
+      root.render(
+        <SopCampaignRecipeParseResultDialog
+          open
+          onOpenChange={() => {}}
+          parsed={makeParsed()}
+          config={{ ...makeConfig(), body: '点击提现到账，{M}' }}
+          onChange={() => {}}
+        />,
+      )
+    })
+    const text = dialogText()
+    expect(text).toContain('已关闭')
+    // 三项命中痕迹一个都不能有：骨架提示 / 复核区 / 格子标红
+    expect(text).not.toContain('骨架命中红线')
+    expect(text).not.toContain('红线复核')
+    expect(document.body.querySelectorAll('.sop-recipe-term--hit')).toHaveLength(0)
+  })
+
+  it('关闭时词表仍可看可编辑（让人先把词配好、再打开开关）', () => {
+    const changes = renderWithTerms(['提现'], { body: '点击提现到账，{M}' }, true, false)
+    expect(dialogText()).toContain('已关闭')
+    expect(document.body.querySelectorAll('.sop-recipe-term--hit')).toHaveLength(0)
+    expect(dialogText()).not.toContain('红线复核')
+    // 词表还在，改动照常写回
+    expect(termInputs().map((input) => input.value)).toEqual(['提现'])
+    typeInto(termInputs()[0], '提现到账')
+    expect(changes[changes.length - 1]).toEqual([{ term: '提现到账', allow: [] }])
+  })
+
+  it('关闭时隐藏「显示红线标记」开关（没东西可标，留着只是噪音）', () => {
+    renderWithTerms(['提现'], {}, true, false)
+    expect(dialogText()).not.toContain('显示红线标记')
+    expect(dialogText()).toContain('合规红线：关')
   })
 })

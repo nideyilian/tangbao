@@ -5,6 +5,7 @@ import {
   findRecipeForbiddenViolations,
   isRecipeCompliant,
   normalizeRecipeForbiddenTerms,
+  resolveEnabledRecipeForbiddenTerms,
   resolveRecipeForbiddenTerms,
 } from './recipeForbiddenTerms'
 
@@ -247,5 +248,37 @@ describe('recipeForbiddenTerms 加白（TB-146）', () => {
     const dirty = normalizeRecipeForbiddenTerms([{ term: '军', disabled: 'yes' }])
     expect(dirty).toEqual([{ term: '军', allow: [] }])
     expect(findRecipeForbiddenViolations('参军报国', dirty)).toEqual(['军'])
+  })
+})
+
+/**
+ * TB-147：**总开关**（默认关闭）。需求原话：「直接帮我屏蔽红线词功能」。
+ *
+ * 关闭时返回**空词表** —— 复用「空词表 = 红线全关」的既有语义，
+ * 让判定 / 剔除 / 标红 / 复核四件事一次全部失效。
+ */
+describe('recipeForbiddenTerms 总开关（TB-147）', () => {
+  it('关闭（undefined / false）时拿到空词表：一条都不拦', () => {
+    for (const enabled of [undefined, false]) {
+      const rules = resolveEnabledRecipeForbiddenTerms(enabled, undefined)
+      expect(rules).toEqual([])
+      expect(findRecipeForbiddenViolations('日赚千元，裸体艺术', rules)).toEqual([])
+    }
+    // 即便用户自己配了一份词表，关着也不生效
+    expect(resolveEnabledRecipeForbiddenTerms(false, ['提现'])).toEqual([])
+  })
+
+  it('开启时按常规取词表（没配过 → 默认 21 词）', () => {
+    expect(resolveEnabledRecipeForbiddenTerms(true, undefined)).toEqual(DEFAULT_RECIPE_FORBIDDEN_RULES)
+    expect(resolveEnabledRecipeForbiddenTerms(true, ['提现'])).toEqual([{ term: '提现', allow: [] }])
+    // 「开着但词表为空」= 用户明确清空 ⇒ 仍然一条不拦（与总开关是两回事，别合并语义）
+    expect(resolveEnabledRecipeForbiddenTerms(true, [])).toEqual([])
+  })
+
+  /** 脏值不能把功能打开：`Boolean('no')` 是 true，用宽松判断会让"关了还在拦"。 */
+  it('脏值不算开启：只有显式 true 才启用', () => {
+    for (const dirty of ['yes', 1, {}]) {
+      expect(resolveEnabledRecipeForbiddenTerms(dirty as unknown as boolean, ['提现'])).toEqual([])
+    }
   })
 })

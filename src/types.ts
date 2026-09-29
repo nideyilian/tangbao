@@ -205,6 +205,14 @@ export interface AppSettings {
   assistantActions: AssistantActionPreferences
   adNegativeRuleProfiles: AdNegativeRuleProfile[]
   /**
+   * 配方卡「合规红线」**总开关**（TB-147）。
+   *
+   * ⚠️ **默认关闭**：`undefined` / `false` = 不启用 —— 不判定、不标红、生成前也不剔除。
+   * 只有显式 `true` 才启用。判定侧一律走 `resolveEnabledRecipeForbiddenTerms`，
+   * **不要在调用点各写一遍判断** —— 漏一处就是「关了还在拦」。
+   */
+  recipeForbiddenEnabled?: boolean
+  /**
    * 配方卡「合规红线」词表（全局一份，所有配方卡共用）。
    *
    * 三种值语义**必须分清**（见 `normalizeRecipeForbiddenTerms`）：

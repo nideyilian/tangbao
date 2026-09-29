@@ -202,6 +202,23 @@ export function resolveRecipeForbiddenTerms(terms?: RecipeForbiddenTermsInput | 
 }
 
 /**
+ * 取**当前生效**的红线规则 —— 判定侧的唯一入口（TB-147）。
+ *
+ * 总开关（`AppSettings.recipeForbiddenEnabled`）关闭时返回**空数组**，复用既有的
+ * 「空词表 = 红线全关」语义 ⇒ 判定 / 剔除 / 标红 / 复核四件事一次全部失效。
+ *
+ * ⚠️ 调用点必须走这里，**不要各自写 `enabled ? terms : []`** —— 漏掉任何一处，
+ * 症状就是「开关关了、那条路径还在拦」，而且极难发现是哪条路径漏了。
+ */
+export function resolveEnabledRecipeForbiddenTerms(
+  enabled: boolean | undefined,
+  terms?: RecipeForbiddenTermsInput | null,
+): readonly RecipeForbiddenRule[] {
+  if (enabled !== true) return []
+  return resolveRecipeForbiddenTerms(terms)
+}
+
+/**
  * 把正文里的**例外词**挖空（换成占位符）。
  *
  * 必须先挖完再判定，不能边挖边判 —— 否则前一个词的判定会看到「已被挖掉一部分」的正文，

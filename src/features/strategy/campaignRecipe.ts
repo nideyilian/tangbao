@@ -198,6 +198,7 @@ export {
   findRecipeForbiddenViolations as findCampaignRecipeViolations,
   isRecipeCompliant as isCampaignRecipeCompliant,
   normalizeRecipeForbiddenTerms as normalizeCampaignRecipeForbiddenTerms,
+  resolveEnabledRecipeForbiddenTerms as resolveEnabledCampaignRecipeForbiddenTerms,
   resolveRecipeForbiddenTerms as resolveCampaignRecipeForbiddenTerms,
 } from '../../lib/recipeForbiddenTerms'
 
