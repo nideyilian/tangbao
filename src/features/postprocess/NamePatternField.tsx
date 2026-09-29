@@ -36,6 +36,13 @@ interface Props {
   placeholder?: string
   /** 输入框右侧的操作按钮（如「恢复默认」）；跟随输入框底对齐 */
   trailing?: ReactNode
+  /**
+   * 变量按钮列哪些 token；缺省 = 后处理全集。
+   *
+   * 图转视频的命名复用这个输入框，但它的 token 集是后处理的子集（没有 `{preset}`）：
+   * 列出来的按钮点了能插进模板、渲染时却取不到值，等于给用户挖了个坑。
+   */
+  tokens?: readonly PostprocessNameToken[]
 }
 
 /** 光标位置：读不到就给 null，插入时按「追加到末尾」处理 */
@@ -51,6 +58,7 @@ export default function NamePatternField({
   containerClassName,
   placeholder,
   trailing,
+  tokens,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   /** 最后一次已知的光标位置（**底层模板**坐标）；`null` = 用户还没在框里落过光标 */
@@ -144,7 +152,7 @@ export default function NamePatternField({
         {trailing}
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1">
-        {POSTPROCESS_NAME_TOKENS.map((token) => (
+        {(tokens ?? POSTPROCESS_NAME_TOKENS).map((token) => (
           <Button
             key={token}
             variant="ghost"

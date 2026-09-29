@@ -22,6 +22,7 @@
  * 两件事的成败必须分开。所以这里是 fire-and-forget，异常只在提示里体现。
  */
 
+import type { ImageVideoNamingContext } from './naming'
 import { resolveDirectionInputDirsByMedia, runImageVideoJob, type ImageVideoInputDir } from './runVideo'
 import type { ImageVideoParams } from './types'
 
@@ -37,6 +38,13 @@ export interface AutoImageVideoRun {
   /** 要处理的图片目录（本次产出实际写到的目录） */
   dir: string
   params: ImageVideoParams
+  /**
+   * 命名上下文，由触发方（后处理收尾，`store.ts`）组装。
+   *
+   * 放这儿而不是在跑的时候现读：自动触发出现在后处理收尾那一刻，那时手上就有方向与渠道；
+   * 隔了几分钟再回头去猜「这可是哪个方向」，只会猜错。
+   */
+  naming: ImageVideoNamingContext
 }
 
 export interface AutoImageVideoInput {
@@ -90,7 +98,7 @@ async function runAutoImageVideo(input: AutoImageVideoInput): Promise<void> {
   let completed = 0
   for (const run of input.runs) {
     try {
-      const result = await runImageVideoJob({ inputDir: run.dir, params: run.params })
+      const result = await runImageVideoJob({ inputDir: run.dir, params: run.params, naming: run.naming })
       if (result.status === 'completed') {
         completed += 1
         continue

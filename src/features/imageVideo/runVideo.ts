@@ -32,6 +32,7 @@ import type {
 } from './engineTypes'
 import { PURE_MEDIA_ID } from '../../lib/postprocessMedia'
 import { getVideoLibraryDirs } from './library'
+import { resolveVideoNamePrefix, type ImageVideoNamingContext } from './naming'
 import { buildEngineConfig, resolveVideoOutputDir } from './params'
 import type { ImageVideoParams } from './types'
 
@@ -51,6 +52,14 @@ export interface ImageVideoRunInput {
   inputDir: string
   /** 已按继承链解析完的参数 */
   params: ImageVideoParams
+  /**
+   * 命名上下文（产品线 / 产品 / 方向 / 渠道 / 创作者 / 分辨率）。
+   *
+   * **必传**（内部字段可空）：这东西只有调用方手上才有 —— 项目树在 store 里、渠道名在
+   * 产出记录里。这里刻意不给兜底默认值：缺了它 `{product}` 这类 token 会整段消失、
+   * 文件名悄悄变短，而界面预览显示的还是完整那份（见了鬼的一类不一致）。
+   */
+  naming: ImageVideoNamingContext
   onProgress?: (progress: ImageVideoRunProgress) => void
   signal?: AbortSignal
 }
@@ -219,7 +228,10 @@ export async function runImageVideoJob(input: ImageVideoRunInput): Promise<Image
   const library = { bgm: dirs?.bgm ?? '', watermark: dirs?.watermark ?? '' }
   // 「每张图各出一个视频」要等数完图才知道出几个（`resolveVideoPlan`）
   const plan = resolveVideoPlan(input.params, scanned.count)
-  const config = buildEngineConfig(input.params, { inputDir, outputDir, library }, plan)
+  // 文件名前缀：命名模板 + 这一批的上下文。界面预览走的是同一个函数（见 `naming.ts`），
+  // 否则会出现「预览显示一段、落盘少一段」这种只能在目录里数文件才发现的不一致
+  const namePrefix = resolveVideoNamePrefix(input.params, input.naming)
+  const config = buildEngineConfig(input.params, { inputDir, outputDir, library, namePrefix }, plan)
   const started = await api.imageVideoCall({
     method: 'start_job',
     params: { config },

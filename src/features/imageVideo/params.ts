@@ -47,33 +47,66 @@ export const IMAGE_VIDEO_NUMBER_RANGES = {
   effectIntensity: { min: 0, max: 1000 },
   effectSpeed: { min: 0.1, max: 10 },
   bitrate: { min: 100, max: 100000 },
+  /**
+   * 音量（0~1，**不是百分比**）。
+   *
+   * 2026-09-29 从归一化里的字面量搬进来：界面原先不知道这两个字段的范围，
+   * 用户填 2 时输入框不提示、落盘却被钳成 1 —— 显示与生效对不上。
+   */
+  bgmVolume: { min: 0, max: 1 },
+  /** 水印缩放百分比（同一次搬移）。 */
+  watermarkScale: { min: 1, max: 1000 },
 } as const
 
 export type ImageVideoNumberField = keyof typeof IMAGE_VIDEO_NUMBER_RANGES
 
-/** 名字前缀最长保留多少字符（引擎要拿它拼文件名，太长会顶爆路径长度）。 */
-const FILE_PREFIX_MAX = 60
+/**
+ * 命名模板最长保留多少字符（**模板本身**，不是渲染结果）。
+ *
+ * 渲染结果另有一道上限（`naming.ts` 的 `IMAGE_VIDEO_NAME_PREFIX_MAX`）—— 模板可以写得比结果长
+ * （比如带一组当前取不到值的 token），但也不该无限长：它是落盘值，界面还要整段显示出来。
+ */
+const NAME_PATTERN_MAX = 300
 
 /**
- * 清洗文件名前缀。
+ * 老字段 `filePrefix` 的兼容读取（**只在迁移时用**：2026-09-29 起前缀并成了命名模板）。
  *
- * 前缀会参与拼文件名（引擎拼成 `<前缀>-<序号>.mp4`），所以 `\` `:` `*` 这类字符必须剥掉 ——
- * 留着轻则文件名怪异，重则让引擎把文件写到意料之外的位置。
- *
- * 清洗与仓库其它命名场景共用同一个内核（`sanitizeFileName`），不另写一套；
- * 另外把首尾的 `-` 也去掉，否则前缀尾部那个分隔符会和序号前的那个连成 `--`。
+ * 老值可能是自由文本（手改 JSON、从别处导入的配置），塞进模板前必须把花括号剥掉 ——
+ * 否则 `a{b}` 里的 `{b}` 会被当成占位符：渲染时按「未知 token」原样保留，
+ * 用户就在一段本该是纯文本的前缀里看见莫名的 `{b}`。
  */
-function cleanFilePrefix(value: string): string {
-  return sanitizeFileNameCore(value, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, FILE_PREFIX_MAX)
+function legacyPrefixText(value: unknown): string | undefined {
+  const text = optionalString(value, 120)
+  if (text === undefined) return undefined
+  return (
+    sanitizeFileNameCore(text.replace(/[{}]/g, ''), '-')
+      .replace(/^-+|-+$/g, '')
+      .trim() || undefined
+  )
 }
 
-/** 前缀：不在或清洗成空 → 一律当「没表态」。 */
-function optionalFilePrefix(value: unknown): string | undefined {
-  const text = optionalString(value, FILE_PREFIX_MAX)
-  if (text === undefined) return undefined
-  return cleanFilePrefix(text) || undefined
+/**
+ * 命名模板：新字段优先；只有老字段时**就地迁移**。
+ *
+ * ⚠️ 迁移是必须的，不是防御性代码 —— 2026-09-29 之前那两格是「文件名前缀」（文本框）+
+ * 「文件名带日期」（开关），前者被按数字字段渲染、**填进去的值一律被清空**（详见
+ * `VideoParamsDialog` 的渲染修正），而后者是 Switch、写得进去：实测库里就有
+ * `imageVideoByMedia.gdt.datePrefix = true`。不迁移的话，用户配过的日期前缀会静默消失。
+ *
+ * 规则（老写法都能还原成等效模板）：
+ * - `datePrefix: true` → 前面补一段 `{date}`（老行为是 `20260929-前缀-1.mp4`）；
+ * - `filePrefix` 有值 → 作为一段**字面文本**接在后面；
+ * - 两者都空 / 只有 `datePrefix: false` → **没表态**（那本来就是默认值，等于什么都没说）。
+ */
+function optionalNamePattern(raw: Record<string, unknown>): string | undefined {
+  const direct = optionalString(raw.namePattern, NAME_PATTERN_MAX)
+  if (direct !== undefined) return direct
+  const legacyDate = optionalBoolean(raw.datePrefix) === true
+  const legacyPrefix = legacyPrefixText(raw.filePrefix)
+  if (!legacyDate && legacyPrefix === undefined) return undefined
+  const parts: string[] = legacyDate ? ['{date}'] : []
+  if (legacyPrefix) parts.push(legacyPrefix)
+  return parts.join('-')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -174,11 +207,10 @@ export function normalizeImageVideoOverride(raw: unknown): ImageVideoNodeOverrid
     effectIntensity: optionalNumber(raw.effectIntensity, ranges.effectIntensity.min, ranges.effectIntensity.max),
     effectSpeed: optionalNumber(raw.effectSpeed, ranges.effectSpeed.min, ranges.effectSpeed.max),
     bitrate: optionalNumber(raw.bitrate, ranges.bitrate.min, ranges.bitrate.max),
-    filePrefix: optionalFilePrefix(raw.filePrefix),
-    datePrefix: optionalBoolean(raw.datePrefix),
+    namePattern: optionalNamePattern(raw),
     outputDir: optionalString(raw.outputDir, 500),
     useBgm: optionalBoolean(raw.useBgm),
-    bgmVolume: optionalNumber(raw.bgmVolume, 0, 1),
+    bgmVolume: optionalNumber(raw.bgmVolume, ranges.bgmVolume.min, ranges.bgmVolume.max),
     bgmRandom: optionalBoolean(raw.bgmRandom),
     bgmLoop: optionalBoolean(raw.bgmLoop),
     bgmFolder: optionalLibraryPath(raw.bgmFolder),
@@ -190,7 +222,7 @@ export function normalizeImageVideoOverride(raw: unknown): ImageVideoNodeOverrid
     watermarkPath: optionalLibraryPath(raw.watermarkPath),
     watermarkPosition: optionalAllowed(raw.watermarkPosition, IMAGE_VIDEO_WATERMARK_POSITIONS),
     watermarkSizeMode: optionalAllowed(raw.watermarkSizeMode, IMAGE_VIDEO_WATERMARK_SIZE_MODES),
-    watermarkScale: optionalNumber(raw.watermarkScale, 1, 1000),
+    watermarkScale: optionalNumber(raw.watermarkScale, ranges.watermarkScale.min, ranges.watermarkScale.max),
     watermarkBlendMode: optionalAllowed(raw.watermarkBlendMode, IMAGE_VIDEO_WATERMARK_BLEND_MODES),
     watermarkMatchMethod: optionalAllowed(raw.watermarkMatchMethod, IMAGE_VIDEO_WATERMARK_MATCH_METHODS),
     watermarkAudio: optionalAllowed(raw.watermarkAudio, IMAGE_VIDEO_WATERMARK_AUDIO_MODES),
@@ -245,12 +277,20 @@ export function resolveImageVideoParams(chain: readonly ImageVideoNodeOverride[]
   return merged
 }
 
-/** 引擎一次渲染要知道的目录。 */
+/** 引擎一次渲染要知道的目录与命名。 */
 export interface ImageVideoEnginePaths {
   /** 输入：这个方向的产出图片目录 */
   inputDir: string
   /** 输出：视频落点 */
   outputDir: string
+  /**
+   * 文件名前缀（**模板已经渲染好的结果**，不含序号）。
+   *
+   * 由调用方用 `naming.ts` 的 `resolveVideoNamePrefix` 算好再传进来：渲染要 ProjectNode 的
+   * 产品线 / 产品 / 方向名与创作者（后处理那份设置），那些东西这一层拿不到，
+   * 也不该为了一个字符串去读 store。
+   */
+  namePrefix: string
   /**
    * 视频素材库的两个根（绝对路径，由主进程给）。
    *
@@ -347,9 +387,12 @@ export function buildEngineConfig(
     // 引擎自带的那套「图片水印图层」糖包不用（糖包有自己的水印体系），显式关掉
     use_image_watermark: false,
     watermark_layers: [],
-    use_date_prefix: params.datePrefix,
+    // ---- 文件名 ----
+    // 日期与序号都不再由引擎决定：日期在模板里（`{date}`，见 naming.ts），序号引擎固定加末尾。
+    // 所以引擎这两个开关一律关 —— 开着 `use_date_prefix` 会在前缀之外**再加一个日期**。
+    use_date_prefix: false,
     use_first_image_name: false,
-    custom_prefix: params.filePrefix,
+    custom_prefix: paths.namePrefix,
     image_selection_mode: params.imageSelection,
     bitrate: params.bitrate,
   }

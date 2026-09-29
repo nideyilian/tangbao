@@ -268,18 +268,42 @@ function resolveTokenValue(token: string, context: PostprocessNameContext): stri
 
 const KNOWN_TOKEN_SET = new Set<string>(POSTPROCESS_NAME_TOKENS)
 
+/** 渲染模板时的可选行为（缺省 = 后处理那套，与加这个参数之前完全一致）。 */
+export interface RenderNamePatternOptions {
+  /**
+   * 认哪些 token；缺省 = 后处理全集。
+   *
+   * 图转视频复用同一个渲染器，但它的 token 集是后处理的**子集**（视频水印不是预设体系，
+   * 没有 `{preset}`）。不传这一项的话，视频模板里的 `{preset}` 会落进「已知但取不到值」
+   * 那一支被**静默删掉** —— 用户在模板里看得见、在文件名里找不着，是最难查的一类不一致。
+   * 传进来才会按「未知 token 原样保留」处理，配合校验提示让人当场看见。
+   */
+  knownTokens?: readonly string[]
+  /**
+   * 清洗后为空时的兜底（缺省 `'image'`）。
+   *
+   * 视频传空串：那边「只有序号」是合法结果（`1.mp4`），塞个 `image` 等于凭空造了个名字。
+   */
+  fallback?: string
+}
+
 /**
  * 渲染模板。
  *
  * - 未知 token → 原样保留（`{foo}` 留在结果里，便于肉眼发现模板写错）。
  * - 已知但取值为空的 token → 整段删除。
  * - 结果再折叠连续 `-` 与首尾 `-`，避免出现空段。
- * - 兜底：清洗后为空 → `'image'`。
+ * - 兜底：清洗后为空 → `options.fallback`（缺省 `'image'`）。
  */
-export function renderPostprocessNamePattern(pattern: string, context: PostprocessNameContext = {}): string {
+export function renderPostprocessNamePattern(
+  pattern: string,
+  context: PostprocessNameContext = {},
+  options: RenderNamePatternOptions = {},
+): string {
   const safePattern = typeof pattern === 'string' && pattern.trim() ? pattern : DEFAULT_POSTPROCESS_NAME_PATTERN
+  const known = options.knownTokens ? new Set<string>(options.knownTokens) : KNOWN_TOKEN_SET
   const replaced = safePattern.replace(TOKEN_PATTERN, (raw, name: string) => {
-    if (!KNOWN_TOKEN_SET.has(name)) return raw
+    if (!known.has(name)) return raw
     const value = resolveTokenValue(name, context)
     return value === null ? '' : sanitizeGeneratedImageFilenamePart(value, 60)
   })
@@ -288,7 +312,8 @@ export function renderPostprocessNamePattern(pattern: string, context: Postproce
     .replace(/^-+|-+$/g, '')
     .trim()
   const sanitized = sanitizeGeneratedImageFilenamePart(collapsed, 180)
-  return sanitized || 'image'
+  if (sanitized) return sanitized
+  return options.fallback ?? 'image'
 }
 
 /** 命名所需的最小单元视图：与 `PostprocessOutputUnit` 结构兼容，只取命名相关字段。 */

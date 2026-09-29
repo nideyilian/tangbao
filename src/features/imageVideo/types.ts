@@ -20,6 +20,8 @@
  * 写错一个就是运行时静默跳过（`job.py` 按名字查表，查不到按无效果处理）。
  */
 
+import type { PostprocessNameToken } from '../../lib/postprocessNaming'
+
 /** 分辨率预设；引擎原样认这些字符串。 */
 export const IMAGE_VIDEO_RESOLUTIONS = [
   '1280x720',
@@ -202,10 +204,16 @@ export interface ImageVideoParams {
   effectSpeed: number
   /** 视频码率（kbps） */
   bitrate: number
-  /** 输出文件名前缀（引擎的 `custom_prefix`）；空 = 只用序号 */
-  filePrefix: string
-  /** 文件名是否带日期前缀（引擎的 `use_date_prefix`） */
-  datePrefix: boolean
+  /**
+   * 输出文件的**命名模板**（可用占位符见 `IMAGE_VIDEO_NAME_TOKENS`）。
+   *
+   * ⚠️ **不含序号**：引擎固定把 `-1`、`-2` 加在末尾，`{seq}` 写了也会被忽略
+   * （序号由「这一次出几个视频」决定，糖包给不出）。所以这里渲染出来就是引擎的
+   * `custom_prefix`（见 `naming.ts` 的 `resolveVideoNamePrefix`）。
+   *
+   * 空 = 没表态（继续向上继承），继承链最底端是 `IMAGE_VIDEO_NAME_PATTERN`。
+   */
+  namePattern: string
   /**
    * 输出目录（绝对路径）。
    *
@@ -281,6 +289,28 @@ export type ImageVideoNodeOverride = Partial<ImageVideoParams>
 export const IMAGE_VIDEO_LOCAL_DIR_SUFFIX = '-视频'
 
 /**
+ * 视频命名可用的 token：**后处理那套的子集**（渲染复用 `lib/postprocessNaming`）。
+ *
+ * 比后处理少两个：
+ * - `{preset}`（水印预设名）—— 视频水印取自素材库的文件/文件夹，不是预设体系；
+ * - `{seq}`（序号）—— 引擎固定加在末尾，模板里写了也不生效。
+ *
+ * 渲染器认的这一份要和界面变量按钮列的那一份**同源**（都读这个常量），别各写一遍。
+ */
+export const IMAGE_VIDEO_NAME_TOKENS = [
+  'date',
+  'line',
+  'product',
+  'direction',
+  'media',
+  'creator',
+  'size',
+] as const satisfies readonly PostprocessNameToken[]
+
+/** 默认命名模板：`20260929-机器人-竖版-广点通-1.mp4`（末尾的 `-1` 由引擎加）。 */
+export const IMAGE_VIDEO_NAME_PATTERN = '{date}-{product}-{direction}-{media}'
+
+/**
  * 默认参数。
  *
  * 取值刻意保守：**不自动出视频、不随机转场、不加花哨动态效果**。
@@ -304,8 +334,7 @@ export const DEFAULT_IMAGE_VIDEO_PARAMS: ImageVideoParams = {
   effectIntensity: 100,
   effectSpeed: 1,
   bitrate: 2000,
-  filePrefix: '',
-  datePrefix: false,
+  namePattern: IMAGE_VIDEO_NAME_PATTERN,
   outputDir: '',
   useBgm: false,
   bgmVolume: 0.5,

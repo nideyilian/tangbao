@@ -189,6 +189,7 @@ import {
   shouldAutoRunImageVideo,
   type AutoImageVideoRun,
 } from './features/imageVideo/autoTrigger'
+import { resolveVideoNamingContext } from './features/imageVideo/naming'
 import { isScrollActive } from './lib/scrollActivity'
 import { buildLocalImageUrl, isLocalImageUrl, localImageUrlToDataUrl } from './lib/localImageUrl'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
@@ -1493,7 +1494,21 @@ async function executePostprocessImageIds(
           ),
         )
         if (!params || !shouldAutoRunImageVideo(params, result.outputs.length)) continue
-        autoImageVideoRuns.push({ mediaId: entry.mediaId, mediaName: entry.mediaName, dir: entry.dir, params })
+        autoImageVideoRuns.push({
+          mediaId: entry.mediaId,
+          mediaName: entry.mediaName,
+          dir: entry.dir,
+          params,
+          // 命名上下文在这里定下来：此刻手上就有方向与渠道，等到视频队列跑到这一条时
+          // 再去猜「这是哪个方向」只会猜错（队列是串行的，可能隔了几分钟）
+          naming: resolveVideoNamingContext({
+            collections,
+            directionId,
+            mediaName: entry.mediaName,
+            resolution: params.resolution,
+            creator: usePostprocessMediaStore.getState().creator,
+          }),
+        })
       }
       if (autoImageVideoRuns.length > 0) {
         enqueueAutoImageVideo({

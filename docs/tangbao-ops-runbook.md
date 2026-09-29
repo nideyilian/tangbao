@@ -1843,10 +1843,39 @@ import { describe, expect, it } from 'vitest'
 describe('probe', () => { it('runs', () => { expect(1).toBe(1) }) })
 ```
 
-连它都挂 = **环境故障**，与你的改动无关。已排除清单见 `docs/RISK.md` R-98
-（Node 版本 / peer / sandbox / `NODE_OPTIONS` / 缓存 / electron 插件 / `--pool` / `--no-isolate`）。
+连它都挂 = **环境故障**，与你的改动无关。
 
-**确认是环境故障后怎么交付**：tsc 双端 + `eslint` + `prettier` + 本文第 2 节的抓屏，
+**⭐ 根因已定位（2026-09-29）**：**cwd 的盘符大小写与磁盘上的不一致**（vitest #10812）。
+本机 Bash 工具给的 cwd 是 `d:\AAA\TANGBAO`（**小写 d**），磁盘上规范是 `D:\AAA\TANGBAO`；
+vitest 4.1.10 在 Windows 上因此解析出两套路径，**每个测试文件都在收集阶段就挂**。
+
+判据（一条命令）：
+
+```bash
+node -e "console.log(process.cwd())"   # 小写盘符 = 中招；pwd -W 给的是规范形式
+```
+
+R-98 里「最小探针也挂」也由此解释得通 —— 那时探针放在 `src/` 下（root = 项目 = 小写盘符）。
+探针放到 `%TEMP%` 并用大写盘符 root（`--root C:/…`）就通过，正是对照。
+
+**正确跑法**：默认池 + 把 cwd 规范后再交给 vitest（包一层 chdir），
+
+```bash
+node %TEMP%/tb-run-vitest.mjs run [<path>]
+```
+
+```js
+// %TEMP%/tb-run-vitest.mjs
+process.chdir('D:/AAA/TANGBAO')
+await import('file:///D:/AAA/TANGBAO/node_modules/vitest/vitest.mjs')
+```
+
+⚠️ **别用 `--pool=vmForks` 绕**：它确实能绕开盘符问题，但 vm 上下文里
+`vi.stubGlobal('window', …)` 会报 `Cannot redefine property: window`，
+`src/features/postprocess/taskPostprocess.test.ts` 当场假红 **17 条**
+（实测：同一个文件默认池 19 passed、vmForks 17 failed —— 这类假红比哑掉更难分辨）。
+
+**确实定性为环境故障、无解时怎么交付**：tsc 双端 + `eslint` + `prettier` + 本文第 2 节的抓屏，
 并在交付说明里**如实写「测试未执行」** —— 不要把没跑的凑成一句「全绿」。
 
 ### 4. 正常时的跑法（供对照）

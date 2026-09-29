@@ -20,11 +20,13 @@
  */
 
 import { useStore } from '../../store'
+import { usePostprocessMediaStore } from '../../storePostprocessMedia'
 import type { TaskPostprocessOutput } from '../../types'
 import { useAssetLibraryStore } from '../assetLibrary/store'
 import { resolveProjectImageVideoParams } from '../projectTree/params'
 import { useProjectTreeParamsStore } from '../projectTree/storeProjectTreeParams'
 import type { ImageVideoScanResult } from './engineTypes'
+import { resolveVideoNamingContext } from './naming'
 import { resolveDirectionInputDirsByMedia, partitionUsableInputDirs, runImageVideoJob } from './runVideo'
 import { useImageVideoStore } from './store'
 
@@ -101,10 +103,20 @@ export async function runVideoBatchForDirection(input: {
     const entry = usable[index]!
     // 每个渠道用它自己那一套参数（2026-09-28 起参数按渠道存）
     const params = resolveProjectImageVideoParams(collections, nodeParams, input.directionId, globals, entry.mediaId)
+    // 命名上下文与参数同源：同一个方向、同一个渠道、同一份分辨率 —— 文件名里的每一段都取自
+    // 「这次跑的到底是谁」，不能借别的渠道的值（界面预览与实际落盘要逐字一致）
+    const naming = resolveVideoNamingContext({
+      collections,
+      directionId: input.directionId,
+      mediaName: entry.mediaName,
+      resolution: params.resolution,
+      creator: usePostprocessMediaStore.getState().creator,
+    })
     input.onProgress?.({ index: index + 1, total: usable.length, percent: 0, message: `正在准备 ${entry.mediaName}…` })
     const result = await runImageVideoJob({
       inputDir: entry.dir,
       params,
+      naming,
       signal: input.signal,
       onProgress: (progress) =>
         input.onProgress?.({

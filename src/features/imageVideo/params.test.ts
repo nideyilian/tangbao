@@ -16,12 +16,12 @@ describe('normalizeImageVideoOverride', () => {
   it('只保留真的表了态的字段（空串与 undefined 一律丢弃，等于继续继承）', () => {
     const override = normalizeImageVideoOverride({
       imagesPerVideo: 4,
-      filePrefix: '',
+      namePattern: '',
       outputDir: '   ',
       resolution: undefined,
     })
     expect(override).toEqual({ imagesPerVideo: 4 })
-    expect('filePrefix' in override).toBe(false)
+    expect('namePattern' in override).toBe(false)
     expect('outputDir' in override).toBe(false)
   })
 
@@ -62,12 +62,47 @@ describe('normalizeImageVideoOverride', () => {
     expect(normalizeImageVideoOverride({ enabled: true })).toEqual({ enabled: true })
   })
 
-  it('前缀会过文件名清洗（它要参与拼文件名）', () => {
-    expect(normalizeImageVideoOverride({ filePrefix: 'a/b:c*' })).toEqual({ filePrefix: 'a-b-c' })
+  it('命名模板原样保留（占位符是落盘格式，清洗发生在「渲染成前缀」那一步）', () => {
+    expect(normalizeImageVideoOverride({ namePattern: '{date}-{product}' })).toEqual({
+      namePattern: '{date}-{product}',
+    })
   })
 
-  it('前缀全是非法字符时视为没表态，而不是留下一个空的「显式覆盖」', () => {
-    expect(normalizeImageVideoOverride({ filePrefix: '***' })).toEqual({})
+  it('模板超长会被截断，不原样落盘', () => {
+    const override = normalizeImageVideoOverride({ namePattern: `{product}${'x'.repeat(400)}` })
+    expect((override.namePattern ?? '').length).toBe(300)
+  })
+
+  /**
+   * 老字段迁移（2026-09-29 把「前缀 + 日期开关」并成了命名模板）。
+   *
+   * 这条不是防御性代码：库里**真有存量** —— 实测 `imageVideoByMedia.gdt` 就配过
+   * `datePrefix: true`（Switch 写得进去，坏的只是那两个文本框）。
+   */
+  it('迁移：日期开关打开时补一段 {date}（老行为是 20260929-前缀-1.mp4）', () => {
+    expect(normalizeImageVideoOverride({ datePrefix: true })).toEqual({ namePattern: '{date}' })
+    expect(normalizeImageVideoOverride({ datePrefix: true, filePrefix: '双十一' })).toEqual({
+      namePattern: '{date}-双十一',
+    })
+  })
+
+  it('迁移：只有旧前缀时，它就是一段字面文本（仍过文件名清洗）', () => {
+    expect(normalizeImageVideoOverride({ filePrefix: 'a/b:c*' })).toEqual({ namePattern: 'a-b-c' })
+  })
+
+  it('迁移：前缀里的花括号要剥掉 —— 否则会被当成占位符渲染', () => {
+    expect(normalizeImageVideoOverride({ filePrefix: 'a{b}' })).toEqual({ namePattern: 'ab' })
+  })
+
+  it('迁移：日期开关关着又没有前缀 = 没表态（那本来就是默认值，等于什么都没说）', () => {
+    expect(normalizeImageVideoOverride({ datePrefix: false })).toEqual({})
+    expect(normalizeImageVideoOverride({ datePrefix: false, filePrefix: '***' })).toEqual({})
+  })
+
+  it('新字段优先：同时存在时只认 namePattern，不再看老字段', () => {
+    expect(normalizeImageVideoOverride({ namePattern: '{product}', datePrefix: true, filePrefix: '旧' })).toEqual({
+      namePattern: '{product}',
+    })
   })
 
   it('非对象输入返回空覆盖，不抛', () => {
@@ -114,6 +149,7 @@ describe('buildEngineConfig', () => {
   const paths = {
     inputDir: 'D:/导出/方向A',
     outputDir: 'D:/导出/方向A-视频',
+    namePrefix: '20260929-机器人-竖版展示-广点通',
     library: { bgm: 'D:/库/bgm', watermark: 'D:/库/watermark' },
   }
 
@@ -151,8 +187,13 @@ describe('buildEngineConfig', () => {
     expect(config.output_dir).toBe(paths.outputDir)
     expect(config.video_count).toBe(3)
     expect(config.bitrate).toBe(5000)
-    expect(config.custom_prefix).toBe('')
     expect(config.use_first_image_name).toBe(false)
+  })
+
+  it('文件名前缀 = 调用方渲染好的模板结果；引擎的日期开关一律关（开着会在前缀之外再加一个日期）', () => {
+    const config = buildEngineConfig(BASE, paths)
+    expect(config.custom_prefix).toBe(paths.namePrefix)
+    expect(config.use_date_prefix).toBe(false)
   })
 
   it('转场与效果名单整份带给引擎（引擎按名字查表）', () => {
@@ -192,6 +233,7 @@ describe('BGM 与视频水印映射（2026-09-27 接上）', () => {
   const paths = {
     inputDir: 'D:/导出/A',
     outputDir: 'D:/导出/A-视频',
+    namePrefix: '20260929-A',
     library: { bgm: 'D:/库/bgm', watermark: 'D:/库/watermark' },
   }
 
@@ -322,7 +364,7 @@ describe('resolveVideoPlan', () => {
     const params = { ...BASE, videoCountMode: 'perImage' as const, fps: 25 }
     const config = buildEngineConfig(
       params,
-      { inputDir: 'D:/in', outputDir: 'D:/out', library: { bgm: '', watermark: '' } },
+      { inputDir: 'D:/in', outputDir: 'D:/out', namePrefix: 'A', library: { bgm: '', watermark: '' } },
       resolveVideoPlan(params, 12),
     )
     expect(config.num_images).toBe(1)
@@ -336,6 +378,7 @@ describe('resolveVideoPlan', () => {
       {
         inputDir: 'D:/in',
         outputDir: 'D:/out',
+        namePrefix: 'A',
         library: { bgm: '', watermark: '' },
       },
     )

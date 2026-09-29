@@ -962,9 +962,9 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
   {
     module: 'src/features/imageVideo/VideoParamsDialog.tsx',
     responsibility:
-      '图转视频参数弹窗：按「方向 × 渠道」各配一套（出视频开关 / 节奏 / 画面 / 转场与效果 / BGM / 视频水印），只写该渠道那一层覆盖，附「恢复默认」与「应用到本方向其它渠道」；改一个字段立刻落盘，数字字段走本地草稿 + onBlur 提交（避免写进「1」这种半截值）',
+      '图转视频参数弹窗：按「方向 × 渠道」各配一套，顶部标签一次只显示一组（节奏 / 画面 / 转场与效果 / 声音 / 水印，改过的组打点），底部固定「输出与命名」块（输出位置 = 目录选择 + 清除；文件命名 = 命名模板 + 变量按钮 + 实时文件名预览 + 占位符校验）；只写该渠道那一层覆盖，附「恢复本组 / 全部恢复 / 应用到本方向其它渠道」；改一个字段立刻落盘，数字字段走本地草稿 + 失焦/回车提交、越界当场标红、空值灰字写出上层生效值。字符串字段各走专用控件 —— 曾经与数字字段共用 `type="number"` 渲染，导致「文件名前缀」「输出位置」填什么都存不进去（R-121）',
     decision: 'compose',
-    targets: ['Switch', 'Button'],
+    targets: ['Switch', 'Button', 'Alert'],
   },
   {
     module: 'src/features/imageVideo/VideoLibrarySection.tsx',
