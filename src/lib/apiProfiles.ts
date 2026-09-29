@@ -812,9 +812,11 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSet
       record.assistantActions as Partial<AssistantActionPreferences> | undefined,
     ),
     adNegativeRuleProfiles,
-    // 配方卡合规红线词表（TB-142）：`undefined` = 没自定义过（用内置默认 21 词），
+    // 配方卡合规红线词表（TB-142 / TB-145）：`undefined` = 没自定义过（用内置默认 21 词），
     // `[]` = 用户明确清空（红线关闭）。**不能**把空数组折算成 undefined ——
     // 用户把误判词全删光之后，默认词表不能又冒回来。
+    // 每条规则是 `{ term, allow }`（词 + 例外词）；**旧存档的纯字符串数组照收**
+    // （归一化补成 `allow: []`，行为与升级前一致）。
     recipeForbiddenTerms: normalizeRecipeForbiddenTerms(record.recipeForbiddenTerms),
     // 红线标记显示开关（TB-144）：默认显示，只有显式 false 才关。
     // ⚠️ 它只管显示，判定与剔除照旧 —— 两者别混（见 AppSettings 里的注释）。

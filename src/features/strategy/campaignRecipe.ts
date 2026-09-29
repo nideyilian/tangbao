@@ -16,9 +16,14 @@
  * 距离定义：两条提示词在「维度取值」上的汉明距离（不同维度计数）。
  */
 import { parseVariablePrompt } from '../../lib/variablePrompt'
-// 词表本体在 lib（设置归一化也要用），这里只 import 需要的两个：默认值用于旧名导出，
+// 词表本体在 lib（设置归一化也要用），这里只 import 需要的几个：默认值用于旧名导出，
 // 判定函数用于 sanitize。其余名字走下方 `export { ... } from` 透传（re-export 不产生本地绑定）。
-import { DEFAULT_RECIPE_FORBIDDEN_TERMS, findRecipeForbiddenViolations } from '../../lib/recipeForbiddenTerms'
+import {
+  DEFAULT_RECIPE_FORBIDDEN_RULES,
+  DEFAULT_RECIPE_FORBIDDEN_TERMS,
+  findRecipeForbiddenViolations,
+  type RecipeForbiddenTermsInput,
+} from '../../lib/recipeForbiddenTerms'
 import type { SopCampaignRecipeConfig, SopCampaignRecipeDimension } from './types'
 
 /** 配方卡维度的别名（语义等价，供引擎内部与调用方共用同一结构）。 */
@@ -176,8 +181,16 @@ export const MAX_DIMENSION_OPTIONS = 400
  */
 export const DEFAULT_CAMPAIGN_RECIPE_FORBIDDEN_TERMS = DEFAULT_RECIPE_FORBIDDEN_TERMS
 
-/** 旧名 = 默认词表，保留给「展示默认值 / 恢复默认 / 测试」使用。 */
+/** 旧名 = 默认词表（**只有词名，不含例外**），保留给「展示默认值 / 测试」使用。 */
 export const CAMPAIGN_RECIPE_FORBIDDEN_TERMS = DEFAULT_RECIPE_FORBIDDEN_TERMS
+
+/**
+ * 默认规则（**带例外词**）——界面「恢复默认」的落点（TB-145）。
+ *
+ * ⚠️ 恢复默认必须用这个，不能用上面的纯词名版本：后者会把内置例外一起丢掉，
+ * 用户点一次「恢复默认」就退回「裸妆被拦」的老毛病。
+ */
+export const CAMPAIGN_RECIPE_FORBIDDEN_RULES = DEFAULT_RECIPE_FORBIDDEN_RULES
 
 // 词表本体（默认值 / 归一化 / 判定）都在 lib/recipeForbiddenTerms.ts：它是全应用唯一实现，
 // 放在 lib 是因为设置归一化（lib/apiProfiles.ts）也要用它，而 lib 不能反向依赖 features。
@@ -229,7 +242,7 @@ export function validateCampaignRecipeConfig(config: CampaignRecipeConfig): stri
  */
 export function sanitizeCampaignRecipeConfig(
   config: CampaignRecipeConfig,
-  terms?: readonly string[] | null,
+  terms?: RecipeForbiddenTermsInput | null,
 ): {
   config: CampaignRecipeConfig
   removed: string[]

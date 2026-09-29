@@ -9,6 +9,7 @@ import SopCampaignRecipeParseResultDialog, {
 import { resolveEffectiveDominantSlots } from './campaignRecipe'
 import type { CampaignRecipeDimension } from './campaignRecipe'
 import type { SopCampaignRecipeConfig } from './types'
+import type { RecipeForbiddenRule } from '../../types'
 
 /**
  * 配方卡引擎 · 入外面板。
@@ -38,15 +39,15 @@ export type SopCampaignRecipePanelProps = {
   onChange: (config: SopCampaignRecipeConfig) => void
   onMetaChange?: (meta: { name?: string; desc?: string; dominantSlots?: string[] }) => void
   /**
-   * 当前生效的合规红线词表（全局一份，来自设置）。
+   * 当前生效的合规红线规则（全局一份，来自设置）。每条 = 词 + 它的例外词（TB-145）。
    * 不传 = 内置默认 21 词；传 `[]` = 用户把红线全关了（与不传语义不同）。
    */
-  forbiddenTerms?: readonly string[]
+  forbiddenTerms?: readonly RecipeForbiddenRule[]
   /**
-   * 修改红线词表（配方面板只是透传，真正的存储与生效在设置里）。
+   * 修改红线规则（配方面板只是透传，真正的存储与生效在设置里）。
    * 不传 = 词表按只读展示。
    */
-  onForbiddenTermsChange?: (terms: string[]) => void
+  onForbiddenTermsChange?: (terms: RecipeForbiddenRule[]) => void
   /** 是否显示红线标记；不传 = 显示。只管显示，判定与生成前剔除照旧。 */
   showComplianceHints?: boolean
   /** 切换红线标记显示；不传则开关不渲染。 */

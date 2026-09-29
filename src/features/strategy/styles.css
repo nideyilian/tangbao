@@ -1420,23 +1420,22 @@ button.sop-center-group-tree-toggle:hover {
   margin: 0.375rem 0 0;
 }
 
-/* 红线词表编辑区（TB-142）：每个词一格，可改字、可删；命中当前骨架的那格标红。 */
+/* 红线词表编辑区（TB-142 / TB-145）：每格 = 违规词 + 它的**例外词**（例外填的是正常搭配，
+   判定前会被挖空 —— 见 lib/recipeForbiddenTerms.ts）；命中当前骨架的那格标红。 */
 .sop-recipe-terms__grid {
   display: grid;
   gap: 0.375rem;
-  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
   margin-top: 0.5rem;
 }
 
 .sop-recipe-term {
-  align-items: center;
   background: hsl(var(--ds-color-surface-raised));
   border: 1px solid hsl(var(--ds-color-border));
   border-radius: 0.4375rem;
   display: flex;
-  gap: 0.25rem;
+  flex-direction: column;
   min-width: 0;
-  padding-right: 0.25rem;
 }
 
 .sop-recipe-term--hit {
@@ -1444,7 +1443,16 @@ button.sop-center-group-tree-toggle:hover {
   border-color: hsl(var(--ds-color-danger) / 0.55);
 }
 
-.sop-recipe-term input {
+.sop-recipe-term__head {
+  align-items: center;
+  display: flex;
+  gap: 0.25rem;
+  min-width: 0;
+  padding-right: 0.25rem;
+}
+
+.sop-recipe-term__head input,
+.sop-recipe-term__allow {
   background: transparent;
   border: 0;
   color: hsl(var(--ds-color-text));
@@ -1456,7 +1464,14 @@ button.sop-center-group-tree-toggle:hover {
   padding-inline: 0.5rem;
 }
 
-.sop-recipe-term--hit input {
+/* 例外行：虚线隔开、字色更淡 —— 它是补充说明，不是主字段 */
+.sop-recipe-term__allow {
+  border-top: 1px dashed hsl(var(--ds-color-border));
+  color: hsl(var(--ds-color-text-subtle));
+  height: 1.625rem;
+}
+
+.sop-recipe-term--hit .sop-recipe-term__head input {
   color: hsl(var(--ds-color-danger));
 }
 

@@ -25,7 +25,7 @@ import { useMemo, useState } from 'react'
 import { Badge, Button, Dialog, IconButton, TextArea, cx } from '../../design-system'
 import { AlertTriangleIcon, EyeIcon, FileTextIcon, PlusIcon, SparklesIcon, TrashIcon } from '../../design-system/icons'
 import {
-  CAMPAIGN_RECIPE_FORBIDDEN_TERMS,
+  CAMPAIGN_RECIPE_FORBIDDEN_RULES,
   findCampaignRecipeViolations,
   renderCampaignRecipePrompts,
   validateCampaignRecipeConfig,
@@ -33,6 +33,7 @@ import {
 } from './campaignRecipe'
 import type { ParsedCampaignRecipe } from './campaignRecipeImport'
 import type { SopCampaignRecipeConfig } from './types'
+import type { RecipeForbiddenRule } from '../../types'
 
 /** 一键铺开的预览条数；只用于看效果，不影响实际生成数量。 */
 const RECIPE_PREVIEW_COUNT = 6
@@ -55,17 +56,18 @@ export interface SopCampaignRecipeParseResultDialogProps {
   /** 解析出的素材信息，仅用于「主控槽」的来源说明 */
   meta?: { name?: string; desc?: string; dominantSlots?: string[] }
   /**
-   * 当前生效的合规红线词表（全局一份，来自 `AppSettings.recipeForbiddenTerms`）。
+   * 当前生效的合规红线规则（全局一份，来自 `AppSettings.recipeForbiddenTerms`）。
+   * 每条 = 违规词 + 它的**例外词**（TB-145：例外词在判定前会被挖空，见 lib/recipeForbiddenTerms.ts）。
    *
    * 不传 = 内置默认 21 词 —— 于是本弹窗单独使用时也不会「没有红线」。
    * 传 `[]` = 用户把红线全关了（与「没传」**语义不同**，别用长度判断）。
    */
-  forbiddenTerms?: readonly string[]
+  forbiddenTerms?: readonly RecipeForbiddenRule[]
   /**
-   * 修改红线词表（增 / 删 / 改 / 恢复默认都走它）。
+   * 修改红线规则（增 / 删 / 改 / 恢复默认都走它）。
    * 不传时词表按只读展示：编辑控件（输入框 / 删除 / 加一条 / 恢复默认）一律不渲染。
    */
-  onForbiddenTermsChange?: (terms: string[]) => void
+  onForbiddenTermsChange?: (terms: RecipeForbiddenRule[]) => void
   /**
    * 是否显示红线标记（候选值标红 / 骨架命中提示 / 复核区）。
    * 不传 = 显示。**它只管显示**，判定与生成前剔除照旧（TB-144）。
@@ -167,8 +169,17 @@ export default function SopCampaignRecipeParseResultDialog({
    * ⚠️ 不能写成 `forbiddenTerms && forbiddenTerms.length ? forbiddenTerms : 默认` ——
    * 空数组是「用户把红线全关了」，那样写会让默认词表又冒回来（TB-142）。
    */
-  const terms = forbiddenTerms ?? CAMPAIGN_RECIPE_FORBIDDEN_TERMS
+  const terms = forbiddenTerms ?? CAMPAIGN_RECIPE_FORBIDDEN_RULES
   const canEditTerms = typeof onForbiddenTermsChange === 'function'
+  /**
+   * 例外输入框的「正在输入」原文（TB-145）。
+   *
+   * 为什么需要它：例外是「顿号分隔的一串」，写回设置时要 split 成数组，
+   * 而受控输入直接回显 `allow.join('、')` 会把用户刚敲下的尾随顿号吃掉 ——
+   * 表现为「输完一个词想接着输第二个，顿号打不出来」。所以编辑期间保留原始串，
+   * 失焦后再回显规整结果。
+   */
+  const [allowDraft, setAllowDraft] = useState<{ index: number; text: string } | null>(null)
   /** 红线标记是否显示：关掉只停止标红，判定与生成前剔除照旧（TB-144）。 */
   const showRedlineHints = showComplianceHints ?? true
   const canToggleHints = typeof onShowComplianceHintsChange === 'function'
@@ -249,20 +260,44 @@ export default function SopCampaignRecipeParseResultDialog({
   // 空串允许暂存在界面状态里（用户点「加一条」时那一格本来就是空的）；
   // 判定侧由 resolveRecipeForbiddenTerms 过滤空串，不会出现「空词命中一切」（见该函数注释）。
 
+  /** 例外输入的解析口径：顿号 / 逗号 / 空白都算分隔符（与判定侧的归一化同口径）。 */
+  function parseAllowText(text: string): string[] {
+    return text
+      .split(/[、,，\s]+/u)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
   function addTerm() {
-    onForbiddenTermsChange?.([...terms, ''])
+    setAllowDraft(null)
+    onForbiddenTermsChange?.([...terms, { term: '', allow: [] }])
   }
 
   function updateTerm(index: number, value: string) {
-    onForbiddenTermsChange?.(terms.map((term, current) => (current === index ? value : term)))
+    onForbiddenTermsChange?.(terms.map((item, current) => (current === index ? { ...item, term: value } : item)))
+  }
+
+  /**
+   * 改某一行的「例外」。
+   *
+   * 输入态允许出现空串 / 尾随分隔符（用户还在敲），所以**原文交给 `allowDraft` 保存**、
+   * 只把解析结果写回设置；失焦后回显规整后的串。
+   */
+  function updateTermAllow(index: number, text: string) {
+    setAllowDraft({ index, text })
+    const allow = parseAllowText(text)
+    onForbiddenTermsChange?.(terms.map((item, current) => (current === index ? { ...item, allow } : item)))
   }
 
   function removeTerm(index: number) {
+    setAllowDraft(null)
     onForbiddenTermsChange?.(terms.filter((_, current) => current !== index))
   }
 
+  /** 恢复默认：必须用带例外的 RULES —— 纯词名版本会把内置例外一起丢掉（TB-145）。 */
   function resetTerms() {
-    onForbiddenTermsChange?.([...CAMPAIGN_RECIPE_FORBIDDEN_TERMS])
+    setAllowDraft(null)
+    onForbiddenTermsChange?.(CAMPAIGN_RECIPE_FORBIDDEN_RULES.map((item) => ({ ...item, allow: [...item.allow] })))
   }
 
   /**
@@ -270,10 +305,14 @@ export default function SopCampaignRecipeParseResultDialog({
    *
    * 落点刻意选**词表**而不是给这个候选值开豁免：误判的根因是那个词太宽（「军」撞「军绿色」），
    * 删一次全局受益；给单个值开豁免，同一个词换个值还会再撞（TB-144 的口径）。
+   *
+   * TB-145 补充：删词是**粗**动作（删掉「军」，「参军」也跟着漏）。若只是这个词在某个正常
+   * 搭配里被误伤，更该用下方词表那一格的**例外**输入框 —— 拦住违规用法的同时放过正常写法。
    */
   function removeTerms(words: string[]) {
+    setAllowDraft(null)
     const drop = new Set(words)
-    onForbiddenTermsChange?.(terms.filter((term) => !drop.has(term)))
+    onForbiddenTermsChange?.(terms.filter((item) => !drop.has(item.term)))
   }
 
   return (
@@ -521,7 +560,8 @@ export default function SopCampaignRecipeParseResultDialog({
                   红线复核 · 本次命中 {bodyViolations.length + optionViolations.length} 处
                 </strong>
                 <span className="text-xs text-ds-muted dark:text-ds-muted">
-                  候选值命中会在生成前被剔除；判为误判就删掉那个词。
+                  候选值命中会在生成前被剔除。判为误判：「删掉这个词」是全局放行；若只是某个正常搭配被误伤，
+                  到下方词表里给这个词加例外（更精准）。
                 </span>
               </div>
               <div className="mt-1.5 grid gap-1">
@@ -604,11 +644,13 @@ export default function SopCampaignRecipeParseResultDialog({
               {bodyViolations.length > 0 ? ' · 本次骨架命中' : ''}
             </summary>
             {/* 显示开关（TB-144）：手动关掉这些标记。⚠️ 只关显示，判定与生成前剔除照旧 ——
-                想真正不拦某个误判词，用上方复核区的「这不是红线，删掉这个词」。 */}
+                想真正不拦某个误判词，用上方复核区的「这不是红线，删掉这个词」，
+                或到下方词表里给那个词配例外（TB-145）。 */}
             {canToggleHints && (
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-ds-muted dark:text-ds-muted">
-                  关掉只停用标红与复核提示，不改变判定；想彻底放行某个词，用上面的「删掉这个词」。
+                  关掉只停用标红与复核提示，不改变判定；想放过某个词或某种正常搭配，
+                  用上面的「删掉这个词」或下方词表里的「例外」。
                 </span>
                 <Button
                   size="sm"
@@ -622,30 +664,45 @@ export default function SopCampaignRecipeParseResultDialog({
             {canEditTerms ? (
               <>
                 <div className="sop-recipe-terms__grid">
-                  {terms.map((term, index) => {
-                    const hit = bodyViolations.includes(term)
+                  {terms.map((item, index) => {
+                    const hit = bodyViolations.includes(item.term)
+                    // 编辑期间显示原始串（保住用户刚敲的顿号），失焦后回显规整结果
+                    const allowText = allowDraft?.index === index ? allowDraft.text : item.allow.join('、')
                     return (
-                      <label
+                      <div
                         key={index}
                         className={cx('sop-recipe-term', hit && 'sop-recipe-term--hit')}
                         title={hit ? '命中当前骨架' : undefined}
                       >
+                        <div className="sop-recipe-term__head">
+                          <input
+                            value={item.term}
+                            placeholder="违规词"
+                            aria-label={`红线词 ${index + 1}`}
+                            onChange={(event) => updateTerm(index, event.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="sop-recipe-term__remove"
+                            onClick={() => removeTerm(index)}
+                            aria-label={`删除红线词 ${item.term || index + 1}`}
+                            title="删除这个词"
+                          >
+                            <TrashIcon className="h-3 w-3" />
+                          </button>
+                        </div>
+                        {/* 例外词（TB-145）：写在这里的搭配，判定前会被挖空 ——
+                            「裸妆」放行，而同一条里出现的「裸体」照拦。 */}
                         <input
-                          value={term}
-                          placeholder="词"
-                          aria-label={`红线词 ${index + 1}`}
-                          onChange={(event) => updateTerm(index, event.target.value)}
+                          className="sop-recipe-term__allow"
+                          value={allowText}
+                          placeholder="例外：填正常搭配"
+                          aria-label={`例外词 ${index + 1}（${item.term || '未命名'}）`}
+                          title="这些正常搭配不算违规（顿号分隔）"
+                          onChange={(event) => updateTermAllow(index, event.target.value)}
+                          onBlur={() => setAllowDraft(null)}
                         />
-                        <button
-                          type="button"
-                          className="sop-recipe-term__remove"
-                          onClick={() => removeTerm(index)}
-                          aria-label={`删除红线词 ${term || index + 1}`}
-                          title="删除这个词"
-                        >
-                          <TrashIcon className="h-3 w-3" />
-                        </button>
-                      </label>
+                      </div>
                     )
                   })}
                   <button type="button" className="sop-recipe-terms__add" onClick={addTerm}>
@@ -654,14 +711,25 @@ export default function SopCampaignRecipeParseResultDialog({
                   </button>
                 </div>
                 <div className="sop-recipe-terms__actions">
-                  <span>命中只提示、不中断生成。判为误判的词删掉即可，改动立即对所有配方卡生效。</span>
+                  <span>
+                    命中只提示、不中断生成。每格右下的「例外」填正常搭配（如「裸妆」）——
+                    填了就不再误伤，而违规用法照拦。改动立即对所有配方卡生效。
+                  </span>
                   <Button size="sm" variant="secondary" onClick={resetTerms}>
-                    恢复默认 {CAMPAIGN_RECIPE_FORBIDDEN_TERMS.length} 词
+                    恢复默认 {CAMPAIGN_RECIPE_FORBIDDEN_RULES.length} 词
                   </Button>
                 </div>
               </>
             ) : (
-              <p>{terms.length > 0 ? terms.join(' · ') : '（当前词表为空，红线已关闭）'}</p>
+              <p>
+                {terms.length > 0
+                  ? terms
+                      .map((item) =>
+                        item.allow.length > 0 ? `${item.term}（例外：${item.allow.join('、')}）` : item.term,
+                      )
+                      .join(' · ')
+                  : '（当前词表为空，红线已关闭）'}
+              </p>
             )}
           </details>
 

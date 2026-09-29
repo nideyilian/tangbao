@@ -120,6 +120,27 @@ export interface ApiProfile {
   >
 }
 
+/**
+ * 配方卡「合规红线」的一条规则：词 + 它的**例外词**（TB-145）。
+ *
+ * 判定是子串匹配（中文没有词边界），所以「裸」会命中「裸妆」、「军」会命中「军绿色」。
+ * `allow` 用于把这些**正常搭配**从判定范围里摘出去。
+ */
+export interface RecipeForbiddenRule {
+  /** 违规词本身（非空；空串在归一化时被丢弃）。 */
+  term: string
+  /**
+   * 例外词：正文里出现这些词时，**那一次出现**不算命中。
+   *
+   * 判定实现是「先把例外词从正文里挖空（换成占位符）再 `includes`」，所以
+   * 「裸妆和裸体同框」**仍会被拦住** —— 挖掉「裸妆」之后正文里还剩「裸体」。
+   * （若写成「有例外就跳过整个词」，这一句就会被整体放过，属于漏判。）
+   *
+   * 详见 `lib/recipeForbiddenTerms.ts` 的 `findRecipeForbiddenViolations`。
+   */
+  allow: string[]
+}
+
 export interface AppSettings {
   /** 界面主题：手动浅色 / 深色 */
   themeMode: ThemeMode
@@ -175,15 +196,18 @@ export interface AppSettings {
   /**
    * 配方卡「合规红线」词表（全局一份，所有配方卡共用）。
    *
-   * 三种值语义**必须分清**（见 `normalizeCampaignRecipeForbiddenTerms`）：
+   * 三种值语义**必须分清**（见 `normalizeRecipeForbiddenTerms`）：
    * - `undefined` —— 没自定义过（旧存档 / 新用户）⇒ 用内置默认 21 词；
    * - `[]`        —— 用户**明确清空**了词表 ⇒ 红线关闭，一个词都不拦；
-   * - `string[]`  —— 用户那份词表（trim / 去空 / 去重后的结果）。
+   * - `RecipeForbiddenRule[]` —— 用户那份词表（已 trim / 去空 / 去重）。
    *
    * 因此在归一化里**不能**把空数组折算成 undefined，也不能按长度判断「有没有配」——
    * 否则用户「把误判词全删光」这个动作会被当成「没配过」，默认词表又冒回来。
+   *
+   * ⚠️ TB-145 之前这里存的是 `string[]`。**旧存档照收**：归一化会把纯字符串
+   * 补成 `{ term, allow: [] }`（即「这个词没有例外」，行为与升级前完全一致）。
    */
-  recipeForbiddenTerms?: string[]
+  recipeForbiddenTerms?: RecipeForbiddenRule[]
   /**
    * 配方卡是否显示「红线」标记（候选值标红 + 骨架命中提示 + 复核区）。
    *
@@ -191,7 +215,8 @@ export interface AppSettings {
    * （即「我不想看这些标记」，而不是「别管红线了」）。
    *
    * 想真正让某个误判词不再被拦，要用复核区的「这不是红线，删掉这个词」把它移出
-   * `recipeForbiddenTerms` —— 那是判定层的事，与这个显示开关是两回事（TB-144）。
+   * `recipeForbiddenTerms`，或给这个词配**例外**（TB-145：只放行某个正常搭配，更精准）——
+   * 那是判定层的事，与这个显示开关是两回事（TB-144）。
    */
   recipeComplianceHints?: boolean
   wordLibraryDerivativeRule?: string

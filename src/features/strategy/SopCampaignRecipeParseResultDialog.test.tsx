@@ -26,8 +26,16 @@ import SopCampaignRecipeParseResultDialog, {
 import { __resetOverlayManager } from '../../design-system/overlayManager'
 import type { ParsedCampaignRecipe } from './campaignRecipeImport'
 import type { SopCampaignRecipeConfig } from './types'
+import type { RecipeForbiddenRule } from '../../types'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+/**
+ * 词名 → 规则（多数用例不关心例外，等价于「这个词没有例外」，TB-145）。
+ * 已经是规则形态的项原样保留，方便单独测例外的用例直接用。
+ */
+const toRules = (terms: Array<string | RecipeForbiddenRule>): RecipeForbiddenRule[] =>
+  terms.map((term) => (typeof term === 'string' ? { term, allow: [] } : term))
 
 function makeParsed(overrides: Partial<ParsedCampaignRecipe> = {}): ParsedCampaignRecipe {
   return {
@@ -302,11 +310,15 @@ describe('SopCampaignRecipeParseResultDialog', () => {
  */
 describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () => {
   /** 渲染一个词表可编辑的弹窗，返回「每次写回的词表」记录。 */
-  function renderWithTerms(initial: string[], configOverrides: Partial<SopCampaignRecipeConfig> = {}, editable = true) {
-    const changes: string[][] = []
+  function renderWithTerms(
+    initial: Array<string | RecipeForbiddenRule>,
+    configOverrides: Partial<SopCampaignRecipeConfig> = {},
+    editable = true,
+  ) {
+    const changes: RecipeForbiddenRule[][] = []
     const config = { ...makeConfig(), ...configOverrides }
     function Harness() {
-      const [terms, setTerms] = useState<string[]>(initial)
+      const [terms, setTerms] = useState<RecipeForbiddenRule[]>(toRules(initial))
       return (
         <SopCampaignRecipeParseResultDialog
           open
@@ -339,10 +351,10 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
     expect(termInputs().map((input) => input.value)).toEqual(['提现', '军'])
 
     clickButton('加一条')
-    expect(changes[changes.length - 1]).toEqual(['提现', '军', ''])
+    expect(changes[changes.length - 1]).toEqual(toRules(['提现', '军', '']))
 
     typeInto(termInputs()[0], '提现按钮')
-    expect(changes[changes.length - 1]).toEqual(['提现按钮', '军', ''])
+    expect(changes[changes.length - 1]).toEqual(toRules(['提现按钮', '军', '']))
 
     const removeButtons = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button[aria-label^="删除红线词"]'),
@@ -350,14 +362,17 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
     act(() => {
       removeButtons[1].click()
     })
-    expect(changes[changes.length - 1]).toEqual(['提现按钮', ''])
+    expect(changes[changes.length - 1]).toEqual(toRules(['提现按钮', '']))
   })
 
-  it('恢复默认还原成内置 21 词', () => {
+  it('恢复默认还原成内置 21 词，且**带内置例外**（TB-145）', () => {
     const changes = renderWithTerms(['军'])
     clickButton('恢复默认')
-    expect(changes[changes.length - 1]).toHaveLength(21)
-    expect(changes[changes.length - 1][0]).toBe('人民币')
+    const restored = changes[changes.length - 1]
+    expect(restored).toHaveLength(21)
+    expect(restored[0].term).toBe('人民币')
+    // 关键：恢复默认必须保住内置例外。若退回纯词名版本，用户点一次就回到「裸妆被拦」。
+    expect(restored.find((item) => item.term === '裸')?.allow).toContain('裸妆')
   })
 
   it('命中当前骨架的那一格标红，并指向复核区（TB-144 起骨架提示并入复核清单）', () => {
@@ -375,10 +390,37 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
     expect(document.body.querySelectorAll('.sop-recipe-preview__list li').length).toBeGreaterThan(0)
   })
 
-  it('不给修改回调时词表按只读展示（不渲染编辑控件）', () => {
-    renderWithTerms(['提现', '军'], {}, false)
+  it('例外输入框写回的是「词 + 例外」规则（TB-145）', () => {
+    const changes = renderWithTerms(['裸'])
+    const boxes = () => Array.from(document.body.querySelectorAll<HTMLInputElement>('input[aria-label^="例外词"]'))
+    expect(boxes()).toHaveLength(1)
+    expect(boxes()[0].value).toBe('')
+
+    typeInto(boxes()[0], '裸妆、裸色')
+    expect(changes[changes.length - 1]).toEqual([{ term: '裸', allow: ['裸妆', '裸色'] }])
+  })
+
+  it('填了例外之后：正常搭配不再误伤，违规用法照拦（端到端）', () => {
+    renderWithTerms(['裸'], {
+      body: '裸妆效果，{M}',
+      dimensions: [{ name: 'M', options: ['裸体艺术'] }],
+    })
+    // 填例外前：骨架里的「裸妆」被判命中
+    expect(dialogText()).toContain('骨架命中红线「裸」')
+
+    const boxes = Array.from(document.body.querySelectorAll<HTMLInputElement>('input[aria-label^="例外词"]'))
+    typeInto(boxes[0], '裸妆')
+
+    // 填之后：骨架不再命中……
+    expect(dialogText()).not.toContain('骨架命中红线')
+    // ……而候选值里的「裸体艺术」照旧命中（例外只豁免填进去的那一段，不是整个词）
+    expect(document.body.querySelectorAll('.sop-recipe-option--blocked')).toHaveLength(1)
+  })
+
+  it('不给修改回调时词表按只读展示，且把例外一并写明', () => {
+    renderWithTerms([{ term: '裸', allow: ['裸妆'] }, '军'], {}, false)
     expect(termInputs()).toHaveLength(0)
-    expect(dialogText()).toContain('提现 · 军')
+    expect(dialogText()).toContain('裸（例外：裸妆） · 军')
   })
 })
 
@@ -392,7 +434,7 @@ describe('SopCampaignRecipeParseResultDialog · 红线词表（TB-142）', () =>
  */
 describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () => {
   function renderReview(options: { terms?: string[]; config?: Partial<SopCampaignRecipeConfig>; hints?: boolean }) {
-    const termsChanges: string[][] = []
+    const termsChanges: RecipeForbiddenRule[][] = []
     const hintsChanges: boolean[] = []
     const initial = {
       body: '点击提现到账，{M}',
@@ -400,7 +442,7 @@ describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () =>
       ...options.config,
     }
     function Harness() {
-      const [terms, setTerms] = useState<string[]>(options.terms ?? ['提现', '军'])
+      const [terms, setTerms] = useState<RecipeForbiddenRule[]>(toRules(options.terms ?? ['提现', '军']))
       const [hints, setHints] = useState<boolean>(options.hints ?? true)
       const [config, setConfig] = useState(initial)
       return (
@@ -444,7 +486,7 @@ describe('SopCampaignRecipeParseResultDialog · 红线复核（TB-144）', () =>
   it('「这不是红线」把该词从红线词表里删掉（全局生效的落点）', () => {
     const { termsChanges } = renderReview({})
     clickButton('这不是红线，删掉这个词')
-    expect(termsChanges[termsChanges.length - 1]).toEqual(['军'])
+    expect(termsChanges[termsChanges.length - 1]).toEqual(toRules(['军']))
   })
 
   it('「确认违规，剔除」从维度池删掉这个候选值', () => {
