@@ -19,12 +19,9 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import SopCampaignRecipeParseResultDialog, {
-  countParsedRecipeAttention,
-  listParsedRecipeAttention,
-  summarizeParsedRecipe,
-} from './SopCampaignRecipeParseResultDialog'
+import SopCampaignRecipeParseResultDialog, { summarizeParsedRecipe } from './SopCampaignRecipeParseResultDialog'
 import { __resetOverlayManager } from '../../design-system/overlayManager'
+import type { RecipeProblemTarget } from './campaignRecipeProblems'
 import type { ParsedCampaignRecipe } from './campaignRecipeImport'
 import type { SopCampaignRecipeConfig } from './types'
 import type { RecipeForbiddenRule } from '../../types'
@@ -100,6 +97,10 @@ function renderDialog(options: {
   parsed: ParsedCampaignRecipe | null
   config?: SopCampaignRecipeConfig
   onOpenChange?: (open: boolean) => void
+  /** 落点在弹窗外面时的回传（TB-153）：断言面板侧收到了哪个落点 */
+  onLocateRequest?: (target: RecipeProblemTarget) => void
+  rawChangedAfterParse?: boolean
+  onRequestReparse?: () => void
 }) {
   function Harness() {
     const [config, setConfig] = useState(options.config ?? makeConfig())
@@ -113,6 +114,9 @@ function renderDialog(options: {
           latestConfig = next
           setConfig(next)
         }}
+        onLocateRequest={options.onLocateRequest}
+        rawChangedAfterParse={options.rawChangedAfterParse}
+        onRequestReparse={options.onRequestReparse}
       />
     )
   }
@@ -161,30 +165,116 @@ describe('summarizeParsedRecipe', () => {
   })
 })
 
-describe('countParsedRecipeAttention', () => {
-  it('告警 + 缺失池都算「要留意」（面板入口按钮上只报这个数，不铺内容）', () => {
-    expect(countParsedRecipeAttention(makeParsed())).toBe(2) // 1 条 warning + 1 个 missingPool
-    expect(countParsedRecipeAttention(makeParsed({ warnings: [], missingPools: [] }))).toBe(0)
-    expect(countParsedRecipeAttention(null)).toBe(0)
+/**
+ * 问题清单（TB-153）。
+ *
+ * 上一版这里锁的是 `countParsedRecipeAttention` / `listParsedRecipeAttention`
+ * （条数由明细数出来、每个缺失占位符单独成条）。那两个函数已被 `buildRecipeProblems`
+ * 取代 —— 守卫**跟着搬家**，不丢：条数与明细仍然同源，缺失占位符仍然单独成条
+ * （见 `campaignRecipeProblems.test.ts`），这里补的是**组件这一层**：
+ * 报出来的数 = 列出来的行数、每行都写着位置与怎么改、每条都能点着跳过去。
+ */
+describe('SopCampaignRecipeParseResultDialog · 问题清单（TB-153）', () => {
+  const EMPTY_DIMENSION_CONFIG: SopCampaignRecipeConfig = {
+    body: '{M}, {S1}',
+    dimensions: [
+      { name: 'M', options: ['甲'] },
+      { name: 'S1', options: [] },
+    ],
+  }
+
+  it('报出来的条数 = 列出来的行数，且每行都带位置与定位（TB-148 的口径搬过来）', () => {
+    // 2 个缺失占位符 + 1 条解析告警 = 3
+    const parsed = makeParsed({ missingPools: ['S3', 'S4'], warnings: ['字段「desc」未识别，请手动补充'] })
+    renderDialog({ parsed })
+
+    const list = document.body.querySelector('[aria-label="配方卡问题清单"]')
+    expect(list).not.toBeNull()
+    const total = Number(list!.getAttribute('data-recipe-problem-count'))
+    const rows = list!.querySelectorAll('[data-recipe-problem-id]')
+    // 报几条 = 列几条：同一个来源，不是各算一遍
+    expect(rows).toHaveLength(total)
+    expect(total).toBe(3)
+
+    for (const row of Array.from(rows)) {
+      // 每行都必须说清「在哪」与「怎么办」——这正是杰哥报的「只有一个静态提示」
+      expect(row.textContent, `${row.textContent}`).toContain('位置：')
+      expect(row.querySelectorAll('button').length, `${row.textContent}`).toBeGreaterThan(0)
+    }
+    expect(list!.textContent).toContain('S3')
+    expect(list!.textContent).toContain('S4')
+    expect(list!.textContent).toContain('字段「desc」未识别，请手动补充')
   })
 
-  it('条数**由明细数出来**：两者永远相等（TB-148）', () => {
-    const parsed = makeParsed({
-      missingPools: ['S3', 'S4', 'S5'],
-      warnings: ['字段「desc」未识别，请手动补充', '未识别到配方名称，请手动填写'],
+  it('点「去填值」：滚到那个维度并高亮它（目标真的找到了，不是猜的）', () => {
+    renderDialog({ parsed: makeParsed(), config: EMPTY_DIMENSION_CONFIG })
+
+    const target = document.body.querySelector('[data-recipe-target="dim:1"]')
+    expect(target).not.toBeNull()
+    expect(target!.className).not.toContain('sop-recipe-target--flash')
+
+    const row = document.body.querySelector('[data-recipe-problem-id="structure-dimension-empty-1"]')!
+    const locate = Array.from(row.querySelectorAll('button')).find((button) => button.textContent?.includes('去填值'))!
+    act(() => {
+      locate.click()
     })
-    const items = listParsedRecipeAttention(parsed)
-    expect(items).toHaveLength(5)
-    // 关键：不是「各算一遍再祈祷它们相等」，而是同一个数组的长度
-    expect(countParsedRecipeAttention(parsed)).toBe(items.length)
+    expect(target!.className).toContain('sop-recipe-target--flash')
   })
 
-  it('每个缺失占位符**单独成条**（合并成一句会让「N 条」和「看到几行」脱钩）', () => {
-    const items = listParsedRecipeAttention(makeParsed({ missingPools: ['S3', 'S4'], warnings: [] }))
-    expect(items).toHaveLength(2)
-    expect(items[0]).toContain('S3')
-    expect(items[1]).toContain('S4')
-    expect(listParsedRecipeAttention(null)).toEqual([])
+  it('能一键修的就在问题旁边修：删维度 / 补占位符 / 删占位符', () => {
+    renderDialog({ parsed: makeParsed(), config: EMPTY_DIMENSION_CONFIG })
+    clickButton('删掉这个维度')
+    expect(latestConfig?.dimensions.map((dimension) => dimension.name)).toEqual(['M'])
+  })
+
+  it('「在骨架末尾加上 {X}」把占位符补进骨架（维度没被引用时）', () => {
+    renderDialog({
+      parsed: makeParsed(),
+      config: {
+        body: '{M}',
+        dimensions: [
+          { name: 'M', options: ['甲'] },
+          { name: 'S1', options: ['乙'] },
+        ],
+      },
+    })
+    clickButton('在骨架末尾加上 {S1}')
+    expect(latestConfig?.body).toBe('{M}，{S1}')
+  })
+
+  it('「从骨架里删掉 {X}」把用不上的占位符拿掉', () => {
+    renderDialog({
+      parsed: makeParsed(),
+      config: { body: '{M}, {S9}', dimensions: [{ name: 'M', options: ['甲'] }] },
+    })
+    clickButton('从骨架里删掉 {S9}')
+    expect(latestConfig?.body).toBe('{M}')
+  })
+
+  it('落点在弹窗外的问题（没有名字）把定位请求交回面板，而不是在这里乱跳', () => {
+    const requests: string[] = []
+    renderDialog({ parsed: makeParsed({ name: '' }), onLocateRequest: (target) => requests.push(target.kind) })
+    clickButton('去填名称')
+    expect(requests).toEqual(['name'])
+  })
+
+  it('「重新解析」动作交回面板（原文与解析器都在那边）', () => {
+    let reparsed = 0
+    renderDialog({
+      parsed: makeParsed(),
+      config: EMPTY_DIMENSION_CONFIG,
+      rawChangedAfterParse: true,
+      onRequestReparse: () => {
+        reparsed += 1
+      },
+    })
+    clickButton('重新解析')
+    expect(reparsed).toBe(1)
+  })
+
+  it('没有问题时清单整块不渲染（不留一块空壳）', () => {
+    renderDialog({ parsed: makeParsed({ warnings: [], missingPools: [] }) })
+    expect(document.body.querySelector('[aria-label="配方卡问题清单"]')).toBeNull()
   })
 })
 
@@ -202,24 +292,6 @@ describe('SopCampaignRecipeParseResultDialog', () => {
     expect(text).toContain('字段「desc」未识别，请手动补充')
     expect(text).toContain('gpt-image-1')
     expect(text).toContain('敏感词A')
-  })
-
-  it('「N 条待注意」与明细行数对得上，明细块自带警示外观（TB-148）', () => {
-    // 2 个缺失占位符 + 1 条告警 = 3
-    const parsed = makeParsed({ missingPools: ['S3', 'S4'], warnings: ['字段「desc」未识别，请手动补充'] })
-    renderDialog({ parsed })
-
-    // 徽章与明细块标题都报这个数 ⇒ 同一句出现两次，互为印证（不是各写各的）
-    const shown = dialogText().match(new RegExp(`${countParsedRecipeAttention(parsed)} 条待注意`, 'g')) ?? []
-    expect(shown).toHaveLength(2)
-
-    // 明细逐条列出，**行数 = 报出来的数**（上一版这里是灰字，用户找不到是哪一条）
-    const block = document.body.querySelector('[aria-label="解析待注意"]')
-    expect(block).not.toBeNull()
-    expect(block!.querySelectorAll('li')).toHaveLength(countParsedRecipeAttention(parsed))
-    expect(block!.textContent).toContain('S3')
-    expect(block!.textContent).toContain('S4')
-    expect(block!.textContent).toContain('字段「desc」未识别，请手动补充')
   })
 
   it('骨架与维度池都在弹窗里（外面已无编辑入口）', () => {

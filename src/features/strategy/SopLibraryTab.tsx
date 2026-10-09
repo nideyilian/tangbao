@@ -41,6 +41,7 @@ import type { SopGroup, SopLibraryItem } from './types'
 import { isCampaignRecipeSop, isVariablePromptSop } from './campaignRecipe'
 import { buildSopGroupTree, flattenSopGroupTree } from './sopGroupTree'
 import SopCampaignRecipePanel from './SopCampaignRecipePanel'
+import { focusRecipeTarget } from './recipeTargetLocate'
 import SopImageStack from './SopImageStack'
 import SopTextEditor from './SopTextEditor'
 
@@ -178,6 +179,25 @@ export default function SopLibraryTab({
     allGroupIds,
   )
   const editorMenuRef = useRef<HTMLDivElement>(null)
+  /**
+   * 名称 / 说明所在的字段区（TB-153）。
+   *
+   * 配方卡的问题清单里有些落点长在这里（最典型的是「未识别到配方名称」），
+   * 面板那一层够不着 —— 定位就落在这个容器里，按 `data-recipe-target` 找具体那个输入框。
+   */
+  const editorFieldsRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * 把「弹窗外面」的落点滚进视野并聚焦。
+   *
+   * ⚠️ 必须**等一帧**：调用它的那一刻详情弹窗才刚被关掉（portal 还在 DOM 里），
+   * 立刻滚动会被弹窗盖着看不见，聚焦还可能被焦点陷阱收回去 —— 表现为「点了没反应」。
+   */
+  function locateEditorField(field: 'name' | 'description') {
+    const run = () => focusRecipeTarget(field === 'name' ? 'name' : 'desc', editorFieldsRef.current)
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(run)
+    else run()
+  }
 
   /** 分组树按展开状态展平成行列表；折叠的分组整棵子树跳过。 */
   const groupTreeRows = useMemo(
@@ -608,11 +628,13 @@ export default function SopLibraryTab({
                 </div>
               </Inline>
             </div>
-            <div className="sop-center-editor-fields">
+            <div className="sop-center-editor-fields" ref={editorFieldsRef}>
               <TextField
                 label="名称"
                 value={itemDraft.name}
                 onChange={(event) => setItemDraft({ ...itemDraft, name: event.target.value })}
+                // 定位锚点：配方卡问题清单里「没有名字」那条直接滚到这里（TB-153）
+                data-recipe-target="name"
               />
               <SelectField
                 label="所属分组"
@@ -627,6 +649,7 @@ export default function SopLibraryTab({
                 label="说明"
                 value={itemDraft.description}
                 onChange={(event) => setItemDraft({ ...itemDraft, description: event.target.value })}
+                data-recipe-target="desc"
               />
             </div>
             {/* 配方卡引擎不显示普通 SOP 的正文编辑窗口。
@@ -649,15 +672,27 @@ export default function SopLibraryTab({
             )}
             {isCampaignRecipeSop(itemDraft) && (
               <SopCampaignRecipePanel
+                // 换卡即重挂（TB-152）：面板内部还留着「本次解析结果 / 上次解析用的原文」这类
+                // **只属于某一张卡**的瞬时状态，而 React 在同一位置会复用组件实例 ——
+                // 不加 key 时从 A 卡切到 B 卡，B 卡会顶着 A 卡的「解析完成」徽章与 A 卡的
+                // 原资产信息（详情弹窗里读的就是这份解析结果）。key 一换，这些状态自然归零；
+                // 原文本身已在 config 里，不受影响。
+                key={itemDraft.id}
                 config={itemDraft.campaignRecipe ?? { body: '', dimensions: [] }}
                 meta={{ name: itemDraft.name, desc: itemDraft.description, dominantSlots: itemDraft.dominantSlots }}
-                onChange={(campaignRecipe) => setItemDraft({ ...itemDraft, campaignRecipe })}
+                // 用函数式更新：原文框现在是受控的，每次敲键都会回写草稿，
+                // 直接铺 `{ ...itemDraft }` 会用到本次渲染捕获的那份闭包快照。
+                onChange={(campaignRecipe) =>
+                  setItemDraft((current) => (current ? { ...current, campaignRecipe } : current))
+                }
                 forbiddenTerms={recipeForbiddenTerms}
                 onForbiddenTermsChange={(terms) => setSettings({ recipeForbiddenTerms: terms })}
                 complianceEnabled={recipeForbiddenEnabled}
                 onComplianceEnabledChange={(value) => setSettings({ recipeForbiddenEnabled: value })}
                 showComplianceHints={recipeComplianceHints}
                 onShowComplianceHintsChange={(value) => setSettings({ recipeComplianceHints: value })}
+                // 落点在弹窗外面的问题（名称 / 说明）交回这里定位（TB-153）
+                onLocateOutside={locateEditorField}
                 onMetaChange={(patch) => {
                   // 解析出的名称/说明/主控槽直接落到草案上，随保存一起持久化；
                   // 名称已有值时**不覆盖**用户手填的名字（只在识别到且当前为空时补）

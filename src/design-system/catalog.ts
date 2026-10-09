@@ -1158,6 +1158,13 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     targets: ['Dialog', 'Thumbnail', 'EmptyState'],
   },
   {
+    module: 'src/features/strategy/CampaignRecipeProblemList.tsx',
+    responsibility:
+      '配方卡「问题清单」渲染件（面板与详情弹窗共用）：每条 = 标题 + 位置 + 怎么改 + 动作；面板变体只铺前几条，弹窗变体铺全量并带红线分组头',
+    decision: 'compose',
+    targets: ['Button'],
+  },
+  {
     module: 'src/features/strategy/SopCampaignRecipePanel.tsx',
     responsibility: '配方卡引擎「整段录入」外面板：只放配方卡原文 + 解析/清空 + 详情入口；骨架与维度在详情弹窗里编辑',
     decision: 'compose',

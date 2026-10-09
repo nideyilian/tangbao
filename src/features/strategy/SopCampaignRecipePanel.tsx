@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Badge, Button, TextArea } from '../../design-system'
 import { EyeIcon as Eye, ShuffleIcon as Shuffle, SparklesIcon as Sparkles } from '../../design-system/icons'
 import { parseCampaignRecipeText, toCampaignRecipeConfig, type ParsedCampaignRecipe } from './campaignRecipeImport'
-import SopCampaignRecipeParseResultDialog, {
-  listParsedRecipeAttention,
-  summarizeParsedRecipe,
-} from './SopCampaignRecipeParseResultDialog'
+import SopCampaignRecipeParseResultDialog, { summarizeParsedRecipe } from './SopCampaignRecipeParseResultDialog'
+import { CampaignRecipeProblemList } from './CampaignRecipeProblemList'
+import {
+  buildRecipeProblems,
+  problemTargetKey,
+  recipeTargetScope,
+  resolveRecipeDisplayTerms,
+  summarizeRecipeProblems,
+  type RecipeProblemTarget,
+} from './campaignRecipeProblems'
+import { focusRecipeTarget } from './recipeTargetLocate'
 import { resolveEffectiveDominantSlots } from './campaignRecipe'
 import type { CampaignRecipeDimension } from './campaignRecipe'
 import type { SopCampaignRecipeConfig } from './types'
@@ -30,10 +37,25 @@ import type { RecipeForbiddenRule } from '../../types'
  *
  * 关键约束：解析**只填能确定的字段**，认不出的一律留空并在详情里点明，
  * 绝不静默编造 —— 一个错的配方比一个报错的配方危险得多。
+ *
+ * 2026-10-09（TB-152）：**原文改存进配方卡里**（`config.rawText`），不再是面板的
+ * 组件私有 state。它原先是「关掉弹窗 / 切一次 tab 就没了」的那一份（tab 是条件渲染，
+ * 整块卸载会连内存一起丢），而骨架与维度却是自动保存的 —— 同一个面板里一半留得住、
+ * 一半留不住，用户看到的是「骨架还在、原文变 0 字符」。现在它跟骨架走同一条自动保存
+ * 链路，并且**每张卡各记各的**（切卡不再把上一张的原文带过来）。
+ *
+ * 2026-10-09（TB-153）：外面那块提示从「一段灰字」换成**问题清单**（前几条 + 共 N 条），
+ * 每条能点着跳到出问题的地方、并当场写明怎么改。清单本体与弹窗里是**同一份数据**
+ * （`buildRecipeProblems`），这里只负责「概览 + 路由」：
+ * 落点在弹窗里的，点一下先开弹窗再滚过去；落在面板里的就地滚；落在左侧字段的交给中心。
  */
 
-/** 外面最多铺几条「待注意」明细：再多就让明细进弹窗，别把概览区挤没。 */
-const ATTENTION_PREVIEW_LIMIT = 2
+/**
+ * 外面最多铺几条问题明细：再多就让明细进弹窗，别把概览区挤没。
+ *
+ * 条数由「问题清单」组件内部按 limit 截断，报出来的总数仍是全量（不会因为截断而少报）。
+ */
+const PROBLEM_PREVIEW_LIMIT = 2
 
 export type SopCampaignRecipePanelProps = {
   config: SopCampaignRecipeConfig
@@ -62,6 +84,13 @@ export type SopCampaignRecipePanelProps = {
   showComplianceHints?: boolean
   /** 切换红线标记显示；不传则开关不渲染。 */
   onShowComplianceHintsChange?: (value: boolean) => void
+  /**
+   * 定位到**弹窗外面、面板外面**的字段（SOP 名称 / 说明在管理中心的左侧字段区）。
+   *
+   * 「未识别到配方名称」这类问题的落点就长在那里 —— 只有面板这一层够不着，
+   * 由中心滚动 + 聚焦。不传时该条问题仍然出现，只是定位按钮点了不跳。
+   */
+  onLocateOutside?: (field: 'name' | 'description') => void
 }
 
 /**
@@ -102,8 +131,15 @@ export default function SopCampaignRecipePanel({
   onComplianceEnabledChange,
   showComplianceHints,
   onShowComplianceHintsChange,
+  onLocateOutside,
 }: SopCampaignRecipePanelProps) {
-  const [rawText, setRawText] = useState('')
+  /**
+   * 「整段录入」的原文 —— **存在配方卡里**（`config.rawText`），不是组件私有 state（TB-152）。
+   *
+   * 读：直接取 config；写：`writeRawText`（走 `onChange`，于是自动保存会把它一起落库）。
+   * ⚠️ 别改回 `useState` —— 那样它就只活在面板内存里，关弹窗 / 切 tab / 换卡全丢。
+   */
+  const rawText = config.rawText ?? ''
   const [parseError, setParseError] = useState('')
   const [parsed, setParsed] = useState<ParsedCampaignRecipe | null>(null)
   /**
@@ -121,29 +157,18 @@ export default function SopCampaignRecipePanel({
   /** 上次解析所用的原文：与当前录入框不一致 ⇒ 提示「原文已改动，需重新解析」 */
   const [lastParsedText, setLastParsedText] = useState('')
   const parseTimerRef = useRef<number | null>(null)
-
+  /** 面板根节点：落点在面板里时（原文框）就地定位用。 */
+  const panelRef = useRef<HTMLElement | null>(null)
   /**
-   * 「待注意」的明细与条数（TB-148）。
+   * 待执行的「定位到弹窗里某个元素」请求。
    *
-   * **条数由明细数出来**（`attentionItems.length`），不再单独算一遍 ——
-   * 上一版外面只报数字、内容全在弹窗里且长得像普通说明文字，于是出现了
-   * 「看到『1 条待注意』却不知道是哪条」。明细与数字同源就不会对不上。
+   * 为什么要绕这一圈：外面点到一条落点在弹窗里的问题时，弹窗还没挂上，
+   * 立刻滚动一定滚空。所以这里只记下目标、把弹窗打开，由弹窗在挂载后自己消费。
+   * `seq` 是**必须的**：同一个目标连点两次也要能再触发一次（只比目标的话第二次没有变化，
+   * effect 不会重跑，用户会觉得「点第二下没反应」）。
    */
-  const attentionItems = useMemo(() => listParsedRecipeAttention(parsed), [parsed])
-  const attentionCount = attentionItems.length
-  /**
-   * 外面铺前几条（全文走 `title`，悬停可见）。不整段铺开：
-   * 一屏告警会把「内容概览」这块挤没，而这里的作用只是「告诉你有没有事、大概是什么事」。
-   */
-  const attentionPreview = useMemo(() => {
-    if (attentionItems.length === 0) return ''
-    const head = attentionItems.slice(0, ATTENTION_PREVIEW_LIMIT)
-    return attentionItems.length > ATTENTION_PREVIEW_LIMIT
-      ? `${head.join('；')} 等 ${attentionItems.length} 条`
-      : head.join('；')
-  }, [attentionItems])
-  /** 悬停全文（原生 tooltip 用换行拼接，读起来是列表而不是一行） */
-  const attentionFullText = useMemo(() => attentionItems.join('\n'), [attentionItems])
+  const [locateRequest, setLocateRequest] = useState<{ target: RecipeProblemTarget; seq: number } | null>(null)
+  const locateSeqRef = useRef(0)
 
   /** 已保存的骨架与维度规模：外面据此判断「这个配方卡填了没有、大概填了多少」 */
   const body = config.body ?? ''
@@ -190,6 +215,57 @@ export default function SopCampaignRecipePanel({
   // 主控槽按「当前权重」推导（执行口径即唯一真相），解析声明只作为来源说明
   const dominantSlotsForDisplay = resolveEffectiveDominantSlots(config.dimensions ?? [])
 
+  /**
+   * 问题清单（TB-153）。**外面所有报数的地方都从这一份来** ——
+   * 徽章、入口按钮、下面铺出来的条目，全取 `problems.length`，
+   * 不在任何地方另算一遍（TB-148 的病根就是「数字与明细两处算」）。
+   *
+   * 红线一并进来（按总开关 / 显示开关折算），所以「有红线命中」也会体现在这个数字里。
+   */
+  const problems = buildRecipeProblems({
+    parsed,
+    config,
+    localParseError: parseError,
+    rawChangedAfterParse,
+    forbiddenTerms: resolveRecipeDisplayTerms(complianceEnabled, forbiddenTerms),
+    showComplianceHints,
+  })
+  // 报数只有这一个来源：徽章、入口按钮、清单内部全取这一份
+  const { total: problemCount, blocking: blockingCount } = summarizeRecipeProblems(problems)
+
+  /**
+   * 定位路由：一条问题的落点可能在三层里的任意一层，点了要做什么不一样。
+   *
+   * - `dialog`：先开弹窗，再让弹窗自己滚（弹窗还没挂上，这会儿滚一定滚空）；
+   * - `outside`：落点在管理中心的左侧字段区（名称 / 说明）—— 关掉弹窗，交给中心滚 + 聚焦；
+   * - `panel`：落点就在本面板（原文框），就地滚。
+   */
+  function routeLocate(target: RecipeProblemTarget) {
+    const scope = recipeTargetScope(target)
+    if (scope === 'dialog') {
+      locateSeqRef.current += 1
+      setLocateRequest({ target, seq: locateSeqRef.current })
+      setParseResultOpen(true)
+      return
+    }
+    if (scope === 'outside') {
+      setParseResultOpen(false)
+      onLocateOutside?.(target.kind === 'description' ? 'description' : 'name')
+      return
+    }
+    focusRecipeTarget(problemTargetKey(target), panelRef.current)
+  }
+
+  /**
+   * 写回原文（TB-152）。
+   *
+   * 原文与骨架 / 维度池同属一张配方卡，所以共用同一个 `onChange` ——
+   * 中心的自动保存链只认 `itemDraft`，绕过它就又会变成「只活在内存里」。
+   */
+  function writeRawText(value: string) {
+    onChange({ ...config, rawText: value })
+  }
+
   function handleParse() {
     if (parsing) return
     const text = rawText
@@ -216,7 +292,11 @@ export default function SopCampaignRecipePanel({
         setParseError('')
         // 这里不再拼「已识别 N 个维度、组合空间 M 条」的提示：
         // 那些数字在下面的「内容概览」与详情弹窗里各有一次，外面再报一遍就是重复。
-        onChange(next)
+        //
+        // 原文跟着一起写回（TB-152）：`toCampaignRecipeConfig` 只认得 body / dimensions
+        // （内部走 `parseCampaignRecipeConfig`，那个函数**只挑结构字段**），漏这一步
+        // 就会出现「刚粘完、一点解析，原文立刻从配方卡里消失」。
+        onChange({ ...next, rawText: text })
         onMetaChange?.({
           ...(result.name ? { name: result.name } : {}),
           ...(result.desc ? { desc: result.desc } : {}),
@@ -236,7 +316,9 @@ export default function SopCampaignRecipePanel({
   )
 
   function handleClearInput() {
-    setRawText('')
+    // 原文随配方卡一起存着（TB-152）⇒「清空」必须连**存下来的那份**一起清，
+    // 只清内存等于没清：切走再切回来原文又冒出来。
+    writeRawText('')
     setParsed(null)
     setParseError('')
     setLastParsedText('')
@@ -245,7 +327,7 @@ export default function SopCampaignRecipePanel({
   }
 
   return (
-    <section className="sop-recipe-panel" aria-label="配方卡引擎配置">
+    <section className="sop-recipe-panel" ref={panelRef} aria-label="配方卡引擎配置">
       <header className="sop-recipe-panel__header">
         <strong>
           <Shuffle size={13} />
@@ -269,12 +351,14 @@ export default function SopCampaignRecipePanel({
           <TextArea
             label="配方卡原文"
             value={rawText}
-            onChange={(event) => setRawText(event.target.value)}
+            onChange={(event) => writeRawText(event.target.value)}
             placeholder={
               '直接粘贴整份配方卡，例如：\n\n{\n  "name": "歌单推荐美女",\n  "template": "{M}, {S1}, ...",\n  "master": [...],\n  "pools": { "S1": [...], "S2": [...] }\n}\n\n或自由排版：\nname: 歌单推荐美女\ntemplate: {M}, {S1}, {S2}\nmaster:\n  M1 戴耳机侧颜特写, close-up side profile...\npools:\n  S1: 甜美元气, 温柔治愈, 清冷\n\n或「一键衍生」产出的变量提示词模板（正文 + 可变项）：\n一只{{主体}}，{{风格}}风格。\n\n可变项：\n{{主体}}：柴犬 / 柯基\n{{风格}}：水彩 / 油画'
             }
             containerClassName="sop-recipe-import__field"
             className="sop-recipe-import__input"
+            // 定位锚点：「回到原文框」类问题直接滚到这里（TB-153）。TextArea 会把未知属性透传给 textarea。
+            data-recipe-target="raw"
           />
           <div className="sop-recipe-import__actions">
             <Button
@@ -293,7 +377,7 @@ export default function SopCampaignRecipePanel({
             {/* 原文区域右下角的弹窗入口。放在字符数**之后** ⇒ 落在整栏最右端
                 （字符数自带 margin-left:auto，插在它前面会被挤到中间）。
                 没解析过时禁用并说明原因：给一个点了没反应的按钮比不给更糟。
-                按钮上只报「有几条要留意」，细节一律进弹窗 —— 外面不重复铺内容。 */}
+                按钮上与概览徽章报**同一个数**（都取 problems.length，不可能对不上）。 */}
             <Button
               size="sm"
               variant="secondary"
@@ -308,21 +392,21 @@ export default function SopCampaignRecipePanel({
               }
               leadingIcon={<Eye size={14} />}
             >
-              {attentionCount > 0 ? `查看解析结果（${attentionCount} 条待注意）` : '查看解析结果'}
+              {problemCount > 0 ? `查看解析结果（${problemCount} 个问题）` : '查看解析结果'}
             </Button>
           </div>
         </div>
 
         {/* 内容概览（只读）：不打开详情就能看出「这个配方卡填了什么 / 解析到哪一步」。
-            状态、失败原因、骨架原文、维度规模都收在这一块里 ——
+            状态、问题清单、骨架原文、维度规模都收在这一块里 ——
             原来散在录入区里的成功提示与失败提示已删除，避免同一件事两处都说。
             只读：编辑入口只有「查看解析结果」弹窗一个。 */}
         <section className="sop-recipe-overview" aria-label="配方卡内容概览">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
-            {attentionCount > 0 && (
-              <Badge tone="warning" title={attentionFullText}>
-                {attentionCount} 条待注意
+            {problemCount > 0 && (
+              <Badge tone={blockingCount > 0 ? 'danger' : 'warning'}>
+                {problemCount} 个问题{blockingCount > 0 ? ` · ${blockingCount} 处必须先处理` : ''}
               </Badge>
             )}
             <span className="text-xs text-ds-muted dark:text-ds-muted">
@@ -332,23 +416,15 @@ export default function SopCampaignRecipePanel({
             </span>
           </div>
 
-          {/* 待注意的具体内容（TB-148）：徽章只报个数，这里把前几条摊开 ——
-              上一版外面只有一个数字、一个字内容都没有，看到「1 条待注意」无从下手；
-              全文挂在 `title` 上，悬停可读。 */}
-          {attentionCount > 0 && (
-            <p className="mt-1.5 text-xs text-ds-warning dark:text-ds-warning" title={attentionFullText}>
-              {attentionPreview}
-            </p>
-          )}
-
-          {parseError && (
-            <p className="sop-recipe-panel__warning" role="alert">
-              {parseError}
-            </p>
-          )}
-          {rawChangedAfterParse && !parsing && (
-            <p className="sop-recipe-panel__hint">录入框里的原文已改动，点「解析」更新下面这份内容。</p>
-          )}
+          {/* 问题清单（TB-153）：替代原来那串「摘要文字 + 失败原因 + 原文已改动」的灰字。
+              每条能点着跳到出问题的地方（落点在弹窗里的会先把弹窗打开），
+              并当场写明怎么改。外面只铺前几条，其余进弹窗。 */}
+          <CampaignRecipeProblemList
+            problems={problems}
+            variant="panel"
+            limit={PROBLEM_PREVIEW_LIMIT}
+            onLocate={routeLocate}
+          />
 
           {hasConfigContent ? (
             <>
@@ -381,6 +457,12 @@ export default function SopCampaignRecipePanel({
         onComplianceEnabledChange={onComplianceEnabledChange}
         showComplianceHints={showComplianceHints}
         onShowComplianceHintsChange={onShowComplianceHintsChange}
+        // 问题清单的两个入参：面板与弹窗必须用**同一份输入**，否则两边条数会对不上
+        rawChangedAfterParse={rawChangedAfterParse}
+        localParseError={parseError}
+        // 弹窗里点到「落点不在弹窗」的问题时，回给面板路由（关弹窗 / 就地滚 / 交给管理中心）
+        onLocateRequest={routeLocate}
+        locateRequest={locateRequest}
       />
     </section>
   )

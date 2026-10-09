@@ -486,6 +486,106 @@ describe('callImageApi', () => {
     })
   })
 
+  describe('火山方舟（豆包）模型适配', () => {
+    // 注意：getActiveApiProfile 里顶层 settings.model 会覆盖 profile.model（apiProfiles.ts:948），
+    // 两处都要设，否则生效的仍是默认的 gpt-image-2。
+    const arkSettings = (model: string) => ({
+      ...DEFAULT_SETTINGS,
+      apiKey: 'test-key',
+      baseUrl: 'https://ark.example.com/v1',
+      model,
+      profiles: [{ ...DEFAULT_SETTINGS.profiles[0], model }],
+    })
+
+    const okResponse = () =>
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+
+    it('文生图不发 output_format（方舟带上该字段会被拒）', async () => {
+      const fetchMock = okResponse()
+
+      await callImageApi({
+        settings: arkSettings('doubao-seedream-4-0-250828'),
+        prompt: 'prompt',
+        params: { ...DEFAULT_PARAMS, size: '2048x2048' },
+        inputImageDataUrls: [],
+      })
+
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(String(url)).toBe('https://ark.example.com/v1/images/generations')
+      const body = JSON.parse(String((init as RequestInit).body))
+      expect(body).toMatchObject({ size: '2048x2048', response_format: 'url', watermark: false })
+      expect(body.output_format).toBeUndefined()
+      expect(body.moderation).toBeUndefined()
+      expect(body.quality).toBeUndefined()
+    })
+
+    it('图生图改走 images/generations，参考图进 JSON image 数组（不走 edits）', async () => {
+      const fetchMock = okResponse()
+
+      await callImageApi({
+        settings: arkSettings('Doubao-seedream-4.5'),
+        prompt: 'prompt',
+        params: { ...DEFAULT_PARAMS, size: '2560x1440' },
+        inputImageDataUrls: ['data:image/png;base64,AAAA'],
+      })
+
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(String(url)).toBe('https://ark.example.com/v1/images/generations')
+      expect(String(url)).not.toContain('/images/edits')
+      // 必须是 JSON 请求体，而不是 OpenAI 那条 multipart 上传
+      expect(typeof (init as RequestInit).body).toBe('string')
+      const body = JSON.parse(String((init as RequestInit).body))
+      expect(body.image).toEqual(['data:image/png;base64,AAAA'])
+    })
+
+    it('size 为 auto 时不发送 size 字段（方舟只认像素值或 1K/2K/4K）', async () => {
+      const fetchMock = okResponse()
+
+      await callImageApi({
+        settings: arkSettings('doubao-seedream-4-0-250828'),
+        prompt: 'prompt',
+        params: { ...DEFAULT_PARAMS, size: 'auto' },
+        inputImageDataUrls: [],
+      })
+
+      const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+      expect(body.size).toBeUndefined()
+    })
+
+    it('遮罩局部重绘直接报错，不做静默降级', async () => {
+      okResponse()
+
+      await expect(
+        callImageApi({
+          settings: arkSettings('doubao-seedream-4-0-250828'),
+          prompt: 'prompt',
+          params: { ...DEFAULT_PARAMS },
+          inputImageDataUrls: ['data:image/png;base64,AAAA'],
+          maskDataUrl: 'data:image/png;base64,BBBB',
+        }),
+      ).rejects.toThrow(/不支持遮罩/)
+    })
+
+    it('非方舟模型仍按 OpenAI 形状发（带 output_format）', async () => {
+      const fetchMock = okResponse()
+
+      await callImageApi({
+        settings: arkSettings('gpt-image-2'),
+        prompt: 'prompt',
+        params: { ...DEFAULT_PARAMS, size: '1024x1024' },
+        inputImageDataUrls: [],
+      })
+
+      const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+      expect(body.output_format).toBe('png')
+    })
+  })
+
   it('uses the same-origin API proxy path when API proxy is enabled', async () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(

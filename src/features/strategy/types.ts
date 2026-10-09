@@ -152,6 +152,19 @@ export interface SopCampaignRecipeConfig {
   body: string
   /** 维度池，至少一个维度且每个维度至少一个候选值 */
   dimensions: SopCampaignRecipeDimension[]
+  /**
+   * 「整段录入」时粘进来的配方卡原文（可选，老数据没有这个字段）。
+   *
+   * 2026-10-09 加（TB-152）：它原先只是面板的组件私有 state，**不落库** ⇒
+   * 关掉 SOP 管理中心、或切到「生成元指令」再切回来（tab 条件渲染，整块卸载），
+   * 骨架还留着、原文就没了（界面显示「0 字符」）；从 A 卡切到 B 卡也不清空，
+   * 留着上一张卡的原文。现在它跟骨架、维度池一样是配方卡的字段，
+   * 走同一条自动保存链路 ⇒ 关弹窗 / 切 tab / 换卡 / 重启应用后都在。
+   *
+   * **不参与生成**：引擎只读 `body` + `dimensions`（`sanitizeCampaignRecipeConfig`
+   * 返回的结构里也不带它），纯留档，供用户回头核对「这份配置是从什么原文解析来的」。
+   */
+  rawText?: string
 }
 
 export interface SopSeriesConfig {

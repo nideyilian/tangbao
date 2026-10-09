@@ -345,6 +345,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                     <strong className="text-ds-muted dark:text-ds-muted font-medium">取消选择</strong>、
                     <strong className="text-ds-primary dark:text-ds-primary font-medium">全选任务</strong>、
                     <strong className="text-ds-primary dark:text-ds-primary font-medium">反选任务</strong>、
+                    <strong className="text-ds-primary dark:text-ds-primary font-medium">移动到标签</strong>、
                     <strong className="text-ds-warning dark:text-ds-warning font-medium">编辑收藏夹</strong>、
                     <strong className="text-ds-success dark:text-ds-success font-medium">下载选中</strong>，和
                     <strong className="text-ds-danger dark:text-ds-danger font-medium">删除选中</strong>。
@@ -369,9 +370,9 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                 <div className="space-y-4">
                   <ul className="list-disc pl-4 space-y-2">
                     <li>
-                      在卡片间隙或卡片信息区
+                      在素材库的卡片视图里，于卡片间隙或卡片信息区
                       <strong className="text-ds-primary dark:text-ds-primary font-medium">拖拽框选</strong>
-                      任务卡片；从左侧图片上按下拖动则是拖拽图片（如拖给 Agent）。
+                      任务卡片；从图片上按下拖动则是拖拽图片（如拖给 Agent）。
                     </li>
                     <li>
                       按住{' '}
@@ -384,6 +385,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                       </kbd>{' '}
                       并点击卡片，可添加或移除单项。
                     </li>
+                    <li>选中卡片会连同这些任务产出的图片一起选中，素材库工具栏的导出 / 后处理可直接用这批图。</li>
                     <li>再次框选已选中的卡片会将其取消选中。</li>
                     <li>点击卡片外任意空白处可取消所有选择。</li>
                   </ul>
@@ -407,6 +409,7 @@ export default function HelpModal({ appMode, isFavoriteCollectionOverview = fals
                     <strong className="text-ds-muted dark:text-ds-muted font-medium">取消选择</strong>、
                     <strong className="text-ds-primary dark:text-ds-primary font-medium">全选任务</strong>、
                     <strong className="text-ds-primary dark:text-ds-primary font-medium">反选任务</strong>、
+                    <strong className="text-ds-primary dark:text-ds-primary font-medium">移动到标签</strong>、
                     <strong className="text-ds-warning dark:text-ds-warning font-medium">编辑收藏夹</strong>、
                     <strong className="text-ds-success dark:text-ds-success font-medium">下载选中</strong>，和
                     <strong className="text-ds-danger dark:text-ds-danger font-medium">删除选中</strong>。

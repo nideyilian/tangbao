@@ -72,7 +72,7 @@ describe('callAgentResponsesApi', () => {
     )
     expect(body.instructions).toContain('Set requested_count to the exact number of images')
     expect(body.instructions).not.toContain('One image_generation call per distinct image')
-    expect(body.instructions).toContain('不得生成色情裸露')
+    expect(body.instructions).toContain('画面内容保持健康向上')
     expect(body.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

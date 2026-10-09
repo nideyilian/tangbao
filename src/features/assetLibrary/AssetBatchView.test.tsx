@@ -16,6 +16,10 @@ const storeMocks = vi.hoisted(() => {
     toggleTaskSelection: vi.fn(),
     openFavoritePicker: vi.fn(),
     showToast: vi.fn(),
+    // 卡片形式的任务选中（TB-151）：AssetBatchView 会订阅这两个 + 调 clearSelection
+    selectedTaskIds: [] as string[],
+    setSelectedTaskIds: vi.fn(),
+    clearSelection: vi.fn(),
   }
   const useStore = Object.assign(
     vi.fn((selector: (value: typeof state) => unknown) => selector(state)),
@@ -24,6 +28,7 @@ const storeMocks = vi.hoisted(() => {
   return {
     useStore,
     setDetailTaskId: state.setDetailTaskId,
+    setSelectedTaskIds: state.setSelectedTaskIds,
     editOutputs: vi.fn(),
     removeMultipleTasks: vi.fn(),
     removeTask: vi.fn(),
@@ -139,15 +144,7 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(),
   })
-  ;(storeMocks.useStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-    (selector: (value: unknown) => unknown) =>
-      selector({
-        tasks: [taskA, taskB],
-        settings: { alwaysShowRetryButton: false },
-        setConfirmDialog: vi.fn(),
-        setDetailTaskId: storeMocks.setDetailTaskId,
-      }),
-  )
+  setStoreTasks([taskA, taskB])
   useAssetLibraryStore.setState({
     selectedAssetIds: [],
     activeAssetId: null,
@@ -159,7 +156,7 @@ beforeEach(() => {
 })
 
 /** 替换 mock 任务 store 里的任务列表（任务来自主 store，测试里只能通过 mock 换）。 */
-function setStoreTasks(tasks: TaskRecord[]) {
+function setStoreTasks(tasks: TaskRecord[], selectedTaskIds: string[] = []) {
   ;(storeMocks.useStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
     (selector: (value: unknown) => unknown) =>
       selector({
@@ -167,6 +164,9 @@ function setStoreTasks(tasks: TaskRecord[]) {
         settings: { alwaysShowRetryButton: false },
         setConfirmDialog: vi.fn(),
         setDetailTaskId: storeMocks.setDetailTaskId,
+        selectedTaskIds,
+        setSelectedTaskIds: storeMocks.setSelectedTaskIds,
+        clearSelection: vi.fn(),
       }),
   )
 }
@@ -281,15 +281,7 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
       status: 'error',
       error: '保存状态同步失败',
     } as TaskRecord
-    ;(storeMocks.useStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-      (selector: (value: unknown) => unknown) =>
-        selector({
-          tasks: [taskA, staleTask],
-          settings: { alwaysShowRetryButton: false },
-          setConfirmDialog: vi.fn(),
-          setDetailTaskId: storeMocks.setDetailTaskId,
-        }),
-    )
+    setStoreTasks([taskA, staleTask])
 
     const renderer = renderGrouped()
     const sopCard = cardByGroupId(renderer, 'sop-batch:b1')
@@ -405,6 +397,34 @@ describe('AssetGroupedView（分组视图 · 任务卡片形式）', () => {
     })
     const ids = [...useAssetLibraryStore.getState().selectedAssetIds].sort()
     expect(ids).toEqual(['a', 'b', 'c', 'd'])
+    act(() => renderer.unmount())
+  })
+
+  // TB-151：卡片形式里「一张卡 = 一个任务」。Ctrl/⌘ 点击除了选中卡内素材，还要把组内任务写进
+  // 任务选区 —— 底部那条批量操作栏（全选 / 反选 / 移动到标签 / 删除任务）就靠它才会出现。
+  it('Ctrl/⌘ 点击卡片同时选中所属任务（TB-151）', () => {
+    const renderer = renderGrouped()
+    const sopCard = cardByGroupId(renderer, 'sop-batch:b1')
+    const clickable = sopCard.findAll((node) => typeof node.props.onClick === 'function')[0]!
+    act(() => {
+      clickable.props.onClick({ ctrlKey: true, metaKey: false })
+    })
+    const updater = storeMocks.setSelectedTaskIds.mock.calls[0]?.[0] as ((ids: string[]) => string[]) | undefined
+    expect(typeof updater).toBe('function')
+    expect(updater!([])).toEqual(['t2'])
+    act(() => renderer.unmount())
+  })
+
+  // 反向：任务选区也可能在组件外被改（底部那条批量栏的「全选任务」只写主 store）。
+  // 卡片视图里素材选区是它的镜像，必须跟着重算 —— 否则工具栏那些素材级按钮看不到选区。
+  it('组件外改了任务选区时，素材选区作为镜像跟随（TB-151）', () => {
+    const renderer = renderGrouped()
+    // 组件外只改任务选区（模拟底部批量栏的全选）：任务 t1 的产出图是 a / b
+    setStoreTasks([taskA, taskB], ['t1'])
+    act(() => {
+      renderer.update(createElement(AssetGroupedView, { assets, libraryAssetCount: assets.length }))
+    })
+    expect([...useAssetLibraryStore.getState().selectedAssetIds].sort()).toEqual(['a', 'b'])
     act(() => renderer.unmount())
   })
 
@@ -824,15 +844,7 @@ describe('AssetGroupedView（项目文件夹作用域 · 「包含子文件夹�
     includeSubcollections: boolean,
     assetsOverride?: GeneratedAsset[],
   ) {
-    ;(storeMocks.useStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-      (selector: (value: unknown) => unknown) =>
-        selector({
-          tasks,
-          settings: { alwaysShowRetryButton: false },
-          setConfirmDialog: vi.fn(),
-          setDetailTaskId: storeMocks.setDetailTaskId,
-        }),
-    )
+    setStoreTasks(tasks)
     useAssetLibraryStore.setState({ collections: [parentCollection, childCollection] })
     let renderer: ReactTestRenderer
     act(() => {

@@ -219,10 +219,18 @@ export function useAssetLibraryShortcuts({ onFocusSearch, onOpenViewer }: AssetL
         // 关闭弹出层（菜单/弹窗）各自处理；这里只负责取消选择
         if (state.quickPreviewAssetId) state.setQuickPreviewAsset(null)
         if (targets.length > 0) state.clearSelection()
+        // 卡片形式里任务选中与素材选中是一对（TB-151）：Esc 要一起收掉，
+        // 否则底部那条批量操作栏会留在屏幕上，看着像没取消。
+        useStore.getState().clearSelection()
         return
       }
       if (key === 'Delete' || key === 'Backspace') {
         event.preventDefault()
+        const mainState = useStore.getState()
+        // 卡片视图里「卡 = 任务」（TB-151）：有任务选中时 Del 优先删**任务**（连同产出图，
+        // ADR-0021），让位给 InputBar 的 Delete —— 否则只会把图删掉、卡片留在原地，
+        // 用户看到的是「删了没反应」。
+        if (state.groupedViewStyle === 'cards' && mainState.selectedTaskIds.length > 0) return
         if (targets.length > 0) {
           // 有选中素材：删除（Eagle 语义）。删除 = 永久删除（ADR-0021）——
           // 能删的当场删掉，被其他任务/会话引用的那几张由工作区弹确认；
@@ -237,7 +245,6 @@ export function useAssetLibraryShortcuts({ onFocusSearch, onOpenViewer }: AssetL
         }
         // 无素材选中：InputBar 有选中任务/收藏卡片时由它的 Delete 快捷键处理，
         // 避免「想删任务却删了当前文件夹」
-        const mainState = useStore.getState()
         if (mainState.selectedTaskIds.length > 0 || mainState.selectedFavoriteCollectionIds.length > 0) return
         // 无选中素材且当前在文件夹中：删除当前文件夹（deleteFolders 内含确认弹窗）
         if (typeof state.scope === 'object' && state.scope.kind === 'collection') {

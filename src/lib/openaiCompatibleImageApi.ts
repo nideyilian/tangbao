@@ -510,6 +510,27 @@ async function parseResponsesApiStreamResponse(
   }
 }
 
+/**
+ * 火山方舟（豆包 Seedream / SeedEdit）系模型的判定。
+ *
+ * 方舟的图片接口与 OpenAI 有两条硬差异，不能共用同一条请求形状
+ * （2026-10-08 对他的中转逐字段实测确认）：
+ * 1. **不接受 `output_format` 字段** —— 带上就被上游拒绝，中转还会把它翻译成
+ *    「所有供应商暂时不可用」，用户完全看不出真因；`quality` / `moderation` / `n`
+ *    反倒无害，但既然方舟不认就一并不发。
+ * 2. **没有 `/images/edits` 端点** —— 图生图要在 `/images/generations` 的 JSON 里
+ *    用 `image` 数组传参考图（URL 或 data URL，`data:image/<格式>;base64,` 的
+ *    `<格式>` 须小写）；参考图宽高须 > 14px。
+ *
+ * 按模型名识别，命中后走 `callArkImageApi`，与 OpenAI 兼容链路完全隔离 ——
+ * 不改动任何既有 provider 的行为。
+ */
+const ARK_IMAGE_MODEL_PATTERN = /doubao|seedream|seededit/i
+
+export function isArkImageModel(model: string): boolean {
+  return ARK_IMAGE_MODEL_PATTERN.test(model)
+}
+
 export async function callOpenAICompatibleImageApi(
   opts: CallApiOptions,
   profile: ApiProfile,
@@ -519,7 +540,89 @@ export async function callOpenAICompatibleImageApi(
     return callCustomHttpImageApi(opts, profile, customProvider)
   }
 
+  if (isArkImageModel(profile.model)) {
+    return callArkImageApi(opts, profile)
+  }
+
   return profile.apiMode === 'responses' ? callResponsesImageApi(opts, profile) : callImagesApi(opts, profile)
+}
+
+/**
+ * 火山方舟图片生成：文生图与图生图走**同一个端点**，参考图进 JSON。
+ *
+ * 只发送方舟文档化的字段：`model` / `prompt` / `size` / `response_format` /
+ * `watermark` / `image`。`size` 只接受像素值或 `1K`/`2K`/`4K` 关键词，
+ * 因此应用内的 `auto` 一律不发（交给服务端默认尺寸）。
+ *
+ * 方舟对生成图的总像素有下限（各模型不同，如 Seedream 4.0 ≈ 1280×720、
+ * 4.5 ≈ 2560×1440），低于下限时上游会拒绝；错误文案里补一句尺寸提示，
+ * 避免用户被中转的「所有供应商暂时不可用」误导。
+ */
+async function callArkImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+  const { prompt: originalPrompt, params, inputImageDataUrls } = opts
+  const prompt =
+    profile.codexCli && !opts.settings.allowPromptRewrite
+      ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${originalPrompt}`
+      : originalPrompt
+  const isEdit = inputImageDataUrls.length > 0
+  const mime = MIME_MAP[params.output_format] || 'image/png'
+  const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
+
+  if (opts.maskDataUrl) {
+    throw new Error('豆包（火山方舟）模型不支持遮罩局部重绘，请改用参考图模式，或换用其他模型。')
+  }
+
+  assertOpenAICompatibleApiKey(profile)
+
+  const controller = new AbortController()
+  linkTaskSignal(controller, opts.signal)
+  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
+
+  try {
+    assertImageInputPayloadSize(
+      inputImageDataUrls.reduce((sum, dataUrl) => sum + getDataUrlEncodedByteSize(dataUrl), 0),
+    )
+
+    const body: Record<string, unknown> = {
+      model: profile.model,
+      prompt,
+      response_format: profile.responseFormatB64Json ? 'b64_json' : 'url',
+      // 方舟默认会给图片打上「AI生成」水印，这里显式关掉。
+      watermark: false,
+    }
+    if (params.size && params.size !== 'auto') {
+      body.size = params.size
+    }
+    if (isEdit) {
+      body.image = inputImageDataUrls
+    }
+
+    const endpoint = buildApiUrl(profile.baseUrl, 'images/generations', proxyConfig, useApiProxy)
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        ...createRequestHeaders(profile),
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const message = await getApiErrorMessage(response)
+      throw new Error(
+        params.size && params.size !== 'auto'
+          ? `${message}\n（提示：豆包对生成尺寸有像素下限，1K 的 4:3 / 3:4 等小尺寸会被上游拒绝，建议改用 2K 档尺寸，例如 2048x2048）`
+          : message,
+      )
+    }
+
+    return parseImagesApiResponse((await response.json()) as ImageApiResponse, mime, controller.signal)
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 /** 把任务级取消信号链接到请求自身的 AbortController（超时与任务停止任一触发即中止）。 */

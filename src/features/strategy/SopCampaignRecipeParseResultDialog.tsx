@@ -17,13 +17,22 @@
  * - **不带「应用」按钮**：编辑即时写回草稿（与面板原有行为一致），
  *   加一个「应用」会让「改了没点应用就关掉」变成静默丢失；
  * - **数字只说一次**：维度数 / 候选值数 / 组合空间只出现在维度池标题行（实时值），
- *   顶部状态条只报「成没成、从哪来、有几条待注意」——
+ *   顶部状态条只报「成没成、从哪来」——
  *   上一版两处都报数字，被杰哥指出是重复（见 BACKLOG TB-054）。
+ *
+ * 2026-10-09（TB-153）：**问题清单成为唯一的「有问题」呈现处**。
+ * 解析告警块 / 结构校验那行 `join('；')` / 红线复核块 / 「维度未被骨架引用」灰字，
+ * 原本是四块各说各的、且都点不动；现在全部由 `buildRecipeProblems` 一处产出，
+ * 每条 = 标题 + 位置 + **怎么改** + 处置动作，点「定位」能滚到出问题的地方。
+ * - 落点在本弹窗里的（骨架 / 维度 / 候选值 / 词表）就地滚 + 闪一下；
+ * - 落点在弹窗外面的（原文框 / SOP 名称 / 说明）交回面板路由（`onLocateRequest`）；
+ * - 面板转来的定位请求（`locateRequest`）在这里消费 —— 外面点的时候弹窗还没挂上，
+ *   就地滚一定滚空，所以要等挂载后再滚。
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Button, Dialog, IconButton, TextArea, cx } from '../../design-system'
-import { AlertTriangleIcon, EyeIcon, FileTextIcon, PlusIcon, SparklesIcon, TrashIcon } from '../../design-system/icons'
+import { EyeIcon, FileTextIcon, PlusIcon, SparklesIcon, TrashIcon } from '../../design-system/icons'
 import {
   CAMPAIGN_RECIPE_FORBIDDEN_RULES,
   findCampaignRecipeViolations,
@@ -31,20 +40,24 @@ import {
   validateCampaignRecipeConfig,
   type CampaignRecipeDimension,
 } from './campaignRecipe'
+import { CampaignRecipeProblemList } from './CampaignRecipeProblemList'
+import {
+  appendPlaceholderToBody,
+  buildRecipeProblems,
+  problemTargetKey,
+  recipeTargetScope,
+  removePlaceholderFromBody,
+  resolveRecipeDisplayTerms,
+  type RecipeProblemAction,
+  type RecipeProblemTarget,
+} from './campaignRecipeProblems'
+import { focusRecipeTarget } from './recipeTargetLocate'
 import type { ParsedCampaignRecipe } from './campaignRecipeImport'
 import type { SopCampaignRecipeConfig } from './types'
 import type { RecipeForbiddenRule } from '../../types'
 
 /** 一键铺开的预览条数；只用于看效果，不影响实际生成数量。 */
 const RECIPE_PREVIEW_COUNT = 6
-
-/**
- * 总开关关闭时用的空词表（TB-147）。
- *
- * 刻意做成**模块级常量**而不是每次渲染写 `[]`：数组字面量每次都是新引用，
- * 会把下面依赖它的 `useMemo` 全部打穿（每渲染一次就重算一遍判定）。
- */
-const NO_TERMS: readonly RecipeForbiddenRule[] = []
 
 export interface SopCampaignRecipeParseResultDialogProps {
   open: boolean
@@ -92,6 +105,22 @@ export interface SopCampaignRecipeParseResultDialogProps {
   showComplianceHints?: boolean
   /** 切换上面的显示开关；不传时开关不渲染（只读场景）。 */
   onShowComplianceHintsChange?: (value: boolean) => void
+  /**
+   * 录入框里的原文与上次解析时不一致（TB-153）。由面板传进来 ——
+   * 「问题清单」在面板与弹窗里必须用**同一份输入**算，否则两边的条数会对不上。
+   */
+  rawChangedAfterParse?: boolean
+  /** 面板自己的解析报错（解析成功、但转换不出可用配置时那句）。同上，为了两边口径一致。 */
+  localParseError?: string
+  /**
+   * 落点在**弹窗够不着**的地方（原文框 / SOP 名称 / 说明）时，把定位请求交回面板路由。
+   * 不传时这些条目的「定位」按钮点了不跳 —— 比乱跳好。
+   */
+  onLocateRequest?: (target: RecipeProblemTarget) => void
+  /** 面板转来的「请滚到弹窗里某个元素」请求（用户在**外面**点了落点在弹窗里的问题）。 */
+  locateRequest?: { target: RecipeProblemTarget; seq: number } | null
+  /** 「重新解析」动作：原文与解析器都在面板那边，这里只能请它代劳。 */
+  onRequestReparse?: () => void
 }
 
 /**
@@ -112,31 +141,6 @@ export function summarizeParsedRecipe(
     englishCount += Object.keys(dimension.englishByOption ?? {}).length
   }
   return { optionCount, combinationCount, englishCount }
-}
-
-/**
- * 解析结果里「需要用户留意」的明细（缺失池 + 告警），逐条成文。
- *
- * **条数与文案的唯一构造处**：面板上的徽章数字、弹窗里的徽章数字、弹窗里列出的
- * 每一条，全都从这里走 ⇒ 三者**不可能对不上**。
- *
- * 上一版是「数字在一处算、明细在另一处渲染」，于是出现了最难受的一种不一致：
- * 徽章报着「1 条待注意」，而下面那行明细长得像普通说明文字、用户根本认不出来
- * （2026-09-29 TB-148 报障现场）。条数必须由明细**数出来**，不能另算。
- *
- * 缺失池单独成文而不是把几个占位符合并成一句：合并会让「N 条」和「看到的行数」再次脱钩。
- */
-export function listParsedRecipeAttention(parsed: ParsedCampaignRecipe | null): string[] {
-  if (!parsed) return []
-  return [
-    ...parsed.missingPools.map((name) => `模板引用了未定义的占位符「${name}」——不补候选值，引擎会拒绝生成`),
-    ...parsed.warnings,
-  ]
-}
-
-/** 条数 = 明细长度。别再各算一遍（那正是上面注释里说的漂移源头）。 */
-export function countParsedRecipeAttention(parsed: ParsedCampaignRecipe | null): number {
-  return listParsedRecipeAttention(parsed).length
 }
 
 const SOURCE_LABEL: Record<ParsedCampaignRecipe['source'], string> = {
@@ -190,6 +194,11 @@ export default function SopCampaignRecipeParseResultDialog({
   onComplianceEnabledChange,
   showComplianceHints,
   onShowComplianceHintsChange,
+  rawChangedAfterParse,
+  localParseError,
+  onLocateRequest,
+  locateRequest,
+  onRequestReparse,
 }: SopCampaignRecipeParseResultDialogProps) {
   const close = () => onOpenChange(false)
   /** 红线词表区默认展开（`<details>` 的 open 必须受控，否则用户收起后一旦重渲染就被弹回展开）。 */
@@ -226,14 +235,14 @@ export default function SopCampaignRecipeParseResultDialog({
   const canToggleCompliance = typeof onComplianceEnabledChange === 'function'
   /**
    * **判定实际用的**词表：总开关关闭时为空数组 —— 复用「空词表 = 红线全关」的既有语义，
-   * 于是标红 / 复核区 / 骨架命中提示**一次全部消失**（不必在三个判定点各包一层 `if`）。
+   * 于是标红 / 问题清单里的红线条目 / 骨架命中提示**一次全部消失**（不必在判定点各包一层 `if`）。
    *
-   * ⚠️ 这里**刻意不走** `resolveEnabledRecipeForbiddenTerms`：那个会顺手把词表归一化，
-   * 而界面上的词表带着「用户正在输入的中间态」（点「加一条」留下的空词、只敲了一半的例外），
-   * 归一化会把这些吃掉 ⇒ 输入框内容凭空消失。生成链路（`storeSopGeneration`）拿的是
-   * 设置里的成品，那边才用那个 helper。
+   * 折算口径收在 `resolveRecipeDisplayTerms` 一处（面板算问题清单时用的是同一个函数，
+   * 两处各写一遍必然漂移）。那里**刻意不归一化**：界面上的词表带着「用户正在输入的中间态」
+   * （点「加一条」留下的空词、只敲了一半的例外），归一化会把这些吃掉 ⇒ 输入框内容凭空消失。
+   * 生成链路（`storeSopGeneration`）拿的是设置里的成品，那边才用 `resolveEnabledRecipeForbiddenTerms`。
    */
-  const activeTerms = complianceOn ? terms : NO_TERMS
+  const activeTerms = resolveRecipeDisplayTerms(complianceEnabled, terms)
   /**
    * 词表标题。用模板串拼好而不是散在 JSX 里 —— JSX 的换行缩进会折成空白，
    * 断言与所见文本就未必一致了（TB-146 的测试要按这段文字断言）。
@@ -246,24 +255,35 @@ export default function SopCampaignRecipeParseResultDialog({
   const canToggleHints = typeof onShowComplianceHintsChange === 'function'
 
   /**
-   * 「待注意」明细（TB-148）。徽章数字与下面列出的行**共用这一份**，
-   * 所以「报几条」和「列几条」永远一致。
+   * 问题清单（TB-153）：**弹窗里所有「有问题」的呈现都从这一份来** ——
+   * 条数、明细、落点、怎么改、处置动作，一个来源。原来散在四处的东西
+   * （解析告警块 / 结构校验那行 join / 红线复核块 / 未引用维度提示）全部并入。
+   *
+   * 入参与面板那份**完全一致**（同样的 parsed / config / 原文是否改动 / 折算后的词表），
+   * 所以两处报的数一定是同一个。
    */
-  const attentionItems = useMemo(() => listParsedRecipeAttention(parsed), [parsed])
+  const problems = buildRecipeProblems({
+    parsed,
+    config,
+    localParseError,
+    rawChangedAfterParse,
+    forbiddenTerms: activeTerms,
+    showComplianceHints,
+  })
+  /**
+   * 只读场景（没传 `onForbiddenTermsChange`）里「加白」是点不动的 ——
+   * 与其留一个点了没反应的按钮，不如不渲染它（「点了没反应」正是这次要消灭的东西）。
+   */
+  const shownProblems = canEditTerms
+    ? problems
+    : problems.map((problem) => ({
+        ...problem,
+        actions: problem.actions.filter((action) => action.kind !== 'whitelist-terms'),
+      }))
 
   const placeholders = useMemo(() => extractPlaceholders(body), [body])
   const errors = useMemo(() => validateCampaignRecipeConfig(config), [config])
   const bodyViolations = useMemo(() => findCampaignRecipeViolations(body, activeTerms), [body, activeTerms])
-  const optionViolations = useMemo(
-    () =>
-      dimensions.flatMap((dimension, dimensionIndex) =>
-        (dimension.options ?? []).flatMap((option, optionIndex) => {
-          const violations = findCampaignRecipeViolations(option, activeTerms)
-          return violations.length > 0 ? [{ dimensionIndex, optionIndex, option, violations }] : []
-        }),
-      ),
-    [dimensions, activeTerms],
-  )
   // 骨架命中**不再阻断预览**：生成链路也不再中断（TB-142），预览与真实生成必须同口径。
   const preview = useMemo(() => {
     if (errors.length > 0) return []
@@ -278,10 +298,74 @@ export default function SopCampaignRecipeParseResultDialog({
   const summary = summarizeParsedRecipe(dimensions)
   /** 主控槽展示口径：面板传进来的优先，退到解析声明 */
   const displayDominantSlots = dominantSlots ?? parsed?.dominantSlots ?? []
-  const unusedDimensions = dimensions.filter(
-    (dimension) => dimension.name.trim() && !placeholders.includes(dimension.name),
-  )
   const parsedDimensionCount = parsed?.dimensions.length ?? 0
+
+  /**
+   * 弹窗内容根节点：定位只在弹窗里找，不用 `document`。
+   * 弹窗走 portal 挂在 `body` 下，用整页当范围将来一旦有第二个面板就会定位到别人身上。
+   */
+  const dialogBodyRef = useRef<HTMLDivElement | null>(null)
+  /** 已消费到的定位请求序号：同一个目标连点两次也要能再触发一次。 */
+  const handledLocateSeqRef = useRef(0)
+
+  useEffect(() => {
+    if (!open || !locateRequest) return
+    if (locateRequest.seq <= handledLocateSeqRef.current) return
+    handledLocateSeqRef.current = locateRequest.seq
+    const root = dialogBodyRef.current
+    const key = problemTargetKey(locateRequest.target)
+    // 弹窗刚挂上时内容还在布局中，这一帧滚过去位置是错的 —— 等一帧再滚。
+    if (typeof window.requestAnimationFrame !== 'function') {
+      focusRecipeTarget(key, root)
+      return
+    }
+    const frame = window.requestAnimationFrame(() => focusRecipeTarget(key, root))
+    return () => window.cancelAnimationFrame(frame)
+  }, [open, locateRequest])
+
+  /** 定位：落点在本弹窗里就地滚；够不着的（原文框 / 名称 / 说明）交回面板路由。 */
+  function handleLocate(target: RecipeProblemTarget) {
+    if (recipeTargetScope(target) === 'dialog') {
+      focusRecipeTarget(problemTargetKey(target), dialogBodyRef.current)
+      return
+    }
+    onLocateRequest?.(target)
+  }
+
+  /**
+   * 问题清单上的处置动作 → 弹窗已有的编辑能力。
+   *
+   * 这一层刻意**只做映射**：加维度 / 删维度 / 删候选值 / 加白都是弹窗里原本就有的函数
+   * （也正是加载面板时用户自己也能点到的那几个），清单只是把它们搬到问题旁边。
+   */
+  function handleProblemAction(action: RecipeProblemAction) {
+    switch (action.kind) {
+      case 'locate':
+        handleLocate(action.target)
+        return
+      case 'add-dimension':
+        addDimension()
+        return
+      case 'remove-dimension':
+        removeDimension(action.index)
+        return
+      case 'remove-option':
+        removeOption(action.dimensionIndex, action.optionIndex)
+        return
+      case 'whitelist-terms':
+        whitelistTerms(action.terms)
+        return
+      case 'insert-placeholder':
+        onChange({ ...config, body: appendPlaceholderToBody(body, action.name) })
+        return
+      case 'remove-placeholder':
+        onChange({ ...config, body: removePlaceholderFromBody(body, action.name) })
+        return
+      case 'reparse':
+        onRequestReparse?.()
+        return
+    }
+  }
 
   function updateDimension(index: number, patch: Partial<CampaignRecipeDimension>) {
     onChange({
@@ -415,26 +499,15 @@ export default function SopCampaignRecipeParseResultDialog({
           还没有内容。请在上方粘贴配方卡原文后点「解析」，或先给这个配方卡加上骨架与维度。
         </p>
       ) : (
-        <div className="sop-recipe-panel__body">
+        <div className="sop-recipe-panel__body" ref={dialogBodyRef}>
           {/* 解析相关区块：只在这次真的解析过时才有东西可报 */}
           {parsed && (
             <>
-              {/* 只报「成没成、从哪来、有几条要留意」，数字留给下方维度池标题行说一次 */}
+              {/* 只报「成没成、从哪来」。条数不在这里报 —— 那是问题清单的事（一处一个数）。 */}
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={parsed.ok ? 'success' : 'danger'}>{parsed.ok ? '解析成功' : '解析失败'}</Badge>
                 <Badge tone="neutral">识别来源：{SOURCE_LABEL[parsed.source]}</Badge>
-                {attentionItems.length > 0 && <Badge tone="warning">{attentionItems.length} 条待注意</Badge>}
               </div>
-
-              {!parsed.ok && (
-                <p
-                  className="flex items-start gap-1.5 rounded-ds-lg border border-ds-danger/35 bg-ds-danger-subtle px-3 py-2 text-xs text-ds-danger dark:border-ds-danger/40 dark:bg-ds-danger/10 dark:text-ds-danger"
-                  role="alert"
-                >
-                  <AlertTriangleIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>{parsed.error || '解析失败，请检查原文格式后重试。'}</span>
-                </p>
-              )}
 
               {/* 原资产声明的东西：它们不进表单，所以只有这里能看到 */}
               <section className="space-y-1 rounded-ds-lg border border-ds-border px-3 py-2 dark:border-ds-border">
@@ -463,33 +536,21 @@ export default function SopCampaignRecipeParseResultDialog({
                   />
                 )}
               </section>
-
-              {/* 解析过程中的提醒（TB-148）：缺失池与告警合成**一块**，统一警示外观。
-                  上一版是「一个黄条（缺池）+ 一串灰色小字（告警）」，其中灰字跟普通说明
-                  长得毫无区别 —— 徽章在报「N 条待注意」，用户却找不到是哪一条。 */}
-              {attentionItems.length > 0 && (
-                <section
-                  className="space-y-1.5 rounded-ds-lg border border-ds-warning/35 bg-ds-warning-subtle px-3 py-2 dark:border-ds-warning/40 dark:bg-ds-warning/10"
-                  aria-label="解析待注意"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <AlertTriangleIcon className="h-3.5 w-3.5 shrink-0 text-ds-warning dark:text-ds-warning" />
-                    <span className="text-xs font-medium text-ds-warning dark:text-ds-warning">
-                      {attentionItems.length} 条待注意
-                    </span>
-                  </div>
-                  <ul className="list-inside list-disc space-y-0.5 text-xs text-ds-warning dark:text-ds-warning">
-                    {attentionItems.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </section>
-              )}
             </>
           )}
 
+          {/* 问题清单（TB-153）：解析告警 / 结构校验 / 红线命中 / 原文改动**全在这一份里**。
+              每条能点着跳到出问题的地方，并当场写明怎么改、能自动修的给按钮。
+              条数也由它报 —— 面板上的徽章与入口按钮取的是同一份数据。 */}
+          <CampaignRecipeProblemList
+            problems={shownProblems}
+            variant="dialog"
+            onLocate={handleLocate}
+            onAction={handleProblemAction}
+          />
+
           {/* 维度池标题行：数字只说这一次（实时值），并承载维度级操作 */}
-          <div className="sop-recipe-panel__section-head">
+          <div className="sop-recipe-panel__section-head" data-recipe-target="dimensions">
             <div className="min-w-0">
               <strong>
                 <FileTextIcon className="h-3.5 w-3.5" />
@@ -530,8 +591,14 @@ export default function SopCampaignRecipeParseResultDialog({
             }
             containerClassName="sop-recipe-panel__body-field"
             className="sop-recipe-panel__body-input"
+            // 定位锚点：「骨架缺占位符 / 骨架命中红线」这类问题直接滚到骨架框（TB-153）
+            data-recipe-target="body"
           />
 
+          {/* 骨架命中红线：**这里刻意保留**、没有并进问题清单 ——
+              它是紧挨着骨架与词表的一句「是哪几个词撞上的」，用户看完就知道要去下面词表里
+              找哪一格加白；问题清单里那条负责给动作。两处说的是同一件事的两个面：
+              这里回答「撞了哪些词」，清单回答「现在能做什么」。 */}
           {showRedlineHints && bodyViolations.length > 0 && (
             <p className="sop-recipe-panel__warning" role="alert">
               骨架命中红线「{bodyViolations.join('、')}」，已列入下方「红线复核」。
@@ -547,18 +614,18 @@ export default function SopCampaignRecipeParseResultDialog({
             </p>
           )}
 
-          {unusedDimensions.length > 0 && (
-            <p className="sop-recipe-panel__hint">
-              维度「{unusedDimensions.map((dimension) => dimension.name).join('、')}」未被骨架引用，
-              这些维度不参与实际出词（签名仍会记录，便于历史去重）。
-            </p>
-          )}
+          {/* 「维度未被骨架引用」原来在这里铺一句灰字，现已并进问题清单
+              （那条带定位与「在骨架末尾加上 {X}」/「删掉这个维度」两个动作）。 */}
 
           <div className="sop-recipe-panel__dimensions">
             {dimensions.map((dimension, dimensionIndex) => {
               const isDominant = Boolean(dimension.name.trim() && displayDominantSlots.includes(dimension.name))
               return (
-                <article key={dimensionIndex} className="sop-recipe-dimension">
+                <article
+                  key={dimensionIndex}
+                  className="sop-recipe-dimension"
+                  data-recipe-target={`dim:${dimensionIndex}`}
+                >
                   <div className="sop-recipe-dimension__head">
                     <input
                       value={dimension.name}
@@ -589,6 +656,7 @@ export default function SopCampaignRecipeParseResultDialog({
                           key={optionIndex}
                           className={cx('sop-recipe-option', hit.length > 0 && 'sop-recipe-option--blocked')}
                           title={hit.length > 0 ? `命中合规红线：${hit.join('、')}，生成时会被剔除` : undefined}
+                          data-recipe-target={`opt:${dimensionIndex}:${optionIndex}`}
                         >
                           <input
                             value={option}
@@ -621,76 +689,14 @@ export default function SopCampaignRecipeParseResultDialog({
                 </article>
               )
             })}
-            {dimensions.length === 0 && (
-              <p className="sop-recipe-panel__hint">
-                <AlertTriangleIcon className="h-3.5 w-3.5" /> 还没有维度。点上方「加维度」，或回到外面重新解析原文。
-              </p>
-            )}
+            {/* 「还没有维度」原来在这里铺一句灰字，现已并进问题清单（那条带「加维度」动作） */}
           </div>
 
-          {/* 红线复核（TB-144）：命中项一条条摆出来让用户裁决，而不是只标个红、值还被静默丢掉。
-              两个动作各自落到**已有的真相源**，不需要另存复核结果：
-              「这不是红线」→ 把词加白（红线词表，全局 + 持久 + 可逆）；「确认违规，剔除」→ 删候选值（随这张卡）。
-              命中清零后整块消失，不留常驻噪音。 */}
-          {showRedlineHints && (bodyViolations.length > 0 || optionViolations.length > 0) && (
-            <section
-              className="rounded-ds-lg border border-ds-warning/35 bg-ds-warning-subtle px-3 py-2 dark:border-ds-warning/40 dark:bg-ds-warning/10"
-              aria-label="红线复核"
-            >
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <strong className="flex items-center gap-1.5 text-xs font-medium text-ds-text dark:text-ds-text">
-                  <AlertTriangleIcon className="h-3.5 w-3.5" />
-                  红线复核 · 本次命中 {bodyViolations.length + optionViolations.length} 处
-                </strong>
-                <span className="text-xs text-ds-muted dark:text-ds-muted">
-                  候选值命中会在生成前被剔除。判为误判：「加白」= 整个词不再判（可随时恢复）；
-                  只有某个正常搭配被误伤，就到下方词表里给这个词加例外（更精准）。
-                </span>
-              </div>
-              <div className="mt-1.5 grid gap-1">
-                {bodyViolations.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-ds-muted dark:text-ds-muted">骨架</span>
-                    <span className="min-w-0 flex-1 break-words text-xs text-ds-text dark:text-ds-text">
-                      命中「{bodyViolations.join('、')}」
-                    </span>
-                    {canEditTerms && (
-                      <Button size="sm" variant="secondary" onClick={() => whitelistTerms(bodyViolations)}>
-                        这不是红线，加白
-                      </Button>
-                    )}
-                  </div>
-                )}
-                {optionViolations.map((entry) => (
-                  <div
-                    className="flex flex-wrap items-center gap-2"
-                    key={`${entry.dimensionIndex}:${entry.optionIndex}:${entry.option}`}
-                  >
-                    <span className="text-xs text-ds-muted dark:text-ds-muted">候选值</span>
-                    <span className="min-w-0 flex-1 break-words text-xs text-ds-text dark:text-ds-text">
-                      「{entry.option}」
-                      {dimensions[entry.dimensionIndex]?.name ? `（${dimensions[entry.dimensionIndex].name}）` : ''}
-                      命中「{entry.violations.join('、')}」
-                    </span>
-                    {canEditTerms && (
-                      <Button size="sm" variant="secondary" onClick={() => whitelistTerms(entry.violations)}>
-                        这不是红线，加白
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => removeOption(entry.dimensionIndex, entry.optionIndex)}
-                    >
-                      确认违规，剔除
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {errors.length > 0 && <p className="sop-recipe-panel__warning">{errors.join('；')}</p>}
+          {/* 红线复核原来在这里单独成一块（TB-144），现已并入上方「问题清单」的红线分组：
+              命中项逐条给「加白 / 剔除」两个动作 —— 那两个动作各自落到**已有的真相源**
+              （加白 → 红线词表，全局 + 持久 + 可逆；剔除 → 删候选值，随这张卡），
+              不需要另存复核结果。命中清零后清单里那组自动消失，不留常驻噪音。
+              这里刻意**不留兼容转发层**：一块内容只有一个家。 */}
 
           <div className="sop-recipe-panel__preview">
             <div className="sop-recipe-panel__section-head">
@@ -721,6 +727,7 @@ export default function SopCampaignRecipeParseResultDialog({
             className="sop-recipe-panel__terms"
             open={termsOpen}
             onToggle={(event) => setTermsOpen(event.currentTarget.open)}
+            data-recipe-target="terms"
           >
             <summary>
               {termsSummary}
@@ -745,14 +752,14 @@ export default function SopCampaignRecipeParseResultDialog({
               </div>
             )}
             {/* 显示开关（TB-144）：手动关掉这些标记。⚠️ 只关显示，判定与生成前剔除照旧 ——
-                想真正不拦某个误判词，用上方复核区的「这不是红线，加白」（TB-146），
+                想真正不拦某个误判词，用上方问题清单里的「这不是红线，加白」（TB-146），
                 或到下方词表里给那个词配例外（TB-145）。
                 总开关关着时不渲染它：没东西可标，留着只是噪音。 */}
             {complianceOn && canToggleHints && (
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-ds-muted dark:text-ds-muted">
-                  关掉只停用标红与复核提示，不改变判定；想放过某个词或某种正常搭配，
-                  用上面的「加白」或下方词表里的「例外」。
+                  关掉只停用标红与红线提示，不改变判定；想放过某个词或某种正常搭配，
+                  用上方清单里的「加白」或下方词表里的「例外」。
                 </span>
                 <Button
                   size="sm"
@@ -784,6 +791,7 @@ export default function SopCampaignRecipeParseResultDialog({
                           item.disabled && 'sop-recipe-term--muted',
                         )}
                         title={hit ? '命中当前骨架' : undefined}
+                        data-recipe-target={`term:${index}`}
                       >
                         <div className="sop-recipe-term__head">
                           {/* 勾选 = 加白（TB-146）：整词停用，词与例外都留着，可随时切回。

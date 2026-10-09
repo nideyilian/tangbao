@@ -59,6 +59,16 @@ const VIRTUAL_OVERSCAN = 600
 const SCROLL_PREFETCH_GROUPS = 12
 const SCROLL_PREFETCH_ASSETS = 48
 
+/** 两个 id 列表内容是否完全一致（顺序敏感）—— 判断「选区是不是真的变了」，避免无谓重写。 */
+function sameIdList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index])
+}
+
+/** 列表与集合内容是否一致（顺序无关）—— 镜像选区落库前的幂等判断。 */
+function sameIdSet(list: readonly string[], set: ReadonlySet<string>): boolean {
+  return list.length === set.size && list.every((id) => set.has(id))
+}
+
 // ===== 图片砖·列表行形式的组块常量（组头 + 内联砖区）=====
 const HEADER_H = 52
 const PARAM_ROW_H = 32
@@ -428,6 +438,15 @@ function AssetGroupedView({
   const setDetailTaskId = useStore((state) => state.setDetailTaskId)
   const selectedAssetIds = useAssetLibraryStore((state) => state.selectedAssetIds)
   const clearSelection = useAssetLibraryStore((state) => state.clearSelection)
+  /**
+   * 卡片形式（`cards`）里「一张卡 = 一个任务」：选中单元按**任务**走（TB-151）。
+   *
+   * 任务选中存主 store（`selectedTaskIds`，与底部那条批量操作栏同源，批量移动 / 删除任务靠它），
+   * 素材选中存素材库 store（由任务派生出的镜像，工具栏的导出 / 后处理靠它）。
+   * 图片砖 / 列表行形式（`tiles`）不受影响，仍是纯素材语义。
+   */
+  const selectedTaskIds = useStore((state) => state.selectedTaskIds)
+  const setSelectedTaskIds = useStore((state) => state.setSelectedTaskIds)
   const batchFocusTaskId = useAssetLibraryStore((state) => state.batchFocusTaskId)
   const setBatchFocusTaskId = useAssetLibraryStore((state) => state.setBatchFocusTaskId)
   const dismissedOverviewFailedCount = useAssetLibraryStore((state) => state.dismissedOverviewFailedCount)
@@ -544,6 +563,54 @@ function AssetGroupedView({
   const overviewFailedNoticeVisible =
     overview.failed > 0 && (dismissedOverviewFailedCount === null || overview.failed > dismissedOverviewFailedCount)
   const selected = useMemo(() => new Set(selectedAssetIds), [selectedAssetIds])
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds])
+
+  /** 组 id → 组：框选按卡片（整组）命中，展开成任务 + 素材要用它。 */
+  const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups])
+
+  /**
+   * 当前「整组被选中」的组 id 列表。
+   *
+   * 框选的加选模式要拿它当初始集合（`useDragSelect` 的 `initialSelectedIds`）——
+   * 卡片形式下行内单元是**组**而不是单张素材，给它素材 id 会让加选框选从错误的基线出发。
+   */
+  const selectedGroupIds = useMemo(
+    () =>
+      groups
+        .filter((group) => group.taskIds.length > 0 && group.taskIds.every((id) => selectedTaskIdSet.has(id)))
+        .map((group) => group.id),
+    [groups, selectedTaskIdSet],
+  )
+
+  /**
+   * 卡片形式下「任务选中」是源、「素材选中」是它的镜像（TB-151）。
+   *
+   * 任务选区可能在组件外被改（底部那条批量栏的全选 / 反选 / 取消选择都只写主 store），
+   * 所以镜像落在这里兜底。只在**任务选区真的变化**时重算（prev 比较）：
+   * 切换文件夹、分页刷新导致 `groups` 重建时不动素材选区，避免把用户在图片砖形式里
+   * 选好的那一批图顺手清掉。
+   */
+  const prevSelectedTaskIdsRef = useRef<string[] | null>(null)
+  useEffect(() => {
+    if (groupedViewStyle !== 'cards') {
+      // 离开卡片形式：清掉基线，回来时不做补救式重算
+      prevSelectedTaskIdsRef.current = null
+      return
+    }
+    const prev = prevSelectedTaskIdsRef.current
+    prevSelectedTaskIdsRef.current = selectedTaskIds
+    if (prev === null || sameIdList(prev, selectedTaskIds)) return
+
+    const next = new Set<string>()
+    for (const group of groups) {
+      if (group.taskIds.length === 0) continue
+      if (group.taskIds.every((id) => selectedTaskIdSet.has(id))) {
+        for (const asset of group.assets) next.add(asset.id)
+      }
+    }
+    if (sameIdSet(useAssetLibraryStore.getState().selectedAssetIds, next)) return
+    useAssetLibraryStore.getState().replaceSelection([...next])
+  }, [groupedViewStyle, groups, selectedTaskIds, selectedTaskIdSet])
 
   // 图片砖·列表行形式的组头参数摘要需要实时耗时（运行中的任务每秒刷新一次）
   const isAnyRunning = overview.running > 0
@@ -852,7 +919,7 @@ function AssetGroupedView({
     [],
   )
 
-  // 框选：任务卡片形式以整卡为原子（getItemIds：命中卡片 = 组内全部素材）；
+  // 框选：任务卡片形式以**整卡（整组）**为原子（getItemIds：命中卡片 → 组内任务 + 素材一起选中）；
   // 图片砖·列表行形式以单张图片砖为原子（getItemId：data-asset-id，与图片模式一致）。
   const { selectionBox } = useDragSelect({
     containerSelector: '[data-drag-select-surface]',
@@ -862,22 +929,34 @@ function AssetGroupedView({
       groupedViewStyle === 'cards'
         ? (element) => {
             if (!(element instanceof HTMLElement)) return null
-            const raw = element.dataset.assetIds
-            if (!raw) return null
-            try {
-              const parsed = JSON.parse(raw)
-              return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : null
-            } catch {
-              return null
-            }
+            const groupId = element.dataset.groupId
+            return groupId ? [groupId] : null
           }
         : undefined,
     getItemId:
       groupedViewStyle === 'tiles'
         ? (element) => (element instanceof HTMLElement ? (element.dataset.assetId ?? null) : null)
         : undefined,
-    onSelectionChange: (ids) => useAssetLibraryStore.getState().replaceSelection(ids),
-    initialSelectedIds: selectedAssetIds,
+    onSelectionChange: (ids) => {
+      if (groupedViewStyle !== 'cards') {
+        useAssetLibraryStore.getState().replaceSelection(ids)
+        return
+      }
+      // 卡片形式：ids 是命中的组 id，展开成「任务 + 素材」两处一起写（「选卡 = 选任务」，TB-151）。
+      // 按组展开还顺带补上了老口径的漏网之鱼：没有产出图的失败 / 生成中任务卡素材为空，
+      // 按素材命中时框选框不到它们，按组命中就能选中。
+      const assetIds: string[] = []
+      const taskIds = new Set<string>()
+      for (const groupId of ids) {
+        const group = groupById.get(groupId)
+        if (!group) continue
+        for (const asset of group.assets) assetIds.push(asset.id)
+        for (const taskId of group.taskIds) taskIds.add(taskId)
+      }
+      useAssetLibraryStore.getState().replaceSelection(assetIds)
+      useStore.getState().setSelectedTaskIds([...taskIds])
+    },
+    initialSelectedIds: groupedViewStyle === 'cards' ? selectedGroupIds : selectedAssetIds,
     onSuppressClick: () => {
       suppressClickUntilRef.current = Date.now() + 250
     },
@@ -944,19 +1023,39 @@ function AssetGroupedView({
     if (target) useAssetLibraryStore.getState().openViewer(target, ids)
   }, [])
 
-  /** 图片砖·列表行形式的组头点击：切换组内全部素材的选择 */
+  /**
+   * 点击组头 / Ctrl(⌘)+点击卡片：切换整组的选择。
+   *
+   * 卡片形式（`cards`）的单元是**任务**：两处一起写 —— 任务选中进主 store（底部批量栏据此出现，
+   * 可批量移动 / 删除任务），素材选中进素材库 store（工具栏的导出 / 后处理据此生效）。
+   * 「切换」的判定也跟着单元走：卡片看任务是否全选中，图片砖 / 列表行看素材是否全选中，
+   * 这样视觉上的勾选态和点击语义不会错位。
+   */
   const toggleGroupSelection = useCallback(
     (group: AssetBatchGroup) => {
-      const ids = group.assets.map((asset) => asset.id)
-      const shouldSelect = !ids.every((id) => selectedAssetIds.includes(id))
+      const useTaskUnit = groupedViewStyle === 'cards' && group.taskIds.length > 0
+      const shouldSelect = useTaskUnit
+        ? !group.taskIds.every((id) => selectedTaskIdSet.has(id))
+        : !group.assets.every((asset) => selectedAssetIds.includes(asset.id))
+
       const next = new Set(selectedAssetIds)
-      for (const id of ids) {
-        if (shouldSelect) next.add(id)
-        else next.delete(id)
+      for (const asset of group.assets) {
+        if (shouldSelect) next.add(asset.id)
+        else next.delete(asset.id)
       }
       useAssetLibraryStore.getState().replaceSelection([...next])
+
+      if (!useTaskUnit) return
+      setSelectedTaskIds((current) => {
+        const nextTasks = new Set(current)
+        for (const taskId of group.taskIds) {
+          if (shouldSelect) nextTasks.add(taskId)
+          else nextTasks.delete(taskId)
+        }
+        return [...nextTasks]
+      })
     },
-    [selectedAssetIds],
+    [groupedViewStyle, selectedAssetIds, selectedTaskIdSet, setSelectedTaskIds],
   )
 
   /** 图片砖·列表行形式的单张图片砖切换（框选拖拽刚结束抑制紧随的点击） */
@@ -1039,7 +1138,11 @@ function AssetGroupedView({
       onClick={(event) => {
         // 框选拖拽刚结束的点击会落在容器上（mousedown/up 目标不同），此时不应当清空选区
         if (Date.now() < suppressClickUntilRef.current) return
-        if (event.target === event.currentTarget) clearSelection()
+        if (event.target === event.currentTarget) {
+          // 两处一起收（TB-151）：只清素材的话任务选区还留着 ⇒ 卡片仍勾选、底部批量栏不消失
+          clearSelection()
+          useStore.getState().clearSelection()
+        }
       }}
       onScroll={handleScroll}
     >
@@ -1100,7 +1203,11 @@ function AssetGroupedView({
                 }>
               ).map(({ group, left, top, width, height }) => {
                 const isHighlighted = group.id === highlightGroupId
-                const groupSelected = group.assets.length > 0 && group.assets.every((asset) => selected.has(asset.id))
+                // 勾选态：卡片形式以任务选中为准（源），素材选中作兜底口径 ——
+                // 任一成立即算选中，免得「在图片砖形式里选好一批图，切回卡片后卡片没勾」
+                const byTask = group.taskIds.length > 0 && group.taskIds.every((id) => selectedTaskIdSet.has(id))
+                const byAsset = group.assets.length > 0 && group.assets.every((asset) => selected.has(asset.id))
+                const groupSelected = byTask || byAsset
 
                 return (
                   <div
@@ -1109,7 +1216,6 @@ function AssetGroupedView({
                     data-testid="asset-batch-card"
                     data-group-id={group.id}
                     data-asset-card
-                    data-asset-ids={JSON.stringify(group.assets.map((asset) => asset.id))}
                     role="button"
                     tabIndex={0}
                     aria-pressed={groupSelected}
@@ -1152,7 +1258,10 @@ function AssetGroupedView({
             : (visibleItems as Array<{ group: AssetBatchGroup; top: number; height: number }>).map(
                 ({ group, top, height }) => {
                   const isHighlighted = group.id === highlightGroupId
-                  const groupSelected = group.assets.length > 0 && group.assets.every((asset) => selected.has(asset.id))
+                  // 与卡片形式同一口径：任务选中或整组素材选中都算组被选中
+                  const byTask = group.taskIds.length > 0 && group.taskIds.every((id) => selectedTaskIdSet.has(id))
+                  const byAsset = group.assets.length > 0 && group.assets.every((asset) => selected.has(asset.id))
+                  const groupSelected = byTask || byAsset
                   const taskList = batchTasks(group)
                   const isRunning = group.summary.running > 0
                   const repTask = getRepresentativeTask(group)

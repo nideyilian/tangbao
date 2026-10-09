@@ -1569,6 +1569,40 @@ describe('SopManagementCenter campaign recipe SOPs', () => {
     expect(result.renderer.root.findAllByProps({ 'aria-label': '配方卡引擎配置' })).toHaveLength(1)
     result.renderer.unmount()
   })
+
+  // TB-152：面板里「这次解析读到了什么」是**属于某一张卡**的瞬时状态，而 React 在同一位置
+  // 会复用组件实例 ⇒ 不加 key 时从 A 卡切到 B 卡，B 卡会顶着 A 卡的「解析完成」徽章，
+  // 详情弹窗里读的也是 A 的原资产信息。这条锁的就是面板上那个 key={itemDraft.id}。
+  it('切换配方卡时不带上一张的解析结果（TB-152）', async () => {
+    const recipeB: SopLibraryItem = { ...recipeItem, id: 'sop-recipe-b', name: '另一张配方卡' }
+    let result!: ReturnType<typeof renderCenter>
+    act(() => {
+      result = renderCenter({ items: [recipeItem, recipeB], selectedSopId: 'sop-recipe' })
+    })
+    const panelText = () => textContent(result.renderer.root.findByType(SopCampaignRecipePanel))
+    expect(panelText()).toContain('已保存内容')
+
+    // 在 A 卡上解析一次原文 ⇒ 面板进入「解析完成」并持有解析结果
+    act(() => {
+      const textarea = result.renderer.root.findByType(SopCampaignRecipePanel).findAllByType('textarea')[0]!
+      ;(textarea.props.onChange as (event: { target: { value: string } }) => void)({
+        target: {
+          value: JSON.stringify({ name: '甲', template: '{M}', master: [{ name: 'M', values: ['甲'] }] }),
+        },
+      })
+    })
+    act(() => findButton(result.renderer.root, '解析')!.props.onClick())
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(panelText()).toContain('解析完成')
+
+    // 切到 B 卡：B 这次没解析过 ⇒ 只能是「已保存内容」
+    act(() => result.renderer.root.findByProps({ title: recipeB.name }).props.onClick())
+    expect(panelText()).toContain('已保存内容')
+    expect(panelText()).not.toContain('解析完成')
+    result.renderer.unmount()
+  })
 })
 
 describe('初始分组跟随全局上下文指针（当前方向）', () => {

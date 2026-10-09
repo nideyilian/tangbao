@@ -54,19 +54,43 @@ function panelText(renderer: ReturnType<typeof create>) {
 }
 
 /**
- * 渲染面板。**必须让 onChange 落到 state 上**：面板是受控组件，
+ * 渲染面板，并**把当前配置暴露出来**（TB-152 起需要）。
+ *
+ * 原文改存进 `config.rawText` 之后，「录进去的原文有没有落到配方卡上」这件事
+ * **只能从 config 回读**：textarea 的 value 不是渲染树的 children，
+ * 现有的 `panelText` 走 children 递归，读不到输入框里的文字。
+ *
+ * 同时**必须让 onChange 落到 state 上**：面板是受控组件，
  * 用空的 onChange 时 config 永远不变，会得出「解析完却没有内容」的假结论。
  */
-function renderPanel(initial: SopCampaignRecipeConfig) {
+function renderPanelWithState(initial: SopCampaignRecipeConfig) {
+  let latest = initial
   function Harness() {
     const [config, setConfig] = useState(initial)
-    return <SopCampaignRecipePanel config={config} onChange={setConfig} />
+    return (
+      <SopCampaignRecipePanel
+        config={config}
+        onChange={(next) => {
+          latest = next
+          setConfig(next)
+        }}
+      />
+    )
   }
   let renderer!: ReturnType<typeof create>
   act(() => {
     renderer = create(<Harness />)
   })
-  return renderer
+  return { renderer, getConfig: () => latest }
+}
+
+function renderPanel(initial: SopCampaignRecipeConfig) {
+  return renderPanelWithState(initial).renderer
+}
+
+/** 录入框里的当前文字（受控 textarea 的 value）。 */
+function rawTextValue(renderer: ReturnType<typeof create>) {
+  return renderer.root.findAllByType('textarea')[0]!.props.value as string
 }
 
 function findButton(renderer: ReturnType<typeof create>, label: string) {
@@ -157,9 +181,9 @@ describe('SopCampaignRecipePanel · 外面只留原文 + 能看出内容与状�
     expect(text).toMatch(/\d+ 个维度 · \d+ 个候选值 · 组合空间 \d+ 条/)
   })
 
-  it('有待注意时外面不只报个数：摘要直接摊出具体是哪一条（TB-148）', async () => {
+  it('有问题时外面不只报个数：直接摊出是哪一条、去哪儿改（TB-148 / TB-153）', async () => {
     const renderer = renderPanel(EMPTY_CONFIG)
-    // 没写 name ⇒ 解析会给一条「未识别到配方名称」告警（正好 1 条，便于断言）
+    // 没写 name ⇒ 解析会给一条「未识别到配方名称」的问题（正好 1 条，便于断言）
     typeRawText(renderer, JSON.stringify({ template: '{M}', master: [{ name: 'M', values: ['甲', '乙'] }] }))
     act(() => {
       ;(findButton(renderer, '解析').props.onClick as () => void)()
@@ -167,10 +191,13 @@ describe('SopCampaignRecipePanel · 外面只留原文 + 能看出内容与状�
     await flushParse()
 
     const text = panelText(renderer)
-    // 数字仍在（徽章 + 入口按钮都报这个数）
-    expect(text).toContain('1 条待注意')
-    // 但后面跟着**具体是哪一条** —— 上一版外面一个字内容都没有，看到数字无从下手
-    expect(text).toContain('未识别到配方名称，请手动填写')
+    // 数字仍在（概览徽章 + 入口按钮都报这个数，同一个来源）
+    expect(text).toContain('1 个问题')
+    // 而外面直接写着**是哪一条、长在哪、怎么改** ——
+    // 上一版外面只有一个数字、一个字内容都没有，看到「1 条待注意」无从下手
+    expect(text).toContain('这份配方卡还没有名字')
+    expect(text).toContain('位置：')
+    expect(text).toContain('填一个就行')
   })
 
   it('解析失败：状态「解析失败」且原因就地可见', async () => {
@@ -204,5 +231,55 @@ describe('SopCampaignRecipePanel · 外面只留原文 + 能看出内容与状�
 
     const filled = renderPanel(FILLED_CONFIG)
     expect(findButton(filled, '查看解析结果').props.disabled).toBe(false)
+  })
+})
+
+/**
+ * 原文随手保存（TB-152）。
+ *
+ * 病根：原文原先只是面板的组件私有 state，不落库 ⇒ 关掉管理中心、或切一次 tab
+ * （条件渲染，整块卸载）就没了，骨架却还在 —— 用户看到「0 字符」。
+ *
+ * 四条守卫，各钉住改法的一半：
+ * 1. 录入 = 写回配方卡字段（不是内存）；
+ * 2. 从库里打开时按字段回显；
+ * 3. 「清空」连存下来的那份一起清；
+ * 4. **解析时不能把原文冲掉** —— `toCampaignRecipeConfig` 内部走 `parseCampaignRecipeConfig`，
+ *    那个函数只挑 body / dimensions，漏回填就是「刚粘完一点解析，原文立刻消失」。
+ */
+describe('SopCampaignRecipePanel · 配方卡原文随手保存（TB-152）', () => {
+  it('录入的原文写回配方卡字段', () => {
+    const { renderer, getConfig } = renderPanelWithState(EMPTY_CONFIG)
+    typeRawText(renderer, RECIPE_JSON)
+    expect(getConfig().rawText).toBe(RECIPE_JSON)
+  })
+
+  it('从库里打开的配方卡：原文按字段回显，字符数跟着它', () => {
+    const { renderer } = renderPanelWithState({ ...FILLED_CONFIG, rawText: '原文留档' })
+    expect(rawTextValue(renderer)).toBe('原文留档')
+    expect(panelText(renderer)).toContain('4 字符')
+  })
+
+  it('「清空」连存下来的原文一起清（只清输入框等于没清）', () => {
+    const { renderer, getConfig } = renderPanelWithState({ ...FILLED_CONFIG, rawText: '原文留档' })
+    act(() => {
+      ;(findButton(renderer, '清空').props.onClick as () => void)()
+    })
+    expect(getConfig().rawText).toBe('')
+    expect(rawTextValue(renderer)).toBe('')
+  })
+
+  it('「解析」之后原文仍在配方卡里（解析只写骨架与维度）', async () => {
+    const { renderer, getConfig } = renderPanelWithState(EMPTY_CONFIG)
+    typeRawText(renderer, RECIPE_JSON)
+    act(() => {
+      ;(findButton(renderer, '解析').props.onClick as () => void)()
+    })
+    await flushParse()
+
+    expect(panelText(renderer)).toContain('解析完成')
+    expect(getConfig().rawText).toBe(RECIPE_JSON)
+    // 骨架也照旧落到 config 上（别为了保住原文把正常流程改坏）
+    expect(getConfig().body).toContain('{M}')
   })
 })
