@@ -57,6 +57,7 @@
 | [`eagle-interaction-gap-analysis.md`](eagle-interaction-gap-analysis.md)                                                     | Eagle 交互差距分析                                                                 | 参考 |
 | [`serpent-borrowing-plan.md`](serpent-borrowing-plan.md)                                                                     | **参考 Serpent 的素材库加固方案**：任务中断语义 / schema 版本 + 顺序迁移链 / 老库可用性门禁（含可测验收） | 现行 · **P1~P4 全部落地**（TB-124 / TB-125） |
 | [`analysis-doubao-account-pool.md`](analysis-doubao-account-pool.md) | **豆包账号池接入评估报告**：核心功能 / 登录与会话机制 / 与糖包的架构依赖差异 / 出图可行性结论与改动点 | 现行 |
+| [`doubao-model-guide.md`](doubao-model-guide.md) | **豆包模型使用规范与方法**：配置两条路 / 模型清单 / 尺寸下限实测 / 图生图 / 提示词禁忌 / 报错对照（对应 `TB-150`） | 现行 |
 | [`analysis-doupao-liangnianban.md`](analysis-doupao-liangnianban.md)                                                         | 竞品分析                                                                           | 参考 |
 
 ## AI / Agent 相关
