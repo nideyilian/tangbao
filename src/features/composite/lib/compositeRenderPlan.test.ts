@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chooseRenderBranch, mapLayerPositionToCanvas, planBackgroundFit } from './compositeRenderPlan'
+import { chooseRenderBranch, fitMediaSize, mapLayerPositionToCanvas, planBackgroundFit } from './compositeRenderPlan'
 
 describe('composite render plan', () => {
   it('chooses source-first when source and target ratios match within tolerance', () => {
@@ -189,5 +189,46 @@ describe('composite render plan', () => {
         { width: 640, height: 360 },
       ),
     ).toThrow(/未知的/i)
+  })
+})
+
+/*
+ * 图片/LOGO 图层「按原图比例画」的几何（2026-10-12 杰哥报障「矩形 LOGO 被压缩拉伸」）。
+ *
+ * 原来的绘制是 `drawImage(image, x, y, 框宽, 框高)` —— 框是什么比例，图就被拉成什么比例。
+ * 这两条守卫钉住「只等比缩放」：任一端都不能出现「宽高比变了」。
+ */
+describe('fitMediaSize —— 图片进框只等比缩放，绝不拉伸', () => {
+  it('⭐ contain：长边贴框、短边等比缩（矩形图进方框不会被压成正方形）', () => {
+    // 300×100 的 LOGO 放进 100×100 的框
+    const size = fitMediaSize({ width: 300, height: 100 }, { width: 100, height: 100 }, 'contain')
+    expect(size.width).toBeCloseTo(100)
+    expect(size.height).toBeCloseTo(100 / 3)
+  })
+
+  it('⭐ cover：填满框、超出部分交给裁剪（同样不吃掉比例）', () => {
+    const size = fitMediaSize({ width: 300, height: 100 }, { width: 100, height: 100 }, 'cover')
+    expect(size.width).toBeCloseTo(300)
+    expect(size.height).toBeCloseTo(100)
+  })
+
+  it('两种模式下宽高比都与原图一致 —— 这是「不变形」唯一的判据', () => {
+    const source = { width: 1024, height: 300 }
+    const box = { width: 137, height: 512 }
+    for (const mode of ['contain', 'cover'] as const) {
+      const size = fitMediaSize(source, box, mode)
+      expect(size.width / size.height).toBeCloseTo(source.width / source.height)
+    }
+  })
+
+  it('正方形图进方框：比例本来就对，尺寸等于框（对照，证明不是「一律缩小」）', () => {
+    expect(fitMediaSize({ width: 200, height: 200 }, { width: 50, height: 50 }, 'contain')).toEqual({
+      width: 50,
+      height: 50,
+    })
+  })
+
+  it('尺寸非法时抛错，不静默返回 0（0 会让 drawImage 什么都不画）', () => {
+    expect(() => fitMediaSize({ width: 0, height: 10 }, { width: 10, height: 10 }, 'contain')).toThrow(/尺寸/i)
   })
 })

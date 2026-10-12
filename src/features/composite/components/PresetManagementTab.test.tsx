@@ -627,7 +627,12 @@ describe('PresetManagementTab', () => {
       seedProductLevelWatermark()
       // 归属「机器人」：水印库按产品隔离，这套得属于当前方向所在的产品才会出现在库里
       const preset = productPreset('preset-a', 'Alpha Preset')
-      useCompositeV2Store.setState({ presets: [preset], selectedPreviewPresetId: preset.id })
+      // ⚠️ 产品层引用的那套**也必须真的在库里**。「清单指着一个不存在的预设」是**异常状态**
+      // （水印被删之后留下的死引用），由下面「已被删除的水印引用」那组用例专门覆盖。
+      // 摆在普通现场里的话，物化时它会被先剔掉 —— 那正是本次要修的「重新勾也修不好」，
+      // 而这个用例原本把它当成正常值钉住了，等于把 bug 固化成了期望。
+      const shared = productPreset('preset-shared', 'Shared Preset')
+      useCompositeV2Store.setState({ presets: [shared, preset], selectedPreviewPresetId: preset.id })
 
       let renderer: ReturnType<typeof create>
       act(() => {
@@ -711,6 +716,178 @@ describe('PresetManagementTab', () => {
       expect(
         useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.watermarkPresetIds,
       ).toBeUndefined()
+    })
+  })
+
+  /**
+   * 「水印被删之后留下的死引用」（2026-10-10 报障）。
+   *
+   * 那台电脑上后处理一直报 `PP-PRESET-001`（引用的水印预设不存在），而水印库里有水印、
+   * 用户也「重新设置过」—— 两条线索合起来解释了这个假象：
+   *   ① 死引用在勾选框里**渲染不出来**（列表只渲染库里真实存在的预设），
+   *      界面上看着就是「这个范围一套都没勾」，用户当成「没配」；
+   *   ② 勾选是「在现有清单上增删」，死引用会**一直粘着被写回**，所以重新勾也修不好。
+   * 这组用例把「看得见」与「修得动」两件事都钉住。
+   */
+  describe('已被删除的水印引用（看得见 + 修得动）', () => {
+    /** 方向「月亮」+ 头条 / 百度两个渠道。 */
+    function seedDirectionWithMedia() {
+      usePostprocessMediaStore.setState({
+        watermarkPresetIds: [],
+        media: [
+          { id: 'toutiao', name: '头条' },
+          { id: 'baidu', name: '百度' },
+        ] as never,
+      })
+      seedScope('direction-moon', [
+        { id: 'direction-moon', name: '月亮', parentId: PRODUCT_ID, order: 0, createdAt: 0, updatedAt: 0 },
+      ])
+    }
+
+    function mountTab() {
+      const preset = productPreset('preset-a', 'Alpha Preset')
+      useCompositeV2Store.setState({
+        presets: [preset],
+        selectedPreviewPresetId: preset.id,
+        presetProductMigrationVersion: 1,
+      })
+      let renderer: ReturnType<typeof create>
+      act(() => {
+        renderer = create(<PresetManagementTab />)
+      })
+      mountedRenderers.push(renderer!)
+      return renderer!
+    }
+
+    function deadRefBox(renderer: ReturnType<typeof create>) {
+      return renderer.root.findAll((node) => node.props['data-layout'] === 'preset-dead-refs')
+    }
+
+    it('⭐ 清单里挂着已删除的水印时必须说出来（勾选框里它根本渲染不出来）', () => {
+      seedDirectionWithMedia()
+      useProjectTreeParamsStore.setState({
+        params: { 'direction-moon': { postprocess: { watermarkPresetIds: ['preset-dead'] } } },
+      })
+      const renderer = mountTab()
+
+      // 现象复现：库里那套「Alpha Preset」一个勾都没有 —— 光看这里会以为「这个方向没配水印」
+      expect(renderer.root.findByProps({ 'aria-label': '启用「Alpha Preset」' }).props.checked).toBe(false)
+      // 所以必须由提示条把真相讲出来
+      expect(getNodeText(deadRefBox(renderer)[0]!)).toContain('有 1 套水印已不存在')
+    })
+
+    it('没有死引用时不出提示条（否则天天挂着一条没用的警告）', () => {
+      seedDirectionWithMedia()
+      useProjectTreeParamsStore.setState({
+        params: { 'direction-moon': { postprocess: { watermarkPresetIds: ['preset-a'] } } },
+      })
+      const renderer = mountTab()
+      expect(deadRefBox(renderer)).toHaveLength(0)
+    })
+
+    it('⭐「清掉」撤掉那一格退回继承，而不是写空数组把上层配好的压掉', () => {
+      seedDirectionWithMedia()
+      useProjectTreeParamsStore.setState({
+        params: {
+          // 产品层配的是有效水印 —— 清完之后方向应该继承到它
+          [PRODUCT_ID]: { postprocess: { watermarkPresetIds: ['preset-a'] } },
+          'direction-moon': { postprocess: { watermarkPresetIds: ['preset-dead'] } },
+        },
+      })
+      const renderer = mountTab()
+
+      act(() => {
+        renderer.root.findByProps({ 'data-testid': 'preset-clear-dead-refs' }).props.onClick()
+      })
+
+      // 写 `[]` 的话这里会是 []（= 这个方向明确不加水印），产品层那套就再也进不来了
+      expect(
+        useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.watermarkPresetIds,
+      ).toBeUndefined()
+      // 退回继承后生效值就是产品层那套，提示条随之消失
+      expect(deadRefBox(renderer)).toHaveLength(0)
+      expect(renderer.root.findByProps({ 'aria-label': '停用「Alpha Preset」' }).props.checked).toBe(true)
+    })
+
+    it('⭐ 重新勾一套水印时，失效的引用被顺手剔掉（原来它一直粘着，怎么勾都还在报错）', () => {
+      seedDirectionWithMedia()
+      useProjectTreeParamsStore.setState({
+        params: {
+          'direction-moon': {
+            postprocess: { byMedia: { toutiao: { watermarkPresetIds: ['preset-dead'] } } },
+          },
+        },
+      })
+      const renderer = mountTab()
+
+      act(() => {
+        findScopePill(renderer, '头条')!.props.onClick()
+      })
+      act(() => {
+        renderer.root.findByProps({ 'aria-label': '启用「Alpha Preset」（头条）' }).props.onChange(true)
+      })
+
+      expect(useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.byMedia).toEqual({
+        toutiao: { watermarkPresetIds: ['preset-a'] },
+      })
+    })
+
+    it('渠道各自一份：只有出问题的那个渠道提示 + 清理，别的渠道原样不动', () => {
+      seedDirectionWithMedia()
+      useProjectTreeParamsStore.setState({
+        params: {
+          'direction-moon': {
+            postprocess: {
+              byMedia: {
+                toutiao: { watermarkPresetIds: ['preset-dead'] },
+                baidu: { watermarkPresetIds: ['preset-a'] },
+              },
+            },
+          },
+        },
+      })
+      const renderer = mountTab()
+
+      // 头条这一格指着已删的水印 → 提示；百度那格是好的 → 安静
+      act(() => {
+        findScopePill(renderer, '头条')!.props.onClick()
+      })
+      expect(getNodeText(deadRefBox(renderer)[0]!)).toContain('有 1 套水印已不存在')
+
+      act(() => {
+        findScopePill(renderer, '百度')!.props.onClick()
+      })
+      expect(deadRefBox(renderer)).toHaveLength(0)
+
+      // 回到头条清掉：只有 toutiao 那一格被撤，baidu 连键都不动
+      act(() => {
+        findScopePill(renderer, '头条')!.props.onClick()
+      })
+      act(() => {
+        renderer.root.findByProps({ 'data-testid': 'preset-clear-dead-refs' }).props.onClick()
+      })
+      expect(useProjectTreeParamsStore.getState().params['direction-moon']?.postprocess?.byMedia).toEqual({
+        baidu: { watermarkPresetIds: ['preset-a'] },
+      })
+    })
+
+    it('死引用落在上层（方向自己没写过）时，一样能一键清干净', () => {
+      seedDirectionWithMedia()
+      useProjectTreeParamsStore.setState({
+        params: { [PRODUCT_ID]: { postprocess: { watermarkPresetIds: ['preset-dead'] } } },
+      })
+      const renderer = mountTab()
+
+      // 方向本身什么都没写，但生效值来自产品层 → 提示条照出
+      expect(getNodeText(deadRefBox(renderer)[0]!)).toContain('有 1 套水印已不存在')
+
+      act(() => {
+        renderer.root.findByProps({ 'data-testid': 'preset-clear-dead-refs' }).props.onClick()
+      })
+
+      // 只清「当前节点」的话这一格会纹丝不动、产出继续报错，所以必须沿继承链清
+      expect(useProjectTreeParamsStore.getState().params[PRODUCT_ID]?.postprocess?.watermarkPresetIds).toBeUndefined()
+      expect(deadRefBox(renderer)).toHaveLength(0)
     })
   })
 

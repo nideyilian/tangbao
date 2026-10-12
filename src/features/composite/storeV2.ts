@@ -100,7 +100,13 @@ type CompositeV2StoreActions = {
   setBackgrounds: (backgrounds: CompositeV2BackgroundImage[]) => void
   updatePreset: (presetId: string, patch: Partial<CompositeV2State['presets'][number]>) => void
   addImageLayer: (presetId: string, asset?: CompositeV2ImageAssetRef) => void
-  replaceOrAddLogoLayer: (presetId: string, asset: CompositeV2ImageAssetRef, selectedLayerId?: string) => string
+  replaceOrAddLogoLayer: (
+    presetId: string,
+    asset: CompositeV2ImageAssetRef,
+    selectedLayerId?: string,
+    /** 素材的真实像素尺寸。给了就按原图比例把图层框一起重算（见实现处的说明）。 */
+    sourceSize?: { width: number; height: number },
+  ) => string
   addTextLayer: (presetId: string) => void
   addLogoLayer: (presetId: string) => void
   setSelectedPreviewPresetId: (presetId: string) => void
@@ -110,6 +116,14 @@ type CompositeV2StoreActions = {
   createPreset: (name: string, productId: string) => void
   deletePreset: (presetId: string) => void
   duplicatePreset: (presetId: string) => void
+  /**
+   * 把某个图层上的素材引用**就地换成收编后的引用**（老的 `{ kind: 'path' }` → 程序内的 `stored`）。
+   *
+   * 使用者只有渲染链的存量自愈（`compositeRendererV2` 读到老素材后回写）。两条刻意的处理：
+   * - **不进撤销栈**：收编不是用户做的动作，塞进历史会让他按 Ctrl+Z 时「撤了但没反应」；
+   * - **不动 `updatedAt`**：画面一个字都没变，动了它会让覆盖层缓存整批失效 —— 刚算好的画布白扔。
+   */
+  adoptLayerAsset: (presetId: string, layerId: string, asset: CompositeV2ImageAssetRef) => void
   /**
    * 把一批水印**复制到另一个产品**（跨产品复制；同产品内复制走 `duplicatePreset`）。
    *
@@ -478,7 +492,7 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
             }),
             `preset:${presetId}:layers`,
           ),
-        replaceOrAddLogoLayer: (presetId, asset, selectedLayerId) => {
+        replaceOrAddLogoLayer: (presetId, asset, selectedLayerId, sourceSize) => {
           let resolvedLayerId = ''
           setWithHistory(
             (state) => ({
@@ -488,15 +502,30 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
                 )
                 const logoIndex =
                   selectedIndex >= 0 ? selectedIndex : preset.layers.findIndex((layer) => layer.type === 'logo')
+                /*
+                 * ⚠️ 换素材时**必须把图层框一起按新素材的比例改掉**。
+                 *
+                 * 报障背景（2026-10-12）：「LOGO 图层只有正方形的，矩形 LOGO 会被压缩拉伸」。
+                 * 两个原因叠在一起 —— ① 原来的 `createLogoLayer` 把框固定成 100×100；
+                 * ② 这里换素材只动 `asset`、不动 `position`，于是矩形 LOGO 放进方框里，
+                 * 框的比例就是图的比例。渲染侧现在也保证了「按原图比例画、绝不变形」
+                 * （`fitMediaSize`），但框不改的话那张 LOGO 只会变成方框里的一条小长条，
+                 * 用户还得自己去量尺寸。这里一次改到位。
+                 */
+                const box = sourceSize ? fitLayerBox(sourceSize, LOGO_BASE_LONG_EDGE) : undefined
                 if (logoIndex >= 0) {
                   const layers = [...preset.layers]
                   const logo = layers[logoIndex]!
                   if (logo.type !== 'logo') return preset
                   resolvedLayerId = logo.id
-                  layers[logoIndex] = { ...logo, asset }
+                  layers[logoIndex] = {
+                    ...logo,
+                    asset,
+                    position: box ? { ...logo.position, ...box } : logo.position,
+                  }
                   return { ...preset, layers, updatedAt: now }
                 }
-                const logo = createLogoLayer(asset, now, preset.baseCanvas)
+                const logo = createLogoLayer(asset, now, preset.baseCanvas, box)
                 resolvedLayerId = logo.id
                 return { ...preset, layers: [...preset.layers, logo], updatedAt: now }
               }),
@@ -505,6 +534,26 @@ function createCompositeV2StoreInitializer(options: CreateCompositeV2StoreOption
           )
           return resolvedLayerId
         },
+        /*
+         * 刻意不走 `updatePresets`：它只要 preset.id 命中就返回**新数组**（`changed = true`
+         * 是无条件置的），而这里「没命中图层」时必须真的什么都不改 —— 收编是渲染时顺手做的，
+         * 每次空跑都换一次引用会让订阅者白重渲染一轮。
+         */
+        adoptLayerAsset: (presetId, layerId, asset) =>
+          setWithoutHistory((state) => {
+            const index = state.presets.findIndex((preset) => preset.id === presetId)
+            const preset = index >= 0 ? state.presets[index] : undefined
+            const target = preset?.layers.find(
+              (layer) => layer.id === layerId && (layer.type === 'image' || layer.type === 'logo'),
+            )
+            if (!preset || !target) return {}
+            const presets = [...state.presets]
+            presets[index] = {
+              ...preset,
+              layers: preset.layers.map((layer) => (layer.id === layerId ? { ...layer, asset } : layer)),
+            }
+            return { presets }
+          }),
         addTextLayer: (presetId) =>
           setWithHistory(
             (state) => ({
@@ -861,11 +910,39 @@ function createImageLayer(
   }
 }
 
+/**
+ * LOGO 图层放进来的初始长边（基准画布像素）。
+ *
+ * 原来是硬写死的 `width: 100, height: 100`（正方形）—— 那正是「矩形 LOGO 被压缩」的起点。
+ * 现在改成「**长边**贴到 100、短边按原图比例缩」，正方形 LOGO 的结果与原来完全一致。
+ */
+const LOGO_BASE_LONG_EDGE = 100
+
+/**
+ * 按素材原图比例算图层框：长边贴到 `longEdge`，短边等比缩。
+ *
+ * 只决定「新放进来的素材初始占多大」，与「怎么画」无关 —— 后者由渲染侧的 `fitMediaSize`
+ * 保证永不变形，两者互不依赖（所以即使尺寸算错，画面也不会被拉歪）。
+ * 尺寸不可用时退回正方形，别让一个坏素材把框算成 0。
+ */
+function fitLayerBox(source: { width: number; height: number }, longEdge: number) {
+  const longest = Math.max(source.width, source.height)
+  if (!Number.isFinite(longest) || longest <= 0) return { width: longEdge, height: longEdge }
+  const scale = longEdge / longest
+  return {
+    width: Math.max(1, Math.round(source.width * scale)),
+    height: Math.max(1, Math.round(source.height * scale)),
+  }
+}
+
 function createLogoLayer(
   asset: CompositeV2ImageAssetRef | null,
   now: number,
   baseCanvas: { width: number; height: number },
+  /** 素材尚未确定时（空白 LOGO 图层）不传，框退回正方形。 */
+  sourceSize?: { width: number; height: number },
 ) {
+  const box = sourceSize ? fitLayerBox(sourceSize, LOGO_BASE_LONG_EDGE) : { width: 100, height: 100 }
   return {
     ...createImageLayer(asset, now, baseCanvas),
     id: `logo-layer-${now}`,
@@ -878,8 +955,8 @@ function createLogoLayer(
       marginY: 20,
       offsetX: 0,
       offsetY: 0,
-      width: 100,
-      height: 100,
+      width: box.width,
+      height: box.height,
     },
   }
 }

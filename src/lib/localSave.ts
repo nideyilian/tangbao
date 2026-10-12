@@ -51,6 +51,12 @@ type ElectronAPI = {
   /** 同 saveCompositeImage，但直接传已解码字节；导出成图是大图热点，省掉主进程同步 base64 解码 */
   saveCompositeImageBytes?: (filePath: string, bytes: Uint8Array) => Promise<boolean>
   authorizeCompositeOutputDirectory?: (dirPath: string) => Promise<boolean>
+  /**
+   * 放行「这个素材文件所在的目录」。
+   * 只服务于把老预设里 `{ kind: 'path' }` 的图收进程序内那一次读取
+   * （那种形态只记盘上位置，重启后目录不再被放行就读不到），不是常规读取路径。
+   */
+  authorizeCompositeAssetPath?: (filePath: string) => Promise<boolean>
   saveJson: (filePath: string, data: unknown) => Promise<boolean>
   saveText: (filePath: string, content: string) => Promise<boolean>
   ensureDir: (dirPath: string) => Promise<boolean | string>

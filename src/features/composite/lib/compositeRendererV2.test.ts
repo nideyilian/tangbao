@@ -8,8 +8,9 @@ import {
   renderCompositeV2ToCanvas,
   renderOverlayAt,
 } from './compositeRendererV2'
+import { mapLayerPositionToCanvas } from './compositeRenderPlan'
 import { createDefaultCompositeV2Preset } from './compositeV2Defaults'
-import type { CompositeV2TextLayer } from './compositeV2Types'
+import type { CompositeV2MediaLayer, CompositeV2TextLayer } from './compositeV2Types'
 
 /**
  * 假的 2D 上下文：只记录「画了什么字、画在哪、有没有传 maxWidth」。
@@ -351,5 +352,107 @@ describe('composite renderer v2 · 空覆盖层不合成（2026-09-23）', () =>
     )
 
     expect(ops).toContain('drawImage')
+  })
+})
+
+/**
+ * 报障现场那张 LOGO 的形状：宽是高的 3 倍（2026-10-12）。
+ * 放在 `vi.hoisted` 里是因为下面那个 `vi.mock` 工厂会被提升到 import 之前执行 ——
+ * 直接引用普通顶层常量会踩「Cannot access before initialization」。
+ */
+const MEDIA = vi.hoisted(() => ({ width: 300, height: 100 }))
+
+/**
+ * 假图片解码：`drawLayer` 只从解码结果上读原图宽高（`getSourceWidth/Height`）。
+ * 必须连 `loadImageOriented` 一起换掉 —— `resolveLayerImage` 解 dataUrl 型素材走的正是它，
+ * 而 jsdom 既不解码图片、也不会触发 `onload`。
+ */
+vi.mock('../../../lib/canvasImage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/canvasImage')>()
+  return {
+    ...actual,
+    loadImageOriented: async () => ({ naturalWidth: 300, naturalHeight: 100 }) as unknown as HTMLImageElement,
+  }
+})
+
+/** 记录 `drawImage` 的绘制尺寸 —— 「有没有被拉变形」只在这个数上看得到。 */
+function mediaContext() {
+  const drawnImages: { width: number; height: number }[] = []
+  const base = recordingContext(18).ctx as unknown as Record<string, unknown>
+  const ctx = {
+    ...base,
+    drawImage: (_image: unknown, _x?: number, _y?: number, width?: number, height?: number) => {
+      drawnImages.push({ width: width ?? 0, height: height ?? 0 })
+    },
+    beginPath() {},
+    clip() {},
+    roundRect() {},
+    stroke() {},
+  } as unknown as CanvasRenderingContext2D
+  return { ctx, drawnImages }
+}
+
+function mediaLayer(patch: Partial<CompositeV2MediaLayer> = {}): CompositeV2MediaLayer {
+  return {
+    id: 'logo-layer-1',
+    type: 'logo',
+    name: 'LOGO Layer',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    rotation: 0,
+    // 报障现场：LOGO 图层默认就是 100×100 的正方形框
+    position: {
+      mode: 'anchor',
+      anchor: 'top-left',
+      marginX: 20,
+      marginY: 20,
+      offsetX: 0,
+      offsetY: 0,
+      width: 100,
+      height: 100,
+    },
+    shadow: { enabled: false, color: '#000000', x: 0, y: 2, blur: 6, opacity: 0.7 },
+    asset: { kind: 'dataUrl', dataUrl: 'data:image/png;base64,TUVESUEtQ0FTRS0x' },
+    radius: 0,
+    clip: false,
+    ...patch,
+  }
+}
+
+describe('composite renderer v2 · 图片/LOGO 不变形（2026-10-12 报障）', () => {
+  it('⭐ 矩形 LOGO 放进正方形框：按原图比例画，不被压成正方形', async () => {
+    const { ctx, drawnImages } = mediaContext()
+    const preset = createDefaultCompositeV2Preset()
+
+    await drawLayer(ctx, mediaLayer(), preset, { width: 1280, height: 720 })
+
+    expect(drawnImages).toHaveLength(1)
+    // 旧写法画的是「框宽 × 框高」= 1:1（正方形框）—— 这一条就是那个「压缩拉伸」的探针
+    expect(drawnImages[0]!.width / drawnImages[0]!.height).toBeCloseTo(MEDIA.width / MEDIA.height)
+    // 不裁剪走 contain：长边贴框（框按 0.375 缩放后是 37.5）
+    const box = mapLayerPositionToCanvas(mediaLayer().position, preset.baseCanvas, { width: 1280, height: 720 })
+    expect(drawnImages[0]!.width).toBeCloseTo(box.width)
+    expect(drawnImages[0]!.height).toBeLessThan(box.height)
+  })
+
+  it('⭐ 勾了「裁剪」时同样是原图比例：填满框靠放大，不靠拉伸', async () => {
+    const { ctx, drawnImages } = mediaContext()
+
+    await drawLayer(
+      ctx,
+      mediaLayer({ clip: true, asset: { kind: 'dataUrl', dataUrl: 'data:image/png;base64,TUVESUEtQ0FTRS0y' } }),
+      createDefaultCompositeV2Preset(),
+      { width: 1280, height: 720 },
+    )
+
+    expect(drawnImages).toHaveLength(1)
+    expect(drawnImages[0]!.width / drawnImages[0]!.height).toBeCloseTo(MEDIA.width / MEDIA.height)
+    const box = mapLayerPositionToCanvas(mediaLayer().position, createDefaultCompositeV2Preset().baseCanvas, {
+      width: 1280,
+      height: 720,
+    })
+    // cover：长边溢出框（由 clip 裁掉）—— 旧写法这里恒等于框宽
+    expect(drawnImages[0]!.width).toBeGreaterThan(box.width)
   })
 })

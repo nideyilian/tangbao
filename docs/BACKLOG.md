@@ -35,10 +35,13 @@
 | TB-136 | 视频素材库补齐：BGM 库 + MOV 视频水印库（第一版刻意没做的那两块）  | DONE  | 主写线 | 2026-09-27 |
 | TB-137 | 视频参数表：锁列宽 / 行高 / 控件外观统一 + 修「跟随上级」改不动     | DONE  | 主写线 | 2026-09-28 |
 | TB-149 | 图转视频：输出位置 / 文件命名可配 + 参数弹窗按类分页              | DONE  | 主写线 | 2026-09-29 |
-| TB-150 | 生图：豆包（火山方舟）模型独立请求分支（改模型名即可用）          | DOING | 主写线 | 2026-10-08 |
-| TB-151 | 素材库卡片视图：选卡即选任务（任务选中与素材选中一起走）            | DOING | 主写线 | 2026-10-08 |
-| TB-152 | 配方卡原文随手保存：原文进配方卡字段（关弹窗/切 tab/换卡都在）        | DOING | 主写线 | 2026-10-09 |
-| TB-153 | 配方卡提示改为「可定位的问题清单」（跳转 + 怎么改 + 处置动作）         | DOING | 主写线 | 2026-10-09 |
+| TB-150 | 生图：豆包（火山方舟）模型独立请求分支（改模型名即可用）          | DONE  | 主写线 | 2026-10-08 |
+| TB-151 | 素材库卡片视图：选卡即选任务（任务选中与素材选中一起走）            | DONE  | 主写线 | 2026-10-08 |
+| TB-152 | 配方卡原文随手保存：原文进配方卡字段（关弹窗/切 tab/换卡都在）        | DONE  | 主写线 | 2026-10-09 |
+| TB-153 | 配方卡提示改为「可定位的问题清单」（跳转 + 怎么改 + 处置动作）         | DONE  | 主写线 | 2026-10-09 |
+| TB-154 | 方向 Agent：输入框模式切换 → 一句话生成一批同方向不同的图            | DOING | 主写线 | 2026-10-09 |
+| TB-155 | 水印被删后留下的「死引用」：让它看得见、清得掉、不再粘回去            | DONE  | 主写线 | 2026-10-10 |
+| TB-156 | 水印里的图存进程序内 + 矩形 LOGO 不再被压缩拉伸                        | DONE  | 主写线 | 2026-10-12 |
 
 > ⚠️ **在途超过 2 条即视为并行**。这个项目的 dev（41731 端口 + 单实例锁 + leveldb 独占）
 > 是排他资源，并行必须用 `git worktree` + 独立端口/userData 物理隔离，见 `docs/work-protocol.md`。
@@ -7564,7 +7567,241 @@ localStorage 里的**过期**提示词把输入框盖回去，尺寸参数它不
 - 红线命中的「例外词」提示（TB-145）仍只在词表里编辑，没有进清单（它是词表项的属性，不是一个问题）。
 - 问题清单**不落库**：它是算出来的（存了就会和实际状态脱节）。
 - 清单没有「一键全部修」：多数问题需要人判断（比如某个维度到底该填值还是该删）。
-- **未提交**：等杰哥实测后再 add。工作区另有 TB-150 / TB-151 的未提交改动。
+- **已提交**：`ad527ae` —— 与 TB-150 / TB-151 / TB-152 一并收工（verify 全绿 285 文件 / 3664 用例）。
+  真实模型下的实测仍待杰哥确认。
+
+## TB-154 方向 Agent：输入框加模式切换，一句话生成一批「同方向、彼此不同」的图（2026-10-09 阿伟）
+
+**背景**：杰哥原话 ——
+① 「我就需要用最简单的方式来获得**最多不同的同方向图片**」；
+② 「入口我要在**当前的提示词输入框**添加切换模式按钮，开启后就切换到瀚灵的 agent 模式」；
+③ 「**我不要在配方卡上面添加**」（此前我两次建议挂在配方卡上，被明确否决 —— 这条是硬约束）。
+
+**目标**：输入框上加一枚模式切换按钮。开启后输入一句方向描述 → 系统给出骨架 + 变化维度
+→ 一键出一批**彼此差异最大**的同方向图。
+
+**关键设计**（对齐瀚灵「项目 Agent」，但**界面 / 数据 / 入口完全独立**）：
+- **三层**：产品 → 方向 → Agent。**前两层只是标签**（随打随有，不用维护），
+  只有 **Agent** 是要配置的干活单元；**一个方向下可挂多个 Agent**（不同调性 / 卖点）。
+- **Agent 只管「长什么样」**；「这次出多少张 / 什么尺寸」**不进 Agent**
+  （照瀚灵 `agent` 与 `draft` 分离：同一 agent 这次 10 张、下次 30 张，不新建）。
+- **只借用 `farthestPointSample` 这一个纯函数**，绝不碰配方卡的 UI / 数据 / 链路。
+- 通用视觉池预置 6 类（主色 / 装饰形状 / 表面材质 / 光效 / 背景环境 / 字体风格），跟方向无关，备一次永久用。
+
+**验收标准**（能测）：
+1. 输入框出现模式切换按钮；关闭态与开启态**视觉可辨**（开启后按钮高亮 + 占位文案变 + 出现「数量」）；
+2. 开启后输入一句方向并回车 → **直接产生一批图**，中间不需要再点确认；
+3. 同一句方向连出两批，**两批之间不重复**（最远点采样生效，可人工比对）；
+4. 换一个方向 → Agent 自动归到对应「产品 · 方向」下；**同一方向下可存在 ≥2 个 Agent**；
+5. 改「数量」**不新增 Agent**；
+6. `npm run verify` 全绿。
+
+**一期不做**：正 / 负案例库、独立的「必须遵循 / 禁止出现」规则清单、多方向管理界面。
+
+**⚠️ 方向修正（2026-10-09 傍晚，杰哥拍板「我就是要他那套方案」）**
+
+第一版做错了四处，已推翻重做。错在**没把瀚灵的原始数据挖到底**就开工：
+
+| | 我第一版 | **瀚灵实际是** |
+| --- | --- | --- |
+| 输入 | 一句话 | **参考图**（点「反推」）；一句话只是 `description` |
+| 池子 | 全局通用、备一次永久用 | **每个 Agent 自带**（反推生成 or 手写），固定 6 组 |
+| 占位符 | `{{id}}`、只勾选几个维度 | `{id}`**单花括号**、六组全上 |
+| 反向 | 没有这一段 | **【反向Prompt】是三等分之一**，校验「不能为空」 |
+
+**完整蓝本**：`.workbuddy/reference/hanling/hanling-project-agent-blueprint.md`（含实测字段、
+三段式原文、13 条规则原文、反推/延展提示词、多图合并规则）。**照着它做，别再凭印象。**
+
+**进展（2026-10-09 夜）—— 数据层与两条 AI 链路已按瀚灵重做，UI 未动**：
+
+| 已完成 | 文件 | 干什么 |
+| --- | --- | --- |
+| 出厂常量 | `defaults.ts` | 六池 key、**13 条内建规则**（含 6 条合规红线）、出厂三段式模板——**逐字照抄** |
+| 三段式解析/序列化 | `ruleText.ts` | `parse` / `serialize` / 替换占位符 / 问题清单（门槛照抄瀚灵硬校验） |
+| 数据类型 | `types.ts` | 分类 · 方向 · `ruleText`（真相源）· `rules` |
+| 脏数据防御 | `normalize.ts` | 出不了图的条目丢掉；**老数据缺的内建规则逐条补回** |
+| 持久化 | `store.ts` | namespace `directionAgents`（已登记白名单） |
+| **反推** | `reverseRuleText.ts` | 参考图 → 三段式；多图**并发 6**、合并规则照抄瀚灵 |
+| **延展** | `extendRuleText.ts` | 现有配方 + 一句要求 → 更具体的配方 |
+| 组合 | `composePrompts.ts` | 三段式 + 采样 → 一批提示词（**唯一借用品仍是 `farthestPointSample`**） |
+
+- **测试 70 个**（ruleText 31 / normalize 17 / composePrompts 11 / reverse 11），`npm run verify` 全绿。
+- **反推用的模型**：糖包**没有**独立「视觉模型」配置 —— 跟 `creativePool/poolAnalysis.ts` 一样
+  用 `getAgentTextApiProfile`（糖包既有做法就是「用文本模型配置调多模态」），**不为它新造一套配置**。
+- ⚠️ **两处 bug 是测试逮出来的**：① 占位符正则把配方卡的 `{{x}}` 也认了（会留脏字符）→ 加否定环视 +
+  明确报「你写的可能是双花括号」；② `{池名}` 引用与替换各写一份正则的隐患 → 收敛成 `replacePoolPlaceholders` 一处。
+- **待做（UI）**：输入框模式切换 + Agent 编辑器（三段式 + 规则清单）+ 反推入口（拖参考图）+ 接批量出图。
+  **预览图是上一版（基于错误方向），需按新方向重画后再给杰哥看。**
+
+**进展（2026-10-10）—— UI 与出图链路已接通，核心闭环能跑**
+
+预览 v2 杰哥看过、无异议，按它落地：
+
+| 做了什么 | 文件 |
+| --- | --- |
+| 底栏那枚胶囊 + Agent 选择弹窗（左半截切开关、右半截开列表，按「分类 · 方向」分组） | **新** `features/directionAgent/DirectionAgentPicker.tsx`（已登记 `catalog.ts`） |
+| 当前选中的 Agent（持久化 + 迁移校验 + 删条目连带清空） | `directionAgent/store.ts` |
+| 胶囊接入 + 反推进度 + **反推完的就地确认条** + placeholder 文案 | `components/InputBar.tsx` |
+| **三段式 → 变量提示词模板**（接通出图链路的关键） | **新** `features/directionAgent/toVariablePrompt.ts` |
+
+**出图链路怎么接的（关键，别再自己写一套）**：
+`toVariablePrompt()` 把配方转成糖包认的变量提示词格式 → 在 `submitCurrentMode` 里
+`submitTask({ promptOverride: template })` → `src/store.ts:10316` 那段
+`renderVariablePromptBatch(task.prompt, n, task.id)` **自动按数量展开** → 出 N 张。
+**数量直接走 `params.n`**（与普通出图同一个参数，不另开一份）。**并发/重试/去重/落盘全是现成的。**
+
+**调研到的既有能力（已记进 memory，别再重复实现）**：`InputBar` 的「一键衍生」
+（`generateVariablePromptTwoPhase` 两阶段 + 质量校验，**跟瀚灵反推是同一件事**）；
+`src/lib/variablePrompt.ts` 的 `chooseCombinations`（成熟的「多样度优先」）；
+输入框**已支持全窗口拖参考图**；数量**本来就支持任意张（最大并发 20）**。
+
+**测试**：`directionAgent` 模块 **80 个用例**全过；`compliance.test.ts` 12/12 全过。
+**最有说服力的一条**：转出来的模板能被真实引擎 `parseVariablePrompt` 接受
+（`enabled === true`）并 `renderVariablePromptBatch` 展开成 **10 条互不重复**的提示词。
+
+**还没做**：① Agent 编辑器界面（点列表里的「编辑」改配方、改 13 条规则）—— 按钮已留位、
+未接；② **没跑过真实出图**（要 API 额度，没擅自跑）；③ 反推目前用**自己的提示词**，
+没改成复用 `generateVariablePromptTwoPhase` 的分析阶段。
+
+
+## TB-155 水印被删后留下的「死引用」：看得见、清得掉、不再粘回去（2026-10-10 阿伟）
+
+**报障**（杰哥，另一台电脑）：后处理弹窗 3 条错误 —— `[PP-PRESET-001] 引用的水印预设不存在`，
+渠道 baidu / vendor / gdt，线索写「这套水印已被删除」。他的原话：
+
+> 我明明已经有对应水印，也设置好了，但在后处理时一直提示错误。
+
+**现场截图里两个反常**：① 水印库有 5 套水印，「生效范围」选中「头条」，
+但**那一格里一个勾都没有**；② 他确认自己「重新设置过」。
+
+**根因（读代码核实，非推测）**：三条事实拼出这个假象 ——
+
+1. `deletePreset` **刻意不清理参数层引用**（ADR-0002；`storeV2.ts:577`），于是链上留下
+   指向已删预设的**死引用**；
+2. 产出时 `resolveWatermarkPreset` 按 id 在全库找，找不到就**整桶跳过 + `PP-PRESET-001`**
+   （`taskPostprocess.ts:440`，刻意不降级成无水印）；
+3. **死引用在界面上渲染不出来** —— 勾选框只渲染库里真实存在的预设，所以那一格看着就是
+   「没勾」；而 `togglePresetEnabled` 是在**现有清单上增删**（当时含死引用），
+   「重新勾一套」只是把它一起写回 ⇒ **怎么改都还在报错**。
+
+**旁证**：中控台 Excel 的「水印归属」表只覆盖节点级通用值（`consoleImport.ts:914` 只写
+`watermarkPresetIds`），**不含 `byMedia` 那一层** —— 所以「照表格重配一遍」也压不过
+渠道级死引用（`byMedia` 优先于节点级）。
+
+**改动**（三处，都不动产出链路）
+
+| 位置 | 做什么 |
+| --- | --- |
+| `projectTree/params.ts` 新增 `planWatermarkDeadRefCleanup` | 沿**整条继承链**生成清理补丁。只清当前节点的话，值来自上层时点了没反应（症状是「点了清掉还在报错」）。**剔空写 `undefined` 退回继承，不写 `[]`** —— 后者是「明确不加水印」，会把上层配好的压掉 |
+| `PresetManagementTab.tsx` | ① 左栏加提示条「有 N 套水印已不存在」+ 一键「清掉」；② `writePresetIds` 落盘前剔掉库里不存在的 id |
+| `PresetManagementTab.test.tsx` | 新 `describe('已被删除的水印引用（看得见 + 修得动）')` 6 例 |
+
+**关键判据（写代码时最容易写反的一条）**：剔空那一格必须写 `undefined`。
+`[]` 的语义是「这个范围明确不加水印」，用户的原意却是「用上级那套」（他从没见过那条死引用）。
+测试里用 `mergePostprocessNodeOverride` 把两种语义的**合并结果**直接对照钉死。
+
+**⚠️ 顺带修掉一个把 bug 当期望的存量用例**：`⭐ 切到某个渠道后勾选 = 该渠道单独的水印`
+现场是「产品层引用 `preset-shared`，而库里只有 `preset-a`」—— 那正是死引用现场，
+旧代码把它物化写回、用例还把 `['preset-shared', 'preset-a']` 钉成期望。
+已补上 `preset-shared` 进库（普通现场），死引用场景移交新用例覆盖。
+
+**验收**
+
+- `npm run verify` **全绿：290 文件 / 3757 用例**（含本轮新增 13 例；双端 `tsc` + lint + format 全过），
+  2026-10-10 09:33。
+- 新增用例：`params.test.ts` 7 例 + `PresetManagementTab.test.tsx` 6 例。
+- **反向验证两处，均有效**：
+  1. 把 `planWatermarkDeadRefCleanup` 的剔空从 `undefined` 改回写 `kept`（= `[]`）
+     ⇒ **恰好 2 条红**（剔空语义 + 沿链清理），复原后全绿；
+  2. 去掉 `writePresetIds` 的落盘过滤 ⇒ **恰好 1 条红**
+     （「重新勾一套水印时，失效的引用被顺手剔掉」），复原后全绿。
+
+**未做 / 留给后来人**
+
+- **产出链路不改**：仍按 id 全局找、找不到即整桶跳过。这是刻意的（ADR-0002：
+  静默降级成无水印 = 交付了错误的投放素材）。
+- **中控台「水印归属」表仍不覆盖 `byMedia`**：表格里改「这个方向用哪套」压不过渠道级设置。
+  要修得给表加渠道列，属独立改动，未做（`docs/RISK.md` R-124 已登记）。
+- 本轮**未提交**：工作区挂着另一条写线（TB-154 方向 Agent）的未提交改动，
+  `docs/BACKLOG.md` 同一文件里混着对方的改动，按 R-09 / R-79 只 add 本轮文件的原则，
+  提交需先做 hunk 筛选 —— 待杰哥拍板。
+
+---
+
+## TB-156 水印里的图存进程序内 + 矩形 LOGO 不再被压缩拉伸（2026-10-12 阿伟）
+
+**两条需求**（杰哥原话）：
+
+> 添加进水印的图片要保存在程序内，直到我把它删除
+> 还有当前的 LOGO 图层只有正方形的，我有一些矩形的 LOGO 会被压缩拉伸，帮我修复这个问题
+
+**起因是一次报障**（他的另一台电脑）：水印预览提示「画布预览渲染失败，请检查图层素材」，
+后处理记 `[PP-RENDER-001] 渲染失败`，线索行里写着一句主进程的原始英文：
+`Error invoking remote method 'composite:read-image-file': Error: Path is outside allowed application directories`。
+
+### 根因（读代码核实，非推测）
+
+水印编辑器里「从本机磁盘选图」原先把 `{ kind: 'path', path }` 直接写进图层 —— **图本身没进程序**，
+只记了它在盘上的位置。三重后果：
+
+1. **换台机器断图**：配置包里只有路径，B 机没这个盘就是没图；
+2. **同机器重启也断图**：主进程白名单里「本次运行中用对话框选过的目录」是内存 Set
+   （`sessionAllowedRoots`，`electron/ipc-handlers.ts:34`），关掉软件即清空，读图被
+   `assertAllowedPath`（`:289`）拒；
+3. **不进配置包**：`collectCompositeAssetIds` 只收集 `stored`，`path` 型素材导不出去。
+
+**放大器**：`composite:read-image-file` 漏了 `await`（`readImageFilePayload` 是 async）⇒
+被拒的 Promise 逃出它自己的 `try/catch`，渲染侧收到的是主进程内部英文。
+于是「这张素材读不到」这个**可自解**的故障，变成了一句用户看不懂、我们也难查的报错。
+
+### 改动
+
+| 位置 | 做什么 |
+| --- | --- |
+| `compositeAssets.ts` 新增 `storeCompositeAssetFromDataUrl` | 把已读成 dataUrl 的本机图片落进资产库，返回可直接写进图层的 `stored` 引用 |
+| `PresetLayerPanel.selectMediaAsset` / `PresetCanvasEditor.openImagePicker` | 选图改走上面那步 ⇒ **图进程序**，图层只记 `{ kind: 'stored', assetId, name }` |
+| `compositeAssets.ts` 新增 `readLocalAssetImageDataUrl` / `collectLayerAssetIds` / `releaseUnreferencedAssets` | ① 读老 `path` 前先请主进程放行它所在目录；② 删图层 / 删预设时按**引用计数**释放没人再用的图 |
+| `electron/ipc-handlers.ts` 新增 `composite:authorize-asset-path` | 按文件取父目录放行（与 `fs:select-file` 同粒度）。**刻意在渲染进程之外取 dirname** —— Windows 盘根这类边界用字符串切容易切错 |
+| `compositeRendererV2.resolveLayerImage` + `storeV2.adoptLayerAsset` | 读到老 `path` 的内容就**顺手收编**成 `stored`，老预设不必逐张重选图。收编**不进撤销栈**（不是用户做的动作）、**不动 `updatedAt`**（画面一个字没变，动了会让覆盖层缓存整批失效） |
+| `compositeRenderPlan.ts` 新增 `fitMediaSize` + `compositeRendererV2.drawLayer` | **图片 / LOGO 一律按原图比例画**：不裁剪走 contain、裁剪走 cover，两种都不改纵横比 |
+| `storeV2.createLogoLayer` / `replaceOrAddLogoLayer` | 换素材时**把图层框一起按素材比例重算**（长边贴 100）。原来框被写死 100×100、换素材又只动 `asset` ⇒ 矩形 LOGO 一放进去就是歪的 |
+| `PresetManagementTab.pickLogoAsset` | 从 LOGO 库插入前先量一次素材真实尺寸再交给 store |
+
+### 修「变形」时的三个判断
+
+- **为什么在渲染侧兜底，而不是只把放置时的框设对**：框设对只解决「新放进去的」；已经配歪的
+  存量预设、以及用户手动改过 W/H 的那些，照样会变形。
+- **`clip` 打开时走 cover（填满 + 裁掉溢出），不关闭时走 contain（完整显示 + 留白）**：
+  裁剪语义本来就要求填满，而**填满可以靠放大，不必靠拉伸**。
+- **副作用（要在意）**：手动把框拉成别的比例，不再能把图片撑变形（图会等比缩放居中）。
+  这是刻意的；若以后确有「强行拉伸」的场景，得另加一个 per-layer 开关。
+
+### 验收
+
+- `npm run verify` **全绿：290 文件 / 3779 用例**（含本轮新增 22 例；双端 `tsc` + lint + format 全过），
+  2026-10-12 17:06。
+- 新增用例：`compositeRenderPlan.test.ts` 5 例、`compositeRendererV2.test.ts` 2 例、
+  `storeV2.test.ts` 7 例、`compositeAssets.test.ts` 6 例、`ipc-handlers.test.ts` 2 例。
+- **反向验证三处，均精确命中**（探针脚本写 `%TEMP%`，跑完还原）：
+  1. 渲染侧改回「拉成框的宽高」⇒ **恰好 2 条红**（contain + cover 两条）；
+  2. 去掉 `composite:read-image-file` 的 `await` ⇒ **恰好 1 条红**（断言「读不到要 resolve(null) 而不是 reject」）；
+  3. `replaceOrAddLogoLayer` 不再重算框 ⇒ **恰好 3 条红**（矩形 / 竖版 / 替换三条）。
+
+  三条对照用例（「不给素材尺寸时保持正方形」等）全程保持绿 —— 证明探针打中了目标。
+- **顺带被测试抓到的一个真缺陷**：`composite:authorize-asset-path` 第一版是**先归一化再判绝对路径**，
+  而 `path.resolve('relative/x')` 会拿 CWD 补成绝对路径 ⇒ 那个判据恒真、等于放行工作目录。
+  已按 `authorizeCompositeOutputDirectory` 的写法改成先判后归一。
+
+### 未做 / 留给后来人
+
+- **老预设若原图在本机已不存在**，收编无从谈起，只能重选一次图。代码只保证「重选之后不会再坏」。
+- **`{ kind: 'internal' }`（历史形态）**既不迁移也不收集，仍未处理（与 `path` 同类，但本机已无生产者）。
+- 本轮**未提交**：工作区挂着 TB-154（方向 Agent）与 TB-155 的未提交改动，
+  `PresetManagementTab.tsx` / `PresetManagementTab.test.tsx` 同一文件里混着对方的 hunk
+  （R-116 死引用清理），`docs/BACKLOG.md` / `docs/RISK.md` 亦然。按 R-09 / R-79 只 add 本轮文件的原则，
+  提交需先做 hunk 筛选 —— 待杰哥拍板。
+
+
 
 
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDialog } from '../../../hooks/useAppDialog'
+import { storeCompositeAssetFromDataUrl, collectLayerAssetIds, releaseUnreferencedAssets } from '../lib/compositeAssets'
 import { mapLayerPositionToCanvas } from '../lib/compositeRenderPlan'
 import { renderCompositeV2ToCanvas } from '../lib/compositeRendererV2'
 import { fitCompositeTextLayer } from '../lib/compositeTextLayout'
@@ -166,12 +167,15 @@ export function PresetCanvasEditor(props: Props) {
         if (selectedLayerId && preset) {
           const nextLayers = preset.layers.filter((l) => l.id !== selectedLayerId)
           if (nextLayers.length !== preset.layers.length && props.onUpdatePreset) {
+            const removed = preset.layers.filter((l) => l.id === selectedLayerId)
             props.onUpdatePreset({ layers: nextLayers })
             if (selectedLayerId === internalSelectedLayerId) {
               setInternalSelectedLayerId('')
             }
             props.onSelectLayer?.('')
             useStore.getState().showToast('已删除图层', 'success')
+            // 先删后 release：判据读的是「删完之后」的状态（见 `releaseUnreferencedAssets`）
+            void releaseUnreferencedAssets(collectLayerAssetIds(removed), () => useCompositeV2Store.getState())
           }
         }
       }
@@ -361,7 +365,16 @@ export function PresetCanvasEditor(props: Props) {
       ])
       if (!path) return
       const payload = await window.electronAPI.readImageFile(path)
-      if (!payload?.dataUrl) return
+      if (!payload?.dataUrl) {
+        useStore.getState().showToast('读取图片失败，请重试', 'error')
+        return
+      }
+      // 图片存进程序内（不再只记磁盘路径）—— 见 `storeCompositeAssetFromDataUrl` 头注。
+      const asset = await storeCompositeAssetFromDataUrl(payload.dataUrl, path.split(/[\\/]/).pop())
+      if (!asset) {
+        useStore.getState().showToast('图片存入程序失败，请重试', 'error')
+        return
+      }
 
       const img = new Image()
       img.onload = () => {
@@ -373,7 +386,7 @@ export function PresetCanvasEditor(props: Props) {
           height = Math.round(height * scale)
         }
         updateLayer(layer.id, {
-          asset: { kind: 'path', path },
+          asset,
           position:
             layer.position.mode === 'free'
               ? preserveFreeLayerCenter(layer.position, { width, height })
@@ -381,6 +394,7 @@ export function PresetCanvasEditor(props: Props) {
         })
         useStore.getState().showToast('已更换图片素材', 'success')
       }
+      img.onerror = () => useStore.getState().showToast('图片解析失败，请重试', 'error')
       img.src = payload.dataUrl
     } catch {
       useStore.getState().showToast('读取图片失败，请重试', 'error')

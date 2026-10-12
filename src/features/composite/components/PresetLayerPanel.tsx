@@ -13,8 +13,10 @@ import {
 } from '../../../design-system/icons'
 import { useAppDialog } from '../../../hooks/useAppDialog'
 import { useStore } from '../../../store'
+import { collectLayerAssetIds, releaseUnreferencedAssets, storeCompositeAssetFromDataUrl } from '../lib/compositeAssets'
 import { layerWantsIdentifier } from '../lib/compositeIdentifier'
 import { fitCompositeTextLayer } from '../lib/compositeTextLayout'
+import { useCompositeV2Store } from '../storeV2'
 import type { CompositeV2Layer, CompositeV2Preset } from '../lib/compositeV2Types'
 
 type Props = {
@@ -88,11 +90,17 @@ export function PresetLayerPanel({ preset, selectedLayerId, onSelectLayer, onUpd
     useStore.getState().showToast(direction === -1 ? '已上移图层' : '已下移图层', 'success')
   }
 
+  /**
+   * 删图层，并把**只有它还在用**的图片素材从程序里一并释放（见 `releaseUnreferencedAssets`）。
+   * 顺序不能反：先删再 release，否则判据会读到一个「自己还引用着」的状态。
+   */
   function removeLayer(layerId: string) {
     if (!preset) return
+    const removed = preset.layers.filter((layer) => layer.id === layerId)
     onUpdatePreset({ layers: preset.layers.filter((layer) => layer.id !== layerId) })
     if (selectedLayerId === layerId) onSelectLayer('')
     useStore.getState().showToast('已删除图层', 'success')
+    void releaseUnreferencedAssets(collectLayerAssetIds(removed), () => useCompositeV2Store.getState())
   }
 
   async function selectMediaAsset(layer: Extract<CompositeV2Layer, { type: 'image' | 'logo' }>) {
@@ -107,7 +115,20 @@ export function PresetLayerPanel({ preset, selectedLayerId, onSelectLayer, onUpd
       const path = await window.electronAPI.selectFile([{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }])
       if (!path) return
       const payload = await window.electronAPI.readImageFile(path)
-      if (!payload?.dataUrl) return
+      if (!payload?.dataUrl) {
+        useStore.getState().showToast('读取图片失败，请重试', 'error')
+        return
+      }
+      /*
+       * 图片**存进程序内**，图层只记一个资产库引用 —— 不再写 `{ kind: 'path' }`。
+       * 只记路径的话，关掉软件（路径白名单是内存态）或换台机器，这张图就读不到了。
+       * 详见 `storeCompositeAssetFromDataUrl` 头注。
+       */
+      const asset = await storeCompositeAssetFromDataUrl(payload.dataUrl, path.split(/[\\/]/).pop())
+      if (!asset) {
+        useStore.getState().showToast('图片存入程序失败，请重试', 'error')
+        return
+      }
       const img = new Image()
       img.onload = () => {
         let width = img.width
@@ -118,11 +139,12 @@ export function PresetLayerPanel({ preset, selectedLayerId, onSelectLayer, onUpd
           height = Math.round(height * scale)
         }
         updateLayer(layer.id, {
-          asset: { kind: 'path', path },
+          asset,
           position: { ...layer.position, width, height },
         })
         useStore.getState().showToast('已替换图片素材', 'success')
       }
+      img.onerror = () => useStore.getState().showToast('图片解析失败，请重试', 'error')
       img.src = payload.dataUrl
     } catch {
       useStore.getState().showToast('读取图片失败，请重试', 'error')

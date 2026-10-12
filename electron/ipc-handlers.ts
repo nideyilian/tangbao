@@ -1296,9 +1296,18 @@ export function registerIpcHandlers(): void {
     },
   )
 
+  /*
+   * ⚠️ 这两个 handler 里的 `await` **不是可省的**：`readImageFilePayload` /
+   * `listCompositeImageFiles` 都是 async，少了 `await` 时抛错**不会**落进这里的 `try/catch`，
+   * 而是以「拒绝的 Promise」逃到 IPC 层。渲染进程拿到的是
+   * `Error invoking remote method 'composite:read-image-file': Error: Path is outside allowed
+   * application directories` 这种主进程内部英文 —— 于是「这张素材读不到」这个**可自解**的
+   * 故障，变成了一句用户看不懂、我们也难查的报错（2026-10-12 杰哥报障，水印预览与后处理
+   * 一起挂在这一条上）。宁可它返回 `null` 让调用方按「素材缺失」处理。
+   */
   handleChecked('composite:read-image-file', async (_event, { filePath }: { filePath: string }) => {
     try {
-      return readImageFilePayload(filePath)
+      return await readImageFilePayload(filePath)
     } catch (err) {
       console.error('读取合成图片失败:', err)
       return null
@@ -1307,7 +1316,7 @@ export function registerIpcHandlers(): void {
 
   handleChecked('composite:list-image-files', async (_event, { dirPath }: { dirPath: string }) => {
     try {
-      return listCompositeImageFiles(dirPath)
+      return await listCompositeImageFiles(dirPath)
     } catch (err) {
       console.error('列出合成图片失败:', err)
       return []
@@ -1381,6 +1390,34 @@ export function registerIpcHandlers(): void {
   handleChecked('composite:authorize-output-directory', async (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object') return false
     return authorizeCompositeOutputDirectory((payload as { dirPath?: unknown }).dirPath)
+  })
+
+  /**
+   * 放行「某个素材文件所在的目录」，只服务于一件事：把老预设里 `{ kind: 'path' }` 的图片
+   * **收进程序内**那一次读取。
+   *
+   * 为什么需要它：那种形态只记了盘上的位置，而路径白名单里属于「本次运行中用对话框选过」
+   * 的目录是内存态，重启就清空 —— 于是老预设的图在新一次启动后**读都读不到**，
+   * 自然也就没机会收编成资产（2026-10-12 杰哥报障的现场）。这里按文件取父目录再放行，
+   * 与「选图对话框」放行的是同一个粒度（`fs:select-file` 也是 `addAllowedRoot(dirname)`）。
+   *
+   * 刻意**不**在渲染进程自己拼父目录：Windows 盘根（`D:\a.png` → `D:\`）这类边界
+   * 用字符串切容易切错，交给 `path.dirname` 一条路走。
+   *
+   * 安全面：等价于已有的 `composite:authorize-output-directory`（同样接受任意绝对路径），
+   * 未新开口子 —— 两者都只能放行目录，读文件时仍受 `assertAllowedPath` 与图片扩展名过滤约束。
+   */
+  handleChecked('composite:authorize-asset-path', async (_event, { filePath }: { filePath: string }) => {
+    if (typeof filePath !== 'string') return false
+    const trimmed = filePath.trim()
+    /*
+     * ⚠️ 必须**先判绝对路径、再归一化**：`normalizeFsPath` 走的是 `path.resolve`，
+     * 它会拿 CWD 把 `relative/logo.png` 补成绝对路径 —— 先归一化的话这个判据恒真，
+     * 等于把「用户当前工作目录」也放行了（`authorizeCompositeOutputDirectory` 同样是先判后归一）。
+     */
+    if (!trimmed || !path.isAbsolute(trimmed)) return false
+    addAllowedRoot(path.dirname(normalizeFsPath(trimmed)))
+    return true
   })
 
   handleChecked('fs:read-file-buffer', async (_event, { filePath }: { filePath: string }) => {

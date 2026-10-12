@@ -12,6 +12,7 @@ import {
   normalizePostprocessNodeOverride,
   normalizeProjectNodeParamsMap,
   pickDeepestCollectionId,
+  planWatermarkDeadRefCleanup,
   resolveProjectImageVideoParams,
   resolveProjectNodeKind,
   resolveProjectNodePathNames,
@@ -885,5 +886,111 @@ describe('按渠道的图转视频参数（imageVideoByMedia）', () => {
       },
     })
     expect(normalized[DIRECTION]?.imageVideoByMedia).toEqual({ gdt: { imagesPerVideo: 3 } })
+  })
+})
+
+/**
+ * 「水印被删之后参数层留下的死引用」的清理。
+ *
+ * 背景（2026-10-10 报障）：那台电脑上后处理一直报 `PP-PRESET-001`，而水印库里有水印、
+ * 界面上也没勾错 —— 因为死引用在勾选框里渲染不出来。必须有一个显式的清理出口。
+ */
+describe('planWatermarkDeadRefCleanup —— 清掉指向已删预设的引用', () => {
+  const EXISTING: ReadonlySet<string> = new Set(['preset-alive'])
+
+  it('⭐ 剔空的那一格交给调用方写 undefined（退回继承），不是 []（那是「明确不加水印」）', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: { postprocess: { watermarkPresetIds: ['preset-dead'] } },
+    }
+    const plans = planWatermarkDeadRefCleanup(COLLECTIONS, params, DIRECTION, EXISTING)
+    expect(plans).toEqual([{ collectionId: DIRECTION, patch: { watermarkPresetIds: undefined }, removed: 1 }])
+
+    // 反向验证：两种写法合并出来的结果**完全不同**，这正是本函数唯一容易写错的地方。
+    // 写 undefined → 这一格没了，继续继承上层（用户「其实是级联到产品那套」的预期）；
+    // 写 []      → 这一格变成「明确不加水印」，把产品层配好的水印**彻底压掉**且不再受上层影响。
+    expect(mergePostprocessNodeOverride({ watermarkPresetIds: ['preset-dead'] }, plans[0]!.patch)).toBeUndefined()
+    expect(mergePostprocessNodeOverride({ watermarkPresetIds: ['preset-dead'] }, { watermarkPresetIds: [] })).toEqual({
+      watermarkPresetIds: [],
+    })
+  })
+
+  it('还有有效的就只剔掉失效的，顺序照旧', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: { postprocess: { watermarkPresetIds: ['preset-dead', 'preset-alive', 'preset-gone'] } },
+    }
+    const plans = planWatermarkDeadRefCleanup(COLLECTIONS, params, DIRECTION, EXISTING)
+    expect(plans).toEqual([{ collectionId: DIRECTION, patch: { watermarkPresetIds: ['preset-alive'] }, removed: 2 }])
+  })
+
+  it('⭐ 沿整条继承链清：值来自上层时也只清当前节点会点了没反应', () => {
+    const params: ProjectNodeParamsMap = {
+      [LINE]: { postprocess: { watermarkPresetIds: ['preset-line-dead'] } },
+      [PRODUCT]: { postprocess: { watermarkPresetIds: ['preset-alive', 'preset-product-dead'] } },
+    }
+    const plans = planWatermarkDeadRefCleanup(COLLECTIONS, params, DIRECTION, EXISTING)
+    // 两条都给出，一次写干净；只清当前节点（此例里方向什么都没写）的话链路照旧报错
+    expect(plans).toEqual([
+      { collectionId: LINE, patch: { watermarkPresetIds: undefined }, removed: 1 },
+      { collectionId: PRODUCT, patch: { watermarkPresetIds: ['preset-alive'] }, removed: 1 },
+    ])
+  })
+
+  it('渠道级那一格同样清，且**不动**没问题的别的渠道', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: {
+        postprocess: {
+          byMedia: {
+            toutiao: { watermarkPresetIds: ['preset-dead'] },
+            baidu: { watermarkPresetIds: ['preset-alive'] },
+          },
+        },
+      },
+    }
+    const plans = planWatermarkDeadRefCleanup(COLLECTIONS, params, DIRECTION, EXISTING)
+    expect(plans).toEqual([
+      {
+        collectionId: DIRECTION,
+        patch: { byMedia: { toutiao: { watermarkPresetIds: undefined } } },
+        removed: 1,
+      },
+    ])
+    // baidu 那一格连键都不出现在补丁里 —— 出现在补丁里就会被 `mergeByMediaOverride` 动一次
+    expect(Object.keys(plans[0]!.patch.byMedia ?? {})).toEqual(['toutiao'])
+  })
+
+  it('渠道级还有有效的：剔掉失效的，同胞的导出位置字段原样保留', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: {
+        postprocess: {
+          byMedia: { gdt: { watermarkPresetIds: ['preset-dead', 'preset-alive'], outputDirs: ['D:/投放'] } },
+        },
+      },
+    }
+    const plans = planWatermarkDeadRefCleanup(COLLECTIONS, params, DIRECTION, EXISTING)
+    expect(plans).toEqual([
+      {
+        collectionId: DIRECTION,
+        patch: { byMedia: { gdt: { watermarkPresetIds: ['preset-alive'], outputDirs: ['D:/投放'] } } },
+        removed: 1,
+      },
+    ])
+  })
+
+  it('没有死引用时返回空数组：不产生「其实什么都没改」的写盘', () => {
+    const params: ProjectNodeParamsMap = {
+      [PRODUCT]: { postprocess: { watermarkPresetIds: ['preset-alive'] } },
+      [DIRECTION]: { postprocess: { byMedia: { toutiao: { watermarkPresetIds: ['preset-alive'] } } } },
+    }
+    expect(planWatermarkDeadRefCleanup(COLLECTIONS, params, DIRECTION, EXISTING)).toEqual([])
+    // 空数组（「明确不加水印」）里没有 id 可剔，同样不该产生补丁
+    const explicitEmpty: ProjectNodeParamsMap = { [DIRECTION]: { postprocess: { watermarkPresetIds: [] } } }
+    expect(planWatermarkDeadRefCleanup(COLLECTIONS, explicitEmpty, DIRECTION, EXISTING)).toEqual([])
+  })
+
+  it('节点没有归属（collectionId 为 null）时无事发生', () => {
+    const params: ProjectNodeParamsMap = {
+      [DIRECTION]: { postprocess: { watermarkPresetIds: ['preset-dead'] } },
+    }
+    expect(planWatermarkDeadRefCleanup(COLLECTIONS, params, null, EXISTING)).toEqual([])
   })
 })

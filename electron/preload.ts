@@ -52,6 +52,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('composite:save-image', { filePath, bytes }),
   authorizeCompositeOutputDirectory: (dirPath: string) =>
     ipcRenderer.invoke('composite:authorize-output-directory', { dirPath }),
+  // 「我要读这个素材文件，请放行它所在的目录」—— 只用于把老预设里 `{kind:'path'}` 的图
+  // 收进程序内那一次（见 `composite:authorize-asset-path` 的说明），不是常规读取路径
+  authorizeCompositeAssetPath: (filePath: string) => ipcRenderer.invoke('composite:authorize-asset-path', { filePath }),
   saveJson: (filePath: string, data: unknown) => ipcRenderer.invoke('fs:save-json', { filePath, data }),
   saveText: (filePath: string, content: string) => ipcRenderer.invoke('fs:save-text', { filePath, content }),
   ensureDir: (dirPath: string) => ipcRenderer.invoke('fs:ensure-dir', { dirPath }),

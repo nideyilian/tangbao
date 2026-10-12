@@ -1,5 +1,9 @@
-import { mapLayerPositionToCanvas, planBackgroundFit } from './compositeRenderPlan'
-import { getCompositeAssetObjectUrl } from './compositeAssets'
+import { fitMediaSize, mapLayerPositionToCanvas, planBackgroundFit } from './compositeRenderPlan'
+import {
+  getCompositeAssetObjectUrl,
+  readLocalAssetImageDataUrl,
+  storeCompositeAssetFromDataUrl,
+} from './compositeAssets'
 import { ByteLruCache } from '../../../lib/byteLruCache'
 import {
   blobToDataUrl,
@@ -208,7 +212,38 @@ export async function renderOverlayAt(
   return overlay
 }
 
-async function resolveLayerImage(layer: CompositeV2MediaLayer) {
+/**
+ * 已经触发过收编的「预设 + 图层」（同一次运行里不重复触发）。
+ *
+ * 正常路径下 `imageCache` 已经挡住了重复读取，这个 Set 只是兜住并发首帧
+ * （水印预览与后处理可能同时第一次渲染同一套预设）。
+ */
+const adoptingLayerKeys = new Set<string>()
+
+/**
+ * 把图层上「本机磁盘路径」型素材**收编**为程序内的资产引用。
+ *
+ * 这是**存量数据的自愈**：2026-10-12 起新建/替换素材已经直接写 `stored`，但历史预设里还留着
+ * `{ kind: 'path' }` —— 报障「这套水印的预览与产出一起失败」的正是它们。读到一次内容就把它
+ * 存进资产库并改写图层，用户不必把这套水印里的图逐张重选一遍，也不必理解「路径白名单」。
+ *
+ * 落库失败只记日志：这一步是「顺手做的」，绝不能因为它让画面渲染不出来。
+ */
+async function adoptLegacyLayerAsset(presetId: string, layerId: string, dataUrl: string, name?: string) {
+  const key = `${presetId}\u0000${layerId}`
+  if (adoptingLayerKeys.has(key)) return
+  adoptingLayerKeys.add(key)
+  try {
+    const asset = await storeCompositeAssetFromDataUrl(dataUrl, name)
+    if (!asset) return
+    const { useCompositeV2Store } = await import('../storeV2')
+    useCompositeV2Store.getState().adoptLayerAsset(presetId, layerId, asset)
+  } catch (error) {
+    console.error('收编本机素材失败:', error)
+  }
+}
+
+async function resolveLayerImage(layer: CompositeV2MediaLayer, presetId: string) {
   if (!layer.asset) return null
   if (layer.asset.kind === 'dataUrl' && layer.asset.dataUrl) {
     return loadImage(layer.asset.dataUrl)
@@ -232,10 +267,12 @@ async function resolveLayerImage(layer: CompositeV2MediaLayer) {
   const cacheKey = `path:${path}`
   const cached = imageCache.get(cacheKey)
   if (cached) return cached
-  const api = window.electronAPI
-  const payload = await api?.readImageFile?.(path)
-  if (!payload?.dataUrl) return null
-  return loadImage(payload.dataUrl, cacheKey)
+  // 老形态：只记了盘上位置。先请主进程放行它所在目录再读（那种目录只在「选图那一次会话」
+  // 的白名单里），读到就顺手收编成程序内的资产 —— 下一次启动不再依赖磁盘路径。
+  const dataUrl = await readLocalAssetImageDataUrl(path)
+  if (!dataUrl) return null
+  void adoptLegacyLayerAsset(presetId, layer.id, dataUrl, path.split(/[\\/]/).pop())
+  return loadImage(dataUrl, cacheKey)
 }
 
 function applyShadow(
@@ -281,18 +318,35 @@ export async function drawLayer(
   applyShadow(ctx, layer, preset.baseCanvas, target)
 
   if (layer.type !== 'text') {
-    const image = await resolveLayerImage(layer)
+    const image = await resolveLayerImage(layer, preset.id)
     if (image) {
+      /*
+       * 按**原图比例**画进框 —— 绝不把图拉成框的宽高（`fitMediaSize` 头注记了这次的报障）。
+       * 「裁剪」是「填满并裁掉溢出」，所以走 cover：填满靠放大，不靠拉伸；
+       * 不裁剪时走 contain，完整显示、居中，框比图大就留白。
+       */
+      const sourceWidth = getSourceWidth(image)
+      const sourceHeight = getSourceHeight(image)
+      const drawn =
+        sourceWidth > 0 && sourceHeight > 0
+          ? fitMediaSize(
+              { width: sourceWidth, height: sourceHeight },
+              { width: rect.width, height: rect.height },
+              layer.clip ? 'cover' : 'contain',
+            )
+          : // 解出来是 0 尺寸（素材损坏）：退回按框画。宁可这一层画不出来，
+            // 也不能让一个几何错误把整批产出带走 —— 那会把一张坏图放大成「整个方向都没产出」。
+            { width: rect.width, height: rect.height }
       if (layer.clip) {
         const radius = Math.min(layer.radius, rect.width / 2, rect.height / 2)
         ctx.save()
         ctx.beginPath()
         ctx.roundRect(-rect.width / 2, -rect.height / 2, rect.width, rect.height, radius)
         ctx.clip()
-        ctx.drawImage(image, -rect.width / 2, -rect.height / 2, rect.width, rect.height)
+        ctx.drawImage(image, -drawn.width / 2, -drawn.height / 2, drawn.width, drawn.height)
         ctx.restore()
       } else {
-        ctx.drawImage(image, -rect.width / 2, -rect.height / 2, rect.width, rect.height)
+        ctx.drawImage(image, -drawn.width / 2, -drawn.height / 2, drawn.width, drawn.height)
       }
       const strokeWidth = getScaledLayerStrokeWidth(layer.stroke, preset.baseCanvas, target)
       if (strokeWidth > 0) {

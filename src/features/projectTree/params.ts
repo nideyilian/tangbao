@@ -282,6 +282,74 @@ export function resolveNodeWatermarkBindingsByMedia(
   return result
 }
 
+/** 一条「清掉已失效的水印引用」的写入计划。 */
+export interface WatermarkDeadRefCleanup {
+  /** 要改的节点 */
+  collectionId: string
+  /** 交给 `setPostprocessOverride` 的补丁（里层的 `undefined` = 撤掉那一格） */
+  patch: PostprocessNodeOverride
+  /** 这条补丁一共剔掉几个 id */
+  removed: number
+}
+
+/**
+ * 清掉某个节点**继承链**上所有「指向已不存在的水印」的引用。
+ *
+ * **为什么需要它**：`deletePreset` 刻意不清理参数层引用（ADR-0002），于是链上会留下
+ * 「死引用」—— 产出时按 id 找不到预设就**整桶跳过 + `PP-PRESET-001`**
+ * （`taskPostprocess.ts` 的水印解析段）。而这条死引用在界面上**看不出来**：
+ * 水印库只渲染真实存在的预设，死引用渲染不出来，表现为「这个范围一套都没勾」；
+ * 用户重新勾也修不掉（勾选是在现有清单上增删，死引用一直粘着被一起写回）。
+ * 结果就是「我明明配了水印，却一直报错，怎么改都不行」——必须有一个显式的出口。
+ *
+ * **为什么沿整条链清，而不是只清当前节点**：清单是**最深一次声明覆盖上层**，
+ * 所以要影响产出本来只需清最深那一层；但用户看到的是「这个范围用哪些水印」，
+ * 他分不清也不该去关心值落在哪一层。链上任何一层的死引用都是垃圾（它永远不可能
+ * 生效成一套真的水印），一并清掉，点一次就能让当前范围的产出恢复正常。
+ *
+ * ⚠️ **剔空的那一格写 `undefined` 而不是 `[]`**：这是本函数唯一容易写错的地方。
+ * `[]` 的语义是「这个范围明确不加水印」，会**压掉上层配好的水印**；而一条只剩死引用的
+ * 清单，用户的真实意图是「用上级那套」（他从来没见过那条死引用）。剔空 = 这一格没配过。
+ */
+export function planWatermarkDeadRefCleanup(
+  collections: AssetCollection[],
+  params: ProjectNodeParamsMap,
+  collectionId: string | null,
+  existingPresetIds: ReadonlySet<string>,
+): WatermarkDeadRefCleanup[] {
+  const result: WatermarkDeadRefCleanup[] = []
+  for (const entry of resolveProjectOverrideChain(collections, params, collectionId)) {
+    const patch: PostprocessNodeOverride = {}
+    let removed = 0
+
+    const declared = entry.override.watermarkPresetIds
+    if (Array.isArray(declared)) {
+      const kept = declared.filter((id) => existingPresetIds.has(id))
+      if (kept.length !== declared.length) {
+        removed += declared.length - kept.length
+        patch.watermarkPresetIds = kept.length > 0 ? kept : undefined
+      }
+    }
+
+    // 渠道级那一份同理。逐格判：只动真的有死引用的渠道，其余渠道原样保留
+    const byMedia: Record<string, PostprocessMediaOverride> = {}
+    for (const [mediaId, perMedia] of Object.entries(entry.override.byMedia ?? {})) {
+      const perDeclared = perMedia?.watermarkPresetIds
+      if (!Array.isArray(perDeclared)) continue
+      const kept = perDeclared.filter((id) => existingPresetIds.has(id))
+      if (kept.length === perDeclared.length) continue
+      removed += perDeclared.length - kept.length
+      byMedia[mediaId] = { ...perMedia, watermarkPresetIds: kept.length > 0 ? kept : undefined }
+    }
+    if (Object.keys(byMedia).length > 0) patch.byMedia = byMedia
+
+    // 用计数判空而不是 `Object.keys(patch)`：剔空时字段值是 `undefined`，
+    // 键仍然存在，按键判会把「其实什么都没改」也算成一条补丁，白白写一次盘
+    if (removed > 0) result.push({ collectionId: entry.collectionId, patch, removed })
+  }
+  return result
+}
+
 /** 归一化 id 列表：去空、去重、保序。**空数组有效**（水印 = 显式不加水印 / 参与产出 = 一个渠道都不投）。 */
 function normalizeIdList(raw: unknown): string[] {
   const ids: string[] = []

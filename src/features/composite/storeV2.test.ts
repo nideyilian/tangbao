@@ -481,3 +481,156 @@ describe('composite v2 store state factory', () => {
     expect(store.getState().presets.map((preset) => preset.id)).toEqual([...before, 'brand-new'])
   })
 })
+
+/** 带素材的图片/LOGO 图层字面量（只填断言用得上的字段，其余走默认）。 */
+function mediaLayerFixture(id: string, asset: CompositeV2ImageLayer['asset']): CompositeV2ImageLayer {
+  return {
+    id,
+    type: 'image',
+    name: 'Image Layer',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    rotation: 0,
+    position: { mode: 'free', x: 0, y: 0, width: 240, height: 120 },
+    shadow: { enabled: false, color: '#000000', x: 0, y: 4, blur: 12, opacity: 0.25 },
+    asset,
+    radius: 0,
+    clip: false,
+  }
+}
+
+/*
+ * 2026-10-12 报障：「LOGO 图层只有正方形的，矩形 LOGO 会被压缩拉伸」。
+ * 根因之一是 LOGO 图层的框被写死成 100×100，换素材时又只动 asset、不动 position。
+ */
+describe('LOGO 图层按素材原图比例设框（2026-10-12 报障）', () => {
+  function presetWithLogoLayer() {
+    const store = createCompositeV2Store()
+    const preset = { ...createDefaultCompositeV2Preset(10), id: 'preset-a', name: 'Preset A' }
+    store.setState({ presets: [preset] })
+    return { store, preset }
+  }
+
+  it('⭐ 矩形素材：长边贴 100，短边等比缩 —— 不再是 100×100 的正方框', () => {
+    const { store, preset } = presetWithLogoLayer()
+
+    const layerId = store
+      .getState()
+      .replaceOrAddLogoLayer(preset.id, { kind: 'stored', assetId: 'asset-1', name: '京东保LOGO' }, undefined, {
+        width: 300,
+        height: 100,
+      })
+
+    const logo = store.getState().presets[0]!.layers.find((layer) => layer.id === layerId)!
+    expect(logo.position.width).toBe(100)
+    expect(logo.position.height).toBe(33)
+    expect(logo.position.width / logo.position.height).toBeCloseTo(3, 1)
+  })
+
+  it('竖版素材：高是长边，宽按比例缩', () => {
+    const { store, preset } = presetWithLogoLayer()
+
+    const layerId = store
+      .getState()
+      .replaceOrAddLogoLayer(preset.id, { kind: 'stored', assetId: 'asset-2' }, undefined, {
+        width: 100,
+        height: 400,
+      })
+
+    const logo = store.getState().presets[0]!.layers.find((layer) => layer.id === layerId)!
+    expect(logo.position.height).toBe(100)
+    expect(logo.position.width).toBe(25)
+  })
+
+  it('不给素材尺寸时保持正方形（空白 LOGO 图层没有比例可依，不猜一个）', () => {
+    const { store, preset } = presetWithLogoLayer()
+
+    const layerId = store.getState().replaceOrAddLogoLayer(preset.id, { kind: 'stored', assetId: 'asset-3' })
+
+    const logo = store.getState().presets[0]!.layers.find((layer) => layer.id === layerId)!
+    expect(logo.position.width).toBe(100)
+    expect(logo.position.height).toBe(100)
+  })
+
+  it('替换已有 LOGO：锚点与边距保留，只换素材与框尺寸', () => {
+    const { store, preset } = presetWithLogoLayer()
+    const firstId = store
+      .getState()
+      .replaceOrAddLogoLayer(preset.id, { kind: 'stored', assetId: 'asset-old' }, undefined, {
+        width: 100,
+        height: 100,
+      })
+
+    const secondId = store
+      .getState()
+      .replaceOrAddLogoLayer(preset.id, { kind: 'stored', assetId: 'asset-new' }, undefined, {
+        width: 200,
+        height: 100,
+      })
+
+    expect(secondId).toBe(firstId)
+    const logo = store.getState().presets[0]!.layers[0]!
+    expect(logo).toMatchObject({ type: 'logo', asset: { kind: 'stored', assetId: 'asset-new' } })
+    expect(logo.position.width / logo.position.height).toBeCloseTo(2, 1)
+    if (logo.position.mode !== 'anchor') throw new Error('Expected an anchor position')
+    expect(logo.position.anchor).toBe('top-left')
+    expect(logo.position.marginX).toBe(20)
+  })
+
+  it('尺寸非法（0 / NaN）退回正方形，不把框算成 0', () => {
+    const { store, preset } = presetWithLogoLayer()
+
+    const layerId = store
+      .getState()
+      .replaceOrAddLogoLayer(preset.id, { kind: 'stored', assetId: 'asset-4' }, undefined, {
+        width: 0,
+        height: 0,
+      })
+
+    const logo = store.getState().presets[0]!.layers.find((layer) => layer.id === layerId)!
+    expect(logo.position.width).toBe(100)
+    expect(logo.position.height).toBe(100)
+  })
+})
+
+/*
+ * 收编：老预设里 `{ kind: 'path' }` 的素材被读到之后，就地换成程序内的 `stored`。
+ * 它是**渲染时顺手做的**，所以绝不能产生用户可见的副作用（撤销栈、内容修订号）。
+ */
+describe('adoptLayerAsset —— 老 path 素材收编（2026-10-12）', () => {
+  it('⭐ 只换素材引用：不动 updatedAt、不进撤销栈', () => {
+    const store = createCompositeV2Store()
+    const preset = { ...createDefaultCompositeV2Preset(10), id: 'preset-a', name: 'Preset A' }
+    store.setState({
+      presets: [
+        { ...preset, layers: [mediaLayerFixture('image-layer-x', { kind: 'path', path: 'D:/素材/角标.png' })] },
+      ],
+    })
+    const updatedAtBefore = store.getState().presets[0]!.updatedAt
+    const canUndoBefore = store.getState().canUndo
+
+    store
+      .getState()
+      .adoptLayerAsset(preset.id, 'image-layer-x', { kind: 'stored', assetId: 'asset-1', name: '角标.png' })
+
+    expect(store.getState().presets[0]!.layers[0]).toMatchObject({
+      asset: { kind: 'stored', assetId: 'asset-1', name: '角标.png' },
+    })
+    // 画面一个字都没变：动了 updatedAt 会让覆盖层缓存整批失效
+    expect(store.getState().presets[0]!.updatedAt).toBe(updatedAtBefore)
+    // 用户没做这个动作，不该能「撤」它
+    expect(store.getState().canUndo).toBe(canUndoBefore)
+  })
+
+  it('图层 id 找不到时不产生任何改动（返回同一份 presets 引用）', () => {
+    const store = createCompositeV2Store()
+    const preset = { ...createDefaultCompositeV2Preset(10), id: 'preset-a', name: 'Preset A' }
+    store.setState({ presets: [{ ...preset, layers: [mediaLayerFixture('image-layer-x', null)] }] })
+    const before = store.getState().presets
+
+    store.getState().adoptLayerAsset(preset.id, 'missing-layer', { kind: 'stored', assetId: 'asset-1' })
+
+    expect(store.getState().presets).toBe(before)
+  })
+})

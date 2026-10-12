@@ -1046,3 +1046,57 @@ describe('fs:ensure-dir 的失败原因必须可诊断（TB-049 / R-62）', () =
     // 反向验证锚点：若改回 `return false`，上面这两条立刻挂
   })
 })
+
+/*
+ * 老水印里的「本机选图」只记了盘上位置，而那种目录只在**选图那一次运行**的白名单里
+ * （内存 Set、重启清空）。所以点开一套老水印时，渲染侧会先请主进程放行素材所在目录，
+ * 读到内容才有机会把它收编进程序内 —— 这条通道就是那次放行（2026-10-12 报障）。
+ */
+describe('composite:authorize-asset-path —— 放行老素材所在目录', () => {
+  const trustedUrl = new URL('../dist/index.html', import.meta.url).href
+  const trustedEvent = () => {
+    const frame = { url: trustedUrl }
+    return { senderFrame: frame, sender: { mainFrame: frame } }
+  }
+  /** 白名单之外的目录：初始状态下它里面的文件读不到。 */
+  const outsideRoot = mkdtempSync(path.join(os.tmpdir(), 'composite-outside-'))
+
+  afterAll(() => {
+    rmSync(outsideRoot, { recursive: true, force: true })
+  })
+
+  async function resolveHandler<T>(channel: string) {
+    vi.mocked(ipcMain.handle).mockClear()
+    const mod = await import('./ipc-handlers')
+    mod.registerIpcHandlers()
+    const call = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === channel)
+    expect(call).toBeTruthy()
+    return call![1] as unknown as (event: unknown, payload: T) => Promise<unknown>
+  }
+
+  it('⭐ 放行之后原本被挡住的素材就能读到（收编的前提）', async () => {
+    const assetPath = path.join(outsideRoot, 'nested', 'logo.png')
+    writeFixtureFile(assetPath)
+    const read = await resolveHandler<{ filePath: string }>('composite:read-image-file')
+
+    /*
+     * 先证明它**确实被挡着** —— 少了这一步，下面那条会因为「本来就允许」而假绿。
+     * 顺带钉住「读不到要 resolve(null) 而不是 reject」：`readImageFilePayload` 是 async，
+     * handler 少了 `await` 的话这里收到的是主进程原始英文报错（正是这次报障的观感）。
+     */
+    await expect(read(trustedEvent(), { filePath: assetPath })).resolves.toBeNull()
+
+    const authorize = await resolveHandler<{ filePath: string }>('composite:authorize-asset-path')
+    await expect(authorize(trustedEvent(), { filePath: assetPath })).resolves.toBe(true)
+
+    await expect(read(trustedEvent(), { filePath: assetPath })).resolves.toMatchObject({ name: 'logo.png' })
+  })
+
+  it('相对路径、空串、非字符串一律拒绝（不把 CWD 当成受信根）', async () => {
+    const authorize = await resolveHandler<{ filePath: string }>('composite:authorize-asset-path')
+
+    await expect(authorize(trustedEvent(), { filePath: 'relative/logo.png' })).resolves.toBe(false)
+    await expect(authorize(trustedEvent(), { filePath: '   ' })).resolves.toBe(false)
+    await expect(authorize(trustedEvent(), { filePath: null as unknown as string })).resolves.toBe(false)
+  })
+})

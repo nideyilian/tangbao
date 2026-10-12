@@ -8,13 +8,16 @@ import {
   TrashIcon as Trash2,
 } from '../../../design-system/icons'
 import { filterPresetsByProduct, filterPresetsByQuery, filterUnassignedPresets } from '../lib/compositePresetLibrary'
+import { getSourceHeight, getSourceWidth, loadImageOriented } from '../../../lib/canvasImage'
 import type { CompositeFsImage } from '../lib/compositeTypes'
 import type { CompositeV2Preset } from '../lib/compositeV2Types'
 import {
+  collectLayerAssetIds,
   dataUrlToCompositeBlob,
   getCompositeAssetObjectUrl,
   isCompositeAssetReferenced,
   removeCompositeAsset,
+  releaseUnreferencedAssets,
   storeCompositeBlobs,
 } from '../lib/compositeAssets'
 import {
@@ -38,7 +41,12 @@ import { bindPresetToNode } from '../lib/presetBinding'
 import { runPresetProductMigration } from '../presetProductMigrationRunner'
 import { useCompositeV2Store } from '../storeV2'
 import { useStore } from '../../../store'
-import { listProductNodes, resolveNodeWatermarkBinding, resolveOwningProductId } from '../../projectTree/params'
+import {
+  listProductNodes,
+  planWatermarkDeadRefCleanup,
+  resolveNodeWatermarkBinding,
+  resolveOwningProductId,
+} from '../../projectTree/params'
 import { useProjectTreeParamsStore } from '../../projectTree/storeProjectTreeParams'
 import { usePostprocessMediaStore } from '../../../storePostprocessMedia'
 import { useAssetLibraryStore } from '../../assetLibrary/store'
@@ -144,6 +152,24 @@ export function PresetManagementTab() {
   const effectivePresetIds = binding.presetIds
   const isPresetEnabled = (presetId: string) => effectivePresetIds.includes(presetId)
 
+  /** 全库 id 集合：判断「这个引用还找得到预设吗」的唯一依据。 */
+  const existingPresetIds = useMemo(() => new Set(store.presets.map((preset) => preset.id)), [store.presets])
+
+  /**
+   * 当前范围生效清单里、**库里已经找不到**的那些 id。
+   *
+   * 它们来自「这套水印被删掉了」—— `deletePreset` 刻意不清理参数层引用（ADR-0002），
+   * 于是链上留下死引用：产出时按 id 找不到预设就**整桶跳过 + `PP-PRESET-001`**。
+   *
+   * 界面上必须显式说出来：下面的勾选框只渲染真实存在的预设，死引用渲染不出来，
+   * 不说的话这里看着就是「这个范围一套都没勾」—— 用户会以为「没配水印」，
+   * 而真实情况是产出会整批失败；更糟的是他重新勾也修不掉（见 `writePresetIds`）。
+   */
+  const deadPresetIds = useMemo(
+    () => effectivePresetIds.filter((id) => !existingPresetIds.has(id)),
+    [effectivePresetIds, existingPresetIds],
+  )
+
   /** 本范围的节点覆盖。全局默认没有「覆盖」这一说（基线就是基线自己的值）。 */
   const nodeOverride = isGlobal ? undefined : params[scope]?.postprocess
 
@@ -178,8 +204,13 @@ export function PresetManagementTab() {
    */
   const writePresetIds = (nextIds: string[]) => {
     if (!hasProduct) return
-    if (mediaScope) setPostprocessOverride(scope, { byMedia: { [mediaScope]: { watermarkPresetIds: nextIds } } })
-    else setPostprocessOverride(scope, { watermarkPresetIds: nextIds })
+    // 落盘前先剔掉库里不存在的 id。死引用没有任何生效语义，留着只会在产出时让整桶跳过；
+    // 而勾选是「在现有清单上增删」，不过滤的话它会一直粘着被写回去 —— 用户把水印重新勾一遍
+    // 照样报错的根因就在这里。剔空成 `[]` 仍然照原样写：那是用户自己取消到最后一个勾，
+    // 「不加水印」正是他要的（与「剔空退回继承」是两回事，后者见 `clearDeadPresetRefs`）。
+    const ids = nextIds.filter((id) => existingPresetIds.has(id))
+    if (mediaScope) setPostprocessOverride(scope, { byMedia: { [mediaScope]: { watermarkPresetIds: ids } } })
+    else setPostprocessOverride(scope, { watermarkPresetIds: ids })
   }
 
   /**
@@ -211,6 +242,40 @@ export function PresetManagementTab() {
     }
     setPostprocessOverride(scope, { watermarkPresetIds: undefined })
     useStore.getState().showToast(`「${scopeName}」已改回跟随上级`, 'success')
+  }
+
+  /**
+   * 清掉当前范围**继承链上**所有已失效的水印引用（指向被删掉的预设）。
+   *
+   * **为什么沿整条链清**：清单是「最深一次声明覆盖上层」，死引用落在哪一层界面上看不出来 ——
+   * 只清当前这一格的话，值来自上层时点了没反应，症状是「点了清掉还在报错」。
+   * 链上任何一层的死引用都是垃圾（永远生效不成一套真水印），一并清掉，一次点好。
+   *
+   * **剔空的那一格写 `undefined`（退回继承）而不是 `[]`**：`[]` 是「明确不加水印」，
+   * 会把上层配好的水印压掉；而一条只剩死引用的清单，用户的真实意图是「用上级那套」——
+   * 他从来没见过那条死引用。这个区分由 `planWatermarkDeadRefCleanup` 统一负责。
+   */
+  const clearDeadPresetRefs = () => {
+    let removed = 0
+    if (isGlobal) {
+      // 全局基线不在 `params` 里（ADR-0012 之后它已没有写入点），单独清一次。
+      // 直接 setState 而不是走 action：这是清理垃圾数据，不该占撤销栈的一格 ——
+      // 与产品迁移的写法一致（`presetProductMigrationRunner`）。
+      const kept = globalWatermarkPresetIds.filter((id) => existingPresetIds.has(id))
+      if (kept.length !== globalWatermarkPresetIds.length) {
+        removed += globalWatermarkPresetIds.length - kept.length
+        usePostprocessMediaStore.setState({ watermarkPresetIds: kept })
+      }
+    } else {
+      // 链上可能有多条补丁，逐条写。每次都走 `set((state) => …)` 取最新状态，
+      // 所以前一条不会把后一条顶掉（用渲染时那份快照拼一次写入就会）
+      for (const plan of planWatermarkDeadRefCleanup(collections, params, scope, existingPresetIds)) {
+        setPostprocessOverride(plan.collectionId, plan.patch)
+        removed += plan.removed
+      }
+    }
+    if (removed === 0) return
+    useStore.getState().showToast(`已清掉 ${removed} 条失效的水印引用`, 'success')
   }
 
   /**
@@ -390,6 +455,42 @@ export function PresetManagementTab() {
         useStore.getState().showToast('导入失败，部分文件无法读取', 'error')
       }
     }
+  }
+
+  /**
+   * 把 LOGO 库里的一个 LOGO 插进当前预设。
+   *
+   * 会**先量一次素材的真实尺寸**再交给 store：LOGO 图层默认是 100×100 的方框，只有知道
+   * 图的比例，框才能一次设对。矩形 LOGO 塞进方框就是报障「被压缩拉伸」的那个现象 ——
+   * 渲染侧现在保证「按原图比例画、绝不变形」（`fitMediaSize`），但框不改的话那张 LOGO
+   * 只会显示成方框里的一条小长条，用户还得自己去量尺寸。
+   *
+   * 量不出来（素材损坏）就不传尺寸，退回原有行为：插入照旧成功，只是框保持原样。
+   */
+  async function pickLogoAsset(asset: CompositeFsImage) {
+    if (!activePreset) return
+    const logo = store.projectLogos.find((item) => item.id === asset.path)
+    if (!logo?.assetId) return
+    let sourceSize: { width: number; height: number } | undefined
+    try {
+      const objectUrl = await getCompositeAssetObjectUrl(logo.assetId)
+      if (objectUrl) {
+        const image = await loadImageOriented(objectUrl)
+        const width = getSourceWidth(image)
+        const height = getSourceHeight(image)
+        if (width > 0 && height > 0) sourceSize = { width, height }
+      }
+    } catch (error) {
+      console.error('读取 LOGO 尺寸失败:', error)
+    }
+    const layerId = store.replaceOrAddLogoLayer(
+      activePreset.id,
+      { kind: 'stored', assetId: logo.assetId, name: logo.name },
+      selectedLayerId,
+      sourceSize,
+    )
+    setSelectedLayerId(layerId)
+    useStore.getState().showToast(`已插入 LOGO「${logo.name}」`, 'success')
   }
 
   async function deleteLogoAsset(asset: CompositeFsImage) {
@@ -739,6 +840,38 @@ export function PresetManagementTab() {
             </div>
           )}
 
+          {/*
+           * 失效引用提示（2026-10-10）。
+           *
+           * 预设被删之后，参数层会留下指向它的死引用（`deletePreset` 刻意不清理，ADR-0002）：
+           * 产出时按 id 找不到预设就整桶跳过并报 `PP-PRESET-001` —— 一整批图白跑。
+           *
+           * **必须在这里说**：下面的勾选框只渲染真实存在的预设，死引用渲染不出来。
+           * 不说的话，这个范围看着就是「一套都没勾」，用户会当成「没配水印」，
+           * 而产出实际会失败；他再勾一遍也修不掉（勾选是增删，死引用会一起被写回）。
+           */}
+          {deadPresetIds.length > 0 && (
+            <div
+              data-layout="preset-dead-refs"
+              className="space-y-1 rounded-ds-lg border border-ds-warning/35 bg-ds-warning-subtle px-3 py-2 dark:border-ds-warning/30 dark:bg-ds-warning/10"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-ds-warning">有 {deadPresetIds.length} 套水印已不存在</span>
+                <button
+                  type="button"
+                  data-testid="preset-clear-dead-refs"
+                  onClick={clearDeadPresetRefs}
+                  className="shrink-0 cursor-pointer rounded-ds-md border border-ds-warning/50 px-2 py-0.5 text-xs text-ds-warning hover:bg-ds-warning/10 dark:hover:bg-ds-warning/20"
+                >
+                  清掉
+                </button>
+              </div>
+              <p className="text-xs text-ds-warning opacity-90">
+                这个范围还记着它们，但库里已经没有了。产出时这一批会被跳过并报错，点「清掉」把它们从配置里移除。
+              </p>
+            </div>
+          )}
+
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -895,8 +1028,12 @@ export function PresetManagementTab() {
                             confirmText: '确认删除',
                             tone: 'danger',
                             action: () => {
+                              // 先收下这套水印用到的素材 id，删完再释放（仍被别的水印或 LOGO 库
+                              // 引用着的不会被删 —— 判据见 `releaseUnreferencedAssets`）
+                              const removedAssetIds = collectLayerAssetIds(preset.layers)
                               store.deletePreset(preset.id)
                               useStore.getState().showToast(`已删除预设「${preset.name}」`, 'success')
+                              void releaseUnreferencedAssets(removedAssetIds, () => useCompositeV2Store.getState())
                             },
                           })
                         }
@@ -992,18 +1129,7 @@ export function PresetManagementTab() {
               useStore.getState().showToast('已更新 LOGO 顺序', 'success')
             }}
             onImportFiles={importLogoFiles}
-            onPickAsset={(asset) => {
-              if (!activePreset) return
-              const logo = store.projectLogos.find((item) => item.id === asset.path)
-              if (!logo?.assetId) return
-              const layerId = store.replaceOrAddLogoLayer(
-                activePreset.id,
-                { kind: 'stored', assetId: logo.assetId, name: logo.name },
-                selectedLayerId,
-              )
-              setSelectedLayerId(layerId)
-              useStore.getState().showToast(`已插入 LOGO「${logo.name}」`, 'success')
-            }}
+            onPickAsset={(asset) => void pickLogoAsset(asset)}
           />
         </div>
 
