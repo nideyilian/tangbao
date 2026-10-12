@@ -1238,6 +1238,20 @@ export const legacyComponentCoverage: LegacyComponentCoverage[] = [
     decision: 'compose',
     targets: ['Panel', 'Button', 'Switch', 'EmptyState'],
   },
+  {
+    module: 'src/features/directionAgent/DirectionAgentPicker.tsx',
+    responsibility:
+      '输入框底栏的 Agent 模式胶囊与选择弹窗：左半截切开关、右半截开列表（按「分类 · 方向」分组，含「＋ 从参考图新建」入口与「关闭 Agent 模式」）',
+    decision: 'compose',
+    targets: ['Badge', 'Button'],
+  },
+  {
+    module: 'src/features/directionAgent/DirectionAgentEditor.tsx',
+    responsibility:
+      '方向 Agent 编辑器：看 / 改三段式配方（纯文本域 + 实时体检报告）、逐条启停 13 条规则、用 AI 延展、启用开关与删除',
+    decision: 'compose',
+    targets: ['Dialog', 'TextArea', 'Switch', 'Button', 'Badge', 'Alert'],
+  },
 ]
 
 export interface InteractionPattern {

@@ -59,6 +59,7 @@ const APP_DATA_NAMESPACES = new Set([
   'imageVideo',
   'creativePools',
   'creativePoolAssets',
+  'directionAgents',
 ])
 
 function appDataNamespace(value: unknown): string {

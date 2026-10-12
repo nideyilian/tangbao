@@ -74,6 +74,11 @@ import PostprocessSettingsModal from './PostprocessSettingsModal'
 import { usePostprocessMediaStore } from '../storePostprocessMedia'
 import ViewportTooltip from './ViewportTooltip'
 import ModelSwitcher from './ModelSwitcher'
+import DirectionAgentEditor from '../features/directionAgent/DirectionAgentEditor'
+import DirectionAgentPicker from '../features/directionAgent/DirectionAgentPicker'
+import { reverseRuleTextFromImages } from '../features/directionAgent/reverseRuleText'
+import { useActiveDirectionAgent, useDirectionAgentStore } from '../features/directionAgent/store'
+import { ruleTextToVariablePrompt } from '../features/directionAgent/toVariablePrompt'
 import { CloseIcon, FolderOpenIcon, TagsIcon } from './icons'
 import { CheckIcon, FileImageIcon, ImageIcon, ImagesIcon, ShieldCheckIcon, SparklesIcon } from '../design-system/icons'
 import { getGallerySopPromptRunStorageKey, type GallerySopRunStatus } from '../features/strategy/adapters/gallerySopRun'
@@ -1442,6 +1447,30 @@ export default function InputBar() {
   const [oneClickDerivePhase, setOneClickDerivePhase] = useState('')
   // 一键衍生必须由用户显式开启，避免挂图后拦截普通图生图。
   const [oneClickDeriveEnabled, setOneClickDeriveEnabled] = useState(false)
+  // 方向 Agent 模式（TB-154）：按「参考图反推出来的配方」出一批同方向、互不相同的图。
+  //
+  // ⚠️ 命名刻意避开「Agent」两个字单独出现 —— 这个文件里 `appMode === 'agent'` 指的是
+  // 糖包既有的「Agent 工作区」，两者是完全不同的东西，混起来看代码的人会误判。
+  //
+  // 开关本身是瞬时 UI 状态（跟 oneClickDeriveEnabled 一样）；**选中的是哪个 Agent
+  // 由 directionAgent 自己的 store 持久化** —— 那是用户的选择，重启后该还在。
+  const [directionAgentMode, setDirectionAgentMode] = useState(false)
+  const activeDirectionAgent = useActiveDirectionAgent()
+  /** 正在编辑哪个 Agent（null = 编辑器关着）。 */
+  const [editingDirectionAgentId, setEditingDirectionAgentId] = useState<string | null>(null)
+  const upsertDirectionAgent = useDirectionAgentStore((s) => s.upsertAgent)
+  const setActiveDirectionAgent = useDirectionAgentStore((s) => s.setActiveAgent)
+  /** 反推中的进度文案（空串 = 没在跑）。复用给按钮与提示位，别再多开一个 state。 */
+  const [agentReversePhase, setAgentReversePhase] = useState('')
+  /** 反推出来、还没落库的草稿（有值 = 显示确认条）。 */
+  const [agentReverseDraft, setAgentReverseDraft] = useState<{
+    ruleText: string
+    succeeded: number
+    failedNames: string[]
+  } | null>(null)
+  /** 确认条上的三个输入（分类 / 方向 / 名字）。 */
+  const [agentDraftMeta, setAgentDraftMeta] = useState({ category: '', direction: '', name: '' })
+  const agentReverseRunningRef = useRef(false)
   const [referenceStyleEnabled, setReferenceStyleEnabled] = useState(false)
   // 视觉 Skill 面板：点外部（透明遮罩）已能关，这里补 Esc
   useCloseOnEscape(referenceStyleEnabled, () => setReferenceStyleEnabled(false))
@@ -1568,9 +1597,13 @@ export default function InputBar() {
   const showSubmitTooltip = submitHover && (activeAgentIsRunning || (gallerySopModeActive ? true : !hasSubmitApiConfig))
   const promptPlaceholder = gallerySopModeActive
     ? '本次生成要求（可选）：补充本批次的主题、内容和限制；留空则完全按 SOP 执行'
-    : referenceStyleEnabled
-      ? '输入新主题，每行一个；系统会保留参考图的风格与构图并分别生成'
-      : '描述你想生成的图片，可输入 @ 来指定参考图...'
+    : directionAgentMode
+      ? activeDirectionAgent
+        ? '这句只当备注：出图用的是 Agent 的配方，数量在下面设'
+        : '还没选 Agent —— 点左边那枚胶囊挑一个，或从参考图新建'
+      : referenceStyleEnabled
+        ? '输入新主题，每行一个；系统会保留参考图的风格与构图并分别生成'
+        : '描述你想生成的图片，可输入 @ 来指定参考图...'
   // 一键衍生防重入：AI 反推模板期间禁止重复点击发送
   const oneClickDeriveRunningRef = useRef(false)
   const referenceStyleRunningRef = useRef(false)
@@ -1728,6 +1761,84 @@ export default function InputBar() {
     }
   }, [deriveCopyMode, derivePolicy, hasSubmitApiConfig, inputImages, prompt, setPrompt, showToast])
 
+  // ===== 方向 Agent（TB-154）=====
+
+  /**
+   * 从挂着的参考图反推一份配方。
+   *
+   * **只出草稿、不落库** —— 反推完先给用户看，填好分类 / 方向 / 名字再保存。
+   * 跟瀚灵那句「统一审核后自动保存」一个意思：AI 不替用户拍板。
+   */
+  const runAgentReverse = useCallback(async () => {
+    if (agentReverseRunningRef.current) return
+    if (inputImages.length === 0) {
+      showToast('请先把参考图拖进输入框，再点「从参考图新建」', 'error')
+      return
+    }
+    agentReverseRunningRef.current = true
+    setAgentReversePhase('正在反推参考图…')
+    try {
+      const result = await reverseRuleTextFromImages(
+        inputImages.map((image, index) => ({ name: `图${index + 1}`, dataUrl: image.dataUrl })),
+      )
+      setAgentReverseDraft({
+        ruleText: result.ruleText,
+        succeeded: result.succeeded,
+        failedNames: result.failed.map((item) => item.name),
+      })
+      setAgentDraftMeta({ category: '', direction: '', name: '' })
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '反推失败，请重试', 'error')
+    } finally {
+      agentReverseRunningRef.current = false
+      setAgentReversePhase('')
+    }
+  }, [inputImages, showToast])
+
+  /** 把反推草稿落成 Agent，并切到「用它出图」。 */
+  const saveAgentDraft = useCallback(() => {
+    if (!agentReverseDraft) return
+    const id = upsertDirectionAgent({
+      name: agentDraftMeta.name.trim() || agentDraftMeta.direction.trim() || '新 Agent',
+      category: agentDraftMeta.category,
+      direction: agentDraftMeta.direction,
+      // 输入框那句当备注留着 —— 它不参与出图（出图只读三段式），但回头能看出这版配方当初要什么
+      description: prompt.trim(),
+      ruleText: agentReverseDraft.ruleText,
+    })
+    setActiveDirectionAgent(id)
+    setDirectionAgentMode(true)
+    setAgentReverseDraft(null)
+    showToast('配方已保存为 Agent，之后可以直接拿它出图', 'success')
+  }, [agentReverseDraft, agentDraftMeta, prompt, upsertDirectionAgent, setActiveDirectionAgent, showToast])
+
+  /**
+   * 方向 Agent 出图。
+   *
+   * 把配方转成糖包的「变量提示词」模板，然后交给**现成的提交链路**：
+   * 数量走 `params.n`（跟普通出图同一个参数，不另开一份，免得两处数量打架），
+   * 任务执行时会 `renderVariablePromptBatch(task.prompt, n, task.id)` 把它展开成 n 条，
+   * 每条一张图。所以这里**不需要自己展开、也不需要自己提交 n 个任务** ——
+   * 并发、重试、去重、落盘全是现成的。
+   */
+  const submitDirectionAgentTask = useCallback(() => {
+    if (!activeDirectionAgent) {
+      showToast('还没有选 Agent，点输入框上那枚胶囊挑一个', 'error')
+      return
+    }
+    let template: string
+    try {
+      template = ruleTextToVariablePrompt(activeDirectionAgent.ruleText)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '这份配方还不能出图', 'error')
+      return
+    }
+    void submitTask({ promptOverride: template }).then(
+      () => undefined,
+      () => undefined,
+    )
+  }, [activeDirectionAgent, showToast])
+
   // ===== 风格池 =====
   const [creativePoolOpen, setCreativePoolOpen] = useState(false)
   const creativePool = useCreativePool('style')
@@ -1787,6 +1898,9 @@ export default function InputBar() {
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
+    } else if (directionAgentMode) {
+      // 方向 Agent：用户显式开的开关，优先于下面「挂图衍生 / 风格池 / SOP」那些分流
+      submitDirectionAgentTask()
     } else if (gallerySopModeActive) {
       if (!activeGallerySop) {
         showToast('请先选择 SOP 预设', 'error')
@@ -1851,6 +1965,8 @@ export default function InputBar() {
     revealGallerySopBatch,
     runOneClickDerive,
     submitTaskWithCreativePool,
+    directionAgentMode,
+    submitDirectionAgentTask,
     showToast,
   ])
   const stopActiveAgentResponse = useCallback(() => {
@@ -4790,6 +4906,12 @@ export default function InputBar() {
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-ds-muted dark:text-ds-muted">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <ModelSwitcher />
+              <DirectionAgentPicker
+                enabled={directionAgentMode}
+                onToggle={setDirectionAgentMode}
+                onRequestReverse={() => void runAgentReverse()}
+                onEditAgent={(agent) => setEditingDirectionAgentId(agent.id)}
+              />
               <span>Enter 发送 · Shift+Enter 换行 · @ 引用参考图</span>
               {variablePromptState.enabled && (
                 <Badge
@@ -4819,6 +4941,56 @@ export default function InputBar() {
                 <li key={`${index}:${error}`}>{error}</li>
               ))}
             </ul>
+          )}
+
+          {/* 方向 Agent（TB-154）：反推进度 + 反推完的就地确认条。
+              就地展开、不弹窗 —— 弹窗会打断用户手上正在做的事（挂图、改提示词）。 */}
+          {(agentReversePhase || agentReverseDraft) && (
+            <div className="mt-3 rounded-ds-lg border border-ds-border bg-ds-surface-subtle p-3 text-xs dark:bg-ds-surface">
+              {agentReversePhase ? (
+                <p className="text-ds-muted">{agentReversePhase}</p>
+              ) : agentReverseDraft ? (
+                <>
+                  <p className="text-ds-success">
+                    已从 {agentReverseDraft.succeeded} 张参考图反推出配方
+                    {agentReverseDraft.failedNames.length > 0
+                      ? `（${agentReverseDraft.failedNames.join('、')} 失败已跳过）`
+                      : ''}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {(
+                      [
+                        ['category', '分类'],
+                        ['direction', '方向'],
+                        ['name', '名字'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="inline-flex items-center gap-1.5">
+                        <span className="text-ds-muted">{label}</span>
+                        <input
+                          value={agentDraftMeta[key]}
+                          onChange={(event) =>
+                            setAgentDraftMeta((previous) => ({ ...previous, [key]: event.target.value }))
+                          }
+                          placeholder={
+                            key === 'category' ? '如：百度' : key === 'direction' ? '如：网赚' : '如：暖色促销版'
+                          }
+                          className="h-7 w-[104px] rounded-ds-md border border-ds-border bg-ds-surface px-2 text-xs text-ds-text outline-none transition placeholder:text-ds-text-subtle focus:border-ds-primary/40 dark:bg-ds-surface-subtle"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setAgentReverseDraft(null)}>
+                      丢弃
+                    </Button>
+                    <Button size="sm" onClick={saveAgentDraft}>
+                      保存为 Agent
+                    </Button>
+                  </div>
+                </>
+              ) : null}
+            </div>
           )}
 
           {/* 参数 + 按钮 */}
@@ -5317,6 +5489,16 @@ export default function InputBar() {
           </Suspense>,
           document.body,
         )}
+
+      {/* 方向 Agent 编辑器（TB-154）：看配方 / 改三段式 / 管 13 条规则 / AI 延展。
+          Dialog 自带 portal，不用手动挂到 body。 */}
+      <DirectionAgentEditor
+        agentId={editingDirectionAgentId}
+        open={editingDirectionAgentId !== null}
+        onOpenChange={(next) => {
+          if (!next) setEditingDirectionAgentId(null)
+        }}
+      />
     </>
   )
 }
